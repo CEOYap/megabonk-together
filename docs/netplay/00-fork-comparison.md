@@ -67,10 +67,10 @@ in the same commits.
 |---|---|
 | 17 non-idempotent event RPCs → `Unreliable` | **Critical** — permanent desync on any packet loss; reverts upstream `24f5004` |
 | Host relay echoes `GoldChanged` to its own sender | **Critical** — gold duplication exploit (`ChangeGold` is a delta) |
-| `NetEntity` keyed on GameObject, cleaned only in `OnDestroy` | **High** — broken under object pooling; stale ownership on recycled objects |
+| `NetEntity` keyed on GameObject, cleaned only in `OnDestroy` | **High** — broken under object pooling (**confirmed**: `DespawnPickup` calls `ObjectPool.Release`, never `Destroy`); stale ownership on recycled objects |
 | `Object.Destroy(netEnt)` before `DespawnPickup` | **High** — deferred clear + `AddComponent`/`Destroy` churn per pickup cycle |
-| Final swarm enemy cap 400 → 700/800 | **High** — contradicts `NETPLAY_CHANGES.md`, worst-case density up 75–100% |
-| `BaseSummoner` patch re-enabled verbatim | **High** — was disabled for measured FPS reasons; compounding multiplier unaddressed |
+| Final swarm enemy cap 400 → 700/800 | **High** — the game *lowers* the cap to 400 then 300 during the final swarm; vanilla baseline is 550, not 400 |
+| `BaseSummoner` patch re-enabled verbatim | **High** — was disabled for measured FPS reasons; compounds credit income to ~2–3×, not the advertised few percent |
 | Claimed `Interlocked` concurrency fix never applied | **Medium** — only the `//TODO` markers were deleted; the race is intact |
 | `__instance.target` assignment silently dropped in `Enemy.cs` | **Medium** — 2–6 s host-aggro bias on every spawn |
 | `Specific.IsGoldenShrine` added with no version gate | **Medium** — silent MemoryPack wire break |
@@ -171,6 +171,13 @@ Ranked by value, after reading all three:
 4. **Attack the real GC hot paths** — `TargetSwitcher.Update` at 600 enemies, and
    `GetAllPlayersAlive()`. Neither is touched by any fork. See
    [`04-performance-and-gc.md`](04-performance-and-gc.md).
-5. **Decompile the handful of game internals** that block confident fixes —
-   `BaseSummoner.giveCreditsTimer` above all. See
+5. ~~**Decompile the handful of game internals** that block confident fixes —
+   `BaseSummoner.giveCreditsTimer` above all.~~ **DONE** — 9 of 11 targets resolved against
+   buildid 21750826. `giveCreditsTimer` is an accumulator reset each grant, the enemy cap is
+   550 (not 400), `ChargeShrine.Start` does not write `isGolden`, and `DamageContainer`s are
+   recycled through **shared statics** — the last of which surfaced a new High-severity defect
+   ([P1-5](01-critical-fixes.md#p1-5)) that no fork had identified. See
    [`../reverse-engineering/01-investigation-targets.md`](../reverse-engineering/01-investigation-targets.md).
+6. **Verify the Steam upload suppression** — decompilation showed the game ships its own mod
+   detection on `Leaderboards.UploadScore`, and two of its three upload calls bypass that check.
+   This is a player-facing ban risk and is now [P0-0](01-critical-fixes.md#p0-0).

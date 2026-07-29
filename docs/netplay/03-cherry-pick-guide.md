@@ -130,9 +130,12 @@ positional, so this silently corrupts `SpawnedObject` between mismatched builds.
 [P1-3](01-critical-fixes.md#p1-3) (protocol version gate) **first**, then
 [P1-2](01-critical-fixes.md#p1-2).
 
-Their `ChargeShrine.Start` postfix is a retry, not a fix, and its value depends on whether
-`Start()` writes `isGolden`. Decompile before adding it — see
-[`../reverse-engineering/01-investigation-targets.md`](../reverse-engineering/01-investigation-targets.md#chargeshrine).
+> **Their `ChargeShrine.Start` postfix: RESOLVED — do not take it.** `Start` was decompiled in
+> full (VA `0x1804C2A60`) and **never touches `isGolden`, nor reads `goldChance`**. It only
+> does visual setup: rotation, alpha, two `MaterialPropertyBlock`s, a `Random.ColorHSV` call for
+> the rune-stone's *cosmetic* colour, and the spawn action. The ordering hazard the postfix
+> guards against does not exist, so the message change alone is sufficient. See
+> [`../reverse-engineering/01-investigation-targets.md`](../reverse-engineering/01-investigation-targets.md#chargeshrine).
 
 ```bash
 git checkout -b feat/sync-golden-shrine main
@@ -208,14 +211,29 @@ execution:
 3. **Component-level keying collapsed to GameObject-level.** `DynamicData.For(component)`
    keyed the component. The `Component` overload of `GetOrAddNetEntity` forwards to
    `comp.gameObject`, so **every component on a GameObject now shares one `NetData`**. Check
-   `PoolManager.cs` (reads `weaponBase`'s `OwnerId`, writes `__result`'s) and
-   `WeaponUtility.cs` (whose "already assigned?" guard breaks if the `DamageContainer` shares
-   a GameObject).
-4. **Lifetime is wrong for a pooled game.** Cleanup only happens in `NetEntity.OnDestroy`,
-   but Megabonk pools enemies, pickups, and projectiles — pooled objects are disabled and
-   reused, never destroyed. Stale `NetId`/`OwnerId` survives recycling. The static dictionary
-   is never swept, and the `this.gameObject != null` guard in `OnDestroy` fails during scene
-   teardown, so entries leak across stages.
+   `PoolManager.cs`, which reads `weaponBase`'s `OwnerId` and writes `__result`'s.
+
+   > **Correction from decompilation:** the `WeaponUtility` half of this concern was
+   > mis-stated. `DamageContainer` is a **plain managed class, not a `Component`**
+   > (`dump.cs:374151`), so it can never share a GameObject and GameObject-level keying is not
+   > what breaks it. The real defect is worse and applies to `DynamicData` too — see
+   > [P1-5](01-critical-fixes.md#p1-5): `WeaponUtility.GetDamageContainer` ignores its
+   > `recycleDc` argument and returns a **static** container, so *every* weapon attack shares
+   > one instance and any identity-keyed store collapses regardless of implementation.
+
+4. **Lifetime is wrong for a pooled game — now CONFIRMED, not inferred.** Cleanup only happens
+   in `NetEntity.OnDestroy`, but Megabonk pools aggressively: `PoolManager` holds **40+
+   `UnityEngine.Pool.ObjectPool<GameObject>`** covering enemies, pickups, projectiles and
+   attacks (`dump.cs:363290`), and `PickupManager.DespawnPickup` was decompiled calling
+   **`ObjectPool<GameObject>.Release`** with no `Destroy` path at all (VA `0x1804DDB60`).
+   Pooled objects are disabled and reused, never destroyed, so `OnDestroy` fires only at scene
+   teardown and stale `NetId`/`OwnerId` survives every recycle. The static dictionary is never
+   swept, and the `this.gameObject != null` guard in `OnDestroy` fails during scene teardown,
+   so entries leak across stages.
+
+   The correct reset point is `actionOnRelease` on the pool — the 7-argument
+   `ObjectPool<T>` constructor exposes it, and `src/plugin/Helpers/PoolHelper.cs` already
+   reconstructs that constructor reflectively, so it is demonstrably reachable.
 
 Worst individual site, in `Pickup.cs` and three others:
 
@@ -237,10 +255,26 @@ with netcode changes.
 
 ### Final swarm cap 400 → 700/800
 
-`7acbc94`. `NETPLAY_CHANGES.md` documents the 400 cap as deliberate ("keeping the original
-cap"), and the existing 500/600 multiplayer caps are already flagged *"untested, you have
-been warned"*. This raises worst-case concurrent enemies by 75–100% at the single densest
-moment in the game — and multiplies `OnEnemyDied` volume, which the same fork made unreliable.
+`7acbc94`. **REJECT — and the decompilation strengthens the case while correcting the numbers.**
+
+`EnemyManager.GetNumMaxEnemies` (VA `0x180419D60`) is the actual population cap:
+
+```c
+if (<final swarm active>) return (MyTime.<t> >= DAT_18262EDF4) ? 300 : 400;
+return 0x226;   // 550 — the normal cap
+```
+
+So the vanilla cap is **550**, and 400 is the **final-swarm** value, which the game lowers
+again to **300** past a time threshold. The game deliberately *reduces* density at its densest
+moment. Raising it to 700–800 pushes against a staged reduction rather than correcting an
+oversight — and multiplies `OnEnemyDied` volume, which the same fork made unreliable.
+
+> **Two corrections this forces on our own documentation:**
+>
+> - `NETPLAY_CHANGES.md` calling 400 "the original cap" is **wrong**; 400 is final-swarm only.
+> - **Our own 500/600 caps were chosen against that wrong baseline.** A 500 cap is *below*
+>   vanilla's 550, so the 2–4 player setting may be reducing density rather than raising it.
+>   The *"untested, you have been warned"* note is well earned. Re-tune against 550 / 400 / 300.
 
 ### `BaseSummoner` re-enable
 
@@ -262,9 +296,20 @@ private static void Tick_Postfix(BaseSummoner __instance)
 `"Credits Timer Multiplier (Disabled)"`, and `GetCreditsTimerMultiplier()` → `PlayersCount` →
 `GetAllPlayersAlive()` allocates a `Player[]` plus two LINQ iterators per summoner per tick.
 
-**UNVERIFIED:** whether `giveCreditsTimer` is an interval or a countdown determines the exact
-failure mode, but both compound. Decompile before enabling under any circumstances —
-[`../reverse-engineering/01-investigation-targets.md`](../reverse-engineering/01-investigation-targets.md#basesummoner).
+> **RESOLVED (was UNVERIFIED) — `Tick` decompiled at VA `0x18046D990`.** `giveCreditsTimer` is
+> an **accumulator**: it counts up by `deltaTime`, and on reaching a threshold of `1.0`
+> (`DAT_18262EC7C`, read as `1.0f`) it grants credits and **resets to `0.0`**.
+>
+> That inverts the feared failure mode. Multiplying an up-counter by >1 makes it reach the
+> threshold *sooner*, so credits arrive **faster** and **more** enemies spawn — the patch does
+> not starve spawning. But the compounding is real *within* each accumulation window, so the
+> effect is roughly **2–3× credit income**, not the 1–5% the multiplier's name suggests.
+>
+> **Still reject as written**, for two reasons that survive: the FPS regression that caused the
+> original disable is unaddressed, and the per-tick allocation above is real. If the balance
+> lever is wanted, the grant line is `credits += GetCreditsPerSecond() * GetMultiplier()` — so
+> **postfix `GetMultiplier()` (VA `0x46CD20`)** instead: linear, non-compounding, and it
+> composes with the game's own multiplier rather than fighting it.
 
 ### `Task.Run` removal in `WebsocketClientService`
 
@@ -288,6 +333,20 @@ dominate, are untouched. Fix the source instead: [P1-4](01-critical-fixes.md#p1-
 Land these as separate small PRs so each reverts independently, and so the parts worth
 upstreaming to `Fcornaire/megabonk-together` are already isolated.
 
+Two branches come **before** anything from this fork, because neither originates here:
+
+```bash
+# 0a. Steam upload suppression audit — ban risk, independent of everything else
+git checkout -b fix/verify-steam-suppression main
+#    P0-0 — nothing from Sea-Bass; see 01-critical-fixes.md#p0-0
+
+# 0b. Dangling-transform diagnostic — XS, and every later playtest then collects data on it
+git checkout -b chore/dangling-transform-logging main
+#    P2-1 — the rate-limited version of the Sea-Bass log line
+```
+
+Then the fork-derived work:
+
 ```bash
 # 1. Charging state machine — highest value, transport-independent
 git checkout -b fix/charging-state-machine main
@@ -309,12 +368,18 @@ git checkout -b feat/protocol-version-gate main
 git checkout -b fix/host-relay-xp-gold main
 #    P1-1
 
-# 6. Golden shrine sync — requires #4
+# 6. Damage ownership attribution — requires #4 if it changes a message shape
+git checkout -b fix/damage-ownership-attribution main
+#    P1-5 — nothing from Sea-Bass; their NetEntity makes this worse, not better
+
+# 7. Golden shrine sync — requires #4
 git checkout -b feat/sync-golden-shrine main
-#    P1-2
+#    P1-2 — message change only, no Start postfix
 ```
 
-Items 1 and 5 are the best value-to-risk in the entire fork.
+Items 1 and 5 are the best value-to-risk in the entire fork. Note that **P0-0, P2-1 and P1-5
+take nothing from Sea-Bass at all** — they came out of decompilation, and P1-5 in particular is
+a defect their `NetEntity` refactor would have deepened rather than fixed.
 
 Once done, clean up:
 

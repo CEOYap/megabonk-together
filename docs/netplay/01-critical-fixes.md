@@ -10,21 +10,105 @@ an environment with no .NET SDK. Build and playtest each one.
 
 | ID | Title | Severity | Effort | Transport-independent |
 |---|---|---|---|---|
+| [P0-0](#p0-0) | Steam upload suppression unverified — ban risk | Critical | S | yes |
 | [P0-1](#p0-1) | Shrine/pylon/lamp claim clobbering locks the object permanently | Critical | S | yes |
 | [P0-2](#p0-2) | `KeyNotFoundException` in every charging stop path | Critical | S | yes |
 | [P0-3](#p0-3) | Non-atomic network ID allocation | High | S | yes |
 | [P0-4](#p0-4) | `NullReferenceException` on enemy target assignment | High | XS | yes |
 | [P1-1](#p1-1) | Client-originated XP / gold / encounter-close never reach peers | High | M | yes |
-| [P1-2](#p1-2) | Legendary (golden) shrine state not synced | Medium | S | yes |
+| [P1-2](#p1-2) | Legendary (golden) shrine state not synced | Medium | XS | yes |
 | [P1-3](#p1-3) | No protocol version gate — mismatched builds corrupt sessions | High | M | mostly |
 | [P1-4](#p1-4) | `GetAllPlayersAlive()` allocates on every call, including per-tick paths | Medium | S | yes |
+| [P1-5](#p1-5) | Damage ownership misattributed through shared static `DamageContainer`s | High | M | yes |
 | [P2-1](#p2-1) | Dangling transform hack is silent | Low | XS | yes |
 | [P2-2](#p2-2) | Dead `GetAllPlayers()` calls in charging paths | Low | XS | yes |
 | [P2-3](#p2-3) | Charging logic triplicated across shrine / pylon / lamp | Low | M | yes |
 
-Suggested order: P0-1 → P0-2 → P0-4 → P0-3 → P1-3 → P1-1 → P1-4 → P1-2 → P2-*.
+### Suggested order
 
-P0-1 and P0-2 touch the same six methods; do them in one branch.
+```
+P0-0  →  P2-1  →  P0-1+P0-2+P2-2  →  P0-4  →  P0-3  →  P1-3  →  P1-1  →  P1-5  →  P1-2  →  P1-4  →  P2-3
+```
+
+Three deliberate departures from a straight severity ranking:
+
+1. **P0-0 first.** It is the only item whose failure mode harms players outside the game
+   (leaderboard bans). It is also small, and independent of everything else.
+2. **P2-1 second, despite being P2.** It is XS, zero-risk, and purely *diagnostic* — it turns the
+   silent dangling-transform hack into rate-limited evidence. Landing it early means every
+   subsequent playtest in this sequence is also collecting data on it, which is the only
+   realistic route to closing
+   [investigation target #8](../reverse-engineering/01-investigation-targets.md#8-netplayer-lifetime-and-the-dangling-transform--nice).
+   Doing it last wastes every test run before it.
+3. **P1-3 before P1-1, P1-2 and P1-5.** All three change or add message handling; P1-2 and P1-5
+   change the wire format outright. Landing the version gate first means a mismatched build is
+   refused with a readable message instead of desyncing confusingly — which matters most
+   precisely while you are iterating on message changes.
+
+P0-1 and P0-2 touch the same six methods, and P2-2 deletes dead code in twelve methods that
+overlap them. Do all three in one branch.
+
+### What the decompilation changed
+
+Findings from
+[`../reverse-engineering/01-investigation-targets.md`](../reverse-engineering/01-investigation-targets.md)
+(buildid 21750826) that move items on this list:
+
+| Item | Change |
+|---|---|
+| [P1-2](#p1-2) | **Effort S → XS.** `ChargeShrine.Start` confirmed **not** to write `isGolden`, so the `Start` postfix is dead weight. Steps 1–3 alone are sufficient. |
+| [P1-5](#p1-5) | **New.** `WeaponUtility.GetDamageContainer` ignores its `recycleDc` argument and returns a **static** container; `DamageUtility` and `XpDamager` hold statics too. Identity-keyed ownership collapses. |
+| [P0-0](#p0-0) | **New.** `Leaderboards.UploadScore` carries mod detection, and two of its three uploads bypass that check entirely. |
+| Final swarm cap | The vanilla cap is **550**, not 400. 400 is the *final-swarm* value, dropping to 300. See the rejection table below — and re-check our own 500/600 numbers. |
+| `BaseSummoner` patch | The compounding is real but **inverts** the feared direction (more enemies, not fewer), and a cleaner patch point exists. Still not recommended as written. |
+
+---
+
+<a name="p0-0"></a>
+## P0-0 — Steam upload suppression unverified (ban risk)
+
+**Status:** CONFIRMED (game side) / UNVERIFIED (mod side)
+**Files:** `src/plugin/Patches/LeaderBoards.cs`, `Patches/SteamStatsManager.cs`,
+`Patches/SteamAchievementsManager.cs`
+
+### Why this is first
+
+`NETPLAY_CHANGES.md` states that uploading a netplay score can get players banned. Decompilation
+of `Leaderboards.UploadScore` (VA `0x1803E2820`) shows the game **already detects mods**: it
+calls `LeaderboardsNew_Sus.CheckMods(...)` above a score threshold and probes ~10 directory paths
+with `Directory.Exists`.
+
+Two facts make the mod's own suppression load-bearing rather than belt-and-braces:
+
+1. **That detection gates only one of three uploads.** The primary `QueueLeaderboardUpload` is
+   guarded by `canShowScore && !suspicious`; two further `QueueLeaderboardUpload(..., true)`
+   calls run **unconditionally** at the end of the method.
+2. **`SteamAchievementsManager.ENABLED` does not cover it.** That kill switch is declared on the
+   achievements manager only, and it does gate `TryUnlockAchievement` completely (confirmed at
+   VA `0x1803EBDE0`) — but `Leaderboards` has no equivalent.
+
+### Fix
+
+This is an **audit**, not a rewrite. Confirm, by reading the current patches and then by testing:
+
+- [ ] `UploadScore` cannot execute at all during a netplay session — a prefix returning `false`,
+      not a filter on its inputs. Partial suppression is useless given (1).
+- [ ] `SteamStatsManager.TryUploadStats` (VA `0x1803EF750`) is covered too; its decompilation is
+      in `megabonk-re/decompiled/` and has not been read yet.
+- [ ] Suppression is restored on session end, and cannot leak into singleplayer — the
+      **il2cpp** skill's teardown rule applies.
+- [ ] Consider setting `SteamAchievementsManager.ENABLED = false` for the session as a second
+      layer for achievements specifically; it sits below any internal caller and so cannot be
+      bypassed by a call path the mod did not patch.
+
+### Test
+
+Play a netplay run to a score above the threshold, exit cleanly, and confirm no leaderboard entry
+and no stat upload. Then play a **singleplayer** run and confirm uploads work normally — a
+teardown leak here silently breaks legitimate progression.
+
+> Recorded so the mod reliably **avoids** submitting modded runs. Do not attempt to influence or
+> work around the detection; the goal is that no netplay run ever reaches the upload path.
 
 ---
 
@@ -543,10 +627,17 @@ per-object state. The reasoning is that Unity may run `Start()` after the receiv
 already set `isGolden`, overwriting it.
 
 That is a real ordering hazard, but the postfix as written only helps if the value was
-already stored somewhere the postfix can read — it is a retry, not a fix. Before adding it,
-**decompile `ChargeShrine` and confirm whether `Start()` writes `isGolden`** (see
-[`../reverse-engineering/01-investigation-targets.md`](../reverse-engineering/01-investigation-targets.md#chargeshrine)).
-If it does not, step 3 above is sufficient and the postfix is dead weight.
+already stored somewhere the postfix can read — it is a retry, not a fix.
+
+> **RESOLVED — do not take the postfix.** `ChargeShrine$$Start` (VA `0x1804C2A60`) was
+> decompiled in full: it rotates `circleProgress`, zeroes `audioStart` alpha, deactivates the
+> zone block, builds two `MaterialPropertyBlock`s, applies colours, disables the renderer and
+> fires the spawn action. **It never touches `isGolden`, and never reads `goldChance`.** Steps
+> 1–3 above are sufficient and the postfix is dead weight.
+>
+> (`Start` *does* call `Random.ColorHSV` — that is the rune-stone's cosmetic colour, not the
+> golden roll. The two were easy to conflate from field offsets alone.) See
+> [`../reverse-engineering/01-investigation-targets.md`](../reverse-engineering/01-investigation-targets.md#chargeshrine).
 
 ### Test
 
@@ -712,6 +803,78 @@ Unity Profiler → GC Alloc, during a final swarm at 4+ players. Compare before/
 
 ---
 
+<a name="p1-5"></a>
+## P1-5 — Damage ownership misattributed through shared static `DamageContainer`s
+
+**Status:** CONFIRMED (via Ghidra, buildid 21750826)
+**Files:** `src/plugin/Patches/WeaponUtility.cs:51` (`//TODO: track DamageContainer so we dont
+have to do this check`), `Services/SynchronizationService.cs:1537`, `:1608`, `:1612`
+
+### Symptom
+
+Gold and kill credit are attributed to the wrong player, intermittently, and more often under
+load. Item- and passive-sourced damage is usually correct; damage through weapons and the shared
+combat utilities is not.
+
+### Root cause
+
+Three facts, each confirmed by decompilation:
+
+1. **`DamageContainer` instances are recycled, not allocated per hit.** `Reuse(float, string)`
+   takes the constructor's exact signature and re-initialises all 13 fields in place, with no
+   allocation (VA `0x1804A64D0`).
+2. **22 types cache a container as a field — and three of them are `static`.**
+   `DamageUtility`, `WeaponUtility` and `XpDamager` hold theirs in `_StaticFields`: a *single
+   instance shared process-wide*. The other 19 (items, passives, projectiles) are per-instance.
+3. **`WeaponUtility.GetDamageContainer` ignores the `recycleDc` argument it is handed** and
+   returns the static `weaponDc` regardless (VA `0x180434FF0`).
+
+So every weapon attack receives **the same object**. A side table keyed on managed reference
+identity — which is what both `DynamicData` and any `ConditionalWeakTable` replacement key on —
+collapses all of them into one entry. Last writer wins.
+
+The existing "already assigned?" guard at `WeaponUtility.cs:51` makes this **worse**: it reads a
+shared static's stale entry and concludes it is valid, so it skips the reassignment that would
+have corrected the owner.
+
+**This also explains the intermittency.** The 19 per-instance holders belong to one player for
+their lifetime, so ownership keyed on those is *accidentally* correct. Only the three shared
+statics misattribute — which is why some damage sources look fine and others do not.
+
+> Plausible but **unproven**: this may underlie the gold-desync reports patched three times in
+> the changelog (v4.0.1, v4.0.2, v4.0.3). Those fixes addressed shared-experience delta
+> computation, which is a different mechanism. Do not assume this closes them — verify.
+
+### Fix
+
+Reference identity cannot work for the three statics; there is no per-owner instance to key on.
+Attribution must be captured **at the damage site**, from the call context, and carried
+explicitly rather than looked up from the container afterwards.
+
+Sketch, in order of preference:
+
+1. **Capture the owner where the attack originates** and pass it through the existing message,
+   rather than resolving it from the container on receipt. This removes the side table entirely
+   for the affected paths.
+2. If a side table must remain for the 19 per-instance holders, **clear it on `Reuse`**
+   (Harmony postfix on VA `0x1804A64D0`), never on `OnDestroy` — pooled objects are not
+   destroyed. This is necessary but **not sufficient** for the statics.
+3. Delete the "already assigned?" guard; it is actively harmful.
+
+**Do P1-3 first if the fix changes any message shape.**
+
+> A spare-field approach was considered and is **not** currently viable:
+> `damageBlockedByArmor` and `canProcJoe` looked like unused carriers, but `GetDamageContainer`
+> is observed writing `canProcJoe`, so it is in use. `damageBlockedByArmor` remains unverified.
+
+### Test
+
+Three players, each using a different weapon, damaging the same enemy. Assert gold and kill
+credit land on the player who actually dealt the killing blow. Repeat with item- and
+passive-sourced damage (expected to already work) to confirm the split.
+
+---
+
 <a name="p2-1"></a>
 ## P2-1 — Dangling transform hack is silent
 
@@ -801,7 +964,7 @@ in [`03-cherry-pick-guide.md`](03-cherry-pick-guide.md) and
 |---|---|
 | 17 event RPCs → `Unreliable` | Permanent desync on packet loss; reverts upstream `24f5004`. See [`02-delivery-method-reference.md`](02-delivery-method-reference.md) |
 | `NetEntity` replacing `DynamicData` | Broken under object pooling; GameObject-level key collapse; unbounded static dictionary; slower at most call sites |
-| Final swarm cap 400 → 700/800 | Contradicts `NETPLAY_CHANGES.md`; worst-case density up 75–100% |
-| `BaseSummoner` patch re-enabled | Disabled upstream for measured FPS reasons; compounding multiplier unaddressed. Decompile first — see [`../reverse-engineering/01-investigation-targets.md`](../reverse-engineering/01-investigation-targets.md#basesummoner) |
+| Final swarm cap 400 → 700/800 | **CONFIRMED wrong.** `EnemyManager.GetNumMaxEnemies` returns 550 normally and *lowers* to 400 during the final swarm, then 300 past a time threshold. The game deliberately reduces density at its heaviest moment; raising it pushes against a staged reduction. Note `NETPLAY_CHANGES.md` calling 400 "the original cap" is also wrong — and **our own 500/600 caps were chosen against that wrong baseline; 500 is below vanilla.** |
+| `BaseSummoner` patch re-enabled **as written** | `giveCreditsTimer` is an accumulator reset to 0 on each grant, so multiplying it by >1 makes credits arrive *faster* — the opposite of the feared collapse, but compounding within each window to roughly 2–3× rather than the 1–5% the multiplier implies. If this balance lever is wanted, postfix `GetMultiplier()` (VA `0x46CD20`) instead: linear, non-compounding, and it composes with the game's own multiplier. The FPS reason for the original disable is still unaddressed. |
 | `Task.Run` removal in `WebsocketClientService` | Moot — that file is deleted by the Steamworks migration |
 | `PlayersCount` `ICollection` test | Cosmetic; fix `GetAllPlayersAlive()` instead (P1-4) |

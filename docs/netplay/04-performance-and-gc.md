@@ -10,18 +10,34 @@ sites themselves are confirmed by inspection.
 
 ## Context
 
-`NETPLAY_CHANGES.md` sets the enemy caps:
+`NETPLAY_CHANGES.md` sets the mod's enemy caps:
 
 | Players | Cap | Note |
 |---|---|---|
-| 1 | 400 | original game cap |
+| 1 | 400 | described as "original game cap" — **incorrect, see below** |
 | 2–4 | 500 | |
 | 5–6 | 600 | *"untested, you have been warned"* |
-| any, final swarm | 400 | *"keeping the original cap"* |
+| any, final swarm | 400 | *"keeping the original cap"* — **also incorrect** |
 
 Every managed-side per-enemy cost is multiplied by that number, every frame.
 
-> `Sea-Bass-cmd/optimized-netplay` raises the final-swarm cap to 700/800. Rejected — see
+> **The vanilla baseline in that table is wrong.** `EnemyManager.GetNumMaxEnemies`
+> (VA `0x180419D60`) returns **550** normally, **400** during the final swarm, and **300** past
+> a time threshold within it — confirmed by decompilation. 400 is the final-swarm value, not
+> the general cap.
+>
+> Two consequences for this document's premise:
+>
+> - **The 2–4 player cap of 500 is *below* vanilla's 550.** If the intent was "more players,
+>   more enemies", that setting does the opposite. Only the 5–6 cap of 600 actually raises it.
+> - The per-frame multiplier this whole document reasons about is therefore **550 at baseline**,
+>   not 400 — so single-player costs are ~37% higher than assumed here, and the gap between
+>   single-player and 6-player density is much smaller than the table implies.
+>
+> Re-tune against 550 / 400 / 300 before acting on any density-derived estimate below.
+
+> `Sea-Bass-cmd/optimized-netplay` raises the final-swarm cap to 700/800. Rejected — and the
+> game *lowers* the cap at that moment deliberately. See
 > [`03-cherry-pick-guide.md`](03-cherry-pick-guide.md#final-swarm-cap-400--700800).
 
 ---
@@ -250,7 +266,13 @@ private void RecomputeCache()
 ```
 
 This matters most if `BaseSummoner` is ever re-enabled — that patch calls
-`GetCreditsTimerMultiplier()` on every `Tick`. See
+`GetCreditsTimerMultiplier()` on every `Tick`, **on every summoner**. `SummonerController` holds
+a `List<BaseSummoner>` with five subclasses (`dump.cs:372136`), so the allocation is per-summoner
+per-frame, not once per frame.
+
+Decompilation also shows `Tick` already calls `EnemyManager.HasMaxEnemies()` and
+`GetMultiplier()` on the credit-grant path, so the game does its own per-tick work here — one
+more reason to make our additions cheap. See
 [`../reverse-engineering/01-investigation-targets.md`](../reverse-engineering/01-investigation-targets.md#basesummoner)
 before enabling it at all.
 
@@ -330,9 +352,9 @@ measured rather than guessed.
 | Anti-fix | Why |
 |---|---|
 | Downgrade event RPCs to `Unreliable` | Trades correctness for bandwidth. See [`02-delivery-method-reference.md`](02-delivery-method-reference.md) |
-| `NetEntity` as implemented in the Sea-Bass fork | Slower than `DynamicData` at most call sites; `AddComponent`/`Destroy` churn on pooled objects. See [`03-cherry-pick-guide.md`](03-cherry-pick-guide.md#netentity) |
-| Raise the final-swarm cap | Makes every item above worse, at the worst moment |
-| Re-enable `BaseSummoner` unmodified | Adds per-tick allocation *and* an unresolved compounding multiplier |
+| `NetEntity` as implemented in the Sea-Bass fork | Slower than `DynamicData` at most call sites; `AddComponent`/`Destroy` churn on pooled objects — **pooling now confirmed**: 40+ `ObjectPool<GameObject>` and `DespawnPickup` calling `Release`. See [`03-cherry-pick-guide.md`](03-cherry-pick-guide.md#netentity) |
+| Raise the final-swarm cap | Makes every item above worse, at the worst moment — and the game deliberately *lowers* it there (400, then 300) |
+| Re-enable `BaseSummoner` unmodified | Adds per-summoner-per-tick allocation, and compounds credit income to ~2–3× rather than the advertised few percent. Postfix `GetMultiplier()` instead if the lever is wanted |
 | Add `is ICollection<T>` tests at call sites | Saves one enumerator while leaving the array and iterators. Fix the source |
 
 ---

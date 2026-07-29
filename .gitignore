@@ -70,3 +70,7 @@ ghidra_projects/
 # it holds a copy of GameAssembly.dll (licensed game binary, large) and Ghidra
 # projects, which the per-file patterns above do NOT cover.
 /megabonk-re/
+
+# Python bytecode from scripts/re
+__pycache__/
+*.pyc

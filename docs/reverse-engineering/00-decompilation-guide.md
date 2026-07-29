@@ -140,7 +140,7 @@ Local install: `D:\01 Coding\ghidra_12.1.2_PUBLIC` (headless at
 > Ghidra 11.4+ replaced Jython with **PyGhidra** (CPython 3); there is no `jython*.jar` in a
 > 12.x install. Il2CppDumper's `ghidra_with_struct.py` is written for Jython/Python 2.
 >
-> A ported copy is at `megabonk-re/ghidra_with_struct_py3.py`, leaving the tool install
+> A ported copy is at `scripts/re/ghidra_with_struct_py3.py`, leaving the tool install
 > untouched. Three distinct breakages, only one of which is a syntax error:
 >
 > | Problem | Lines | Why it breaks |
@@ -156,12 +156,12 @@ Local install: `D:\01 Coding\ghidra_12.1.2_PUBLIC` (headless at
 > Verify any future port compiles before running it:
 >
 > ```powershell
-> & "C:\Python312\python.exe" -W error::SyntaxWarning -m py_compile "megabonk-re\ghidra_with_struct_py3.py"
+> & "C:\Python312\python.exe" -W error::SyntaxWarning -m py_compile "scripts\re\ghidra_with_struct_py3.py"
 > ```
 
 Ghidra workflow:
 1. Import `GameAssembly.dll`, let auto-analysis finish (slow — 20+ min for a Unity game).
-2. Run `megabonk-re/ghidra_with_struct_py3.py` and point it at `script.json` and `il2cpp.h`
+2. Run `scripts/re/ghidra_with_struct_py3.py` and point it at `script.json` and `il2cpp.h`
    from the same build folder.
 3. Navigate to the **VA** and read the Decompiler pane.
 
@@ -171,7 +171,7 @@ Headless, if you would rather not sit through the GUI:
 & "D:\01 Coding\ghidra_12.1.2_PUBLIC\support\analyzeHeadless.bat" `
   "megabonk-re\ghidra" MegabonkProject `
   -import "$env:MegabonkPath\GameAssembly.dll" `
-  -postScript "megabonk-re\ghidra_with_struct_py3.py"
+  -postScript "scripts\re\ghidra_with_struct_py3.py"
 ```
 
 Multibonk's README confirms this is the practical route for this specific game:
@@ -341,23 +341,39 @@ Reading tips for IL2CPP output:
 
 The GUI is needed exactly once — to build the project (Steps 1–6). After that the analysis and
 the Il2CppDumper names are persisted on disk (~2 GB in `megabonk-re/ghidra-re/`), and
-`megabonk-re/decompile.py` batch-decompiles straight to text with no GUI at all:
+`scripts/re/decompile_headless.py` batch-decompiles straight to text with no GUI at all.
+
+> **`analyzeHeadless.bat` cannot run a PyGhidra script.** It launches Ghidra through
+> `launch.bat`, so the CPython script provider is never initialised and any `.py` post-script
+> dies with `GhidraScriptLoadException: Ghidra was not started with PyGhidra`. PyGhidra requires
+> Ghidra to be started **from Python**. That is what the script below does, via the `pyghidra`
+> API — so there is no `analyzeHeadless` in this workflow at all.
+
+Run it with the venv interpreter that `pyghidra_launcher.py` installed into (**not** your system
+Python — `pyghidra` is not on the global path):
 
 ```powershell
-$env:PYGHIDRA_PYTHON = "C:\Python312\python.exe"
-& "D:\01 Coding\ghidra_12.1.2_PUBLIC\support\analyzeHeadless.bat" `
-  "megabonk-re\ghidra-re" Megabonk `
-  -process -noanalysis `
-  -scriptPath "megabonk-re" `
-  -postScript decompile.py 0x18046D990 0x1803EBDE0 DamageContainer
+& "$env:APPDATA\ghidra\ghidra_12.1.2_PUBLIC\venv\Scripts\python.exe" `
+  "scripts\re\decompile_headless.py" 0x18046D990 0x1803EBDE0 DamageContainer
 ```
 
-Arguments are hex VAs (`0x...`) and/or case-insensitive substrings of a function name. Output
-lands in `megabonk-re/decompiled/<FunctionName>.c`, one file per function, each with a header
-recording its entry point.
+Arguments:
 
-`-noanalysis` is what makes this fast — it reuses the existing analysis rather than redoing the
-20–60 minute pass.
+| Form | Meaning |
+|---|---|
+| `0x18046D990` | a hex VA — decompiles the function containing it |
+| `DamageContainer` | case-insensitive substring of a function name (capped at 40 matches) |
+| `@0x18262EC7C` | reads the **constant** at that address as float/int32/double — for resolving `DAT_` globals |
+
+Names use Ghidra's `$$` separator (`ChargeShrine$$Start`), not `__`. **Single-quote patterns in
+PowerShell** or `$$` is eaten as a variable.
+
+Output lands in `megabonk-re/decompiled/<FunctionName>.c`, one file per function, each headed
+with its entry point. That directory is gitignored; the script is not.
+
+> **`LockException: Unable to lock project!` means Ghidra still has the project open.** Close it
+> (`File → Close Project`) or quit Ghidra. The GUI and headless cannot hold the same project
+> simultaneously.
 
 > **`LockException: Unable to lock project!` means Ghidra still has the project open.** Close it
 > in the GUI (`File → Close Project`) or quit Ghidra, then re-run. The GUI and headless cannot
