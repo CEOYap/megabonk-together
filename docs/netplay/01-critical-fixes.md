@@ -1,0 +1,807 @@
+# Critical Netplay Fixes
+
+Ranked, implementable fix list. Every item has a symptom, a root cause traced to a line on
+`main` (`041881b`), a proposed patch, and a test that reproduces it.
+
+**None of these patches have been compiled or run.** They are derived from source reading in
+an environment with no .NET SDK. Build and playtest each one.
+
+## Priority summary
+
+| ID | Title | Severity | Effort | Transport-independent |
+|---|---|---|---|---|
+| [P0-1](#p0-1) | Shrine/pylon/lamp claim clobbering locks the object permanently | Critical | S | yes |
+| [P0-2](#p0-2) | `KeyNotFoundException` in every charging stop path | Critical | S | yes |
+| [P0-3](#p0-3) | Non-atomic network ID allocation | High | S | yes |
+| [P0-4](#p0-4) | `NullReferenceException` on enemy target assignment | High | XS | yes |
+| [P1-1](#p1-1) | Client-originated XP / gold / encounter-close never reach peers | High | M | yes |
+| [P1-2](#p1-2) | Legendary (golden) shrine state not synced | Medium | S | yes |
+| [P1-3](#p1-3) | No protocol version gate — mismatched builds corrupt sessions | High | M | mostly |
+| [P1-4](#p1-4) | `GetAllPlayersAlive()` allocates on every call, including per-tick paths | Medium | S | yes |
+| [P2-1](#p2-1) | Dangling transform hack is silent | Low | XS | yes |
+| [P2-2](#p2-2) | Dead `GetAllPlayers()` calls in charging paths | Low | XS | yes |
+| [P2-3](#p2-3) | Charging logic triplicated across shrine / pylon / lamp | Low | M | yes |
+
+Suggested order: P0-1 → P0-2 → P0-4 → P0-3 → P1-3 → P1-1 → P1-4 → P1-2 → P2-*.
+
+P0-1 and P0-2 touch the same six methods; do them in one branch.
+
+---
+
+<a name="p0-1"></a>
+## P0-1 — Shrine/pylon/lamp claim clobbering locks the object permanently
+
+**Status:** CONFIRMED
+**Files:** `src/plugin/Services/SynchronizationService.cs`
+**Affected methods:** `OnStartingToChargingShrine` (L2753), `OnStartingToChargingPylon` (L3052),
+`OnStartingToChargingLamp` (L3145), `OnReceivedStartingToChargingShrine` (L2785),
+`OnReceivedStartingToChargingPylon` (L3084), `OnReceivedStartingToChargingLamp` (L3177)
+
+### Symptom
+
+Two players touch the same shrine (or pylon, or graveyard boss lamp). The second player's
+charge is correctly prevented — but from that moment the object can never be charged again by
+anyone, for the rest of the run. Log shows repeated
+`"Another player is already charging this shrine. Preventing re trigger."`
+
+### Root cause
+
+The host writes the charger list **before** checking whether the object is already claimed:
+
+```csharp
+// SynchronizationService.cs:2769-2779  (current)
+var chargers = shrineChargingPlayers.FirstOrDefault(p => p.Key == shrineNetplayId).Value;
+
+shrineChargingPlayers[shrineNetplayId] = [playerManagerService.GetLocalPlayer().ConnectionId];
+//  ^ overwrites player 1's claim with player 2
+
+if (chargers != null && chargers.Any())
+{
+    logger.LogInfo("Another player is already charging this shrine. Preventing re trigger.");
+    return false;   // bails out — but the dictionary is already corrupted
+}
+```
+
+The bail-out is correct. The write that precedes it is not. Sequence:
+
+1. Player 1 starts charging. `shrineChargingPlayers[id] = [P1]`.
+2. Player 2 touches the shrine. `chargers` captures `[P1]`, then the dictionary is
+   overwritten to `[P2]`, then the method bails because `chargers.Any()` is true.
+3. Player 1 stops charging. `OnStoppingChargingShrine` calls `.Remove(P1)` — but the list
+   contains `[P2]`, so nothing is removed.
+4. The list is permanently non-empty. Every subsequent start bails. The shrine is dead.
+
+Step 3 is also where P0-2 fires.
+
+### Fix
+
+Check first, write second. Apply to all six methods.
+
+```csharp
+public bool OnStartingToChargingShrine(uint shrineNetplayId)
+{
+    var isHost = IsServerMode() ?? false;
+
+    IGameNetworkMessage message = new StartingChargingShrine
+    {
+        ShrineNetplayId = shrineNetplayId,
+        PlayerChargingId = playerManagerService.GetLocalPlayer().ConnectionId
+    };
+
+    if (!isHost)
+    {
+        udpClientService.SendToHost(message, LiteNetLib.DeliveryMethod.ReliableOrdered);
+        return false;
+    }
+
+    // FIX P0-1: check before writing, and use TryGetValue instead of an O(n) LINQ scan
+    if (shrineChargingPlayers.TryGetValue(shrineNetplayId, out var chargers)
+        && chargers != null && chargers.Count > 0)
+    {
+        logger.LogInfo("Another player is already charging this shrine. Preventing re trigger.");
+        return false;
+    }
+
+    shrineChargingPlayers[shrineNetplayId] = [playerManagerService.GetLocalPlayer().ConnectionId];
+
+    udpClientService.SendToAllClients(message, LiteNetLib.DeliveryMethod.ReliableOrdered);
+
+    return true;
+}
+```
+
+The `OnReceived*` variants have the same shape, keyed on `shrine.ShrineNetplayId` and
+storing `shrine.PlayerChargingId`:
+
+```csharp
+// OnReceivedStartingToChargingShrine, host branch
+if (shrineChargingPlayers.TryGetValue(shrine.ShrineNetplayId, out var chargers)
+    && chargers != null && chargers.Count > 0)
+{
+    return;
+}
+
+shrineChargingPlayers[shrine.ShrineNetplayId] = [shrine.PlayerChargingId];
+// ... rest unchanged
+```
+
+> `ICollection<uint>.Count` is O(1) on the `List<uint>` actually stored. `.Any()` allocates
+> an enumerator. Prefer `.Count > 0` in all six methods.
+
+### Test
+
+1. Two clients, one shrine. Player 1 starts charging, player 2 walks into it, both walk away.
+2. Player 1 walks back in. **Expected:** charging starts. **Currently:** blocked forever.
+3. Repeat for a pylon and for a graveyard boss lamp.
+
+---
+
+<a name="p0-2"></a>
+## P0-2 — `KeyNotFoundException` in every charging stop path
+
+**Status:** CONFIRMED
+**Files:** `src/plugin/Services/SynchronizationService.cs`
+**Affected methods:** `OnStoppingChargingShrine` (L2846), `OnStoppingChargingPylon` (L3238),
+`OnStoppingChargingLamp` (L3331), `OnReceivedStoppingChargingShrine` (L2878),
+`OnReceivedStoppingChargingPylon` (L3272), `OnReceivedStoppingChargingLamp` (L3363)
+
+### Symptom
+
+Host throws `KeyNotFoundException` and the message-handling path aborts. Depending on where
+it is caught, this either spams the log or drops the remainder of that frame's message batch.
+Most likely to fire on: a stop arriving with no recorded start (packet reorder), a late join,
+or a player disconnecting mid-charge.
+
+### Root cause
+
+Unguarded indexer read on a `ConcurrentDictionary`:
+
+```csharp
+// SynchronizationService.cs:2864  (current)
+var chargers = shrineChargingPlayers.FirstOrDefault(p => p.Key == shrineNetplayId).Value;
+
+shrineChargingPlayers[shrineNetplayId].Remove(playerManagerService.GetLocalPlayer().ConnectionId);
+//                   ^^^^^^^^^^^^^^^^ throws KeyNotFoundException if the key is absent
+```
+
+Note the code already reads `chargers` — which is `null` when the key is missing — and then
+indexes anyway. The null check happens *after* the throw.
+
+`OnReceivedStoppingChargingShrine` (L2884-2885) has the identical defect.
+
+### Fix
+
+Guard, and reuse the reference you already fetched:
+
+```csharp
+public bool OnStoppingChargingShrine(uint shrineNetplayId)
+{
+    var isHost = IsServerMode() ?? false;
+
+    IGameNetworkMessage message = new StoppingChargingShrine
+    {
+        ShrineNetplayId = shrineNetplayId,
+        PlayerChargingId = playerManagerService.GetLocalPlayer().ConnectionId
+    };
+
+    if (!isHost)
+    {
+        udpClientService.SendToHost(message, LiteNetLib.DeliveryMethod.ReliableOrdered);
+        return false;
+    }
+
+    // FIX P0-2: guard the key, and mutate the reference we already hold
+    if (!shrineChargingPlayers.TryGetValue(shrineNetplayId, out var chargers)
+        || chargers == null || chargers.Count == 0)
+    {
+        logger.LogInfo("No one is charging this shrine; ignoring stop.");
+        return false;
+    }
+
+    chargers.Remove(playerManagerService.GetLocalPlayer().ConnectionId);
+
+    if (chargers.Count > 0)
+    {
+        logger.LogInfo("Another player is still charging this shrine. Preventing stop trigger.");
+        return false;
+    }
+
+    udpClientService.SendToAllClients(message, LiteNetLib.DeliveryMethod.ReliableOrdered);
+
+    return true;
+}
+```
+
+`OnReceivedStoppingChargingShrine` host branch, same shape with `shrine.PlayerChargingId`.
+
+> **Note on the existing behaviour:** in the current code `chargers` and
+> `shrineChargingPlayers[id]` are the *same object*, so `chargers.Any()` after the `.Remove`
+> does reflect the post-removal state and the logic happens to be correct. Only the
+> unguarded indexer is broken. The rewrite above preserves that behaviour while making the
+> aliasing explicit.
+
+> **Threading:** the values are plain `List<uint>` inside a `ConcurrentDictionary`. The
+> dictionary is concurrent; the lists are not. If message handling can run off the main
+> thread, mutating `chargers` is itself a race. This is resolved for free by the Steamworks
+> migration (poll-based receive on the main thread) — see
+> [`../steamworks/00-migration-plan.md`](../steamworks/00-migration-plan.md). Until then,
+> if you want belt-and-braces, swap the value type to a lock-protected wrapper or a
+> `ConcurrentDictionary<uint, byte>` used as a set.
+
+### Test
+
+1. Client starts charging a shrine, then disconnects without a clean stop.
+2. Host: **expected** a log line and no exception. **Currently:** `KeyNotFoundException`.
+3. Also: replay a `StoppingChargingShrine` message for an ID that was never started.
+
+---
+
+<a name="p0-3"></a>
+## P0-3 — Non-atomic network ID allocation
+
+**Status:** CONFIRMED
+**Files:**
+- `src/plugin/Services/EnemyManagerService.cs:165`
+- `src/plugin/Services/PickupManagerService.cs:47`
+- `src/plugin/Services/SpawnedObjectManagerService.cs:50`
+
+The `//TODO: concurrency?` markers sit at `EnemyManagerService.cs:40`,
+`PickupManagerService.cs:25`, `SpawnedObjectManagerService.cs:41`.
+
+> `Sea-Bass-cmd/optimized-netplay` claims to have fixed this in commit `0c7e313`. It did not
+> — the automated script's regex failed to match, so only the `//TODO` comments were deleted.
+> `git grep Interlocked` across that branch's `src/plugin` returns nothing. Do not assume it
+> is done.
+
+### Symptom
+
+Two entities allocated concurrently receive the same network ID, or an ID is skipped. Result:
+`TryAdd` fails, the method returns `0`, and the entity is never registered — so it exists on
+the host but never spawns on clients, or spawns and is never updatable. Log shows
+`"Attempted to add an enemy that already exists. EnemyId: N"`.
+
+Rare, load-dependent, and therefore most likely at 400–600 enemies.
+
+### Root cause
+
+```csharp
+// EnemyManagerService.cs:163-175  (current)
+public uint AddSpawnedEnemy(Enemy enemy)
+{
+    currentEnemyId++;                                   // read-modify-write, not atomic
+    if (!spawnedEnemies.TryAdd(currentEnemyId, enemy))  // and re-read here
+    {
+        Plugin.Log.LogWarning($"Attempted to add an enemy that already exists. EnemyId: {currentEnemyId}");
+        return 0;
+    }
+
+    DynamicData.For(enemy).Set("netplayId", currentEnemyId);
+
+    return currentEnemyId;
+}
+```
+
+Three separate reads of a shared mutable field around a concurrent insert.
+
+### Fix
+
+```csharp
+// EnemyManagerService.cs
+private int currentEnemyId = 0;   // was: private uint currentEnemyId = 0; //TODO: concurrency?
+
+public uint AddSpawnedEnemy(Enemy enemy)
+{
+    // FIX P0-3: atomic allocation, single read
+    var newId = (uint)System.Threading.Interlocked.Increment(ref currentEnemyId);
+
+    if (!spawnedEnemies.TryAdd(newId, enemy))
+    {
+        Plugin.Log.LogWarning($"Attempted to add an enemy that already exists. EnemyId: {newId}");
+        return 0;
+    }
+
+    DynamicData.For(enemy).Set("netplayId", newId);
+
+    return newId;
+}
+```
+
+Check the reset paths too — `EnemyManagerService.cs:198` and equivalents do
+`currentEnemyId = 0;`. With the field now `int` that still compiles; prefer
+`Interlocked.Exchange(ref currentEnemyId, 0)` for symmetry.
+
+Apply the same shape to `PickupManagerService.AddSpawnedPickup` and
+`SpawnedObjectManagerService.AddSpawnedObject`.
+
+### Test
+
+Hard to reproduce deterministically. Add a temporary assertion that the returned ID is
+strictly greater than the previous one, and run a final swarm at 4+ players. Absence of the
+`"already exists"` warning over several runs is weak evidence; the `Interlocked` version is
+correct by construction.
+
+---
+
+<a name="p0-4"></a>
+## P0-4 — `NullReferenceException` on enemy target assignment
+
+**Status:** CONFIRMED
+**File:** `src/plugin/Patches/Enemies/Enemy.cs:60-63`
+
+### Symptom
+
+Host throws NRE inside the `Enemy.InitEnemy` postfix. Since this is a Harmony patch on enemy
+spawn, a throw here can abort enemy initialisation entirely.
+
+### Root cause
+
+```csharp
+// Enemy.cs:59-63  (current)
+var randomPlayer = playerManagerService.GetNetPlayerByNetplayId(id);
+
+__instance.target = randomPlayer.Rigidbody;      // randomPlayer may be null
+DynamicData.For(__instance).Set("targetId", randomPlayer.ConnectionId);
+```
+
+`GetNetPlayerByNetplayId` can return `null` — the netplayer may not be spawned yet during a
+join, or may have just disconnected. Nothing guards it.
+
+### Fix
+
+Keep the physics-target assignment (this is the line `Sea-Bass-cmd` accidentally dropped) and
+add the guard:
+
+```csharp
+var randomPlayer = playerManagerService.GetNetPlayerByNetplayId(id);
+
+if (randomPlayer != null)
+{
+    __instance.target = randomPlayer.Rigidbody;
+    DynamicData.For(__instance).Set("targetId", randomPlayer.ConnectionId);
+}
+else
+{
+    // FIX P0-4: netplayer not spawned yet or already gone — fall back to the local player
+    var fallback = playerManagerService.GetLocalPlayer();
+    DynamicData.For(__instance).Set("targetId", fallback.ConnectionId);
+}
+```
+
+> Do **not** copy the Sea-Bass version of this block. It collapses the branch in a way that
+> silently deletes `__instance.target = randomPlayer.Rigidbody`, leaving the enemy's physics
+> target pointing at the host while the network says otherwise. `TargetSwitcher.Update`
+> repairs it, but only after a random 2–6 s delay — so every freshly-spawned enemy beelines
+> at the host first.
+
+### Test
+
+Join a session mid-run while enemies are spawning. Watch the host log for NREs in
+`init_PostFix`.
+
+---
+
+<a name="p1-1"></a>
+## P1-1 — Client-originated XP / gold / encounter-close never reach peers
+
+**Status:** CONFIRMED
+**File:** `src/plugin/Services/SynchronizationService.cs`
+**Handlers:** `OnReceivedAddXp` (L4387), `OnReceivedCloseEncounter` (L4425),
+`OnReceivedChangeGold` (L4464)
+
+### Symptom
+
+When a **client** (not the host) triggers a gold change, an XP grant, or an encounter close,
+the host applies it locally but never forwards it. Every other client stays out of sync. In a
+3+ player session this is visible immediately as divergent gold totals.
+
+### Root cause
+
+Send side handles both roles:
+
+```csharp
+// OnChangeGold — client sends to host, host broadcasts
+if (isHost) udpClientService.SendToAllClients(message, ReliableOrdered);
+else        udpClientService.SendToHost(message, ReliableOrdered);
+```
+
+Receive side does not:
+
+```csharp
+// SynchronizationService.cs:4464  (current)
+private void OnReceivedChangeGold(GoldChanged changed)
+{
+    Plugin.CAN_SEND_MESSAGES = false;
+    GameManager.Instance.player.inventory.ChangeGold(changed.Amount);
+    Plugin.CAN_SEND_MESSAGES = true;
+}
+```
+
+The host applies it and stops. There is no relay.
+
+### Fix — and the trap to avoid
+
+`Sea-Bass-cmd` added the relay, which is the right idea:
+
+```csharp
+if (IsServerMode() == true) udpClientService.SendToAllClients(changed, ReliableOrdered);
+```
+
+**Do not copy this.** `SendToAllClients` fans out to every peer in `gamePeers` with no sender
+filter, so the message is echoed back to the client that sent it. For `AddXp` that is
+harmless — `playerXp.xp = xp.Xp` is an absolute assignment and therefore idempotent. For
+`GoldChanged` it is a **duplication exploit**: `ChangeGold(changed.Amount)` applies a *delta*.
+
+```
+Client A picks up gold  → ChangeGold(+50) locally
+                        → sends GoldChanged{Amount=50, OwnerId=A} to host
+Host                    → relays to ALL clients, including A
+                        → applies ChangeGold(+50) locally
+Client A receives echo  → ChangeGold(+50) again        <-- A now has +100
+```
+
+`IUdpClientService` already exposes the right primitive
+(`UdpClientService.cs:54`), and `GoldChanged` already carries `OwnerId`:
+
+```csharp
+public void SendToAllClientsExcept<T>(int netPlayerId, uint sender, T data) where T : IGameNetworkMessage;
+```
+
+So:
+
+```csharp
+private void OnReceivedChangeGold(GoldChanged changed)
+{
+    // FIX P1-1: relay to peers, excluding the originator — ChangeGold applies a DELTA
+    if (IsServerMode() == true)
+    {
+        udpClientService.SendToAllClientsExcept((int)changed.OwnerId, changed.OwnerId, changed);
+    }
+
+    Plugin.CAN_SEND_MESSAGES = false;
+    GameManager.Instance.player.inventory.ChangeGold(changed.Amount);
+    Plugin.CAN_SEND_MESSAGES = true;
+}
+```
+
+Check `SendToAllClientsExcept`'s two parameters against its implementation at
+`UdpClientService.cs:1669` before wiring — the `netPlayerId`/`sender` split is not obvious
+from the signature.
+
+Same treatment for `OnReceivedCloseEncounter`. `OnReceivedAddXp` is idempotent, so a plain
+`SendToAllClients` is defensible there, but excluding the sender is still cheaper and more
+consistent — do it uniformly.
+
+### Test
+
+1. Three players. **Client B** (not host) picks up gold.
+2. Assert B's total increases by exactly the pickup amount, not twice.
+3. Assert client C's total also increases. **Currently:** C never sees it.
+
+---
+
+<a name="p1-2"></a>
+## P1-2 — Legendary (golden) shrine state not synced
+
+**Status:** CONFIRMED
+**Files:** `src/common/Messages/GameNetworkMessages/SpawnedObject.cs`,
+`src/plugin/Services/SynchronizationService.cs` (`SendSpawnedObject`),
+`src/plugin/Patches/ChargeShrine.cs`
+
+### Symptom
+
+`ChargeShrine.isGolden` is decided host-side at spawn and never transmitted. Clients render
+and treat legendary shrines as ordinary ones.
+
+### Fix
+
+Three parts. **Do P1-3 (version gate) first** — this changes the wire format.
+
+**1. Extend the message.** `src/common/Messages/GameNetworkMessages/SpawnedObject.cs`:
+
+```csharp
+[MemoryPackable]
+public partial class Specific
+{
+    public int ShadyGuyRarity { get; set; }
+    public bool? IsGoldenShrine { get; set; }   // NEW — see P1-3, this breaks the wire format
+}
+```
+
+**2. Populate it on send**, in `SendSpawnedObject`, alongside the existing shady-guy and
+microwave rarity capture:
+
+```csharp
+var chargeShrine = obj.GetComponentInChildren<ChargeShrine>();
+bool? isGoldenShrine = chargeShrine != null ? chargeShrine.isGolden : (bool?)null;
+
+// ... in the message initialiser:
+SpecificData = new Specific
+{
+    ShadyGuyRarity = rarity.HasValue ? (int)rarity.Value : -1,
+    IsGoldenShrine = isGoldenShrine
+}
+```
+
+**3. Apply it on receive**, in the spawned-object handler, next to where `ShadyGuyRarity` is
+applied:
+
+```csharp
+if (toSpawn.SpecificData.IsGoldenShrine.HasValue)
+{
+    var chargeShrine = spawned.GetComponentInChildren<ChargeShrine>();
+    if (chargeShrine != null)
+    {
+        chargeShrine.isGolden = toSpawn.SpecificData.IsGoldenShrine.Value;
+    }
+}
+```
+
+### On the `Start` postfix
+
+`Sea-Bass-cmd` also adds a `ChargeShrine.Start` postfix that re-reads the flag from
+per-object state. The reasoning is that Unity may run `Start()` after the receive handler has
+already set `isGolden`, overwriting it.
+
+That is a real ordering hazard, but the postfix as written only helps if the value was
+already stored somewhere the postfix can read — it is a retry, not a fix. Before adding it,
+**decompile `ChargeShrine` and confirm whether `Start()` writes `isGolden`** (see
+[`../reverse-engineering/01-investigation-targets.md`](../reverse-engineering/01-investigation-targets.md#chargeshrine)).
+If it does not, step 3 above is sufficient and the postfix is dead weight.
+
+### Test
+
+Host until a legendary shrine spawns. Confirm the client sees the golden visual and receives
+the legendary reward.
+
+---
+
+<a name="p1-3"></a>
+## P1-3 — No protocol version gate
+
+**Status:** CONFIRMED (by absence)
+**Files:** `src/common/Messages/`, connection handshake in `UdpClientService.cs` /
+`WebsocketClientService.cs`
+
+### Symptom
+
+A host and a client running different mod builds connect successfully, then desync in
+confusing, hard-to-diagnose ways — or crash on deserialization.
+
+### Root cause
+
+All network messages use `MemoryPack`, which serializes members **positionally** for
+`[MemoryPackable]` types. Adding, removing, or reordering a field in any message under
+`src/common/Messages/` changes the wire layout. There is no version exchange at connect time,
+so a mismatch is not detected.
+
+This is not hypothetical: P1-2 above adds a field to `Specific`, and
+`Sea-Bass-cmd/optimized-netplay` already did so without a gate.
+
+### Fix
+
+**1. Define a protocol version** separate from the plugin's semantic version — bump it only
+when the wire format changes:
+
+```csharp
+// src/common/ProtocolVersion.cs
+namespace MegabonkTogether.Common
+{
+    public static class Protocol
+    {
+        /// <summary>
+        /// Bump on ANY change to a type under Messages/ — added field, removed field,
+        /// reordered member, changed type. MemoryPack is positional.
+        /// </summary>
+        public const int Version = 1;
+    }
+}
+```
+
+**2. Exchange it in the handshake.** `UdpClientService.cs:186` currently connects with a
+placeholder key:
+
+```csharp
+netManager.Connect(target, "yourKey"); //TODO: technically we should use a key but do we really care ? will
+```
+
+and `UdpClientService.cs:201` accepts any request:
+
+```csharp
+Plugin.Log.LogInfo($"Got a connection request from remote"); //TODO: technically we should validate the request key
+```
+
+Both TODOs resolve here. Send the protocol version as the connect key and validate it host
+side, rejecting mismatches with a clear reason so the client can surface a real message
+rather than a generic timeout.
+
+**3. Surface it in the UI.** On rejection, tell the player which side is out of date.
+
+### Interaction with the Steamworks migration
+
+This gets *easier* after the migration — publish the protocol version as lobby metadata via
+`SteamMatchmaking.SetLobbyData` and filter incompatible lobbies out of the browser before
+anyone connects. Do the LiteNetLib version now anyway; it is small and it unblocks P1-2.
+
+### Test
+
+Build two plugin versions with different `Protocol.Version`. Confirm the join is refused with
+a readable message rather than silently proceeding.
+
+---
+
+<a name="p1-4"></a>
+## P1-4 — `GetAllPlayersAlive()` allocates on every call
+
+**Status:** CONFIRMED
+**File:** `src/plugin/Services/PlayerManagerService.cs:133-136`
+
+### Root cause
+
+```csharp
+public IEnumerable<Player> GetAllPlayersAlive()
+{
+    return [.. players.Where(p => p.Value.Hp > 0).Select(p => p.Value)];
+}
+```
+
+The collection expression materialises a `Player[]` on every call, plus two LINQ iterator
+objects. Called from:
+
+- `GameBalanceService.PlayersCount` — which is read by `GetCreditsTimerMultiplier`,
+  `GetEnemyHpMultiplier`, `GetFreeChestSpawnRateMultiplier`, `GetPickupXpValue`,
+  `GetMaxEnemiesSpawnable`, `GetBossLampRequiredCharge`
+- `TargetSwitcher.PickANewTarget` (L60) and `PickACloseTarget` (L80), each adding a `.ToList()`
+- `FinalFightController` (L111, L136, L161)
+- `SynchronizationService` (L2939-2940), which calls it **twice in consecutive lines**
+
+`TargetSwitcher` is a per-enemy `MonoBehaviour`, so at 600 enemies this is the single worst
+allocation site in the mod. See
+[`04-performance-and-gc.md`](04-performance-and-gc.md#targetswitcher).
+
+> `Sea-Bass-cmd` "fixes" this by adding an `is ICollection<Player>` test at the *call* site in
+> `GameBalanceService`. Since the return value is already an array, the test succeeds and one
+> enumerator allocation is saved — while the array and both iterators, which dominate, are
+> untouched. Do not bother; fix the source.
+
+### Fix
+
+Maintain a reusable buffer and expose a non-allocating overload:
+
+```csharp
+// PlayerManagerService.cs
+private readonly List<Player> alivePlayersBuffer = new(8);
+
+/// <summary>
+/// Non-allocating. The returned list is reused — copy it if you need to retain it,
+/// and do not call this re-entrantly.
+/// </summary>
+public IReadOnlyList<Player> GetAllPlayersAliveNonAlloc()
+{
+    alivePlayersBuffer.Clear();
+    foreach (var kv in players)
+    {
+        if (kv.Value.Hp > 0) alivePlayersBuffer.Add(kv.Value);
+    }
+    return alivePlayersBuffer;
+}
+
+/// <summary>Cheap count with no allocation at all.</summary>
+public int GetAlivePlayerCount()
+{
+    int n = 0;
+    foreach (var kv in players) if (kv.Value.Hp > 0) n++;
+    return n;
+}
+```
+
+Keep the existing `GetAllPlayersAlive()` for callers that retain the result. Then:
+
+- `GameBalanceService.PlayersCount` → `playerManagerService.GetAlivePlayerCount()`
+- `TargetSwitcher.PickANewTarget` / `PickACloseTarget` → `GetAllPlayersAliveNonAlloc()`,
+  dropping the `.ToList()`
+- `SynchronizationService` L2939-2940 → call once, reuse
+
+> The buffer is single-threaded by assumption. That holds if all callers are on the Unity
+> main thread — verify for `SynchronizationService`, which handles network messages. If it
+> does not hold today, it will after the Steamworks migration; until then, give
+> `SynchronizationService` its own buffer instance rather than sharing.
+
+### Test
+
+Unity Profiler → GC Alloc, during a final swarm at 4+ players. Compare before/after.
+
+---
+
+<a name="p2-1"></a>
+## P2-1 — Dangling transform hack is silent
+
+**Status:** CONFIRMED
+**File:** `src/plugin/Patches/Unity/UnityComponent.cs:27-31`
+
+```csharp
+if (__instance == null) //TODO: i'm pretty sure its a netplayer dangling reference but how do i even debug this...
+{
+    __result = GameManager.Instance.player.transform; //Hack ¯\_(ツ)_/¯
+    return false;
+}
+```
+
+A known-unexplained fallback that produces no evidence. Add a **rate-limited** warning — this
+path can fire per-frame per-affected-object, and an unthrottled `LogWarning` is a per-frame
+string allocation plus BepInEx disk I/O:
+
+```csharp
+private static float lastDanglingWarnTime = -999f;
+
+if (__instance == null)
+{
+    if (Time.unscaledTime - lastDanglingWarnTime > 5f)
+    {
+        lastDanglingWarnTime = Time.unscaledTime;
+        Plugin.Log.LogWarning("Caught dangling transform reference (likely a destroyed NetPlayer). Falling back to local player transform.");
+    }
+    __result = GameManager.Instance.player.transform;
+    return false;
+}
+```
+
+Once you have frequency data, chase the root cause — a `NetPlayer` reference retained past
+`Destroy`. Prime suspects: `PlayerManagerService.cs:466` (`//TODO: cleanup inventories at some
+point`) and `TargetSwitcher.currentTarget`, which caches a `(Transform, Rigidbody)` tuple
+with no invalidation on player despawn.
+
+---
+
+<a name="p2-2"></a>
+## P2-2 — Dead `GetAllPlayers()` calls in charging paths
+
+**Status:** CONFIRMED
+
+Every charging method contains:
+
+```csharp
+var players = playerManagerService.GetAllPlayers();
+```
+
+`players` is never read. It appears in all 12 charging methods (start/stop × shrine/pylon/lamp
+× local/received). Delete them — each is a wasted call and, depending on the implementation,
+an allocation. Do this as part of P0-1/P0-2 since you are already editing those methods.
+
+---
+
+<a name="p2-3"></a>
+## P2-3 — Charging logic triplicated across shrine / pylon / lamp
+
+**Status:** CONFIRMED
+Upstream's own note at `SynchronizationService.cs:3145`:
+`//TODO: this is ass, pylon and lamp should be refactored to use the same logic, but i'm in holidays and lazy right now zzzz`
+
+Six ~30-line methods differ only in which dictionary they touch and which message type they
+build. `Sea-Bass-cmd`'s extraction into `HandleChargingStart` / `HandleChargingStop` is the
+right shape — with two corrections:
+
+1. **Keep them `private`.** Sea-Bass added them to the public `ISynchronizationService`
+   interface taking a `ConcurrentDictionary<uint, ICollection<uint>>` parameter, which leaks
+   internal state through the API surface.
+2. **Use `TryGetValue`, not `FirstOrDefault`.** Sea-Bass's version keeps the O(n) LINQ scan
+   with a closure allocation and a `ConcurrentDictionary` snapshot enumerator.
+
+Do this **after** P0-1 and P0-2 land, so the fixes are verified in the duplicated form first
+and the dedup is a pure refactor.
+
+---
+
+## Explicitly not recommended
+
+Changes present in `Sea-Bass-cmd/optimized-netplay` that should **not** be applied. Rationale
+in [`03-cherry-pick-guide.md`](03-cherry-pick-guide.md) and
+[`../AUDIT_optimized-netplay.md`](../AUDIT_optimized-netplay.md).
+
+| Change | Why not |
+|---|---|
+| 17 event RPCs → `Unreliable` | Permanent desync on packet loss; reverts upstream `24f5004`. See [`02-delivery-method-reference.md`](02-delivery-method-reference.md) |
+| `NetEntity` replacing `DynamicData` | Broken under object pooling; GameObject-level key collapse; unbounded static dictionary; slower at most call sites |
+| Final swarm cap 400 → 700/800 | Contradicts `NETPLAY_CHANGES.md`; worst-case density up 75–100% |
+| `BaseSummoner` patch re-enabled | Disabled upstream for measured FPS reasons; compounding multiplier unaddressed. Decompile first — see [`../reverse-engineering/01-investigation-targets.md`](../reverse-engineering/01-investigation-targets.md#basesummoner) |
+| `Task.Run` removal in `WebsocketClientService` | Moot — that file is deleted by the Steamworks migration |
+| `PlayersCount` `ICollection` test | Cosmetic; fix `GetAllPlayersAlive()` instead (P1-4) |

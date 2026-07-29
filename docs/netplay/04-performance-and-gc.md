@@ -1,0 +1,353 @@
+# Performance and GC
+
+Where the frames actually go at 400–600 enemies, ordered by expected payoff.
+
+Everything here is from source reading — **no profiling was performed**. Treat the ordering
+as a hypothesis to validate with the Unity Profiler, not as measured fact. The allocation
+sites themselves are confirmed by inspection.
+
+---
+
+## Context
+
+`NETPLAY_CHANGES.md` sets the enemy caps:
+
+| Players | Cap | Note |
+|---|---|---|
+| 1 | 400 | original game cap |
+| 2–4 | 500 | |
+| 5–6 | 600 | *"untested, you have been warned"* |
+| any, final swarm | 400 | *"keeping the original cap"* |
+
+Every managed-side per-enemy cost is multiplied by that number, every frame.
+
+> `Sea-Bass-cmd/optimized-netplay` raises the final-swarm cap to 700/800. Rejected — see
+> [`03-cherry-pick-guide.md`](03-cherry-pick-guide.md#final-swarm-cap-400--700800).
+
+---
+
+## What upstream already fixed
+
+`bd9518c` ("feat: more code optimizations") is genuinely good work and is already on our
+`main`. Do not regress it:
+
+**`Patches/Enemies/Enemy.cs`** — `AllowedDamageSource` changed from `string[]` to
+`HashSet<string>`:
+
+```csharp
+- public static readonly string[] AllowedDamageSource = Enum.GetNames(typeof(EItem));
++ public static readonly HashSet<string> AllowedDamageSource = new(Enum.GetNames(typeof(EItem)));
+```
+
+O(n) linear scan → O(1) hash lookup, on a per-damage-event path. At 600 enemies taking
+damage this is the difference between a scan of every `EItem` name per hit and a single hash.
+
+**`Services/EnemyManagerService.cs`** — `GetAllEnemiesDeltaAndUpdate` rewritten:
+
+```csharp
+- var currentEnemies = spawnedEnemies.Select(kv => kv.Value.ToModel(kv.Key)).ToList();
+- previousSpawnedEnemiesDelta = currentEnemies.ToDictionary(e => e.Id);
++ var currentEnemies = new Dictionary<uint, EnemyModel>(spawnedEnemies.Count);
++ foreach (var (id, enemy) in spawnedEnemies) currentEnemies[id] = enemy.ToModel(id);
++ previousSpawnedEnemiesDelta = currentEnemies;
+```
+
+Removes a `List` + a `Dictionary` + two LINQ iterators per network tick, on the per-enemy
+delta path. Also pre-sizes the dictionary, avoiding rehash growth at 600 entries.
+
+Also adds a `DistanceThrottler` and moves a `GetComponentInChildren<Renderer>()` call out of a
+boss-only branch into `InitEnemy`.
+
+---
+
+<a name="targetswitcher"></a>
+## 1. `TargetSwitcher` — the dominant managed cost
+
+**File:** `src/plugin/Scripts/Enemies/TargetSwitcher.cs`
+**Status:** CONFIRMED (allocation sites), LIKELY (that this dominates)
+
+Not touched by any fork. This is the biggest remaining win.
+
+### Problem A — one `MonoBehaviour.Update` per enemy
+
+`TargetSwitcher` is added to every enemy on the host (`Enemy.cs`, `init_PostFix`). At 600
+enemies that is **600 managed `Update()` calls per frame**, each crossing the IL2CPP
+managed↔native boundary. In Il2CppInterop-injected MonoBehaviours this crossing is
+substantially more expensive than a native Unity `Update`.
+
+Most of those calls do nothing — `Update` accumulates a timer and returns:
+
+```csharp
+private void Update()
+{
+    if (enemy == null) return;
+    timer += Time.deltaTime;
+    if (timer >= delay) { /* ... */ }
+}
+```
+
+**Fix:** replace the per-enemy `Update` with a single manager that ticks all switchers from
+one `Update`, ideally slicing the work across frames (e.g. 1/4 of the registered switchers per
+frame — the switch interval is 2–6 s, so quarter-rate resolution is imperceptible).
+
+```csharp
+// Sketch: one MonoBehaviour, N plain objects
+internal sealed class TargetSwitcherManager : MonoBehaviour
+{
+    private readonly List<TargetSwitcherState> switchers = new(700);
+    private int cursor;
+
+    private void Update()
+    {
+        if (switchers.Count == 0) return;
+
+        // process ~1/4 of the list per frame
+        int budget = Mathf.Max(1, switchers.Count / 4);
+        float dt = Time.deltaTime * 4f;   // compensate for the slice rate
+
+        for (int i = 0; i < budget; i++)
+        {
+            cursor = (cursor + 1) % switchers.Count;
+            switchers[cursor].Tick(dt);
+        }
+    }
+}
+```
+
+This also removes 600 injected-MonoBehaviour instances, which is itself a memory and
+`AddComponent` cost at spawn.
+
+### Problem B — allocations per target switch
+
+```csharp
+// TargetSwitcher.cs:60 and :80
+var alives = playerManagerService.GetAllPlayersAlive().ToList();
+```
+
+Per switch, per enemy, this allocates:
+- a `Player[]` inside `GetAllPlayersAlive()` (see [P1-4](01-critical-fixes.md#p1-4))
+- two LINQ iterator objects (`Where` + `Select`)
+- a `List<Player>` from `.ToList()`
+
+With a 2–6 s interval and 600 enemies that is roughly 150–300 switches/second × 4 allocations.
+
+**Fix:** use the non-allocating accessor from [P1-4](01-critical-fixes.md#p1-4) and drop the
+`.ToList()`:
+
+```csharp
+var alives = playerManagerService.GetAllPlayersAliveNonAlloc();
+if (alives.Count == 0) return;
+var selectedPlayer = alives[Random.Range(0, alives.Count)];
+```
+
+### Problem C — `PickACloseTarget` is O(enemies × players)
+
+```csharp
+foreach (var player in alives)
+{
+    // ... resolves netplayer, then:
+    var distance = Vector3.Distance(enemy.transform.position, target.transform.position);
+}
+```
+
+`Vector3.Distance` computes a square root. Comparing distances does not need one — use
+`(a - b).sqrMagnitude` and compare against a squared threshold. Same for `CanSwitch()`:
+
+```csharp
+private bool CanSwitch()
+{
+    if (enemy.transform == null) return false;
+    float sqrDistance = (enemy.transform.position - currentTarget.transform.position).sqrMagnitude;
+    return sqrDistance <= switchMaxDistance * switchMaxDistance;
+}
+```
+
+Also: each `enemy.transform` access is a native property call through interop. Cache the
+`Transform` once in `StartSwitching` rather than re-fetching per comparison.
+
+---
+
+<a name="getallplayersalive"></a>
+## 2. `GetAllPlayersAlive()` — allocation at the source
+
+**File:** `src/plugin/Services/PlayerManagerService.cs:133-136`
+**Status:** CONFIRMED
+
+```csharp
+public IEnumerable<Player> GetAllPlayersAlive()
+{
+    return [.. players.Where(p => p.Value.Hp > 0).Select(p => p.Value)];
+}
+```
+
+Three allocations per call, and it is called from a lot of places that do not need a
+materialised collection — most of them only want `.Count()`.
+
+Call sites:
+
+| Caller | Frequency |
+|---|---|
+| `GameBalanceService.PlayersCount` | every balance query |
+| `TargetSwitcher.PickANewTarget` / `PickACloseTarget` | per enemy per switch |
+| `FinalFightController` L111/136/161 | per final-fight tick |
+| `SynchronizationService` L2939-2940 | **twice on consecutive lines** |
+
+Full fix in [P1-4](01-critical-fixes.md#p1-4). Add `GetAlivePlayerCount()` (no allocation at
+all) and `GetAllPlayersAliveNonAlloc()` (reused buffer).
+
+The `SynchronizationService` double-call is worth fixing on its own:
+
+```csharp
+// current — allocates twice
+var rand = UnityEngine.Random.Range(0, playerManagerService.GetAllPlayersAlive().Count());
+var randomPlayer = playerManagerService.GetAllPlayersAlive().ElementAt(rand);
+
+// fixed
+var alives = playerManagerService.GetAllPlayersAliveNonAlloc();
+if (alives.Count == 0) return;
+var randomPlayer = alives[UnityEngine.Random.Range(0, alives.Count)];
+```
+
+`.ElementAt()` on an `IEnumerable` also walks the sequence; on the array it is O(1), but only
+because of a runtime type check.
+
+---
+
+## 3. `GameBalanceService` — recomputed per call
+
+**File:** `src/plugin/Services/GameBalanceService.cs`
+**Status:** CONFIRMED
+
+Every getter recomputes from scratch:
+
+```csharp
+private int PlayersCount => playerManagerService.GetAllPlayersAlive().Count();
+private static int StageIndex => MapController.runConfig?.mapData.stages.IndexOf(MapController.currentStage) ?? 0;
+```
+
+`StageIndex` does an `IndexOf` over a list on every access. `PlayersCount` allocates.
+
+These change **only** when a player joins, a player dies, or the stage changes. There is
+already an `Initialize()` method and an `EventManager`. Cache:
+
+```csharp
+private int cachedPlayersCount;
+private int cachedStageIndex;
+private DifficultyLevel cachedDifficulty;
+
+public void Initialize()
+{
+    RecomputeCache();
+    // subscribe to player-joined / player-died / stage-changed and call RecomputeCache()
+}
+
+private void RecomputeCache()
+{
+    cachedPlayersCount = playerManagerService.GetAlivePlayerCount();
+    cachedStageIndex   = MapController.runConfig?.mapData.stages.IndexOf(MapController.currentStage) ?? 0;
+    cachedDifficulty   = ComputeDifficultyLevel(cachedPlayersCount);
+}
+```
+
+This matters most if `BaseSummoner` is ever re-enabled — that patch calls
+`GetCreditsTimerMultiplier()` on every `Tick`. See
+[`../reverse-engineering/01-investigation-targets.md`](../reverse-engineering/01-investigation-targets.md#basesummoner)
+before enabling it at all.
+
+---
+
+## 4. `EnemyManagerService` — remaining LINQ
+
+**File:** `src/plugin/Services/EnemyManagerService.cs`
+**Status:** CONFIRMED
+
+`bd9518c` fixed the delta path. These remain:
+
+**`GetEnemyByReference` (L199)** — linear scan with a closure, per call:
+
+```csharp
+return spawnedEnemies.FirstOrDefault(kv => kv.Value == enemy);
+```
+
+O(n) over up to 600 entries, plus a `ConcurrentDictionary` snapshot enumerator. Called from
+the retarget path. **Fix:** maintain a reverse index `Dictionary<Enemy, uint>` alongside
+`spawnedEnemies`, updated in `AddSpawnedEnemy` / removal. Or, better, read the ID from the
+per-enemy net state you already store rather than searching for it.
+
+**Retarget path (L52-86)** — runs when a player dies:
+
+```csharp
+var oldTargetEnemies = spawnedEnemies.Values.Where(enemy => { ... }).ToList()  // implied
+var randomIndex = Random.Range(0, currentPlayersAliveExcludingOldOneId.Count());
+var randomNewTargetId = currentPlayersAliveExcludingOldOneId.ElementAt(randomIndex);
+var playerRigidbody = playerId_rigidbody.FirstOrDefault(pr => pr.Item1 == newTargetId).Item2;
+```
+
+`.Count()` then `.ElementAt()` on the same sequence walks it twice. `FirstOrDefault` inside a
+loop over enemies is O(enemies × players). This fires once per player death, so it is a spike
+rather than sustained cost — but at 600 enemies it is a visible hitch at exactly the wrong
+moment. Materialise once outside the loop, and build a `Dictionary<uint, Rigidbody>` instead
+of scanning `playerId_rigidbody`.
+
+---
+
+## 5. Network payload
+
+**Status:** CONFIRMED (thresholds), UNVERIFIED (byte counts — nothing measures them today)
+
+The dominant traffic is the per-tick enemy delta from `SendEnemiesUpdate`.
+
+**Thresholds** — `EnemyManagerService.cs:42-43`:
+
+```csharp
+private const float POSITION_TRESHOLD = 0.1f;
+private const float YAW_TRESHOLD = 5.0f;
+```
+
+An enemy is included in the delta if it moved 0.1 units or rotated 5°. At 600 enemies in a
+swarm, essentially all of them qualify every tick, so the delta is effectively a full snapshot.
+Raising `POSITION_TRESHOLD` is the cheapest bandwidth lever available and carries **zero
+correctness risk** — the tradeoff is purely visual smoothness on clients, and the
+interpolators (`EnemyInterpolator`) already smooth between updates.
+
+**Quantization** — enemy positions are full-precision `float`. Multibonk sends `short`
+quantized values: 6 bytes per position instead of 12. Halving the dominant payload is a
+larger win than anything the Sea-Bass branch attempted, and it costs no reliability.
+
+**Distance culling** — `bd9518c` added a `DistanceThrottler`. Extend it to be *per-peer*:
+an enemy 200 units from client B does not need per-tick updates sent to B. Requires
+`SendToAllClients` to become a per-peer loop, which is a real refactor — but it is the change
+with the largest headroom at 6 players.
+
+**Before tuning any of this, add byte counters.** `UdpClientService` already tracks latency
+(`GetLatency(uint connectionId)`); add per-message-type byte totals so changes can be
+measured rather than guessed.
+
+---
+
+## 6. Things not to do
+
+| Anti-fix | Why |
+|---|---|
+| Downgrade event RPCs to `Unreliable` | Trades correctness for bandwidth. See [`02-delivery-method-reference.md`](02-delivery-method-reference.md) |
+| `NetEntity` as implemented in the Sea-Bass fork | Slower than `DynamicData` at most call sites; `AddComponent`/`Destroy` churn on pooled objects. See [`03-cherry-pick-guide.md`](03-cherry-pick-guide.md#netentity) |
+| Raise the final-swarm cap | Makes every item above worse, at the worst moment |
+| Re-enable `BaseSummoner` unmodified | Adds per-tick allocation *and* an unresolved compounding multiplier |
+| Add `is ICollection<T>` tests at call sites | Saves one enumerator while leaving the array and iterators. Fix the source |
+
+---
+
+## Measurement checklist
+
+Before claiming any of this works:
+
+1. **Unity Profiler → GC Alloc**, host machine, final swarm at 4+ players. Record bytes/frame
+   before and after each change individually.
+2. **Deep Profile** for one capture to attribute costs to `TargetSwitcher.Update` vs
+   `SendEnemiesUpdate` vs game code. Deep profiling distorts absolute numbers — use it for
+   attribution only.
+3. **Frame-time histogram, not average.** Micro-stutter is a p99 problem; a mean FPS number
+   will hide it entirely.
+4. **Bandwidth counters** per message type, both directions, at 2 / 4 / 6 players.
+5. **Under packet loss** (`clumsy` / `tc netem` at 3%) — some "performance" problems are
+   retransmit storms, and some correctness problems only appear here.

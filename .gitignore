@@ -57,3 +57,10 @@ nunit-*.xml
 thirdparty/
 
 InputHandler.cs
+# IL2CPP reverse-engineering artifacts (see docs/reverse-engineering/)
+# dump.cs is ~11.5 MB - never commit it
+dump.cs
+script.json
+il2cpp.h
+DummyDll/
+ghidra_projects/
