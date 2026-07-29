@@ -442,3 +442,66 @@ Land these as separate small PRs so each can be reverted independently, and so t
 2. Decompile `Assembly-CSharp.dll` and confirm `BaseSummoner.giveCreditsTimer` semantics before enabling that patch under any circumstances.
 3. Measure the serialized size of `WeaponAdded` and `ChestOpened` against MTU before considering an unreliable channel for anything.
 4. Test with simulated 2–5% packet loss (`clumsy` on Windows, `tc netem` on Linux). Most of what is flagged here is invisible on a LAN.
+
+---
+
+# Addendum: Does a Steamworks.NET migration change any of this?
+
+Prompted by the question of adopting [Steamworks.NET](https://github.com/rlabrecque/Steamworks.NET) similar to [Vanlichtinstein1945/Multibonk](https://github.com/Vanlichtinstein1945/Multibonk).
+
+**Short answer: it changes the transport, not the findings.** None of the 15 flagged risks live in `UdpClientService`; they live in `SynchronizationService` game logic and in delivery-method *semantics*, both of which survive a transport swap unchanged. But the migration is worth doing on its own merits, and it does shift two items in the merge plan.
+
+## What Multibonk actually is
+
+Worth calibrating before treating it as a template:
+
+| | megabonk-together | Multibonk |
+|---|---|---|
+| Loader | BepInEx IL2CPP | MelonLoader |
+| Transport | LiteNetLib UDP + NAT punch + self-hosted relay | `ISteamNetworkingSockets` P2P |
+| Discovery | Self-hosted websocket rendezvous (`src/server`) | `SteamMatchmaking` lobbies |
+| Netcode surface | `SynchronizationService.cs` alone is 4,373 lines | 1,252 lines of networking total |
+| What is synced | enemies, pickups, projectiles, chests, shrines/pylons/lamps, damage attribution, XP, gold, inventory, encounters | player position + rotation + animation bits |
+
+Multibonk replicates *other players running around*. It has no enemy sync, no pickup ownership, no charging state machine, no damage attribution. It is not a reference implementation for this fork's feature set — but its **API choices are correct** and worth copying: `SteamNetworkingSockets.CreateListenSocketP2P` / `ConnectP2P`, `SteamMatchmaking` lobbies, and `GameLobbyJoinRequested_t` for friends-list joins.
+
+One thing not to copy: `SteamNetworking.cs:580` passes `0` as `nSendFlags`, i.e. `k_nSteamNetworkingSend_Unreliable`. All three of its send helpers are named `SendUnreliable`/`BroadcastUnreliable`/`SendToHostUnreliable`. That is *correct for Multibonk* — position snapshots are continuous state where the next packet supersedes a lost one. It is **not** a precedent for one-shot event RPCs, and it is the same shape of mistake as the `Unreliable` downgrade audited above. Multibonk gets away with it because it never sends a non-idempotent event.
+
+## What the migration genuinely buys
+
+1. **Deletes a large amount of infrastructure.** SteamNetworkingSockets P2P provides NAT traversal via Valve's SDR relay network, encryption, and SteamID-based authentication. That removes the `EventBasedNatPunchListener` path, the entire relay fallback (`usesRelay`, `relayPeer`, `RelayEnvelope`, `gamePeersIntroducedByRelay`, `hasTriedForceRelay`), `WebsocketClientService.cs` (382 lines), and **all of `src/server`** — plus its hosting cost, nginx, and OTel/Prometheus wiring. Valve's relay backbone is better than a self-hosted one: global, DDoS-protected, free.
+2. **Steam invites, friends-list joins, and a lobby browser** replace the current code-exchange flow.
+3. **Message handling becomes main-thread by construction.** SteamNetworkingSockets is *poll-based* (`ReceiveMessagesOnConnection` from an Update loop), not callback-from-a-background-thread like LiteNetLib. Pumping it from Unity's Update eliminates the entire `//TODO: concurrency?` race class — including R10 and R14 above — structurally rather than by adding `Interlocked`.
+4. **Nagle coalescing is on by default**, so the "packet batching" the audited branch claimed but never implemented comes free. `ConfigureConnectionLanes` additionally gives real priority and bandwidth-share between message classes — a legitimate way to get the bandwidth win without giving up reliability. `GetConnectionRealTimeStatus` supplies ping/loss/queue depth for free.
+
+## What it does not change
+
+Every finding in §4 survives. Specifically:
+
+- **R2 (gold duplication)** — SteamNetworkingSockets has no sender-exclusion either. You still need the `SendToAllClientsExcept(..., changed.OwnerId, ...)` fix.
+- **R1/R3/R4/R5 (reliability)** — the flag vocabulary changes, the question does not:
+
+  | LiteNetLib | SteamNetworkingSockets |
+  |---|---|
+  | `ReliableOrdered` | `k_nSteamNetworkingSend_Reliable` (8) — always ordered |
+  | `ReliableUnordered` | also `Reliable`; no unordered variant, slightly more head-of-line blocking |
+  | `Unreliable` | `k_nSteamNetworkingSend_Unreliable` (0) |
+  | `Sequenced` / `ReliableSequenced` | no equivalent — implement with a sequence number + drop-if-older |
+
+  The MTU concern carries over verbatim and is arguably sharper: SNS reliable fragments cleanly up to 512 KB, while unreliable messages above ~1200 bytes fragment *unreliably* — losing any fragment drops the whole message.
+- **R6/R12/R13 (NetEntity)**, **R7 (enemy cap)**, **R8 (BaseSummoner)**, **R9 (enemy target)** — entirely unrelated to transport.
+- **R11 (MemoryPack wire break)** — unrelated. You still need a version gate; Steam lobbies make this *easier*, since you can publish the protocol version as lobby metadata via `SetLobbyData` and filter incompatible lobbies out of the browser before anyone connects.
+
+## Implementation gotchas
+
+1. **Megabonk already initializes Steam.** The game ships `Il2Cppcom.rlabrecque.steamworks.net.dll` (that's how the achievement/leaderboard code you already patch works). Do **not** call `SteamAPI.Init()` again. Multibonk ships its own managed `Steamworks.NET.dll` in `Mods/`, which P/Invokes the same native `steam_api64.dll` — workable, and the normal approach, but it means two managed callback registries over one native dispatch. Multibonk calls `SteamAPI.RunCallbacks()` every frame from `LobbyManager.Update()`; since the game pumps callbacks too, verify that double-pumping does not double-fire the game's own Steam callbacks. The clean alternative is direct P/Invoke to the flat C API (`SteamAPI_ISteamNetworkingSockets_*`) with `SteamAPI_ManualDispatch_*` — more work, no registry conflict.
+2. **Call `SteamNetworkingUtils.InitRelayNetworkAccess()` at startup.** Multibonk does not, which costs a multi-second stall on the first P2P connection while the SDR ticket is fetched.
+3. **Steam-only.** No non-Steam path afterwards. Interacts with the Proton work (`9384f93`, `ff42005`) — Steamworks under Proton is generally fine and probably *more* reliable than the current NAT-punch path, but it needs testing on that target specifically.
+
+## Effect on the merge plan
+
+- **Reject the `Unreliable` downgrade becomes more important, not less.** Get the reliability map correct and documented *before* porting it to a new API. Migrating a broken map is how a bug survives two rewrites.
+- **Drop the `WebsocketClientService` `Task.Run` item (R14) from the discussion entirely** — that file goes away in the migration, so it is not worth debating now.
+- **The four Essential charging fixes and the host-relay fix are transport-independent.** Port them now; they carry over to Steam sockets unchanged.
+
+Sequence: land the Essential fixes first (small, self-contained, useful either way), then treat the Steam migration as its own project behind an `ISocketTransport` seam. `IUdpClientService` is already close to that seam — `SendToAllClients` / `SendToHost` / `SendToClient` / `SendToAllClientsExcept` cover the 91 `udpClientService.` call sites in `SynchronizationService.cs` — so the refactor is mostly confined to `UdpClientService.cs` (1,810 lines) rather than spreading through game logic.
