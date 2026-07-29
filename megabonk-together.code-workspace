@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../../Il2CppDumper"
+		},
+		{
+			"path": "../../AssetRipper"
+		}
+	],
+	"settings": {}
+}

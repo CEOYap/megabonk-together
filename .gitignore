@@ -40,6 +40,7 @@ ScaffoldingReadMe.txt
 ~$*
 *~
 CodeCoverage/
+.obsidian/
 
 # MSBuild Binary and Structured Log
 *.binlog
