@@ -136,20 +136,28 @@ decompiled C for the RVA you found in `dump.cs`.
 Local install: `D:\01 Coding\ghidra_12.1.2_PUBLIC` (headless at
 `support\analyzeHeadless.bat`). `GameAssembly.dll` is 52 MB.
 
-> **Ghidra 12 dropped Jython — patch the Il2CppDumper script before using it.**
+> **Ghidra 12 dropped Jython — the Il2CppDumper script needs porting, not just patching.**
 > Ghidra 11.4+ replaced Jython with **PyGhidra** (CPython 3); there is no `jython*.jar` in a
-> 12.x install. Il2CppDumper's `ghidra_with_struct.py` is a Python 2 script and fails to parse.
+> 12.x install. Il2CppDumper's `ghidra_with_struct.py` is written for Jython/Python 2.
 >
-> It needs exactly **one** change — line 156:
+> A ported copy is at `megabonk-re/ghidra_with_struct_py3.py`, leaving the tool install
+> untouched. Three distinct breakages, only one of which is a syntax error:
 >
-> ```python
-> print 'Script finished!'      # Python 2, fails under PyGhidra
-> print('Script finished!')     # works
+> | Problem | Lines | Why it breaks |
+> |---|---|---|
+> | Bare `ghidra.` package root | 17, 52, 67 | Jython had `ghidra` implicitly in scope. PyGhidra needs an explicit `import ghidra`, or you get `NameError: name 'ghidra' is not defined`. **This is the first thing you hit.** |
+> | `.encode("utf-8")` | 7 sites | Returns `str` on Python 2 but `bytes` on Python 3. JPype will not marshal `bytes` to a Java `String`, so every symbol name and comment breaks. Python 3 strings are already Unicode — the calls are simply removed. |
+> | `print '…'`, `"\)"` | 156, 73 | Python 2 print statement; invalid escape sequence (`SyntaxWarning` on 3.12+). |
+>
+> The `.encode` one is the dangerous one: it is not a syntax error, so a grep for Python-2
+> *syntax* misses it entirely and the script fails only at runtime, mid-run, after you have
+> already waited through analysis.
+>
+> Verify any future port compiles before running it:
+>
+> ```powershell
+> & "C:\Python312\python.exe" -W error::SyntaxWarning -m py_compile "megabonk-re\ghidra_with_struct_py3.py"
 > ```
->
-> Everything else in the script is already Python-3 compatible; its `from ghidra.app...` Java
-> imports work fine under PyGhidra via JPype. A patched copy is at
-> `megabonk-re/ghidra_with_struct_py3.py` so the tool install stays untouched.
 
 Ghidra workflow:
 1. Import `GameAssembly.dll`, let auto-analysis finish (slow — 20+ min for a Unity game).
@@ -273,21 +281,47 @@ bulleted list) → `+` → add `megabonk-re/`.
 Then find `ghidra_with_struct_py3.py` in the list. If it shows a red error icon, PyGhidra is not
 active — you launched the wrong `.bat`, go back to Step 0.
 
-### Step 5 — apply the IL2CPP metadata
+### Step 5 — parse `il2cpp.h` first (optional, but do it before Step 6)
 
-Select `ghidra_with_struct_py3.py` → **Run**. It prompts twice with a file chooser:
+**The script does not load `il2cpp.h`.** It prompts for `script.json` and nothing else — the
+header must already be in Ghidra's data type manager, as the script's own comment says
+(*"Requires types (il2cpp.h) to be imported first"*). Load it via
+`File → Parse C Source…`:
 
-1. `script.json` → `megabonk-re/build-21750826/script.json`
-2. `il2cpp.h` → `megabonk-re/build-21750826/il2cpp.h`
+1. Add `megabonk-re/build-21750826/il2cpp.h` to the source-files list
+2. Clear the parse options / include paths (the defaults target real system headers)
+3. `Parse to Program`
 
-It then names tens of thousands of functions and applies struct definitions. Expect another long
-wait; it finishes with `Script finished!` in the console.
+**This is heavy — the header is 44 MB.** Expect a long parse, and expect some errors in its
+log; partial success is normal and still useful. If Ghidra runs out of memory, raise
+`MAXMEM` in `support\launch.properties` and restart.
+
+**You can skip this step.** Without it you still get every function *name*, which is most of the
+value; you lose typed struct fields, so the decompiler shows `*(float *)(param_1 + 0x38)`
+instead of `this->procCoefficient`. Since reading IL2CPP output means mapping offsets against
+`dump.cs` by hand anyway, skipping is a reasonable trade on a first pass.
+
+### Step 6 — run the script
+
+Select `ghidra_with_struct_py3.py` → **Run** → choose
+`megabonk-re/build-21750826/script.json` at the single prompt.
+
+Six passes run in order — `Methods`, `Strings`, `Metadata`, `Metadata Methods`, `Addresses`,
+`Signatures` — ending with `Script finished!` in the console.
 
 **Before this step**, every function is `FUN_1804a64d0`. **After it**, the same function is
-`DamageContainer$$Reuse`. That rename is the entire point of the exercise — skipping it leaves
-you reading anonymous machine code.
+`DamageContainer$$Reuse`. That rename is the entire point of the exercise.
 
-### Step 6 — go to an address and read
+> **A wall of `Warning: Unable to parse` in the `Signatures` pass means Step 5 was skipped.**
+> Ghidra cannot resolve `Unity_Hierarchy_HierarchyViewModel_o*` if the header was never parsed,
+> so every signature is rejected — often thousands of them.
+>
+> **This is not a failure.** The `Signatures` pass runs *last*; names and function boundaries
+> were already applied by the earlier passes and are intact. You can navigate and decompile
+> immediately. Re-run the script after parsing the header if you want typed signatures — it is
+> safe to run repeatedly.
+
+### Step 7 — go to an address and read
 
 Press **`G`** (Go To), paste a VA from `dump.cs` — e.g. `0x1804A64D0` — and press Enter.
 
@@ -303,7 +337,38 @@ Reading tips for IL2CPP output:
 - Calls to `il2cpp_*` runtime helpers are boilerplate; skim past them.
 - Right-click a variable → `Retype Variable` to improve output as you learn what it is.
 
-### Step 7 — record the finding
+### Step 7b — skip the GUI entirely (recommended once the project exists)
+
+The GUI is needed exactly once — to build the project (Steps 1–6). After that the analysis and
+the Il2CppDumper names are persisted on disk (~2 GB in `megabonk-re/ghidra-re/`), and
+`megabonk-re/decompile.py` batch-decompiles straight to text with no GUI at all:
+
+```powershell
+$env:PYGHIDRA_PYTHON = "C:\Python312\python.exe"
+& "D:\01 Coding\ghidra_12.1.2_PUBLIC\support\analyzeHeadless.bat" `
+  "megabonk-re\ghidra-re" Megabonk `
+  -process -noanalysis `
+  -scriptPath "megabonk-re" `
+  -postScript decompile.py 0x18046D990 0x1803EBDE0 DamageContainer
+```
+
+Arguments are hex VAs (`0x...`) and/or case-insensitive substrings of a function name. Output
+lands in `megabonk-re/decompiled/<FunctionName>.c`, one file per function, each with a header
+recording its entry point.
+
+`-noanalysis` is what makes this fast — it reuses the existing analysis rather than redoing the
+20–60 minute pass.
+
+> **`LockException: Unable to lock project!` means Ghidra still has the project open.** Close it
+> in the GUI (`File → Close Project`) or quit Ghidra, then re-run. The GUI and headless cannot
+> hold the same project simultaneously.
+
+**Do not switch to r2ghidra or ghidra-cli for this.** r2ghidra needs radare2 and does not import
+Il2CppDumper's `script.json`, so every function reverts to `fcn.1804a64d0` and the naming work is
+lost. `ghidra-cli` needs a Rust toolchain and a full JDK to build, and is WSL-oriented. Neither
+buys anything the script above does not already do with zero extra dependencies.
+
+### Step 8 — record the finding
 
 Write the answer into
 [`01-investigation-targets.md`](01-investigation-targets.md) using the shape under

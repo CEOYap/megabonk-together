@@ -124,8 +124,70 @@ catches all five subclasses (CONFIRMED): `BossSummoner` (`:372304`), `ChallengeS
 `SummonerController` is not a MonoBehaviour either, so something else drives `Tick()` — finding
 that caller is the remaining half of Q3.
 
-**Q1–Q3 — NEEDS GHIDRA.** No bodies in the dump. Read `Tick` at **VA 0x18046D990**. Two details
-that sharpen the question:
+### Q1–Q3 — ANSWERED (CONFIRMED via Ghidra). The feared failure mode is backwards.
+
+`Tick` at VA `0x18046D990`, decompiled with types applied:
+
+```c
+// per call:
+giveCreditsTimer  += multiplier * MyTime.deltaTime;     // accumulates UP
+spendCreditsTimer += multiplier * MyTime.deltaTime;
+
+if (THRESHOLD <= giveCreditsTimer) {                    // fires on reaching threshold
+    if (!EnemyManager.HasMaxEnemies()) {
+        credits += GetCreditsPerSecond() * GetMultiplier();
+    }
+    giveCreditsTimer = 0.0;                             // <-- RESET TO ZERO
+}
+// ... spendCreditsTimer likewise triggers SpendCredits() then resets to 0
+TickExtra();                                            // virtual tail call
+```
+
+**Q1 — it is an accumulator, not an interval or a countdown.** It counts *up* by
+`deltaTime` (scaled by the slowmode multiplier), is compared against a threshold, and is **reset
+to `0.0`** when it fires. `spendCreditsTimer` behaves identically.
+
+**Q2 — `Tick` does not reassign it from a constant; it accumulates and zeroes.** So the prefix
+*does* observe a value carried across calls — but only within one accumulation window, because
+every grant resets it.
+
+**Q3 — sawtooth, per frame.** The `MyTime.deltaTime` scaling confirms per-frame cadence.
+
+> #### The doc's stated fear was wrong — the sign is inverted
+>
+> The concern recorded above was that the patch "compounds geometrically… the summoner stops
+> issuing credits within seconds and enemy spawning collapses." That assumed `giveCreditsTimer`
+> was a *countdown* or a reassigned interval. It is an **up-counter compared against a
+> threshold**, so multiplying it by a value **greater than 1 makes it reach the threshold
+> sooner** — credits are granted *more* often and **more** enemies spawn. The patch does not
+> starve spawning; it accelerates it.
+>
+> **The compounding is real, though, and much stronger than "1.01–1.05×" suggests.** The prefix
+> multiplies every frame *within* an accumulation window, so the timer grows geometrically
+> until it trips rather than being scaled once. Sketching it at 60 fps with the threshold
+> assumed to be 1.0s: unpatched the window is ~60 frames; at 1.05 it trips in roughly half that,
+> and at the 1.05 × 1.07 ≈ 1.12 upper end in roughly a third. So credit income is scaled by
+> something like **2–3×**, not 5%. Anyone reading `GetCreditsTimerMultiplier()` and expecting a
+> few percent would be badly surprised. Treat those figures as an order-of-magnitude sketch, not
+> a measurement — see the caveat below.
+
+**A cleaner patch point is now visible.** The grant line is
+`credits += GetCreditsPerSecond() * GetMultiplier()`. A **postfix on `GetMultiplier()`**
+(VA `0x46CD20`) scaling its return value gives a clean, linear, non-compounding change to credit
+income — no per-frame timer manipulation, no geometric blow-up, and it composes with the game's
+own multiplier rather than fighting it. **Prefer this over touching `giveCreditsTimer` at all.**
+
+Two further confirmations from the same body: spawning is gated on
+`EnemyManager.HasMaxEnemies()` — relevant to [#5](#5-gamemanagerisfinalswarm-and-the-enemy-cap--important),
+since that is the real population cap — and `TickExtra()` is invoked as a virtual tail call,
+confirming the subclass extension point.
+
+**Caveat (UNVERIFIED).** The threshold and the default multiplier are both the global
+`DAT_18262ec7c`, whose value is not visible in the decompiler output. `1.0` is the natural
+reading given `GetCreditsPerSecond()` semantics, and the arithmetic above assumes it. Confirm
+the constant before relying on the 2–3× estimate.
+
+**Remaining detail — NEEDS GHIDRA.** Two more facts worth having:
 
 - `giveCreditsTimer` is **private**, and has a sibling `spendCreditsTimer`. The commented-out
   patch reaches a private field through the interop proxy.
@@ -187,11 +249,27 @@ public static ChargeShrine lastRewardShrine;       // 0x10
 **`isGolden` is an auto-property** (CONFIRMED), so every write goes through a setter — a
 Harmony patch can intercept it, which the current receive-side assignment does not exploit.
 
-**`goldChance` (0x104) sitting next to it is the load-bearing detail** (STRONG): a per-shrine
-roll chance strongly implies `isGolden` is decided **locally at spawn from an RNG draw**. If so,
-every client rolls its own value and the host's assignment is racing a local roll — which is
-precisely the desync the P1-2 postfix is trying to paper over. Reading `Start` in Ghidra to
-confirm the roll happens there would settle Q1 and Q2 together.
+> #### Q1 — ANSWERED (CONFIRMED via Ghidra): `Start()` does **not** write `isGolden`.
+>
+> `ChargeShrine$$Start` at VA `0x1804C2A60` was read in full. It calls `BaseInteractable.Start`,
+> rotates `circleProgress`, zeroes `audioStart` alpha, deactivates `zonePropertyBlock`, builds
+> two `MaterialPropertyBlock`s, applies colours to `runeStone` and `meshRenderer`, disables the
+> renderer, and fires the static spawn action. **Nothing touches `isGolden` (0x108), and
+> `goldChance` (0x104) is never read.**
+>
+> **Therefore the `Start` postfix `Sea-Bass-cmd` adds in
+> [P1-2](../netplay/01-critical-fixes.md#p1-2) is pointless, and the receive-side assignment is
+> sufficient.** That is exactly the question this target was created to settle. Do not take that
+> hunk.
+>
+> **This corrects an earlier STRONG inference recorded here.** The reasoning was that
+> `goldChance` sitting adjacent to `isGolden` implied a local RNG roll in `Start`. It does not.
+> `Start` *does* call `Random.ColorHSV` — but that is the rune-stone's cosmetic colour, not the
+> golden roll. Offset adjacency suggested a relationship that the code does not have; a decompiled
+> body was needed to tell the two apart.
+>
+> Still open: **something** sets `isGolden`, just not `Start`. Whoever spawns the shrine is the
+> next place to look, and it matters only if that writer runs on clients too.
 
 **Two statics worth flagging that the original questions did not anticipate:**
 
@@ -272,9 +350,15 @@ the same type `src/plugin/Helpers/PoolHelper.cs` already reconstructs reflective
 maxSize)`. `actionOnGet` and `actionOnRelease` are exactly the reset points a mod needs, and
 `PoolHelper` already demonstrates they are reachable.
 
-**Q4 — NEEDS GHIDRA**, but the prior is strong: `PickupManager.DespawnPickup(Pickup)` at
-**VA 0x1804DDB60**. Given `Pickup : MonoBehaviour` (`:334856`) and the presence of pickup pools,
-requeue is far more likely than destroy.
+**Q4 — ANSWERED (CONFIRMED via Ghidra): requeue, never destroy.**
+`PickupManager.DespawnPickup(Pickup)` at VA `0x1804DDB60` branches on the pickup's type field,
+picks the matching pool off the `PoolManager` singleton, and calls
+**`UnityEngine.Pool.ObjectPool<GameObject>.Release`** — the symbol
+`Method_UnityEngine_Pool_ObjectPool<GameObject>_Release__` appears literally in the body. It then
+decrements a live-count field. There is no `Destroy` path.
+
+The pool offsets it reads match `dump.cs` exactly (`+0xA8` = `xpPool`, `+0x108` = `powerupPool`),
+which independently confirms the `PoolManager` layout recorded above.
 
 **Q6 — ANSWERED.** See [#4](#4-damagecontainer--important): `DamageContainer.Reuse()` indicates
 pooling there too.
@@ -365,9 +449,72 @@ available — unless Q3 yields a spare field.
 about. Everything except those two fields is left at default by the ctor — notably `enemy`,
 `direction`, `damage`, `flags`.
 
-**Q4 — ANSWERED (STRONG): they are pooled.** `Reuse(float, string)` takes the *exact signature
-of the constructor*. That is the shape of an object pool re-initialising a recycled instance,
-and `Copy(DamageContainer)` reinforces it.
+**Q4 — ANSWERED (CONFIRMED via Ghidra): instances are recycled in place.** `Reuse` at
+VA `0x1804A64D0` decompiles to a pure in-place re-initialisation — **no allocation of any kind**,
+every write targeting `this`:
+
+```c
+void Assets.Scripts.Actors.DamageContainer$$Reuse
+               (longlong param_1, undefined4 param_2, undefined8 param_3)
+{
+  *(undefined4 *)(param_1 + 0x38) = param_2;   // procCoefficient <- arg
+  *(undefined8 *)(param_1 + 0x40) = param_3;   // damageSource    <- arg
+  FUN_180268b20(param_1 + 0x40, param_3);      // GC write barrier (reference field)
+  // ... direction = Vector3.zero via the cached type info ...
+  *(undefined4 *)(param_1 + 0x1c) = 0;         // damage
+  *(undefined1 *)(param_1 + 0x20) = 0;         // crit
+  *(undefined4 *)(param_1 + 0x24) = 0;         // knockback
+  *(undefined8 *)(param_1 + 0x28) = 0;         // enemy = null
+  FUN_180268b20(param_1 + 0x28, 0);            // GC write barrier
+  *(undefined8 *)(param_1 + 0x30) = 0;         // damageEffect + element (one 8-byte store)
+  *(undefined8 *)(param_1 + 0x48) = 0;         // damageBlockedByArmor + flags (one 8-byte store)
+  *(undefined1 *)(param_1 + 0x21) = 0;         // isExecute
+  *(undefined1 *)(param_1 + 0x50) = 0;         // canProcJoe
+  return;
+}
+```
+
+Every one of the 13 fields in the class is written — the two constructor arguments assigned, the
+other eleven zeroed. Offsets match the `dump.cs` layout exactly. The `FUN_180268b20` calls on
+`damageSource` and `enemy` are IL2CPP GC write barriers, which is what a reference field
+assignment looks like.
+
+**The game leaves nothing stale. The mod does.** `Reuse` cannot clear a side table that lives
+outside the object, so an external map keyed on this instance survives the recycle while every
+field it described is reset underneath it. That is the misattribution bug, now confirmed rather
+than suspected.
+
+#### Where the recycled containers actually live — and why the bug is intermittent
+
+There is **no central `DamageContainer` pool**. Instead, 22 types hold a cached container as a
+field and `Reuse()` it per hit. From `il2cpp.h` (field names `reuseDc`, `recycledDx`, `weaponDc`):
+
+| Holder | Storage | Count |
+|---|---|---|
+| `DamageUtility`, `WeaponUtility`, `XpDamager` | **`_StaticFields`** | **3** |
+| `ItemProjectile`, `Rocket`, `Firefield`, `ItemBonker`, `ItemCursedDoll`, `ItemElectricPlug`, `ItemGloves{Blood,Cursed,Lightning,Poison,Power}`, `ItemIceCube`, `ItemMirror`, `ItemSnek`, `ItemSpicyMeatball`, `PassiveAbility{Bullseye,Flex,Shadowstep,Zooma}` | `_Fields` | 19 |
+
+**The three static ones are the bug.** A `_StaticFields` container is a *single instance shared
+process-wide*. Every damage event routed through `DamageUtility`, `WeaponUtility` or `XpDamager`
+reuses the same object, so a side table keyed on managed reference identity collapses all of them
+into one entry — whoever wrote last wins. This is not a rare race; it is wrong whenever two
+owners' damage interleaves through those paths, which in a 6-player session is constant.
+
+`WeaponUtility_StaticFields.weaponDc` is specifically the container behind the
+`Patches/WeaponUtility.cs:51` TODO. The "already assigned?" guard there reads a *shared static*
+object's stale entry and concludes it is valid.
+
+**The 19 per-instance ones are why it looks intermittent.** An item or passive belongs to one
+player for its lifetime, so its cached container maps to a stable owner — ownership keyed on
+those instances is *accidentally* correct. Damage through items mostly works; damage through the
+shared utility paths mostly does not. That split explains reports of gold and kill credit being
+wrong for some sources and fine for others.
+
+**Consequence for the fix.** Clearing state on `Reuse` is necessary but **not sufficient** for
+the static three: there is no per-owner instance to key on at all, because one object serves
+every owner. Attribution for those paths must come from an argument or call context captured at
+the damage site — not from the container's identity. Any design that assumes "one container per
+attacker" is wrong for `DamageUtility`, `WeaponUtility` and `XpDamager`.
 
 > **This makes the `WeaponUtility.cs:51` TODO a correctness bug, not a cleanup.** If containers
 > are recycled, a side table keyed on managed reference identity will hand a later hit the
@@ -379,11 +526,16 @@ and `Copy(DamageContainer)` reinforces it.
 > Confirm by reading `Reuse` at **VA 0x1804A64D0** — if it resets fields rather than allocating,
 > pooling is proven. Any fix must clear tracking state on **`Reuse`**, not on destruction.
 
-**Q3 — CANDIDATES ONLY, NOT ANSWERED.** `damageBlockedByArmor` (int, 0x48) and `canProcJoe`
-(bool, 0x50) each appear exactly once in `dump.cs` — their own declaration. **That is not
-evidence they are unused**: reads and writes live in native code the dump cannot see. Both are
-plausible carriers for an owner id, and both need Ghidra before anything is written to them.
+**Q3 — CANDIDATES ONLY, NOT ANSWERED — and `Reuse` adds a constraint.** `damageBlockedByArmor`
+(int, 0x48) and `canProcJoe` (bool, 0x50) each appear exactly once in `dump.cs` — their own
+declaration. **That is not evidence they are unused**: reads and writes live in native code the
+dump cannot see, and `Reuse` zeroing them says nothing either way, since it zeroes *everything*.
 Hijacking a field the game actually reads would corrupt damage handling.
+
+If one of them is later proven free and used to carry an owner id, **it must be written after
+`Reuse` runs, not before** — `Reuse` clears both. In practice that means a Harmony postfix on
+`Reuse` (VA `0x1804A64D0`) or writing at the point of use. The upside is that the reset is
+automatic: unlike a side table, a field-based owner id cannot go stale across a recycle.
 
 `flags` is definitively **in use** — `DcFlags` is referenced 14 times and carries a full set:
 `None`, `BypassEvade=1`, `BossDamage=2`, `BypassAegis=4`, `FinalBossDamage=8`, `IgnoreArmor=16`,
@@ -432,15 +584,49 @@ live-enemy cap — and `SummonerController` runs several summoners concurrently
 a population cap tune differently, and `GetMaxEnemiesSpawnable()` may be feeding neither of
 these.
 
-`NETPLAY_CHANGES.md` calls 400 "the original cap". **No constant equal to 400 was found on
-`BaseSummoner`.** Either the 400 lives elsewhere, or the claim is inherited folklore. Treat it
-as unverified until located — and note the existing 500/600 mod caps happen to sit on either
-side of the real `maxEnemiesPerSecond = 500`, which may be coincidence or may mean someone was
-tuning against the wrong number.
+### Q1, Q2, Q4 — ANSWERED (CONFIRMED via Ghidra). The real cap is 550, and 400 is the *final swarm* value.
 
-**Q1, Q2, Q3 — NEEDS GHIDRA.** `SpendCredits(bool useWeights)` (`0x46D740`) is where spawning
-is actually gated; read it alongside `CanEarnCredits()` (`0x46C4F0`). `IsFinalSwarm()` was not
-located on `BaseSummoner` — search `GameManager` for it.
+`EnemyManager.GetNumMaxEnemies` (VA `0x180419D60`) is the population cap:
+
+```c
+int32_t EnemyManager__GetNumMaxEnemies(EnemyManager *__this)
+{
+    if (<final-swarm flag set>) {
+        return (MyTime.<t> >= DAT_18262EDF4) ? 300 : 400;   // final swarm LOWERS the cap
+    }
+    return 0x226;                                            // 550 — the normal cap
+}
+```
+
+and `HasMaxEnemies` (VA `0x180419DF0`) is simply
+`GetNumMaxEnemies() <= <currentEnemyCount>`. `BaseSummoner.Tick` consults it before granting
+credits (see [#1](#1-basesummoner--blocking)).
+
+**Q2 — the cap is global, not per-spawner.** It lives on the `EnemyManager` singleton, and every
+summoner checks the same value. The `maxEnemiesPerSecond = 500` / `maxEnemiesPerCycle = 200`
+constants on `BaseSummoner` are **per-summoner rate limits** — a different mechanism entirely.
+Conflating the two is easy and was the source of the confusion below.
+
+**Q4 — `NETPLAY_CHANGES.md` is wrong that 400 is "the original cap."** 400 is the cap **during
+the final swarm**, and it drops further to **300** past a time threshold. The normal cap is
+**550**. The game deliberately *reduces* the population ceiling for the heaviest phase.
+
+> **This inverts the assessment of the `Sea-Bass-cmd` change.** That fork raises the final-swarm
+> return from `400` to `baseCap + 200` (700–800). But the game lowers the cap to 400 and then 300
+> at exactly that moment — the one place it is most concerned about load. Raising it is pushing
+> against a deliberate, staged reduction, not correcting an oversight. The rejection stands, and
+> now with a reason rather than a suspicion.
+>
+> **Also re-examine our own numbers.** The mod's documented 500/600 caps were written believing
+> the vanilla baseline was 400. It is 550 — so a 500 cap is *below* vanilla, and the "untested,
+> you have been warned" note is well earned. Whatever is chosen, tune against 550 / 400 / 300.
+
+**Q3 — partially answered.** The final-swarm predicate is the same flag `IsFinalSwarm` reads;
+both `EnemyManager.IsFinalSwarm` (`0x180419E10`) and `GameManager.IsFinalSwarm` (`0x180503460`)
+exist. Ghidra renders the flag as an offset into `stageBosses` because of struct-layout
+confusion, so the exact field is UNVERIFIED — the *behaviour* above does not depend on naming it.
+`DAT_18262EDF4`, the time threshold that drops 400 → 300, was not resolved; read it with
+`@0x18262EDF4` if the distinction matters.
 
 ---
 
@@ -576,14 +762,78 @@ public static void CheckAchievements()                       { }    // VA 0x1803
 
 Setting `SteamAchievementsManager.ENABLED = false` for the duration of a netplay session is
 strictly more robust than patching each entry point — it cannot be bypassed by an internal call
-path the mod did not think to patch. Verify in Ghidra that `ENABLED` is actually consulted on
-the write path (**VA 0x1803EBDE0**) before relying on it.
+path the mod did not think to patch.
+
+> #### CONFIRMED via Ghidra: `ENABLED` gates the entire write path
+>
+> `TryUnlockAchievement` at VA `0x1803EBDE0` decompiles to:
+>
+> ```c
+> void SteamAchievementsManager__TryUnlockAchievement(System_String_o *achievementKey, ...)
+> {
+>     bool already[16] = { false };
+>     if (**(char **)(SteamAchievementsManager_TypeInfo + 0xb8) != '\0') {   // <-- static field @ 0x0
+>         if (SteamUserStats.GetAchievement(achievementKey, already) && !already[0]) {
+>             if (SteamUserStats.SetAchievement(achievementKey)) {           // the actual Steam write
+>                 // ... set popup timer + pending flag ...
+>             }
+>         }
+>     }
+>     return;
+> }
+> ```
+>
+> The static-fields block is at `TypeInfo + 0xb8`, and the byte read at **offset `0x0`** is
+> `public static bool ENABLED` per `dump.cs`. It wraps **everything** — with it false,
+> `SteamUserStats.SetAchievement` is never reached and the method is a no-op.
+>
+> **`SteamAchievementsManager.ENABLED = false` is therefore a sound suppression**, and a better
+> mechanism than patching entry points: it sits inside the guard, below any internal caller.
+> Restore it on session end like any other swapped state.
+>
+> Still to check before relying on this wholesale: whether `SteamStatsManager` and
+> `Leaderboards.UploadScore` (VA `0x1803E2820`) have an equivalent gate. `ENABLED` is declared
+> on the achievements manager only, so **the leaderboard upload — the actual ban risk — is not
+> covered by it.**
 
 `SteamStatsManager` (`:361487`) is likewise static, with `public static bool areStatsReady`,
 `Init()`, and `RequestStats()` (VA 0x1803EF510).
 
 `Leaderboards` (`:361343`, namespace `Assets.Scripts.Steam`) exposes the ban-risk call directly:
 **`public static void UploadScore(int score)` — VA 0x1803E2820.**
+
+> #### CONFIRMED via Ghidra: the game ships its own mod detection on the upload path
+>
+> `UploadScore` was decompiled in full. Beyond assembling ~60 leaderboard detail fields (map,
+> character, time, run stats, weapons, tomes, player stats, a score hash), it does two things
+> that matter to this mod:
+>
+> 1. **It calls `LeaderboardsNew_Sus.CheckMods(...)`** when the score clears a threshold
+>    (`349999 < score`), and separately probes a list of ~10 directory paths built from
+>    `AppDomain.CurrentDomain.BaseDirectory` (falling back to `Application.dataPath`) with
+>    `Directory.Exists`. If any hits, an internal "suspicious" flag is set.
+> 2. **That flag gates only ONE of three uploads.** The primary
+>    `QueueLeaderboardUpload(...)` is guarded by `canShowScore && !suspicious`, but two further
+>    `QueueLeaderboardUpload(..., true)` calls run **unconditionally** at the end of the method.
+>
+> **Consequences for this fork, in order of importance:**
+>
+> - **`ENABLED` does not help here.** That kill switch is declared on `SteamAchievementsManager`
+>   only. `UploadScore` has no equivalent gate, so the leaderboard path — the actual ban risk
+>   `NETPLAY_CHANGES.md` warns about — must be suppressed by patching, and the existing
+>   `Patches/LeaderBoards.cs` suppression is load-bearing rather than belt-and-braces.
+> - **Partial suppression is not enough.** Because two uploads bypass the internal check, any
+>   patch must prevent `UploadScore` from running at all during netplay, not merely influence
+>   the flag.
+> - **The mod is detectable by directory layout**, independent of anything it does at runtime.
+>   That is a strong argument for never letting a netplay run reach this method, and for
+>   verifying the suppression holds after every game update.
+>
+> This is recorded so the mod can reliably **avoid** submitting netplay scores. Do not attempt to
+> influence or work around the detection — the goal is that no modded run ever uploads.
+>
+> Not yet checked: whether `SteamStatsManager.TryUploadStats` (VA `0x1803EF750`) carries a
+> comparable gate. Its decompilation is in `megabonk-re/decompiled/`.
 
 **`SteamRichPresenceManager` (`:361420`) is a fourth Steam surface the mod does not patch.** Not
 a ban risk, but it will broadcast netplay state to friends as if it were a normal run. Worth a
