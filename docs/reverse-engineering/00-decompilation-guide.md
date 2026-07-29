@@ -219,6 +219,107 @@ for browsing type shapes; useless for behaviour. `Il2CppDumper`'s `dump.cs` is e
 
 ---
 
+## Ghidra walkthrough
+
+**Use the Code Browser, not the Debugger.** The Debugger attaches to a *running* process; this
+is static analysis of a file on disk. You will never launch Megabonk from Ghidra.
+
+### Step 0 — one-time setup (two traps)
+
+**Launch with `support\pyghidraRun.bat`, not `ghidraRun.bat`.** Only the PyGhidra launcher
+registers the CPython 3 script provider. Under plain `ghidraRun.bat` the Il2CppDumper script
+will not appear as runnable.
+
+**PyGhidra must use Python 3.12, not 3.14.** Ghidra bundles `jpype1-1.5.2` wheels for cp39–cp313
+only — there is no cp314 wheel, so a 3.14 interpreter fails to install PyGhidra. On this machine
+`python` is 3.12.10 (`C:\Python312\python.exe`) and the `py` launcher resolves to 3.14. Force the
+right one before first launch:
+
+```powershell
+$env:PYGHIDRA_PYTHON = "C:\Python312\python.exe"
+& "D:\01 Coding\ghidra_12.1.2_PUBLIC\support\pyghidraRun.bat"
+```
+
+First run prints a prompt offering to install PyGhidra into a venv — accept it. Java 21+ is
+required and is already present (21.0.11).
+
+### Step 1 — project
+
+`File → New Project… → Non-Shared Project`. Put it in `megabonk-re/ghidra/`, name it after the
+build (`build-21750826`). One project per game build, mirroring the dump folders.
+
+### Step 2 — import
+
+`File → Import File…` → `%MegabonkPath%\GameAssembly.dll`.
+
+Ghidra should detect **PE / x86:LE:64:default**. Accept the defaults; do not change the image
+base — the VAs in `dump.cs` assume the default `0x180000000`, and changing it silently
+invalidates every address in this repo's docs.
+
+### Step 3 — analyse (the slow part)
+
+Double-click the imported file to open the **Code Browser**. It offers to analyse — say yes,
+accept the default analyzers, `Analyze`.
+
+**This takes 20–60 minutes for 52 MB.** The progress bar is bottom-right. Let it finish
+completely before running any script; a script applied mid-analysis produces garbage. Analysis
+results are saved into the project, so this cost is paid once per build.
+
+### Step 4 — register the script directory
+
+`Window → Script Manager` → the **Manage Script Directories** icon (top-right, looks like a
+bulleted list) → `+` → add `megabonk-re/`.
+
+Then find `ghidra_with_struct_py3.py` in the list. If it shows a red error icon, PyGhidra is not
+active — you launched the wrong `.bat`, go back to Step 0.
+
+### Step 5 — apply the IL2CPP metadata
+
+Select `ghidra_with_struct_py3.py` → **Run**. It prompts twice with a file chooser:
+
+1. `script.json` → `megabonk-re/build-21750826/script.json`
+2. `il2cpp.h` → `megabonk-re/build-21750826/il2cpp.h`
+
+It then names tens of thousands of functions and applies struct definitions. Expect another long
+wait; it finishes with `Script finished!` in the console.
+
+**Before this step**, every function is `FUN_1804a64d0`. **After it**, the same function is
+`DamageContainer$$Reuse`. That rename is the entire point of the exercise — skipping it leaves
+you reading anonymous machine code.
+
+### Step 6 — go to an address and read
+
+Press **`G`** (Go To), paste a VA from `dump.cs` — e.g. `0x1804A64D0` — and press Enter.
+
+The **Decompiler** pane on the right shows reconstructed C. If it is not visible:
+`Window → Decompiler`.
+
+Reading tips for IL2CPP output:
+
+- The first parameter is the instance pointer (`this`), even on methods that look static.
+- Field accesses appear as offsets: `*(float *)(param_1 + 0x38)` is `procCoefficient`, because
+  `dump.cs` lists it at `0x38`. **Keep `dump.cs` open beside Ghidra and map offsets by hand** —
+  this is the core skill.
+- Calls to `il2cpp_*` runtime helpers are boilerplate; skim past them.
+- Right-click a variable → `Retype Variable` to improve output as you learn what it is.
+
+### Step 7 — record the finding
+
+Write the answer into
+[`01-investigation-targets.md`](01-investigation-targets.md) using the shape under
+[Recording findings](#recording-findings), with the buildid. An unrecorded finding will be
+re-derived from scratch in three weeks.
+
+### First target
+
+Start with **`DamageContainer.Reuse` at VA `0x1804A64D0`**. The question is narrow and the
+answer is visible in a short function: does it *reset fields on an existing instance*, or
+allocate? Reset confirms pooling, which upgrades
+[#4](01-investigation-targets.md#4-damagecontainer--important) from STRONG to CONFIRMED and
+settles two other conclusions that currently rest on it.
+
+---
+
 ## Workflow
 
 For any open question:
