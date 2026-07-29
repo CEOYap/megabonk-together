@@ -65,3 +65,8 @@ script.json
 il2cpp.h
 DummyDll/
 ghidra_projects/
+
+# Local RE workspace, one folder per game version. Ignored wholesale on purpose:
+# it holds a copy of GameAssembly.dll (licensed game binary, large) and Ghidra
+# projects, which the per-file patterns above do NOT cover.
+/megabonk-re/
