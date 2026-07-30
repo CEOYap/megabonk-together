@@ -5,6 +5,77 @@ using UnityEngine;
 
 namespace MegabonkTogether.Patches.Unity
 {
+    /// <summary>
+    /// Rate-limited counters for the transform fallbacks below.
+    ///
+    /// Those fallbacks catch a reference that is destroyed game-side but still held by the mod —
+    /// suspected to be a NetPlayer, per the TODO on <see cref="UnityComponentPatches"/>. They are
+    /// currently silent, so there is no evidence of how often they fire, or through which
+    /// accessor. This records both.
+    ///
+    /// These sit inside patches on Component.get_transform, Transform.get_position and
+    /// Transform.get_rotation — three of the hottest properties in Unity — so a plain
+    /// LogWarning per hit would be a per-frame string allocation plus BepInEx disk I/O. Reports
+    /// are therefore throttled, and counts are accumulated between reports so the frequency is
+    /// visible rather than just the fact.
+    ///
+    /// Recording only happens on the exceptional branches, never on the common path.
+    /// </summary>
+    internal static class TransformFallbackDiagnostics
+    {
+        private const float REPORT_INTERVAL_SECONDS = 5f;
+
+        private static float lastReportTime = -999f;
+        private static int danglingTransformHits;
+        private static int danglingPositionHits;
+        private static int danglingRotationHits;
+        private static int missingNetPlayerHits;
+
+        internal static void RecordDanglingTransform() { danglingTransformHits++; MaybeReport(); }
+        internal static void RecordDanglingPosition() { danglingPositionHits++; MaybeReport(); }
+        internal static void RecordDanglingRotation() { danglingRotationHits++; MaybeReport(); }
+        internal static void RecordMissingNetPlayer() { missingNetPlayerHits++; MaybeReport(); }
+
+        /// <summary>
+        /// Reports at most once per <see cref="REPORT_INTERVAL_SECONDS"/>, then resets the counts.
+        /// Time.unscaledTime is a native call, but it only runs on a fallback hit — if that is
+        /// frequent enough for the cost to matter, the counts themselves are the finding.
+        /// </summary>
+        private static void MaybeReport()
+        {
+            var now = Time.unscaledTime;
+            if (now - lastReportTime < REPORT_INTERVAL_SECONDS)
+            {
+                return;
+            }
+            lastReportTime = now;
+
+            Plugin.Log.LogWarning(
+                "Transform fallbacks fired in the last ~5s — " +
+                $"get_transform: {danglingTransformHits}, " +
+                $"get_position: {danglingPositionHits}, " +
+                $"get_rotation: {danglingRotationHits}, " +
+                $"netplayer-not-found: {missingNetPlayerHits}. " +
+                "Dangling hits are a destroyed reference the mod still holds (suspected NetPlayer); " +
+                "falling back to the local player.");
+
+            danglingTransformHits = 0;
+            danglingPositionHits = 0;
+            danglingRotationHits = 0;
+            missingNetPlayerHits = 0;
+        }
+
+        /// <summary>Clears counters and the throttle so each session starts from zero.</summary>
+        internal static void Reset()
+        {
+            lastReportTime = -999f;
+            danglingTransformHits = 0;
+            danglingPositionHits = 0;
+            danglingRotationHits = 0;
+            missingNetPlayerHits = 0;
+        }
+    }
+
     [HarmonyPatch(typeof(Component))]
     internal static class UnityComponentPatches
     {
@@ -26,6 +97,7 @@ namespace MegabonkTogether.Patches.Unity
 
             if (__instance == null) //TODO: i'm pretty sure its a netplayer dangling reference but how do i even debug this...
             {
+                TransformFallbackDiagnostics.RecordDanglingTransform();
                 __result = GameManager.Instance.player.transform; //Hack ¯\_(ツ)_/¯
                 return false;
             }
@@ -43,7 +115,9 @@ namespace MegabonkTogether.Patches.Unity
                 var netPlayer = playerManagerService.GetNetPlayerByNetplayId(netPlayerId);
                 if (netPlayer == null)
                 {
-                    Plugin.Log.LogWarning($"get_transform_Prefix: NetPlayer with NetplayId {netPlayerId} not found");
+                    // Was an unthrottled interpolated LogWarning on a patched get_transform —
+                    // a per-frame string allocation. Same throttling as the fallbacks above.
+                    TransformFallbackDiagnostics.RecordMissingNetPlayer();
                     return true;
                 }
                 __result = netPlayer.Model.transform;
@@ -77,6 +151,8 @@ namespace MegabonkTogether.Patches.Unity
 
             if (__instance == null)
             {
+                // Same dangling-reference fallback as UnityComponentPatches.get_transform_Prefix.
+                TransformFallbackDiagnostics.RecordDanglingPosition();
                 __result = GameManager.Instance.player.transform.position;
                 return false;
             }
@@ -122,6 +198,8 @@ namespace MegabonkTogether.Patches.Unity
 
             if (__instance == null)
             {
+                // Same dangling-reference fallback as UnityComponentPatches.get_transform_Prefix.
+                TransformFallbackDiagnostics.RecordDanglingRotation();
                 __result = GameManager.Instance.player.transform.rotation;
                 return false;
             }

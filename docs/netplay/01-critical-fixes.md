@@ -20,6 +20,7 @@ an environment with no .NET SDK. Build and playtest each one.
 | [P1-3](#p1-3) | No protocol version gate — mismatched builds corrupt sessions | High | M | mostly |
 | [P1-4](#p1-4) | `GetAllPlayersAlive()` allocates on every call, including per-tick paths | Medium | S | yes |
 | [P1-5](#p1-5) | Damage ownership misattributed through shared static `DamageContainer`s | High | M | yes |
+| [P1-6](#p1-6) | `ReTargetEnemies` throws on an empty alive-set, aborting the death handler | Medium | XS | yes |
 | [P2-1](#p2-1) | Dangling transform hack is silent | Low | XS | yes |
 | [P2-2](#p2-2) | Dead `GetAllPlayers()` calls in charging paths | Low | XS | yes |
 | [P2-3](#p2-3) | Charging logic triplicated across shrine / pylon / lamp | Low | M | yes |
@@ -27,8 +28,13 @@ an environment with no .NET SDK. Build and playtest each one.
 ### Suggested order
 
 ```
-P0-0  →  P2-1  →  P0-1+P0-2+P2-2  →  P0-4  →  P0-3  →  P1-3  →  P1-1  →  P1-5  →  P1-2  →  P1-4  →  P2-3
+P0-0  →  P2-1  →  P0-1+P0-2+P2-2  →  P0-4  →  P0-3  →  P1-3  →  P1-1  →  P1-5  →  P1-2  →  P1-4+P1-6  →  P2-3
 ```
+
+**P1-6 pairs with P1-4.** Its fix is to hoist the alive-set materialisation out of the retarget
+loop and guard the empty case — which is the same edit
+[`04-performance-and-gc.md`](04-performance-and-gc.md#4-enemymanagerservice--remaining-linq)
+already asks for on that method. Doing them together is one change, not two.
 
 Three deliberate departures from a straight severity ranking:
 
@@ -928,6 +934,114 @@ passive-sourced damage (expected to already work) to confirm the split.
 
 ---
 
+<a name="p1-6"></a>
+## P1-6 — `ReTargetEnemies` throws on an empty alive-set, aborting the death handler
+
+**Status:** CONFIRMED — observed in a live session log, buildid 21750826
+**File:** `src/plugin/Services/EnemyManagerService.cs:65-66`
+**Caller:** `SynchronizationService.OnReceivedPlayerDied` (`:3658`)
+
+### Symptom
+
+`BepInEx/LogOutput.log` carries, at the end of a two-player run:
+
+```
+System.ArgumentOutOfRangeException: Index was out of range. Must be non-negative and less
+than the size of the collection. (Parameter 'index')
+   at System.Linq.Enumerable.ElementAt[TSource](IEnumerable`1 source, Int32 index)
+   at MegabonkTogether.Services.EnemyManagerService.ReTargetEnemies(...)  EnemyManagerService.cs:66
+   at MegabonkTogether.Services.SynchronizationService.OnReceivedPlayerDied(...)  :3658
+   at MegabonkTogether.Scripts.MainThreadDispatcher.Update()
+```
+
+It appears immediately before `Blocking leaderboard upload`, which places it at game over.
+
+### Root cause
+
+```csharp
+// EnemyManagerService.cs:64-66 — inside foreach (var oldEnemy in oldTargetEnemies)
+var randomIndex = Random.Range(0, currentPlayersAliveExcludingOldOneId.Count());
+var randomNewTargetId = currentPlayersAliveExcludingOldOneId.ElementAt(randomIndex);
+```
+
+When the sequence is empty, `Random.Range(0, 0)` returns `0` and `ElementAt(0)` throws. There is
+no guard.
+
+The caller builds it as
+`GetAllPlayersAlive().Where(p => p.ConnectionId != died.PlayerId)`. `players` **includes** the
+local player — `IPlayerManagerService` exposes a separate `GetAllPlayersExceptLocal()`, which
+would be redundant otherwise — so the set is non-empty whenever anyone is still alive. The empty
+case is therefore *everyone dead*, i.e. the final death of a run.
+
+**So this fires at every multiplayer game over**, is swallowed by `MainThreadDispatcher` into a
+warning, and is invisible without reading the log.
+
+### Why it matters more than "an exception at game over"
+
+The throw aborts `OnReceivedPlayerDied` partway, so **neither** of the two statements after it
+runs:
+
+```csharp
+udpClientService.SendToAllClients(message, ReliableOrdered);      // RetargetedEnemies — moot at game over
+SpawnReviver(netPlayer.Model.transform.position, ..., diedPlayer.ConnectionId);   // NOT moot
+```
+
+At game over, losing the Reviver is harmless. But the guard gap is unconditional: any transient
+state where the alive-set is momentarily empty with players remaining would silently cost that
+player their coffin, and the symptom would be "the Reviver sometimes doesn't spawn" with no
+error surfaced.
+
+### Fix
+
+Hoist the materialisation out of the loop and guard the empty case. This is the **same edit**
+[`04-performance-and-gc.md`](04-performance-and-gc.md#4-enemymanagerservice--remaining-linq)
+already requests for this method — `.Count()` then `.ElementAt()` inside a `foreach` walks the
+sequence twice per enemy, which at 600 enemies is the documented O(enemies × players).
+
+```csharp
+public IEnumerable<(uint, uint)> ReTargetEnemies(uint oldTargetId,
+                                                 IEnumerable<uint> currentPlayersAliveExcludingOldOneId)
+{
+    var retargetedEnemies = new List<(uint, uint)>();
+
+    // FIX P1-6: materialise once, and bail if there is nobody left to retarget onto.
+    var candidates = currentPlayersAliveExcludingOldOneId as IList<uint>
+                     ?? currentPlayersAliveExcludingOldOneId.ToList();
+
+    if (candidates.Count == 0)
+    {
+        // Everyone is dead — the run is over. Nothing to retarget onto.
+        return retargetedEnemies;
+    }
+
+    var oldTargetEnemies = spawnedEnemies.Values.Where(/* unchanged */);
+
+    foreach (var oldEnemy in oldTargetEnemies)
+    {
+        var randomNewTargetId = candidates[Random.Range(0, candidates.Count)];
+        // ... unchanged
+    }
+
+    return retargetedEnemies;
+}
+```
+
+Returning empty is correct rather than merely safe: with no living players there is no valid
+target, and the caller's `RetargetedEnemies` message then carries an empty list, which receivers
+already handle.
+
+> The caller already does `.ToList()` on the sequence it passes, so the `as IList<uint>` path
+> hits in practice today. Keep the fallback anyway — the parameter is typed `IEnumerable<uint>`
+> and a future caller may not materialise.
+
+### Test
+
+Play a two-player session to game over. **Expected:** no `ArgumentOutOfRangeException` in either
+client's log. Then confirm in a 3+ player session that a mid-run death still spawns the Reviver
+and still retargets enemies.
+
+---
+
 <a name="p2-1"></a>
 ## P2-1 — Dangling transform hack is silent
 
@@ -965,6 +1079,36 @@ Once you have frequency data, chase the root cause — a `NetPlayer` reference r
 `Destroy`. Prime suspects: `PlayerManagerService.cs:466` (`//TODO: cleanup inventories at some
 point`) and `TargetSwitcher.currentTarget`, which caches a `(Transform, Rigidbody)` tuple
 with no invalidation on player despawn.
+
+### Implemented — and there were three fallbacks, not one
+
+`TransformFallbackDiagnostics` in `Patches/Unity/UnityComponent.cs` now counts all of them:
+
+| Site | Accessor | Used by |
+|---|---|---|
+| `UnityComponentPatches.get_transform_Prefix` | `Component.get_transform` | DragonBreath, special attacks |
+| `TransformPatches.get_position_Prefix` | `Transform.get_position` | LaserBeamGun |
+| `TransformPatches.get_rotation_Prefix` | `Transform.get_rotation` | ProjectileMelee (Sword) |
+
+Only the first carried the TODO; the other two are the same hack, equally silent. Instrumenting
+one would have produced no data if the dangling reference surfaces through the others — and
+knowing *which* accessor fires is the strongest narrowing signal available, since each has a
+different caller.
+
+Counts accumulate between reports (max one per 5 s) rather than logging per hit: "1,247 times in
+5 s" and "3 times in 5 s" point at completely different root causes, and these sit on three of
+the hottest properties in Unity. Recording happens only on the exceptional branches.
+
+An unthrottled interpolated `LogWarning` on the netplayer-not-found path in the same method was
+folded into the same throttle — it was a per-frame string allocation on a patched
+`get_transform`. `NetworkHandler.ResetNetworking()` calls `Reset()` so counts do not bleed
+between sessions.
+
+**First result — zero fallbacks fired.** A full two-player localhost session including a death
+and game over produced no `Transform fallbacks fired` line at all. That is a real data point,
+not a missing feature: the deployed DLL was confirmed to contain the type. Repeat over more
+sessions, and especially with 3+ players and mid-run disconnects, before concluding the hack is
+dead code that can be deleted.
 
 ---
 
