@@ -18,6 +18,7 @@ like next.
 | [`netplay/02-delivery-method-reference.md`](netplay/02-delivery-method-reference.md) | Reliability policy, the full current message→channel map, and how to classify a new message |
 | [`netplay/03-cherry-pick-guide.md`](netplay/03-cherry-pick-guide.md) | Hunk-level guide to `Sea-Bass-cmd/optimized-netplay` — take / adapt / reject |
 | [`netplay/04-performance-and-gc.md`](netplay/04-performance-and-gc.md) | Measured allocation sites, hot paths, and the ordered list of what to fix for 400–600 enemy density |
+| [`netplay/05-local-testing.md`](netplay/05-local-testing.md) | Two netplay clients on one PC and one Steam account — and what that setup cannot prove |
 
 ### Transport
 

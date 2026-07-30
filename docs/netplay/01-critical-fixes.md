@@ -87,28 +87,81 @@ Two facts make the mod's own suppression load-bearing rather than belt-and-brace
    achievements manager only, and it does gate `TryUnlockAchievement` completely (confirmed at
    VA `0x1803EBDE0`) — but `Leaderboards` has no equivalent.
 
-### Fix
+### Resolution — leaderboards VERIFIED, scope reduced
 
-This is an **audit**, not a rewrite. Confirm, by reading the current patches and then by testing:
+**Decision:** the mod blocks **leaderboard uploads only**. Steam achievements and stats are
+deliberately allowed, because playing co-op is still playing. Only the competitive leaderboard
+carries real risk.
 
-- [ ] `UploadScore` cannot execute at all during a netplay session — a prefix returning `false`,
-      not a filter on its inputs. Partial suppression is useless given (1).
-- [ ] `SteamStatsManager.TryUploadStats` (VA `0x1803EF750`) is covered too; its decompilation is
-      in `megabonk-re/decompiled/` and has not been read yet.
-- [ ] Suppression is restored on session end, and cannot leak into singleplayer — the
-      **il2cpp** skill's teardown rule applies.
-- [ ] Consider setting `SteamAchievementsManager.ENABLED = false` for the session as a second
-      layer for achievements specifically; it sits below any internal caller and so cannot be
-      bypassed by a call path the mod did not patch.
+**Leaderboard suppression is confirmed correct and sufficient.** `Patches/LeaderBoards.cs`
+prefixes `Leaderboards.UploadScore` and returns `false`. Decompilation shows:
+
+- `Leaderboards.UploadScore` is the **only external caller** of
+  `SteamLeaderboardsManagerNew.QueueLeaderboardUpload` (VA `0x180529E40`). The only other
+  references are internal: `CheckUploadQueue` drains the queue, `UploadLeaderboardScore`
+  performs the Steam call.
+- `QueueLeaderboardUpload` merely enqueues onto a `Queue<T>`. Blocking entry to `UploadScore`
+  means nothing is ever queued, so all three of its upload calls are covered — including the
+  two that bypass the game's own `CheckMods` gate.
+
+`Patches/SteamAchievementsManager.cs` was **removed**. It blocked `QueueUpload` and
+`TryUploadAchievements`, neither of which is on the path that fires — so it was dead code that
+also contradicted the new intent.
+
+### Still open — Steam stats are not actually suppressed
+
+`Patches/SteamStatsManager.cs` blocks `QueueUpload` and `TryUploadStats`. **Neither is the path
+the game uses.** The real chain, all confirmed by decompilation and none of it patched:
+
+```
+TrackStats.OnEnemyDied            (mod adjusts, allows)
+  -> SteamStatsManager.OnStatUpdated        caches into Dictionary<string,int>
+  -> SteamStatsManager.Update               on a timer, calls SetCachedStats()
+  -> SetCachedStats                         SteamUserStats.SetStat(...)   <- the ONLY SetStat caller
+  -> SteamAchievementsManager.Update        StoreStats()                  <- commits everything
+```
+
+Two facts make this leak:
+
+1. **`TryUploadAchievements` is nothing but `StoreStats()`** (VA `0x1803EBF10`), and
+   `SteamUserStats.StoreStats` is Steamworks' single global commit — it flushes pending
+   achievements **and** stats together. There is no achievements-only store.
+2. **`TryUnlockAchievement` sets the same pending flag and timer that `QueueUpload` sets**
+   (static offsets `+1` and `+4`), and `SteamAchievementsManager.Update` — unpatched — polls
+   that flag and calls `StoreStats()`. So unlocking any achievement commits whatever stats
+   `SetCachedStats` has already pushed.
+
+**The single choke point is `SetCachedStats`** — a prefix there during netplay would leave
+nothing pending on the stats side, so `StoreStats()` from the achievement path would commit
+achievements only.
+
+Deliberately **not** done in this pass: the current scope is leaderboards only, and stats are
+accepted. Recorded because the existing `SteamStatsManager.cs` patch advertises protection it
+does not provide, and `NETPLAY_CHANGES.md` now says so plainly rather than promising otherwise.
+
+A second-order issue if this is ever picked up: blocking the push *during* the session does not
+un-inflate the local stat store, which can be pushed later from singleplayer.
 
 ### Test
 
-Play a netplay run to a score above the threshold, exit cleanly, and confirm no leaderboard entry
-and no stat upload. Then play a **singleplayer** run and confirm uploads work normally — a
-teardown leak here silently breaks legitimate progression.
+- [x] **Netplay run produces no leaderboard entry.** Confirmed in-game on a two-client localhost
+      session, buildid 21750826. The suppression works as intended.
+- [ ] Confirm an achievement earned during netplay **does** unlock.
+- [ ] **Play a singleplayer run afterwards and confirm the leaderboard upload still works.**
+      Not yet checked, and it is the check that matters most: a prefix that never stops returning
+      `false` looks identical to a correct one in every netplay test, while silently breaking
+      legitimate progression. `HasNetplaySessionInitialized()` is the only thing standing between
+      the two outcomes.
 
-> Recorded so the mod reliably **avoids** submitting modded runs. Do not attempt to influence or
-> work around the detection; the goal is that no netplay run ever reaches the upload path.
+> **Testing caveat.** The above was verified on localhost, which has no packet loss, latency, or
+> reordering, and always takes the direct P2P path rather than the relay. That is sufficient for
+> *this* item — the patch is an unconditional prefix, not a delivery-sensitive behaviour — but do
+> not generalise a clean localhost result to netcode items. See
+> [`05-local-testing.md`](05-local-testing.md#what-this-setup-cannot-tell-you).
+
+> Recorded so the mod reliably **avoids** submitting modded runs to leaderboards. Do not attempt
+> to influence or work around the game's detection; the goal is that no netplay run ever reaches
+> the upload path.
 
 ---
 

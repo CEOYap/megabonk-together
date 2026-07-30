@@ -39,7 +39,16 @@ import pyghidra
 GHIDRA_INSTALL = Path(
     os.environ.get("GHIDRA_INSTALL_DIR", r"D:\01 Coding\ghidra_12.1.2_PUBLIC")
 )
-REPO_ROOT = Path(__file__).resolve().parent.parent
+def _find_repo_root(start: Path) -> Path:
+    """Walk up until we hit the repo root (the directory containing .git)."""
+    for candidate in [start, *start.parents]:
+        if (candidate / ".git").exists():
+            return candidate
+    # Fall back to two levels up from scripts/re/ rather than guessing wrong.
+    return start.parents[1]
+
+
+REPO_ROOT = _find_repo_root(Path(__file__).resolve().parent)
 PROJECT_DIR = REPO_ROOT / "megabonk-re" / "ghidra-re"
 PROJECT_NAME = "Megabonk"
 OUT_DIR = REPO_ROOT / "megabonk-re" / "decompiled"

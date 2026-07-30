@@ -384,6 +384,123 @@ Il2CppDumper's `script.json`, so every function reverts to `fcn.1804a64d0` and t
 lost. `ghidra-cli` needs a Rust toolchain and a full JDK to build, and is WSL-oriented. Neither
 buys anything the script above does not already do with zero extra dependencies.
 
+### Step 7c — mapping offsets to fields by hand
+
+**You only need this when types are not applied.** If `il2cpp.h` was parsed (Step 5), Ghidra
+prints `(__this->fields).giveCreditsTimer` and there is nothing to map. Untyped, the same code
+reads `*(float *)(param_1 + 0x20)` and you resolve it yourself. The skill is still worth having:
+type application fails on some functions, and a wrong struct guess produces confident nonsense
+you need to be able to catch.
+
+#### The three facts that make it mechanical
+
+**1. `dump.cs` already gives you every offset.** No arithmetic required — the offsets are
+comments on each field:
+
+```csharp
+public class DamageContainer                    // dump.cs:374151
+{
+    public Vector3 direction;                   // 0x10
+    public float   damage;                      // 0x1C
+    public float   procCoefficient;             // 0x38
+    public string  damageSource;                // 0x40
+}
+```
+
+**2. `param_1` is `this`.** IL2CPP compiles instance methods to free functions whose first
+argument is the object pointer. `param_1 + 0x38` means "the field at offset 0x38 of this
+object". So `*(float *)(param_1 + 0x38)` **is** `this.procCoefficient` — the mapping is
+literally matching the number against the list above.
+
+**3. Fields start at 0x10 because of a 16-byte object header.** Every IL2CPP reference type
+begins with a class pointer and a monitor pointer, 8 bytes each on x64. `il2cpp.h` shows it
+explicitly:
+
+```c
+struct Assets_Scripts_Actors_DamageContainer_o {
+    Assets_Scripts_Actors_DamageContainer_c *klass;   // 0x00
+    void                                    *monitor; // 0x08
+    Assets_Scripts_Actors_DamageContainer_Fields fields; // 0x10 — first real field
+};
+```
+
+That is why no managed field ever appears below `0x10`. An access at `+0x00` or `+0x08` is
+runtime machinery, not your data.
+
+#### Worked example — the full `DamageContainer` byte map
+
+Sizes: `bool` 1, `int`/`float`/enum 4, pointer/reference 8, `Vector3` 12. Each field starts
+where the previous ended, except where padding is inserted to keep a type naturally aligned.
+
+| Offset | Size | Field | Note |
+|---|---|---|---|
+| `0x00` | 8 | *klass* | header |
+| `0x08` | 8 | *monitor* | header |
+| `0x10` | 12 | `direction` | `Vector3` = 3 × float |
+| `0x1C` | 4 | `damage` | |
+| `0x20` | 1 | `crit` | |
+| `0x21` | 1 | `isExecute` | |
+| `0x22` | 2 | *padding* | so `knockback` lands on a 4-byte boundary |
+| `0x24` | 4 | `knockback` | |
+| `0x28` | 8 | `enemy` | reference |
+| `0x30` | 4 | `damageEffect` | enum → `int32_t` |
+| `0x34` | 4 | `element` | enum → `int32_t` |
+| `0x38` | 4 | `procCoefficient` | |
+| `0x3C` | 4 | *padding* | so `damageSource` lands on an 8-byte boundary |
+| `0x40` | 8 | `damageSource` | reference |
+| `0x48` | 4 | `damageBlockedByArmor` | |
+| `0x4C` | 4 | `flags` | `DcFlags` → `int32_t` |
+| `0x50` | 1 | `canProcJoe` | |
+
+**Verify by walking it:** `0x10 + 12 = 0x1C` ✓, `0x1C + 4 = 0x20` ✓, `0x20 + 1 = 0x21` ✓ …
+Wherever the next offset in `dump.cs` is *further* than your running total, the gap is padding.
+That check is how you catch a misread field size.
+
+#### Reading the decompiled `Reuse` against that map
+
+```c
+*(undefined4 *)(param_1 + 0x38) = param_2;   // procCoefficient <- arg
+*(undefined8 *)(param_1 + 0x40) = param_3;   // damageSource    <- arg
+*(undefined4 *)(param_1 + 0x1c) = 0;         // damage   = 0
+*(undefined1 *)(param_1 + 0x20) = 0;         // crit     = false
+*(undefined8 *)(param_1 + 0x30) = 0;         // damageEffect AND element  <- see below
+*(undefined8 *)(param_1 + 0x48) = 0;         // damageBlockedByArmor AND flags
+```
+
+The **cast tells you the width**: `undefined1` = 1 byte, `undefined4` = 4, `undefined8` = 8.
+
+#### The two things that trip people up
+
+**Merged stores.** `*(undefined8 *)(param_1 + 0x30) = 0` writes **8 bytes** starting at `0x30`,
+covering `0x30–0x37` — which is `damageEffect` *and* `element`. The compiler noticed two
+adjacent 4-byte fields both being zeroed and used one instruction. **One line of decompiled
+output can set two or more fields.** If you count assignments and come up short against the
+field list, look for wide stores.
+
+The reverse also happens: `Vector3 direction` is 12 bytes, so zeroing it takes *two*
+instructions — an 8-byte store at `0x10` plus a 4-byte store at `0x18`.
+
+**Static fields live somewhere else entirely.** Instance fields hang off `param_1`; statics hang
+off the type's static block, reached through `TypeInfo + 0xb8`:
+
+```c
+if (**(char **)(SteamAchievementsManager_TypeInfo + 0xb8) != '\0') { ... }
+```
+
+Read it inside-out: `TypeInfo + 0xb8` → pointer to the static block; first `*` → the block;
+second `*` → the byte at **static offset 0**. `dump.cs` lists
+`public static bool ENABLED; // 0x0`, so that condition is `if (ENABLED)`. Static offsets are
+numbered independently of instance offsets — both start at `0x0`.
+
+#### Bonus signals worth recognising
+
+| Pattern | Meaning |
+|---|---|
+| `FUN_180268b20(ptr, value)` right after a store | GC **write barrier** — the field is a reference type (confirms it's a pointer, not an int) |
+| `if (*(int *)(X_TypeInfo + 0xe4) == 0) il2cpp_runtime_class_init(...)` | lazy static-constructor guard; boilerplate, skim past |
+| `(__this->klass->vtable)._6_SpendCredits.methodPtr` | virtual call — the name after the slot number tells you the method |
+| `FUN_180269910()` / `FUN_180269900()` marked "does not return" | null-check and bounds-check throw helpers |
+
 ### Step 8 — record the finding
 
 Write the answer into

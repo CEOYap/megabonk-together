@@ -31,10 +31,26 @@ You get i-frames when leveling up/getting a reward/openning a chest. This is to 
 > [!NOTE]  
 > You can also still move behind when selecting a reward
 
-## Disabled Save/Steam interaction
+## Save / Steam interaction
 
-The game naturally save progression and update your achievement. The game is not really meant to be played online so all of the save/steam interaction is prohibited when playing a netplay game.
-Same thing with uploading your score to the leaderbord, you would get banned anyway , so let's not do that 😅
+**Leaderboard scores are never uploaded during a netplay session.** Submitting a co-op score to
+a competitive leaderboard is the one thing that could actually get you in trouble, so the mod
+blocks it outright. This is verified against the game's own code, not assumed — the game does
+carry its own mod detection on that path, but it only covers part of it, so the mod does the
+blocking itself.
+
+**Saving is disabled by default** during netplay, so your run progression is not written over.
+There is an option to allow it if you would rather keep progression (`AllowSavesDuringNetplay`)
+— use at your own risk.
+
+**Steam achievements still unlock.** Playing together is still playing, so achievements are left
+alone.
+
+> **Known issue — Steam stats.** The mod contains patches intended to stop netplay statistics
+> (kills, damage, and similar) reaching Steam, but they do not cover the path the game actually
+> uses, so netplay numbers can still be recorded against your profile. This affects your Steam
+> stats only — **not** leaderboards, which stay blocked. Being tracked properly at
+> [`docs/netplay/01-critical-fixes.md`](docs/netplay/01-critical-fixes.md) as P0-0.
 
 ## Custom game balance
 
