@@ -90,3 +90,25 @@ GitHub release.
 | Where a file goes, service and DI conventions | `csharp` | — |
 | FPS, stutter, GC | `unity`, `netcode` | [`docs/netplay/04-performance-and-gc.md`](docs/netplay/04-performance-and-gc.md) |
 | "What does the game actually do here?" | `il2cpp` | [`docs/reverse-engineering/00-decompilation-guide.md`](docs/reverse-engineering/00-decompilation-guide.md) |
+| Game formulas, enums, item/weapon behaviour | — | [`lukeod/megabonk_research`](https://github.com/lukeod/megabonk_research) — see below |
+
+## External reference: `lukeod/megabonk_research`
+
+Third-party decompilation notes covering ground this repo does not: damage and crit formulas,
+the complete enum reference, per-weapon and per-item behaviour. Complementary rather than
+overlapping — our own findings in `docs/reverse-engineering/` are netplay-specific
+(`BaseSummoner`, `giveCreditsTimer`, `isGolden`, `GetNumMaxEnemies`), none of which it covers,
+while it documents item/weapon internals we have not touched.
+
+Worth trusting as a starting point: its `DamageContainer` field list matches ours field-for-field,
+derived independently.
+
+**Two rules when using it.**
+
+1. **Addresses are build-specific and will not match.** It cites
+   `WeaponUtility$$GetDamageContainer` at `0x180435010`; on buildid 21750826 the two overloads
+   are at `0x180434A50` and `0x180434FF0`. Re-derive every address against the local dump —
+   never paste one from an external source into a patch or a doc.
+2. **It is a reference, not a source of truth.** Same UNVERIFIED discipline as everything else:
+   a claim there is a strong hypothesis, not a verified fact, until checked against
+   `megabonk-re/build-21750826/dump.cs` or a decompiled body.

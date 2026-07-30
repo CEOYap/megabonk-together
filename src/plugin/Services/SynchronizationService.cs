@@ -2766,16 +2766,18 @@ namespace MegabonkTogether.Services
                 return false;
             }
 
-            var players = playerManagerService.GetAllPlayers();
-            var chargers = shrineChargingPlayers.FirstOrDefault(p => p.Key == shrineNetplayId).Value;
-
-            shrineChargingPlayers[shrineNetplayId] = [playerManagerService.GetLocalPlayer().ConnectionId];
-
-            if (chargers != null && chargers.Any())
+            // FIX P0-1: check BEFORE writing. The old order overwrote the current charger with the
+            // rejected one, so the later stop removed nothing and the shrine stayed locked forever.
+            // Also TryGetValue instead of an O(n) LINQ scan, and Count > 0 instead of Any().
+            // FIX P2-2: the GetAllPlayers() call that used to be here was never read.
+            if (shrineChargingPlayers.TryGetValue(shrineNetplayId, out var chargers)
+                && chargers != null && chargers.Count > 0)
             {
                 logger.LogInfo("Another player is already charging this shrine. Preventing re trigger.");
                 return false;
             }
+
+            shrineChargingPlayers[shrineNetplayId] = [playerManagerService.GetLocalPlayer().ConnectionId];
 
             udpClientService.SendToAllClients(message, LiteNetLib.DeliveryMethod.ReliableOrdered);
 
@@ -2787,14 +2789,14 @@ namespace MegabonkTogether.Services
             var isHost = IsServerMode() ?? false;
             if (isHost)
             {
-                var players = playerManagerService.GetAllPlayers();
-                var chargers = shrineChargingPlayers.FirstOrDefault(p => p.Key == shrine.ShrineNetplayId).Value;
-                shrineChargingPlayers[shrine.ShrineNetplayId] = [shrine.PlayerChargingId];
-
-                if (chargers != null && chargers.Any())
+                // FIX P0-1 / P2-2 — see OnStartingToChargingShrine.
+                if (shrineChargingPlayers.TryGetValue(shrine.ShrineNetplayId, out var chargers)
+                    && chargers != null && chargers.Count > 0)
                 {
                     return;
                 }
+
+                shrineChargingPlayers[shrine.ShrineNetplayId] = [shrine.PlayerChargingId];
 
                 var spawnedObj = spawnedObjectManagerService.GetSpawnedObject(shrine.ShrineNetplayId);
 
@@ -2859,12 +2861,19 @@ namespace MegabonkTogether.Services
                 return false;
             }
 
-            var players = playerManagerService.GetAllPlayers();
-            var chargers = shrineChargingPlayers.FirstOrDefault(p => p.Key == shrineNetplayId).Value;
+            // FIX P0-2: guard the key. The old unguarded indexer threw KeyNotFoundException when a
+            // stop arrived with no recorded start — a packet reorder, a late join, or a player
+            // disconnecting mid-charge. FIX P2-2: GetAllPlayers() here was never read.
+            if (!shrineChargingPlayers.TryGetValue(shrineNetplayId, out var chargers)
+                || chargers == null || chargers.Count == 0)
+            {
+                logger.LogInfo("No one is charging this shrine; ignoring stop.");
+                return false;
+            }
 
-            shrineChargingPlayers[shrineNetplayId].Remove(playerManagerService.GetLocalPlayer().ConnectionId);
+            chargers.Remove(playerManagerService.GetLocalPlayer().ConnectionId);
 
-            if (chargers != null && chargers.Any())
+            if (chargers.Count > 0)
             {
                 logger.LogInfo("Another player is still charging this shrine. Preventing stop trigger.");
                 return false;
@@ -2880,11 +2889,16 @@ namespace MegabonkTogether.Services
             var isHost = IsServerMode() ?? false;
             if (isHost)
             {
-                var players = playerManagerService.GetAllPlayers();
-                var chargers = shrineChargingPlayers.FirstOrDefault(p => p.Key == shrine.ShrineNetplayId).Value;
-                shrineChargingPlayers[shrine.ShrineNetplayId].Remove(shrine.PlayerChargingId);
+                // FIX P0-2 / P2-2 — see OnStoppingChargingShrine.
+                if (!shrineChargingPlayers.TryGetValue(shrine.ShrineNetplayId, out var chargers)
+                    || chargers == null || chargers.Count == 0)
+                {
+                    return;
+                }
 
-                if (chargers != null && chargers.Any())
+                chargers.Remove(shrine.PlayerChargingId);
+
+                if (chargers.Count > 0)
                 {
                     return;
                 }
@@ -3065,16 +3079,15 @@ namespace MegabonkTogether.Services
                 return false;
             }
 
-            var players = playerManagerService.GetAllPlayers();
-            var chargers = pylonChargingPlayers.FirstOrDefault(p => p.Key == pylonNetplayId).Value;
-
-            pylonChargingPlayers[pylonNetplayId] = [playerManagerService.GetLocalPlayer().ConnectionId];
-
-            if (chargers != null && chargers.Any())
+            // FIX P0-1 / P2-2 — see OnStartingToChargingShrine.
+            if (pylonChargingPlayers.TryGetValue(pylonNetplayId, out var chargers)
+                && chargers != null && chargers.Count > 0)
             {
-                logger.LogInfo("Another player is already charging this shrine. Preventing re trigger.");
+                logger.LogInfo("Another player is already charging this pylon. Preventing re trigger.");
                 return false;
             }
+
+            pylonChargingPlayers[pylonNetplayId] = [playerManagerService.GetLocalPlayer().ConnectionId];
 
             udpClientService.SendToAllClients(message, LiteNetLib.DeliveryMethod.ReliableOrdered);
 
@@ -3086,14 +3099,14 @@ namespace MegabonkTogether.Services
             var isHost = IsServerMode() ?? false;
             if (isHost)
             {
-                var players = playerManagerService.GetAllPlayers();
-                var chargers = pylonChargingPlayers.FirstOrDefault(p => p.Key == pylon.PylonNetplayId).Value;
-                pylonChargingPlayers[pylon.PylonNetplayId] = [pylon.PlayerChargingId];
-
-                if (chargers != null && chargers.Any())
+                // FIX P0-1 / P2-2 — see OnStartingToChargingShrine.
+                if (pylonChargingPlayers.TryGetValue(pylon.PylonNetplayId, out var chargers)
+                    && chargers != null && chargers.Count > 0)
                 {
                     return;
                 }
+
+                pylonChargingPlayers[pylon.PylonNetplayId] = [pylon.PlayerChargingId];
 
                 var spawnedObj = spawnedObjectManagerService.GetSpawnedObject(pylon.PylonNetplayId);
 
@@ -3158,16 +3171,15 @@ namespace MegabonkTogether.Services
                 return false;
             }
 
-            var players = playerManagerService.GetAllPlayers();
-            var chargers = lampsChargingPlayers.FirstOrDefault(p => p.Key == lampNetplayId).Value;
-
-            lampsChargingPlayers[lampNetplayId] = [playerManagerService.GetLocalPlayer().ConnectionId];
-
-            if (chargers != null && chargers.Any())
+            // FIX P0-1 / P2-2 — see OnStartingToChargingShrine.
+            if (lampsChargingPlayers.TryGetValue(lampNetplayId, out var chargers)
+                && chargers != null && chargers.Count > 0)
             {
                 logger.LogInfo("Another player is already charging this lamp. Preventing re trigger.");
                 return false;
             }
+
+            lampsChargingPlayers[lampNetplayId] = [playerManagerService.GetLocalPlayer().ConnectionId];
 
             udpClientService.SendToAllClients(message, LiteNetLib.DeliveryMethod.ReliableOrdered);
 
@@ -3179,14 +3191,14 @@ namespace MegabonkTogether.Services
             var isHost = IsServerMode() ?? false;
             if (isHost)
             {
-                var players = playerManagerService.GetAllPlayers();
-                var chargers = lampsChargingPlayers.FirstOrDefault(p => p.Key == lamp.LampNetplayId).Value;
-                lampsChargingPlayers[lamp.LampNetplayId] = [lamp.PlayerChargingId];
-
-                if (chargers != null && chargers.Any())
+                // FIX P0-1 / P2-2 — see OnStartingToChargingShrine.
+                if (lampsChargingPlayers.TryGetValue(lamp.LampNetplayId, out var chargers)
+                    && chargers != null && chargers.Count > 0)
                 {
                     return;
                 }
+
+                lampsChargingPlayers[lamp.LampNetplayId] = [lamp.PlayerChargingId];
 
                 var spawnedObj = spawnedObjectManagerService.GetSpawnedObject(lamp.LampNetplayId);
 
@@ -3253,12 +3265,17 @@ namespace MegabonkTogether.Services
                 return false;
             }
 
-            var players = playerManagerService.GetAllPlayers();
-            var chargers = pylonChargingPlayers.FirstOrDefault(p => p.Key == pylonNetplayId).Value;
+            // FIX P0-2 / P2-2 — see OnStoppingChargingShrine.
+            if (!pylonChargingPlayers.TryGetValue(pylonNetplayId, out var chargers)
+                || chargers == null || chargers.Count == 0)
+            {
+                logger.LogInfo("No one is charging this pylon; ignoring stop.");
+                return false;
+            }
 
-            pylonChargingPlayers[pylonNetplayId].Remove(playerManagerService.GetLocalPlayer().ConnectionId);
+            chargers.Remove(playerManagerService.GetLocalPlayer().ConnectionId);
 
-            if (chargers != null && chargers.Any())
+            if (chargers.Count > 0)
             {
                 logger.LogInfo("Another player is still charging this pylon. Preventing stop trigger.");
                 return false;
@@ -3274,11 +3291,16 @@ namespace MegabonkTogether.Services
             var isHost = IsServerMode() ?? false;
             if (isHost)
             {
-                var players = playerManagerService.GetAllPlayers();
-                var chargers = pylonChargingPlayers.FirstOrDefault(p => p.Key == pylon.PylonNetplayId).Value;
-                pylonChargingPlayers[pylon.PylonNetplayId].Remove(pylon.PlayerChargingId);
+                // FIX P0-2 / P2-2 — see OnStoppingChargingShrine.
+                if (!pylonChargingPlayers.TryGetValue(pylon.PylonNetplayId, out var chargers)
+                    || chargers == null || chargers.Count == 0)
+                {
+                    return;
+                }
 
-                if (chargers != null && chargers.Any())
+                chargers.Remove(pylon.PlayerChargingId);
+
+                if (chargers.Count > 0)
                 {
                     return;
                 }
@@ -3344,12 +3366,17 @@ namespace MegabonkTogether.Services
                 return false;
             }
 
-            var players = playerManagerService.GetAllPlayers();
-            var chargers = lampsChargingPlayers.FirstOrDefault(p => p.Key == lampNetplayId).Value;
+            // FIX P0-2 / P2-2 — see OnStoppingChargingShrine.
+            if (!lampsChargingPlayers.TryGetValue(lampNetplayId, out var chargers)
+                || chargers == null || chargers.Count == 0)
+            {
+                logger.LogInfo("No one is charging this lamp; ignoring stop.");
+                return false;
+            }
 
-            lampsChargingPlayers[lampNetplayId].Remove(playerManagerService.GetLocalPlayer().ConnectionId);
+            chargers.Remove(playerManagerService.GetLocalPlayer().ConnectionId);
 
-            if (chargers != null && chargers.Any())
+            if (chargers.Count > 0)
             {
                 logger.LogInfo("Another player is still charging this lamp. Preventing stop trigger.");
                 return false;
@@ -3365,11 +3392,16 @@ namespace MegabonkTogether.Services
             var isHost = IsServerMode() ?? false;
             if (isHost)
             {
-                var players = playerManagerService.GetAllPlayers();
-                var chargers = lampsChargingPlayers.FirstOrDefault(p => p.Key == lamp.LampNetplayId).Value;
-                lampsChargingPlayers[lamp.LampNetplayId].Remove(lamp.PlayerChargingId);
+                // FIX P0-2 / P2-2 — see OnStoppingChargingShrine.
+                if (!lampsChargingPlayers.TryGetValue(lamp.LampNetplayId, out var chargers)
+                    || chargers == null || chargers.Count == 0)
+                {
+                    return;
+                }
 
-                if (chargers != null && chargers.Any())
+                chargers.Remove(lamp.PlayerChargingId);
+
+                if (chargers.Count > 0)
                 {
                     return;
                 }

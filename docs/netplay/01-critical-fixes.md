@@ -21,6 +21,7 @@ an environment with no .NET SDK. Build and playtest each one.
 | [P1-4](#p1-4) | `GetAllPlayersAlive()` allocates on every call, including per-tick paths | Medium | S | yes |
 | [P1-5](#p1-5) | Damage ownership misattributed through shared static `DamageContainer`s | High | M | yes |
 | [P1-6](#p1-6) | `ReTargetEnemies` throws on an empty alive-set, aborting the death handler | Medium | XS | yes |
+| [P1-7](#p1-7) | One destroyed `NetPlayer` aborts `Reset()`'s destroy loop, orphaning the rest | Medium | XS | yes |
 | [P2-1](#p2-1) | Dangling transform hack is silent | Low | XS | yes |
 | [P2-2](#p2-2) | Dead `GetAllPlayers()` calls in charging paths | Low | XS | yes |
 | [P2-3](#p2-3) | Charging logic triplicated across shrine / pylon / lamp | Low | M | yes |
@@ -277,6 +278,30 @@ shrineChargingPlayers[shrine.ShrineNetplayId] = [shrine.PlayerChargingId];
 1. Two clients, one shrine. Player 1 starts charging, player 2 walks into it, both walk away.
 2. Player 1 walks back in. **Expected:** charging starts. **Currently:** blocked forever.
 3. Repeat for a pylon and for a graveyard boss lamp.
+
+### IMPLEMENTED and VERIFIED — buildid 21750826
+
+Landed across all twelve methods (shrine / pylon / lamp × local / received × start / stop),
+together with [P0-2](#p0-2) and [P2-2](#p2-2). Confirmed working on a two-client localhost
+session: the shrine, pylon and lamp all remain chargeable after a second player walks in and out.
+
+**Ownership model — decided, not incidental.** A single owner holds the charge. A second player
+entering is rejected without touching the claim, and their exit removes nothing, so the owner's
+charge runs to completion undisturbed. If the *owner* leaves while another player is standing
+inside, the charge stops and that player must re-enter to take ownership. The alternative — any
+occupant keeps it alive — was considered and deliberately not taken.
+
+Two implementation notes for whoever does [P2-3](#p2-3):
+
+- The write is `dict[id] = [localPlayer]`, a **replacement with a single-element list**, so the
+  structure can never hold more than one charger despite being typed `ICollection<uint>`. That
+  matches the single-owner model but makes the type misleading about intent.
+- The pylon path logged `"...charging this shrine..."` — a copy-paste that would have misdirected
+  anyone reading logs for exactly this bug. Corrected.
+
+**Verified in the host log:** no `KeyNotFoundException` across two full sessions. The host is the
+first client (`I am HOST`), not the matchmaking server — the server never sees game state and has
+no charging logs.
 
 ---
 
@@ -1043,6 +1068,105 @@ and still retargets enemies.
 
 ---
 
+<a name="p1-7"></a>
+## P1-7 — One destroyed `NetPlayer` aborts `Reset()`'s destroy loop, orphaning the rest
+
+**Status:** CONFIRMED — observed in a live session log, buildid 21750826
+**File:** `src/plugin/Services/PlayerManagerService.cs:509`
+
+### Symptom
+
+Between two netplay sessions, the host log carries:
+
+```
+[Error] Error while destroying spawned player game objects during reset:
+  Il2CppInterop.Runtime.Il2CppException: System.NullReferenceException
+  at UnityEngine.Component.get_gameObject ()
+  at MegabonkTogether.Services.PlayerManagerService.<Reset>b__50_0(KeyValuePair`2 p)
+  at System.Collections.Generic.List`1.ForEach(Action`1 action)
+  at MegabonkTogether.Services.PlayerManagerService.Reset()   PlayerManagerService.cs:509
+```
+
+### Root cause
+
+```csharp
+// PlayerManagerService.cs:506-515
+try
+{
+    spawnedPlayers.ToList().ForEach(p => GameObject.Destroy(p.Value.gameObject));
+}
+catch (Exception ex)
+{
+    logger.LogError($"Error while destroying spawned player game objects during reset: {ex}");
+}
+spawnedPlayers.Clear();
+```
+
+A `NetPlayer` in `spawnedPlayers` has already been destroyed game-side, so `.gameObject` throws
+through the interop boundary.
+
+**The defect is the blast radius, not the throw.** `List<T>.ForEach` abandons the whole iteration
+on the first exception, and the `try` wraps the *entire loop* rather than each item. So one
+already-destroyed entry means **every remaining `NetPlayer` is never destroyed** — and
+`spawnedPlayers.Clear()` on the next line then drops the only references to them.
+
+Those GameObjects are now orphaned: untracked, undestroyed, and surviving into the next session.
+
+With two players there is one spawned netplayer, so nothing is left behind when it throws — which
+is why the observed session looks harmless. At 3–6 players a single stale entry orphans all the
+others.
+
+### Why it is also evidence
+
+This is the **first stack trace** of the dangling-`NetPlayer` reference that
+[#8](../reverse-engineering/01-investigation-targets.md#8-netplayer-lifetime-and-the-dangling-transform--nice)
+has been chasing, and it names where the stale reference is held: `spawnedPlayers`.
+
+It also explains why [P2-1](#p2-1)'s counters stayed at zero across two sessions — those
+fallbacks are gated on `HasNetplaySessionStarted()`, and by the time `Reset()` runs the session
+has already ended, so they cannot fire on this path.
+
+### Fix
+
+Guard per item, so one bad entry cannot abandon the rest:
+
+```csharp
+foreach (var kv in spawnedPlayers.ToList())
+{
+    try
+    {
+        var netPlayer = kv.Value;
+        if (netPlayer == null)          // Unity's overloaded == catches a destroyed object
+        {
+            continue;
+        }
+
+        var go = netPlayer.gameObject;
+        if (go != null)
+        {
+            GameObject.Destroy(go);
+        }
+    }
+    catch (Exception ex)
+    {
+        // FIX P1-7: per-item, so one destroyed NetPlayer cannot orphan the others.
+        logger.LogWarning($"Could not destroy a spawned player during reset: {ex.Message}");
+    }
+}
+```
+
+Note the null check alone is **not** sufficient: `netPlayer == null` uses Unity's overloaded
+operator and catches the common case, but a native object freed underneath the managed wrapper
+can still throw on `.gameObject` — see the **il2cpp** skill. Keep the try.
+
+### Test
+
+Run a 3+ player session, return to the menu, and start a second one. **Expected:** no
+`Error while destroying spawned player game objects` line, and no leftover netplayer models in
+the new session.
+
+---
+
 <a name="p2-1"></a>
 ## P2-1 — Dangling transform hack is silent
 
@@ -1105,11 +1229,18 @@ folded into the same throttle — it was a per-frame string allocation on a patc
 `get_transform`. `NetworkHandler.ResetNetworking()` calls `Reset()` so counts do not bleed
 between sessions.
 
-**First result — zero fallbacks fired.** A full two-player localhost session including a death
-and game over produced no `Transform fallbacks fired` line at all. That is a real data point,
-not a missing feature: the deployed DLL was confirmed to contain the type. Repeat over more
-sessions, and especially with 3+ players and mid-run disconnects, before concluding the hack is
-dead code that can be deleted.
+**Result so far — zero fallbacks fired, across two separate two-player sessions.** Neither
+produced a `Transform fallbacks fired` line. That is a real data point, not a missing feature:
+the deployed DLL was confirmed to contain the type.
+
+**But [P1-7](#p1-7) explains why these counters may never fire on the path that matters.** The
+dangling `NetPlayer` reference was caught with a stack trace in `PlayerManagerService.Reset()` —
+during *teardown*. These fallbacks are gated on `HasNetplaySessionStarted()`, which is already
+false by then, so they cannot see it. Two clean sessions therefore do **not** mean the hack is
+dead code; they may mean the leak lives outside the window being watched.
+
+Before deleting anything, test 3+ players with mid-run disconnects — and treat P1-7 as the more
+promising lead, since it names where the stale reference is held (`spawnedPlayers`).
 
 ---
 
