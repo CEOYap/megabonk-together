@@ -24,6 +24,7 @@ an environment with no .NET SDK. Build and playtest each one.
 | [P2-1](#p2-1) | Dangling transform hack is silent | Low | XS | yes |
 | [P2-2](#p2-2) | Dead `GetAllPlayers()` calls in charging paths | Low | XS | yes |
 | [P2-3](#p2-3) | Charging logic triplicated across shrine / pylon / lamp | Low | M | yes |
+| [P2-4](#p2-4) | `CheckForUpdates = false` is ignored, and the un-initialised service then NREs | Low | XS | yes |
 
 ### Suggested order
 
@@ -1148,6 +1149,116 @@ right shape — with two corrections:
 
 Do this **after** P0-1 and P0-2 land, so the fixes are verified in the duplicated form first
 and the dedup is a pure refactor.
+
+---
+
+<a name="p2-4"></a>
+## P2-4 — `CheckForUpdates = false` is ignored, and the un-initialised service then NREs
+
+**Status:** CONFIRMED — observed in a live session log, buildid 21750826
+**Files:** `src/plugin/Plugin.cs:169-192`, `src/plugin/Patches/WindowManager.cs:64-66`,
+`src/plugin/Services/AutoUpdaterService.cs:138`
+
+### Symptom
+
+With `CheckForUpdates = false` in the config, the log reports both that updates are disabled
+**and** that an update check ran and failed:
+
+```
+[Info : MegabonkTogether] Auto-update is disabled in configuration.
+...
+[Info : MegabonkTogether] Checking for updates...
+[Error: MegabonkTogether] Error checking for updates: Object reference not set to an instance of an object.
+```
+
+### Root cause
+
+Two independent call sites, only one of which respects the config.
+
+**`Plugin.cs` gates correctly** — and `Initialize()` lives *inside* the gate:
+
+```csharp
+if (ModConfig.CheckForUpdates.Value)
+{
+    autoUpdaterService.Initialize();          // the ONLY caller of Initialize()
+    Task.Run(async () => { await autoUpdaterService.CheckAndUpdate(); /* ... */ });
+}
+else
+{
+    Log.LogInfo("Auto-update is disabled in configuration.");
+}
+```
+
+**`WindowManager.cs` does not gate at all** — it fires on the main-menu window:
+
+```csharp
+Task.Run(async () =>
+{
+    await autoUpdaterService.CheckAndUpdate();   // no CheckForUpdates check
+    // ...
+});
+```
+
+And `CheckAndUpdate()` itself guards only on `isUpdateAvailable` and a 5-minute cooldown — never
+on the config value.
+
+So when the setting is `false`: `Initialize()` never runs, leaving `currentVersion` and
+`pluginPath` **null** (it is their only assignment), and `WindowManager` then calls
+`CheckAndUpdate()` anyway. The check proceeds past its guards, logs `Checking for updates...`,
+reaches GitHub, and dereferences null state on the way back.
+
+> The log records only `ex.Message`, not a stack trace, so the exact null is **not proven**.
+> `currentVersion` is the strongest candidate — `IsNewerVersion(latestRelease.TagName,
+> currentVersion)` is the first thing to use it after the network call. The fix does not depend
+> on identifying it.
+
+### Why it is worth fixing despite being cosmetic
+
+The exception is caught and the game continues, so nothing breaks. But:
+
+- **The setting does not do what it says.** A user who turns auto-update off still has the mod
+  contact the GitHub API every time the main menu opens. That is a behaviour surprise, and the
+  guide added in [`05-local-testing.md`](05-local-testing.md) tells people to set this flag
+  precisely so their test build is left alone.
+- **`pluginPath` is null on the same path**, and `LaunchUpdaterOnExit(pluginDirectory)` uses it
+  (`Patches/SaveManager.cs:108`). Not reached while the check fails early, but it is the same
+  un-initialised state.
+- It puts a red `[Error]` in every log from a user who disabled updates, which is noise in
+  exactly the file used to diagnose everything else.
+
+### Fix
+
+Two lines, either of which alone stops the exception; do both.
+
+**1. Make the second call site respect the config** (`WindowManager.cs`):
+
+```csharp
+if (!ModConfig.CheckForUpdates.Value) return;
+await autoUpdaterService.CheckAndUpdate();
+```
+
+**2. Make the service self-sufficient** rather than relying on every caller to gate — guard at
+the top of `CheckAndUpdate()`, so a future third caller cannot reintroduce this:
+
+```csharp
+public async Task<bool> CheckAndUpdate()
+{
+    if (!ModConfig.CheckForUpdates.Value)
+    {
+        return false;
+    }
+    // ... unchanged
+}
+```
+
+Moving `Initialize()` out of the `if` in `Plugin.cs` is a *third* option and would also stop the
+NRE — but it would leave the config still being ignored, so prefer the two above.
+
+### Test
+
+Set `CheckForUpdates = false`, launch, and open the main menu. **Expected:** the "disabled" line,
+no `Checking for updates...`, and no error. Then set it back to `true` and confirm the check runs
+and an available update is still offered.
 
 ---
 
