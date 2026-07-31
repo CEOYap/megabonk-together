@@ -29,6 +29,8 @@ an environment with no .NET SDK. Build and playtest each one.
 | [P1-6](#p1-6) | `ReTargetEnemies` throws on an empty alive-set, aborting the death handler — **FIXED**, plus 4 more sites via P1-4 | Medium | XS | yes |
 | [P1-7](#p1-7) | One destroyed `NetPlayer` aborts `Reset()`'s destroy loop, orphaning the rest | Medium | XS | yes |
 | [P1-8](#p1-8) | A lost race in `OnReceivedPlayerDisconnected` skips the whole disconnect handler, host retarget included — **FIXED** | High | XS | yes |
+| [P1-9](#p1-9) | Save/restore pairs on game statics use nullness as the "saved?" flag, stranding the mod's handlers — **FIXED** | Medium | XS | yes |
+| [P1-10](#p1-10) | 28 `CAN_SEND_MESSAGES = false` latches with no `try/finally` — one throw and the peer stops sending | High | M | yes |
 | [P2-5](#p2-5) | `RemoveProjectilesByOwnerId` matches the projectile id against the connection id, so it removes nothing | Medium | S | yes |
 | [P2-1](#p2-1) | Dangling transform hack is silent — instrumented, **two root causes found, both FIXED** (second unverified in-game) | Low | XS | yes |
 | [P2-2](#p2-2) | Dead `GetAllPlayers()` calls in charging paths | Low | XS | yes |
@@ -1788,6 +1790,97 @@ be skippable.
 disappears on every remaining peer; no `Disconnected player ... was already removed` line is fatal
 (it is informational, and may legitimately appear on whichever peer lost the race); no
 `get_transform` fallback burst on the host.
+
+---
+
+<a name="p1-9"></a>
+## P1-9 — Save/restore pairs on game statics can strand the mod's handlers permanently
+
+**Status:** CONFIRMED by inspection — **FIXED, not yet verified in-game.** Found while containing
+[open item 3](06-session-handoff.md) (`RestoreDeath`'s NRE).
+**Files:** `src/plugin/Plugin.cs:277`, `:305`, `:425`, `:433`
+
+The mod swaps three game statics — `PlayerHealth.A_Died`, `WeaponInventory.A_WeaponAdded`,
+`PlayerStatsNew.A_StatUpdate` — and restores them afterwards. Both pairs used **the saved value's
+nullness as the "did we save?" flag**:
+
+```csharp
+public void PreventDeath()
+{
+    if (originalDiedAction != null) { Log.LogWarning("Death already prevented"); return; }
+    originalDiedAction = PlayerHealth.A_Died;      // may legitimately be null
+    PlayerHealth.A_Died = new Action(OnPlayerDied);
+}
+
+public void RestoreDeath(bool invokeDeathEvent)
+{
+    if (originalDiedAction == null) { Log.LogWarning("Death not prevented"); return; }
+    ...
+}
+```
+
+A game event with no subscribers is null. If any of the three is null when the mod saves it, the
+save still swaps the static, and the restore then reads that null as "never prevented" and returns
+**without restoring anything**. The mod's handler — or, for the inventory pair, a hard `null` —
+stays on a game static for the rest of the process, singleplayer included. `RestorePlayerInventoryActions`
+is worse: its two guards return before restoring *either* static, so a null `A_WeaponAdded` also
+strands `A_StatUpdate`.
+
+Whether the game ever leaves these null in practice is **UNVERIFIED** — the stripped interop
+assemblies have no method bodies. The asymmetry is a defect regardless: a restore must not be
+gated on a value the save cannot guarantee.
+
+### Fix
+
+- `hasPreventedDeath` / `hasSavedInventoryActions` flags record the state; the saved delegates are
+  data. A null original now round-trips faithfully.
+- `RestoreDeath` hands the delegate back **before** anything that can throw, and
+  `RestorePlayerInventoryActions` restores both statics together.
+- The two call sites that bracket game code — `NetPlayer.Initialize` (the `PlayerInventory`
+  constructor) and `SynchronizationService.OnReceivedWeaponAdded` (`AddWeapon` +
+  `RefreshConstantAttack`) — now use `try/finally`. A throw between save and restore used to
+  silence both callbacks for the rest of the process. Same shape as [P0-6](#p0-6), where one
+  throw latched two statics and broke 581 consecutive enemy spawns.
+
+`RestoreDeath`'s invocation of the game's death handler is also contained now — see
+[open item 3](06-session-handoff.md); the underlying NRE is unchanged and still undiagnosed.
+
+### Test
+
+Play a session to game over, return to the menu, and start a **singleplayer** run. **Expected:**
+death behaves normally in singleplayer (the game's own death screen, not spectator mode), weapons
+still fire their pickup callbacks, and no `Death not prevented` / `Player inventory actions not
+saved` warnings.
+
+---
+
+<a name="p1-10"></a>
+## P1-10 — 28 `CAN_SEND_MESSAGES = false` latches with no `try/finally`
+
+**Status:** CONFIRMED by inspection — **NOT fixed.** Counted 2026-07-31 in
+`src/plugin/Services/SynchronizationService.cs` (all 29 sites live in that one file; one now has a
+`finally`, from [P1-9](#p1-9)).
+
+The pattern is everywhere in the receive handlers:
+
+```csharp
+Plugin.CAN_SEND_MESSAGES = false;
+<game call that applies the received state>
+Plugin.CAN_SEND_MESSAGES = true;
+```
+
+The flag suppresses the mod's own outbound messages while applying someone else's state, so the
+peer does not echo it back. **If the game call throws, the flag stays `false` for the rest of the
+run and this peer stops sending anything** — every subsequent local action is silently invisible to
+the others. That is a total, unrecoverable desync from a single unlucky exception, and
+[P0-6](#p0-6) proved this exact failure happens in practice (a string interpolation threw and
+latched two statics for 581 spawns).
+
+Not fixed here because it is a 28-site mechanical sweep and folding it into an unrelated commit
+would bury it. Do it as one commit of its own, `try/finally` per site, no behaviour change
+otherwise. Worth pairing with a check on whether the flag should be a scoped `IDisposable`
+(`using var _ = Plugin.SuppressOutbound();`) rather than a raw static — 29 sites is enough to
+justify the type.
 
 ---
 

@@ -2143,12 +2143,23 @@ namespace MegabonkTogether.Services
                     upgradeModifiers.Add(modifier);
                 }
 
+                // try/finally: AddWeapon and RefreshConstantAttack are game code running with
+                // CAN_SEND_MESSAGES latched off and two game statics nulled out. A throw used to
+                // leave all three that way for the rest of the process — the mod would go silent
+                // on the wire and the game would stop firing weapon/stat callbacks. Same shape as
+                // P0-6, where one throw latched two statics and broke 581 enemy spawns.
                 Plugin.CAN_SEND_MESSAGES = false;
                 Plugin.Instance.SavePlayerInventoryActions();
-                player.Inventory.weaponInventory.AddWeapon(weaponData, upgradeModifiers);
-                player.RefreshConstantAttack(upgradeModifiers);
-                Plugin.Instance.RestorePlayerInventoryActions();
-                Plugin.CAN_SEND_MESSAGES = true;
+                try
+                {
+                    player.Inventory.weaponInventory.AddWeapon(weaponData, upgradeModifiers);
+                    player.RefreshConstantAttack(upgradeModifiers);
+                }
+                finally
+                {
+                    Plugin.Instance.RestorePlayerInventoryActions();
+                    Plugin.CAN_SEND_MESSAGES = true;
+                }
             }
         }
 

@@ -190,9 +190,18 @@ namespace MegabonkTogether.Scripts.NetPlayer
 
             if (inventory == null)
             {
+                // try/finally: the game's PlayerInventory constructor runs between two nulled-out
+                // game statics. A throw in there used to leave A_WeaponAdded and A_StatUpdate
+                // silenced for the rest of the process — the same shape as P0-6's latched flags.
                 Plugin.Instance.SavePlayerInventoryActions();
-                inventory = new PlayerInventory(characterData);
-                Plugin.Instance.RestorePlayerInventoryActions();
+                try
+                {
+                    inventory = new PlayerInventory(characterData);
+                }
+                finally
+                {
+                    Plugin.Instance.RestorePlayerInventoryActions();
+                }
 
                 playerManagerService.AddPlayerInventory(connectionId, inventory);
             }

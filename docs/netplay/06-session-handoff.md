@@ -77,21 +77,46 @@ enemies off the departed peer". Clients never retarget locally by design — `Re
 targets with `Random.Range`, so a client doing its own would desync. They apply the host's
 `RetargetedEnemies`, which is why the *host's* copy of this handler must not be skippable.
 
-### 3. `Plugin.RestoreDeath` NREs at game over
+### 3. `Plugin.RestoreDeath` NREs at game over — CONTAINED, still undiagnosed
 
 `Animator.set_speed` throws inside the saved death `Il2CppSystem.Action` invoked from
-`Plugin.RestoreDeath` (`Plugin.cs:321`), via `OnReceivedGameOver` → `TransitionToState`. Appears
-on host and clients, every session, pre-existing. `MainThreadDispatcher` catches it, so it
-degrades rather than crashes — but it aborts the rest of `RestoreDeath`.
+`Plugin.RestoreDeath`, via `OnReceivedGameOver` → `TransitionToState`. Appears on host and
+clients, every session, pre-existing.
 
-### 4. `RemoveProjectilesByOwnerId` removes nothing — new, found this session
+**What was fixed:** the blast radius, not the cause. The invoke is now wrapped, so the throw no
+longer escapes into `TransitionToState` to be caught by `MainThreadDispatcher` far from the fault;
+it is logged with its full stack, naming the death event as the source. The delegate is also
+handed back to the game *before* anything that can throw. The earlier note that it "aborts the
+rest of `RestoreDeath`" was wrong — the invoke was already the last statement; what it aborted was
+the caller.
+
+**What is still open:** why the game's own death handler NREs. This needs the IL2CPP dump — the
+stripped interop assemblies have no method bodies, so nothing about what that handler touches can
+be established from this repo. Next session: pull the game-over stack from the log now that it is
+logged deliberately, and decompile `PlayerHealth`'s death path against
+`megabonk-re/build-21750826/dump.cs`.
+
+While containing it, two more defects of the same family turned up and are fixed —
+[P1-9](01-critical-fixes.md#p1-9): both save/restore pairs on game statics used the saved value's
+nullness as the "did we save?" flag, so a null original stranded the mod's handler (or a hard
+`null`) on a game static for the rest of the process, singleplayer included.
+
+### 4. 28 unguarded `CAN_SEND_MESSAGES = false` latches — new, found this session
+
+Every receive handler nulls the flag around a game call and sets it back afterwards, with no
+`try/finally`. One throw and the peer **stops sending anything for the rest of the run** — total
+silent desync. All 29 sites are in `SynchronizationService.cs`; one now has a `finally`. Mechanical
+sweep, its own commit, and worth considering a scoped `IDisposable` instead of a raw static.
+[P1-10](01-critical-fixes.md#p1-10). **Highest-value open item now.**
+
+### 5. `RemoveProjectilesByOwnerId` removes nothing — new, found this session
 
 `spawnedProjectile` is keyed by projectile id, but the filter compares that key to the *connection*
 id, so a departed peer's projectiles are never cleaned up. Fixing it means recording an owner at
 `AddSpawnedProjectile` time and updating its call sites — a real change, not a predicate tweak.
 [P2-5](01-critical-fixes.md#p2-5).
 
-### 5. Remaining `04-performance-and-gc.md` items
+### 6. Remaining `04-performance-and-gc.md` items
 
 - **1C** — `PickACloseTarget` is O(enemies × players).
 - **3** — `GameBalanceService.StageIndex` does an `IndexOf` per access; nothing is cached.
@@ -99,12 +124,12 @@ id, so a departed peer's projectiles are never cleaned up. Fixing it means recor
 - **5** — network payload thresholds. **Blocked on measurement**: nothing counts bytes today.
   Phase 0 of the Steamworks plan already asks for those counters; build them there.
 
-### 6. P1-2 (golden shrine sync) — blocked
+### 7. P1-2 (golden shrine sync) — blocked
 
 Changes the wire format, and the version gate that would make that safe is now a Steamworks
 deliverable. Either wait, or ship knowing a version-mismatched pair desyncs silently.
 
-### 7. `RelayEnvelope.ToFilters` — UNVERIFIED, scheduled
+### 8. `RelayEnvelope.ToFilters` — UNVERIFIED, scheduled
 
 `SendToAllClientsExcept`'s relay branch falls back to an empty filter list on lookup miss. Only
 the direct-peer path was traced. Resolve during Steamworks **Phase 1**, which is where the
