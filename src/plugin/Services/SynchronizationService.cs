@@ -3753,10 +3753,15 @@ namespace MegabonkTogether.Services
         private void SpawnReviver(Vector3 position, Material[] materials, uint ownerConnectionId, uint reviverId = 0)
         {
             var desertGraves = EffectManager.Instance.desertGraves;
+
+            // Declared outside the scope: the rest of this method uses it. The suppression only
+            // needs to cover the Instantiate, which is what trips the spawn patches.
+            GameObject desertGraveInstance;
             using (Plugin.SuppressOutbound())
             {
-                var desertGraveInstance = GameObject.Instantiate(desertGraves[0], position, Quaternion.Euler(-90, 0, 0));
+                desertGraveInstance = GameObject.Instantiate(desertGraves[0], position, Quaternion.Euler(-90, 0, 0));
             }
+
             var interactable = desertGraveInstance.GetComponent<InteractableDesertGrave>();
             var chargeFx = GameObject.Instantiate(interactable.chargeFx, desertGraveInstance.transform);
             var explodeFx = GameObject.Instantiate(interactable.explodeFx, desertGraveInstance.transform);
