@@ -1028,8 +1028,10 @@ namespace MegabonkTogether.Services
         {
             var instance = IL2CPP.PointerToValueGeneric<ProjectileBase>(proj.Pointer, false, false);
 
-            var netplayId = projectileManagerService.AddSpawnedProjectile(instance);
+            // FIX P2-5: the owner is resolved first and handed to the manager, which had no way of
+            // knowing it before — the same id already goes out on the message below.
             var ownerId = owner ?? playerManagerService.GetLocalPlayer().ConnectionId;
+            var netplayId = projectileManagerService.AddSpawnedProjectile(instance, ownerId);
 
             IGameNetworkMessage message;
 

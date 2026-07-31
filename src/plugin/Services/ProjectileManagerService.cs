@@ -14,7 +14,7 @@ namespace MegabonkTogether.Services
     {
         public IEnumerable<Projectile> GetAllProjectiles();
         public IEnumerable<Projectile> GetAllProjectilesDeltaAndUpdate();
-        public uint AddSpawnedProjectile(ProjectileBase projectile);
+        public uint AddSpawnedProjectile(ProjectileBase projectile, uint ownerId);
         public ProjectileBase GetProjectileById(uint id);
         public KeyValuePair<uint, ProjectileBase> GetProjectileByReference(ProjectileBase projectile);
         public ProjectileBase RemoveProjectileById(uint id);
@@ -29,6 +29,10 @@ namespace MegabonkTogether.Services
     internal class ProjectileManagerService : IProjectileManagerService
     {
         private readonly ConcurrentDictionary<uint, ProjectileBase> spawnedProjectile = [];
+        // FIX P2-5: id -> owning connection id, kept in step with spawnedProjectile. Same key
+        // space, so it is only ever the ids this peer allocated; remote projectiles carry their
+        // owner on the message and are tracked by the interpolator instead.
+        private readonly ConcurrentDictionary<uint, uint> projectileOwners = [];
         private Dictionary<uint, Projectile> previousSpawnedProjectilesDelta = [];
         private uint currentProjectileId = 0;
         private ProjectileInterpolator projectileInterpolator;
@@ -91,10 +95,11 @@ namespace MegabonkTogether.Services
             foreach (var id in toRemove)
             {
                 spawnedProjectile.TryRemove(id, out var _);
+                projectileOwners.TryRemove(id, out var _);
             }
         }
 
-        public uint AddSpawnedProjectile(ProjectileBase projectile)
+        public uint AddSpawnedProjectile(ProjectileBase projectile, uint ownerId)
         {
             currentProjectileId++;
             if (!spawnedProjectile.TryAdd(currentProjectileId, projectile))
@@ -102,6 +107,10 @@ namespace MegabonkTogether.Services
                 Plugin.Log.LogWarning($"Attempted to add a projectile that already exists. Id: {currentProjectileId}");
                 return 0;
             }
+
+            // FIX P2-5: record who this projectile belongs to. Nothing did, which is why
+            // RemoveProjectilesByOwnerId could only ever guess — see the comment there.
+            projectileOwners[currentProjectileId] = ownerId;
 
             return currentProjectileId;
         }
@@ -113,6 +122,8 @@ namespace MegabonkTogether.Services
 
         public ProjectileBase RemoveProjectileById(uint id)
         {
+            projectileOwners.TryRemove(id, out var _);
+
             if (!spawnedProjectile.TryRemove(id, out var projectile))
             {
                 Plugin.Log.LogWarning($"Attempted to remove an projectile that does not exist {id}");
@@ -126,6 +137,7 @@ namespace MegabonkTogether.Services
         {
             currentProjectileId = 0;
             spawnedProjectile.Clear();
+            projectileOwners.Clear();
             previousSpawnedProjectilesDelta = [];
 
             if (projectileInterpolator != null)
@@ -172,19 +184,40 @@ namespace MegabonkTogether.Services
             }
         }
 
+        /// <summary>
+        /// Destroys every projectile this peer is simulating on behalf of <paramref name="connectionId"/>.
+        /// Called when that peer disconnects; their projectiles otherwise keep flying, holding the
+        /// weapon and attack of a NetPlayer that has just been destroyed.
+        ///
+        /// <para>FIX P2-5: the filter used to be <c>kv.Key == connectionId</c> — comparing the
+        /// <b>projectile id</b> to a connection id, because no owner was recorded anywhere. It
+        /// removed, at most, the single projectile whose id happened to equal that connection id,
+        /// and normally nothing at all.</para>
+        /// </summary>
         public void RemoveProjectilesByOwnerId(uint connectionId)
         {
-            var projectilesToRemove = spawnedProjectile
-                .Where(kv => kv.Value != null && kv.Key == connectionId)
+            var projectilesToRemove = projectileOwners
+                .Where(kv => kv.Value == connectionId)
                 .Select(kv => kv.Key)
                 .ToList();
 
             foreach (var projectileId in projectilesToRemove)
             {
                 var removedProjectile = RemoveProjectileById(projectileId);
-                if (removedProjectile != null)
+                if (removedProjectile == null)
+                {
+                    continue;
+                }
+
+                // Guarded per projectile: one already-destroyed GameObject must not abandon the
+                // rest of the sweep (the P1-7 lesson).
+                try
                 {
                     GameObject.DestroyImmediate(removedProjectile.gameObject);
+                }
+                catch (System.Exception ex)
+                {
+                    Plugin.Log.LogWarning($"Could not destroy projectile {projectileId} of departed player {connectionId}: {ex.Message}");
                 }
             }
         }

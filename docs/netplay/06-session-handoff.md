@@ -120,12 +120,16 @@ Three families of "mod swaps a global, game code runs, mod swaps it back", each 
 `Dropped N stale netplayer position request(s)` line, and no local player model snapping to a
 remote player's position.
 
-### 5. `RemoveProjectilesByOwnerId` removes nothing — new, found this session
+### 5. ~~`RemoveProjectilesByOwnerId` removes nothing~~ — FIXED, with a known remainder
 
-`spawnedProjectile` is keyed by projectile id, but the filter compares that key to the *connection*
-id, so a departed peer's projectiles are never cleaned up. Fixing it means recording an owner at
-`AddSpawnedProjectile` time and updating its call sites — a real change, not a predicate tweak.
-[P2-5](01-critical-fixes.md#p2-5).
+An `id → ownerId` map now backs it, written at `AddSpawnedProjectile` (one caller, which already
+had the owner id in hand). [P2-5](01-critical-fixes.md#p2-5).
+
+**Remainder, still open:** this only covers projectiles *this* peer simulates. Projectiles received
+from a peer never enter `spawnedProjectile` — they are instantiated, stamped via `DynamicData`, and
+handed to `ProjectileInterpolator` by the sender's id — so nothing removes them when their owner
+leaves; they keep interpolating with no updates. Needs owner tracking inside the interpolator plus
+an unregister-by-owner in the disconnect path.
 
 ### 6. Remaining `04-performance-and-gc.md` items
 

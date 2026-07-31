@@ -32,7 +32,7 @@ an environment with no .NET SDK. Build and playtest each one.
 | [P1-9](#p1-9) | Save/restore pairs on game statics use nullness as the "saved?" flag, stranding the mod's handlers — **FIXED** | Medium | XS | yes |
 | [P1-10](#p1-10) | 28 `CAN_SEND_MESSAGES = false` latches with no `try/finally` — one throw and the peer stops sending — **FIXED** | High | M | yes |
 | [P1-11](#p1-11) | Stranded netplayer-position requests redirect the local player's transforms to a peer — **FIXED** | High | S | yes |
-| [P2-5](#p2-5) | `RemoveProjectilesByOwnerId` matches the projectile id against the connection id, so it removes nothing | Medium | S | yes |
+| [P2-5](#p2-5) | `RemoveProjectilesByOwnerId` matches the projectile id against the connection id, so it removes nothing — **FIXED** (interpolated remote projectiles still uncovered) | Medium | S | yes |
 | [P2-1](#p2-1) | Dangling transform hack is silent — instrumented, **two root causes found, both FIXED** (second unverified in-game) | Low | XS | yes |
 | [P2-2](#p2-2) | Dead `GetAllPlayers()` calls in charging paths | Low | XS | yes |
 | [P2-3](#p2-3) | Charging logic triplicated across shrine / pylon / lamp — **FIXED** | Low | M | yes |
@@ -2471,7 +2471,8 @@ and an available update is still offered.
 <a name="p2-5"></a>
 ## P2-5 — `RemoveProjectilesByOwnerId` filters on the wrong key
 
-**Status:** CONFIRMED by inspection — **NOT fixed.** Found while fixing [P1-8](#p1-8).
+**Status:** CONFIRMED by inspection — **FIXED, not yet verified in-game.** Found while fixing
+[P1-8](#p1-8).
 **File:** `src/plugin/Services/ProjectileManagerService.cs:175`
 
 ```csharp
@@ -2490,8 +2491,35 @@ needs an owner recorded at `AddSpawnedProjectile` time (a parallel `id → owner
 `ResetForNextLevel`), and every call site of `AddSpawnedProjectile` has to supply it — the local
 player's id for locally spawned projectiles, the message's `OwnerId` for received ones.
 
-Left unfixed deliberately: it is a separate change with its own call-site sweep, and folding it
-into the P1-8 commit would have made that fix untestable in isolation.
+### Fix
+
+A `ConcurrentDictionary<uint, uint> projectileOwners` alongside `spawnedProjectile`, written by
+`AddSpawnedProjectile(projectile, ownerId)` and cleared wherever the projectile is — removal, the
+dead-projectile sweep, `ResetForNextLevel`. The predicted "call-site sweep" turned out to be one
+line: `AddSpawnedProjectile` has a single caller, `SynchronizationService.OnSpawnedProjectile`,
+which already computes the owner id for the message it sends. The destroy loop is also guarded per
+projectile now, so one already-destroyed GameObject cannot abandon the rest ([P1-7](#p1-7)).
+
+Both keys stay in one id space — the ids this peer allocated. That matters: **remote** projectiles
+carry an id allocated by the *sender*, so mixing them into the same map would collide.
+
+### Still open — the interpolated remote projectiles
+
+`RemoveProjectilesByOwnerId` only covers projectiles this peer simulates. Projectiles received from
+a peer are never added to `spawnedProjectile`: `OnReceivedSpawnedProjectile` instantiates a
+GameObject, stamps `netplayId`/`ownerId` on it with `DynamicData`, and hands it to
+`ProjectileInterpolator` by id. **Nothing removes those when their owner leaves** — they keep being
+interpolated with no further updates.
+
+Fixing that means owner tracking inside `ProjectileInterpolator` (its ids are the sender's, so it
+needs its own map) plus an unregister-by-owner call in the disconnect path. Left out here because
+it is a second, independent mechanism, and this fix is worth landing testable on its own.
+
+### Test
+
+3 players, one peer disconnects while their weapons are firing. **Expected:** their in-flight
+projectiles vanish on the remaining peers instead of continuing. The ones spawned from received
+messages (see above) will still linger — that is the known remainder, not a failed fix.
 
 ---
 
