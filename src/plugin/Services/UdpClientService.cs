@@ -3,7 +3,6 @@ using Assets.Scripts.Managers;
 using BepInEx.Logging;
 using LiteNetLib;
 using LiteNetLib.Utils;
-using MegabonkTogether.Common;
 using MegabonkTogether.Common.Messages;
 using MegabonkTogether.Common.Messages.GameNetworkMessages;
 using MegabonkTogether.Common.Models;
@@ -81,10 +80,6 @@ namespace MegabonkTogether.Services
             IEncounterService encounterService,
             ManualLogSource logger) : IUdpClientService
     {
-        // FIX P1-3: marks a rejection payload as ours, so an unrelated rejection is not misread
-        // as a version mismatch.
-        private const string PROTOCOL_REJECT_TAG = "MBT_PROTO";
-
         private const int MAX_PACKET_SIZE_BYTES = 1000;
         private const int STARTING_GAME_UDP_PORT = 27015;
         private int GAME_UDP_PORT = STARTING_GAME_UDP_PORT;
@@ -188,10 +183,12 @@ namespace MegabonkTogether.Services
                     if (netManager != null && netManager.IsRunning)
                     {
                         Plugin.Log.LogInfo($"Connecting...");
-                        // FIX P1-3: the connect key carries the protocol version so the remote
-                        // side can refuse an incompatible build instead of accepting it and
-                        // desyncing later. Resolves the old "do we really care" TODO.
-                        netManager.Connect(target, Protocol.ConnectKey);
+                        // The connect key is write-only here: after NAT introduction both peers
+                        // Connect at each other, and LiteNetLib reconciles that cross-connect
+                        // internally without ever raising ConnectionRequestEvent. A protocol
+                        // version sent here is never read. Tried and disproved in-game — see
+                        // P1-3 in docs/netplay/01-critical-fixes.md before reaching for this again.
+                        netManager.Connect(target, "yourKey");
                     }
                     else
                     {
@@ -206,33 +203,11 @@ namespace MegabonkTogether.Services
 
             listener.ConnectionRequestEvent += request =>
             {
-                // FIX P1-3: validate the protocol version before accepting. MemoryPack is
-                // positional, so a peer on a different wire format does not fail loudly — it
-                // deserializes garbage into valid-looking messages. Resolves the old
-                // "we should validate the request key" TODO.
-                var key = request.Data.GetString();
-
-                if (!Protocol.TryParseConnectKey(key, out var remoteVersion))
-                {
-                    Plugin.Log.LogWarning(
-                        $"Rejecting connection from {request.RemoteEndPoint}: unrecognised connect key. " +
-                        $"The remote is running a build older than the protocol gate.");
-
-                    RejectWithReason(request, Protocol.Version, remoteProtocol: null);
-                    return;
-                }
-
-                if (remoteVersion != Protocol.Version)
-                {
-                    Plugin.Log.LogWarning(
-                        $"Rejecting connection from {request.RemoteEndPoint}: protocol {remoteVersion}, " +
-                        $"we speak {Protocol.Version}.");
-
-                    RejectWithReason(request, Protocol.Version, remoteVersion);
-                    return;
-                }
-
-                Plugin.Log.LogInfo($"Got a connection request from remote (protocol {remoteVersion})");
+                // NOTE: this handler does NOT run on the normal NAT-punch path — the cross-connect
+                // is resolved inside LiteNetLib. Absence of this log line in a successful session
+                // is the evidence. Do not put a version gate here; see P1-3 in
+                // docs/netplay/01-critical-fixes.md.
+                Plugin.Log.LogInfo($"Got a connection request from remote");
                 request.Accept();
             };
 
@@ -320,16 +295,6 @@ namespace MegabonkTogether.Services
             {
                 logger.LogInfo($"Peer disconnected: {info.Reason}");
 
-                // FIX P1-3: a rejected connection never established, so there is nothing for
-                // HandleDisconnectedPeer to clean up — surface why instead of letting the player
-                // see a bare timeout.
-                if (info.Reason == DisconnectReason.ConnectionRejected
-                    && TryReadProtocolRejection(info, out var hostProtocol, out var ourProtocolAsSeen))
-                {
-                    HandleProtocolRejection(hostProtocol, ourProtocolAsSeen);
-                    return;
-                }
-
                 if (peer == null)
                 {
                     return;
@@ -396,77 +361,6 @@ namespace MegabonkTogether.Services
         public int GetNetPeerCount()
         {
             return gamePeers.Count;
-        }
-
-        /// <summary>
-        /// FIX P1-3: reads a rejection written by <see cref="RejectWithReason"/>. Returns false
-        /// for any other rejection payload, including an empty one from a build predating the
-        /// gate, so those fall through to the normal disconnect path.
-        /// </summary>
-        private static bool TryReadProtocolRejection(DisconnectInfo info, out int remoteProtocol, out int ourProtocolAsSeen)
-        {
-            remoteProtocol = 0;
-            ourProtocolAsSeen = 0;
-
-            try
-            {
-                if (info.AdditionalData == null || info.AdditionalData.AvailableBytes == 0)
-                {
-                    return false;
-                }
-
-                if (info.AdditionalData.GetString() != PROTOCOL_REJECT_TAG)
-                {
-                    return false;
-                }
-
-                remoteProtocol = info.AdditionalData.GetInt();
-                ourProtocolAsSeen = info.AdditionalData.GetInt();
-                return true;
-            }
-            catch
-            {
-                // Malformed payload from an unknown build — treat as an ordinary rejection.
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// FIX P1-3: tell the player which side is out of date and return to the menu, rather
-        /// than leaving them on a connecting screen that will never resolve.
-        /// </summary>
-        private static void HandleProtocolRejection(int remoteProtocol, int ourProtocolAsSeen)
-        {
-            Plugin.Log.LogError(
-                $"Connection refused: incompatible protocol. We speak {Protocol.Version}, " +
-                $"the other side speaks {remoteProtocol} (it saw ours as {ourProtocolAsSeen}).");
-
-            var weAreOlder = remoteProtocol > Protocol.Version;
-            var descriptionKey = weAreOlder
-                ? "IncompatibleVersion_UpdateYours"
-                : "IncompatibleVersion_UpdateTheirs";
-
-            Plugin.StartNotification(
-                ("MegabonkTogether", "IncompatibleVersion"),
-                ("MegabonkTogether", descriptionKey),
-                [],
-                AudioManager.Instance.uiAbort,
-                item: EItem.BobDead);
-
-            Plugin.GoToMainMenu();
-        }
-
-        /// <summary>
-        /// FIX P1-3: reject a connection with our protocol version attached, so the refused side
-        /// can tell the player which build is out of date rather than showing a bare timeout.
-        /// </summary>
-        private static void RejectWithReason(ConnectionRequest request, int localProtocol, int? remoteProtocol)
-        {
-            var writer = new NetDataWriter();
-            writer.Put(PROTOCOL_REJECT_TAG);
-            writer.Put(localProtocol);
-            writer.Put(remoteProtocol ?? 0); // 0 = the remote predates the gate and sent no version
-            request.Reject(writer);
         }
 
         private void HandleDisconnectedPeer(NetPeer peer)

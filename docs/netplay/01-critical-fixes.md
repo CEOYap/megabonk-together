@@ -905,8 +905,9 @@ the legendary reward.
 <a name="p1-3"></a>
 ## P1-3 — No protocol version gate
 
-**Status:** CONFIRMED (by absence) — FIXED for direct P2P, **relay mode still ungated**, not
-yet verified in-game
+**Status:** CONFIRMED (by absence) — **attempted fix DID NOT WORK, disproved in-game and
+reverted.** Deferred to the Steamworks migration. Read "Why the connect-key gate never fires"
+below before attempting this again.
 **Files:** `src/common/Messages/`, connection handshake in `UdpClientService.cs` /
 `WebsocketClientService.cs`
 
@@ -925,7 +926,11 @@ so a mismatch is not detected.
 This is not hypothetical: P1-2 above adds a field to `Specific`, and
 `Sea-Bass-cmd/optimized-netplay` already did so without a gate.
 
-### Fix
+### Attempted fix — DISPROVED, do not retry
+
+> Everything in this section was implemented and **does not work**. It is kept because the
+> reasoning looks correct and someone will propose it again. Step 2 is the broken step; read
+> "Why the connect-key gate never fires" below before writing any of it.
 
 **1. Define a protocol version** separate from the plugin's semantic version — bump it only
 when the wire format changes:
@@ -964,62 +969,84 @@ rather than a generic timeout.
 
 **3. Surface it in the UI.** On rejection, tell the player which side is out of date.
 
-### What landed
+### Why the connect-key gate never fires
 
-`src/common/Protocol.cs` holds `Protocol.Version` (currently `1`) plus `ConnectKey` /
-`TryParseConnectKey`. The key format is `MBT|<version>`; the prefix exists so the pre-gate
-`"yourKey"` placeholder fails to parse and is reported as an outdated peer rather than as a
-malformed one.
+**Disproved in-game, buildid 21750826.** A host built with `Protocol.Version = 2` accepted a
+client on the shipped build (which sends the old `"yourKey"` placeholder) and the session
+played normally. No rejection, no warning.
 
-`UdpClientService.ConnectionRequestEvent` now parses the key and rejects on mismatch, writing
-a tagged payload (`MBT_PROTO`, our version, the version we saw) that the refused side reads in
-`PeerDisconnectedEvent` to pick between two messages: *update yours* or *theirs*. The rejected
-path returns to the menu instead of falling through to `HandleDisconnectedPeer`, which has
-nothing to clean up for a connection that never established. Any rejection payload that is
-absent, malformed, or untagged falls through to the ordinary disconnect path.
+`ConnectionRequestEvent` is not raised in this topology. After NAT introduction **both** peers
+call `netManager.Connect` at each other — the host's own log shows `Connecting...` before
+`Host: Client connected`. That is a simultaneous cross-connect, and LiteNetLib 1.3.5 reconciles
+it inside `NetPeer.ProcessConnectRequest` (`ConnectRequestResult.P2PLose` / `Reconnection` /
+`NewConnection` are all present in the shipped DLL). When a peer object already exists for the
+remote endpoint in `Outgoing` state, the incoming connect is matched against that attempt and
+the connection-request handler is skipped entirely.
 
-**This is a hard break with every shipped release.** Existing builds send `"yourKey"` and are
-now refused, which is the point of the gate — but it means the first release carrying this
-cannot play with 5.1.0 or earlier at all, and the refusal is one-directional in the log: the
-old build has no code to read the rejection payload, so its player still sees a plain timeout.
-Only the updated side gets the readable message.
+The tell was already in the first host log captured for P1-7, before any of this was written:
+a successful two-player session contains **no** `Got a connection request from remote` line,
+even though that log statement predates the version gate. The handler has never run on this
+path.
 
-### Not covered: relay mode
+The connect key is therefore write-only. Any gate that depends on reading it — including the
+`request.Reject` payload and the "which side is out of date" message built on top of it — is
+dead code in the NAT-punch flow.
 
-The gate lives on the direct peer-to-peer connect path only. **In relay mode two peers never
-exchange a `ConnectionRequest` with each other** — each connects to `RendezVousServer` and the
-server forwards packets between them, so there is no peer-to-peer handshake to validate.
+`ConnectionRequestEvent` still fires for a cold inbound connection with no matching outgoing
+attempt, so the code is not harmful, just ineffective. **Do not delete it and assume the
+problem is gone; it was never solved.**
 
-The relay connect key could not be reused for this either: `RendezVousServer` parses it
-strictly as `id|endpoint|RELAY` (`RendezVousServer.cs:311-328`) and rejects anything whose
-third part is not `RELAY`, so the version cannot ride along without a coordinated server
-deploy.
+### Reverted
 
-Closing this needs either an application-level version exchange as the first message after
-connect — which means a new `[MemoryPackUnion]` tag, and an old peer hitting an unknown tag
-throws in the deserializer rather than reporting a version mismatch — or the Steamworks lobby
-metadata approach below, which is the cleaner one. Left undone deliberately: the P2P gate is
-what unblocks P1-2, and a half-working relay gate would be worse than a documented gap.
+`src/common/Protocol.cs`, the `ConnectionRequestEvent` validation, the rejection payload and
+its three localization strings were all backed out once the gate was disproved. The two
+`//TODO` comments about the connect key are replaced with comments recording *why* a gate does
+not belong there, so the next reader does not re-derive this.
 
-### Interaction with the Steamworks migration
+Also note the relay topology, which the connect-key approach could not have covered either:
+**two relayed peers never exchange a `ConnectionRequest` with each other.** Each connects to
+`RendezVousServer` and the server forwards packets between them. The relay connect key cannot
+carry a version either — `RendezVousServer` parses it strictly as `id|endpoint|RELAY`
+(`RendezVousServer.cs:311-328`) and rejects anything whose third part is not `RELAY`, so
+riding along needs a coordinated server deploy.
 
-This gets *easier* after the migration — publish the protocol version as lobby metadata via
-`SteamMatchmaking.SetLobbyData` and filter incompatible lobbies out of the browser before
-anyone connects. Do the LiteNetLib version now anyway; it is small and it unblocks P1-2.
+### Where this goes instead: Steamworks lobby metadata
+
+**Decision: deferred to the Steamworks migration.** Publish the protocol version as lobby
+metadata via `SteamMatchmaking.SetLobbyData` and filter incompatible lobbies out of the browser
+before anyone connects. That is strictly better than anything achievable on the LiteNetLib
+path: it works for both direct and relayed sessions, it needs no new `[MemoryPackUnion]` tag,
+and an incompatible lobby is never joined rather than being joined and then torn down.
+
+Two requirements carried over from this attempt, both settled:
+
+- **Treat silence as a mismatch.** A peer that publishes no protocol version is an old build
+  and must be refused, not accepted by default. This is the only way a new host rejects a
+  5.1.0 client — and it means the first release carrying the gate cannot play with any earlier
+  version, which needs a loud changelog note rather than a quiet one.
+- **Do not gate on the plugin's semantic version.** Two releases differing only in gameplay or
+  UI stay wire-compatible; bump the protocol number only when a type under `Messages/` changes.
+
+The intermediate option — an application-level handshake message exchanged after connect —
+was considered and rejected. It needs a new union tag, an old peer hitting an unknown tag
+throws in the deserializer rather than reporting a mismatch, and rejecting old builds requires
+either a disconnect timer (which can fire wrongly on a laggy link and kill a legitimate
+player) or a new gate at lobby start. Not worth it for a stopgap that Steamworks removes.
+
+### Consequence for P1-2
+
+P1-2 adds a field to `Specific`, and this entry was supposed to unblock it. **It does not.**
+Until the Steamworks gate exists, any change to a type under `Messages/` is an undetectable
+break between mod versions — so P1-2 either waits, or ships knowing that a mismatched pair
+desyncs silently rather than refusing to connect.
 
 ### Test
 
-Build two plugin versions with different `Protocol.Version`. Confirm the join is refused with
-a readable message rather than silently proceeding, and that the message names the correct
-side as out of date in both directions.
-
-Then confirm the gate does **not** fire on the normal path: two peers on the same build must
-still connect. The version is checked on every direct connection, so a mistake here breaks all
-multiplayer rather than failing quietly — test the matching case first.
-
-Relay mode cannot be tested for this, since it is ungated (above). Force it (IPv6, or block the
-hole-punch) and confirm the session still forms — the gate must not have broken the relay path
-as a side effect.
+There is nothing to test at present; the code is reverted. When the Steamworks gate is built:
+confirm an incompatible lobby is filtered out of the browser rather than joined and dropped,
+confirm a lobby publishing no version is treated as incompatible, and confirm two peers on the
+same build still match — test the matching case first, since a mistake here breaks all
+multiplayer rather than failing quietly.
 
 ---
 
