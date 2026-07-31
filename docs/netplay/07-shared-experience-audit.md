@@ -62,6 +62,7 @@ Two properties of that design matter more than any individual bug:
 
 ## Findings
 
+<a name="se-1"></a>
 ### SE-1 — a stale `forceClose` makes the next round unsatisfiable — CONFIRMED
 
 **This is the mechanism behind the reported symptom.**
@@ -92,6 +93,7 @@ are stuck. And they are freed by the *next* round, because the stale-flag peer e
 again, satisfying the host's barrier — which is still holding the previous round's counts, since
 nothing cleared those either.
 
+<a name="se-2"></a>
 ### SE-2 — the barrier survives teardown and stage changes — CONFIRMED
 
 `closedEncounterPerPlayer` and `forceClose` were cleared **only** by a successful release.
@@ -100,6 +102,7 @@ not touch them. A session that ended mid-encounter therefore poisoned the next o
 direction — instant release with nobody reporting, or a barrier that can never complete. It also
 explains reports where only a full game restart recovers.
 
+<a name="se-3"></a>
 ### SE-3 — the last player to choose is shown "Waiting…" for a round that is over — CONFIRMED
 
 `synchronizationService.RewardFinished()` can complete the round **synchronously**: on the host it
@@ -112,10 +115,12 @@ has already been released.
 Cosmetically this is the "stuck" screen players report even when the game has resumed. It also
 leaves `activeEncounterWindow` inactive and the particle renderers disabled.
 
+<a name="se-4"></a>
 ### SE-4 — no failsafe: any hole is permanent — CONFIRMED (this is upstream #88's request)
 
 Nothing bounded the wait. Every hole above, and any not yet found, becomes an unrecoverable run.
 
+<a name="se-5"></a>
 ### SE-5 — a release can be generated for a round nobody is in — CONFIRMED
 
 `IsClosable()` stays true from the moment the count is met until something clears it, and both the
@@ -127,6 +132,7 @@ window immediately — losing that player's pick.
 This is the likeliest explanation for upstream #37's first complaint: *"if player1 selects a chest,
 he can not wait for the random selection or stop it"* while player 2 is pressing buttons.
 
+<a name="se-6"></a>
 ### SE-6 — `IsClosable()` counts every player, including ones that cannot report — CONFIRMED, not fixed
 
 `closedEncounterPerPlayer.Count >= playerManagerService.GetAllPlayers().Count()`. The count is
@@ -139,6 +145,7 @@ never reaches an encounter is still counted as a participant.
 persists, that peer never joins the round. With the failsafe in place this now resolves in
 `WaitFailsafeSeconds`; without a round identity it cannot be fixed properly.
 
+<a name="se-7"></a>
 ### SE-7 — shared XP is a last-writer-wins absolute value — CONFIRMED, not fixed
 
 `PlayerXpAddXp` sends the sender's **absolute** `xp` and `leftOverXp`; `OnReceivedAddXp` overwrites
@@ -153,6 +160,7 @@ The fix is to send the *delta* and have each peer add it (the message already ca
 or to make the host authoritative for the shared XP total. Both change semantics enough to want a
 playtest, and the second changes the wire contract; neither is done here.
 
+<a name="se-8"></a>
 ### SE-8 — `OnCloseEncounter` dereferenced the UI unguarded — CONFIRMED
 
 `UiManager.Instance.encounterWindows.encounterInProgress` runs from a network callback, so it can
@@ -247,13 +255,99 @@ fork has already diverged.
 | **#80** — "waiting for other players stuck" | No log in the issue, but the title is SE-1's exact symptom. Expect the failsafe to convert it into a 20s stall; if it still occurs afterwards, the failsafe log line names the peer. |
 | **#81, #76** — shared-experience chest soft-lock (both closed upstream) | Same family. Closed upstream without a mechanism being named, so treat them as evidence the symptom recurs rather than as fixed. |
 | **#77** — random freezes with IL2CPP + shared experience | Consistent with the barrier, but "random freeze" also covers the main-thread stalls this fork has been fixing elsewhere. Not attributable without a log. |
-| **#74** — shared XP breaks after many levels | **SE-7**: last-writer-wins on an absolute XP value discards concurrent pickups. Mechanism identified, **not fixed** — the fix changes merge semantics and wants a playtest. |
+| **#74** — shared XP breaks after many levels | ⚠️ **Reassessed after reading the issue body — the first assessment here was wrong.** It is a barrier freeze, not XP arithmetic. Full analysis in [SE-10](#se-10). |
 | **#88 (2nd item)** — quantity tome / projectile-count shrine do nothing for guests | Not shared-experience. Not evaluated in this audit. Starting point: the projectile patches index by `projectileIndex` against `attackQuantity` (`ProjectileAxePatches.CalculateAngleOffset`), and remote spawns are reconstructed from the sender's message rather than re-simulated, so a stat that changes projectile *count* is the kind that would not survive that path. Needs its own investigation. |
 | **#88 (3rd item)** — graveyard final boss cannot be damaged by guests | Not shared-experience. Damage authority — `Plugin.CAN_DAMAGE_ENEMIES` and the boss-room patches — is the place to look. Related to **#66** ("one player cannot see boss", closed). Not evaluated. |
 | **#91** — guest stuck at "waiting for host", softlock after starting map | Lobby/handshake, not the encounter barrier. Overlaps this fork's own open work on the two disconnect paths racing ([P1-8](01-critical-fixes.md#p1-8)). Not evaluated. |
 | **#90** — progression only saved for the host | This fork already fixed a defect in this area: [P0-5](01-critical-fixes.md#p0-5), the netplay flag that `SaveManagerPatches` reads was never cleared on teardown, so **singleplayer kept skipping saves after any netplay session**. That is a superset of the reported symptom for the guest. Worth re-testing here before treating it as open; note `ModConfig.AllowSavesDuringNetplay` also exists. |
 | **#86** — crash on startup on Linux with BepInEx | Environment, not netplay. See [`../PROTON_SETUP.md`](../PROTON_SETUP.md). |
 | **#83** — error while hosting/connecting (closed) | Matchmaking. Not evaluated. |
+
+---
+
+<a name="se-10"></a>
+## SE-10 — why the freeze correlates with level count (upstream #74)
+
+**This entry exists to correct an error in the table above.** #74 was first assessed from its
+title, "Shared XP breaks after many levels", and mapped to [SE-7](#se-7) — the XP merge rule. The
+issue body says something else:
+
+> "after levelling up many many times e,g 100-200, the game eventually desyncs i guess? and we both
+> freeze" … both players stuck on "waiting for other player to make choice" after selecting
+> upgrades, preventing the run from finishing.
+
+That is the **encounter barrier**, not XP arithmetic. The XP defect in SE-7 is real and separate;
+it is not what #74 reports. The lesson is the one this repo keeps relearning: read the report, not
+its title.
+
+### Why "after 100-200 level-ups" and not before
+
+**Every level-up is a barrier round.** With shared experience each player's pickups feed everyone's
+XP, so the round rate is roughly the whole party's pickup rate. By level 100+ the rounds are
+near-continuous, and two things that are unlikely per-round become near-certain:
+
+1. **SE-1's trigger.** The release path exits early — leaving `forceClose` set — when the peer's
+   `rewardQueue` is non-empty at that moment. The faster level-ups arrive, the more likely a
+   release lands on a peer that still has one queued. Once per run is enough.
+2. **Multi-level jumps.** This is where [SE-7](#se-7) feeds in, as a *cause* rather than the
+   symptom. `OnReceivedAddXp` overwrites the receiver's absolute XP with the sender's. A peer whose
+   value was behind therefore jumps forward by however much it had missed, which can cross several
+   level thresholds at once, firing a burst of `AddEncounter` calls — all queued, since one is
+   already in progress. That is precisely the non-empty-queue state SE-1 needs.
+
+So SE-7 and SE-1 are one failure chain: a merge rule that produces bursts, feeding a release path
+that mishandles bursts. Fixing either weakens the chain; fixing SE-7 alone would not have closed
+#74, and mapping #74 to SE-7 alone (as the table originally did) would have led to the wrong fix.
+
+**UNVERIFIED:** that `PlayerXp.AddXp` processes several level thresholds in one call is inferred
+from how the mod uses it (`AddXp(0)` after overwriting the total is only meaningful if the method
+re-evaluates thresholds). The stripped interop assemblies have no body. Check against the dump
+before relying on it.
+
+### Is #74 fixed on this branch?
+
+| Component of #74 | Status |
+|---|---|
+| **The run-ending part** — "we both freeze", unrecoverable | **Bounded, not fixed.** [SE-4](#se-4)'s 20s failsafe releases both peers and logs. A permanent freeze is no longer reachable, whatever the cause. |
+| The most level-rate-sensitive poisoning path | **Fixed** — SE-1. |
+| Barrier state surviving stage changes and sessions | **Fixed** — SE-2. |
+| Release-during-release leaving a peer on a dead "waiting" screen | **Fixed** — SE-3. |
+| NRE in the release path poisoning the barrier | **Fixed** — SE-8. |
+| **Root cause: no round identity** | **Not fixed** — SE-5, SE-6. Needs the wire change described above. |
+| **XP merge producing the bursts** | **Not fixed** — SE-7. |
+
+**Verdict: not resolved, but no longer run-ending — pending in-game confirmation.** None of this
+has been built or played. The expected change in behaviour is that #74's "we both freeze and the
+run is over" becomes "a 20-second stall, then play continues", with
+`Shared-experience failsafe fired after …s` in the log each time.
+
+**That log line is the measurement.** At level 100+ in a 2-3 player shared-experience run:
+
+- **absent** → SE-1 was the whole of #74 on this fork and the barrier is healthy;
+- **present but rare** → a residual attribution hole; the round id (SE-5) is the fix, and the line
+  names the peer it happened on;
+- **present often** → the barrier is still being poisoned every few rounds; do not ship shared
+  experience on the failsafe alone, and prioritise the round id.
+
+### Recommended next step, not taken here
+
+Make `OnReceivedAddXp` apply the **delta** (`Amount`, already on the message) instead of
+overwriting with the absolute `Xp`. It converges — every peer sees every delta exactly once, over
+`ReliableOrdered`, with the host relaying to everyone but the sender — and it removes the
+multi-level bursts that feed SE-1.
+
+Two things to handle when doing it:
+
+- **Ignore an `AddXp` whose `OwnerId` is the local player.** Under absolute semantics a copy
+  echoed back to the sender is a harmless no-op; under delta semantics it double-counts
+  permanently. The relay's sender-exclusion filter is UNVERIFIED (`RelayEnvelope.ToFilters`, open
+  item 9 in [`06-session-handoff.md`](06-session-handoff.md)), so this is not hypothetical.
+- **Deltas cannot self-heal.** The absolute value silently repairs any divergence on the next
+  pickup; a delta stream does not. That is the trade, and it is the right one only because the
+  channel is reliable and ordered and there is no mid-run join.
+
+It is left out of this branch deliberately: it changes progression pacing, and landing it in the
+same build as the barrier fixes would make the playtest above unreadable.
 
 ---
 
@@ -274,6 +368,10 @@ three ([`06-session-handoff.md`](06-session-handoff.md)).
    stage/run behaves normally — neither instant nor stuck.
 4. **#93** (non-shared experience): open chests while teleporting/unable to input, then open another
    chest. **Expected:** no `[chest #93]` diagnostic line, no NRE in `ChestWindowUi.Open`.
+5. **#74's condition** ([SE-10](#se-10)): a long shared-experience run, past level 100. This is the
+   one that needs *duration* rather than a specific action — the defect is a per-round probability,
+   so it only shows up once the rounds are near-continuous. Count the
+   `Shared-experience failsafe fired` lines per stage; that number is the finding, whatever it is.
 
 Collect all three logs. The lines that matter: `Shared-experience failsafe fired`, `[chest #93]`,
 and anything from `OnCloseEncounter`.
