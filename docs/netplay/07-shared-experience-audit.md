@@ -552,6 +552,96 @@ reads as two issues in one report.
 
 ---
 
+## Fix order
+
+The remaining work is not a list to burn down in any order — three later decisions are *gated on
+data this branch produces*, and two of the changes will confound each other's playtest if they ship
+together. Recommended sequence, with the reason each step is where it is.
+
+### 0. Build and play what is already here. Change nothing first.
+
+Everything on this branch is unbuilt and unplayed, and **three open questions are answered for free
+by one session**:
+
+| Log line | Decides |
+|---|---|
+| `Shared-experience failsafe fired after …s` — how often, per stage | whether [SE-5](#se-5)'s round identity is urgent or merely correct |
+| `[chest #81]` | whether [SE-12](#se-12)'s "only banish" half is already fixed by [P1-9](01-critical-fixes.md#p1-9), or needs the dump |
+| `[chest #93]` with `b_open=False` | whether [SE-9](#se-9) was really #93's NRE, or a different field is |
+
+Adding anything before this makes a failure ambiguous, and makes the failsafe counter — the one
+quantitative signal this area has ever had — meaningless as a baseline.
+
+**Exit criteria:** it builds; a 3-player shared-experience run reaches stage 2; you have the three
+logs.
+
+### 1. Whatever the build breaks.
+
+Stated as its own step because it is the only certainty: 20+ commits, no compiler in the
+environment that wrote them. `scripts/checks/csharp_static_checks.py` covers syntax and block
+scope, nothing else. The signature changes to look at first are listed in
+[`06-session-handoff.md`](06-session-handoff.md).
+
+### 2. [SE-7](#se-7) — shared XP as a delta.
+
+**Why here, and not later:** it is small, it is independent of the barrier, and its one prerequisite
+is already done — the duplicate-delivery guard, which landed with the gold path in
+[SE-11](#se-11) and is the same guard XP needs. It also removes the multi-level bursts that feed
+[SE-1](#se-1), so it *reduces* the load on the barrier before the barrier is redesigned.
+
+**Why alone in a build:** it changes progression pacing. Shipped alongside anything else, a report
+of "levelling feels different" cannot be attributed.
+
+**Exit criteria:** two peers' level and XP totals stay identical over a full run; the failsafe count
+does not increase.
+
+### 3. [SE-12](#se-12)'s "only banish" half — but only in the branch the data picks.
+
+- `[chest #81]` **appeared** → P1-9 is the fix; confirm the symptom is gone and close it. Cheap.
+- `[chest #81]` **absent and chests still misbehave** → the hypothesis is wrong. This becomes a
+  reverse-engineering task against `dump.cs` (what makes `ChestWindowUi` offer banish only), not a
+  netcode one, and it should be scheduled as such rather than guessed at. Three issues have already
+  been closed on guesses here.
+
+### 4. [SE-5](#se-5) + [SE-6](#se-6) — round identity. The actual root cause.
+
+Last of the code work, deliberately:
+
+- it is the largest change and the only one that touches the wire (append new union tags —
+  `EncounterClosedV2` / `CloseEncounterV2` — rather than adding fields to the existing messages,
+  which is the positional-corruption hazard);
+- by then the load-side confounder (XP bursts) is gone, so the failsafe count is a clean
+  before/after measurement of whether round identity actually closed the remaining holes;
+- **SE-6 falls out of it and should not be done separately.** Once the host opens a numbered round
+  it can name the participant set at the same moment, which is the only non-racy way to answer "who
+  is expected to report". Fixing SE-6 on its own — e.g. counting only players with an encounter
+  open — replaces one race with another.
+
+**Exit criteria:** the failsafe stops firing. That is the whole point of the ordering: after step 4
+the failsafe should be dead code in practice, and if it still fires, something is left.
+
+### 5. Only then, reconsider the failsafe itself.
+
+Not before. Once it is provably unreachable, the choice is to lower the 20s or promote its log from
+a warning to an error — the *absence* of the line is the health signal. **Do not remove it.** The
+history in this document is four separate softlock issues over four months, three of them closed
+without a mechanism; the failsafe is the only thing that makes the next unknown one survivable
+rather than run-ending.
+
+### Two rules that apply across all of it
+
+**One fix per release, with its changelog entry.** Upstream's issue history is hard to attribute
+precisely because it is not: #81 was filed against 4.0.1 while 4.0.3 was already out, and the
+"multiple encounter" fix that *introduced* [SE-1](#se-1) shipped in the release that claimed to
+prevent deadlocks. A player report is only useful if it names a version that means one thing.
+
+**Leave the opt-out allowlist alone until step 4.** The hand-enumerated cases in
+`OnReceivedInteractableUsed` ([SE-11](#se-11)) are load-bearing today. They should be re-derived
+*after* round identity exists — at that point "who is in this round" is explicit and the allowlist
+can be replaced by it, rather than being pruned on a hunch beforehand.
+
+---
+
 ## How to test this
 
 Shared experience, **3 players** — two is not enough, for the same reason the disconnect work needed
