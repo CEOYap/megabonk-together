@@ -11,6 +11,7 @@ an environment with no .NET SDK. Build and playtest each one.
 | ID | Title | Severity | Effort | Transport-independent |
 |---|---|---|---|---|
 | [P0-0](#p0-0) | Steam upload suppression unverified — ban risk | Critical | S | yes |
+| [P0-6](#p0-6) | Reviving a disconnected player's coffin corrupts the rest of the run — **FIXED** | Critical | S | yes |
 | [P0-5](#p0-5) | Netplay flag never cleared on teardown — singleplayer keeps taking the netplay path | Critical | XS | yes |
 | [P0-1](#p0-1) | Shrine/pylon/lamp claim clobbering locks the object permanently | Critical | S | yes |
 | [P0-2](#p0-2) | `KeyNotFoundException` in every charging stop path | Critical | S | yes |
@@ -20,7 +21,7 @@ an environment with no .NET SDK. Build and playtest each one.
 | [P1-2](#p1-2) | Legendary (golden) shrine state not synced | Medium | XS | yes |
 | [P1-3](#p1-3) | No protocol version gate — mismatched builds corrupt sessions | High | M | mostly |
 | [P1-4](#p1-4) | `GetAllPlayersAlive()` allocates on every call, including per-tick paths — **FIXED** | Medium | S | yes |
-| [P1-5](#p1-5) | ~~Damage ownership misattributed through shared static `DamageContainer`s~~ **dead code, deleted; symptom unattributed** | — | — | — |
+| [P1-5](#p1-5) | ~~Damage ownership misattributed through shared static `DamageContainer`s~~ **every mechanism eliminated in-game; symptom unattributed** | — | — | — |
 | [P1-6](#p1-6) | `ReTargetEnemies` throws on an empty alive-set, aborting the death handler — **FIXED**, plus 4 more sites via P1-4 | Medium | XS | yes |
 | [P1-7](#p1-7) | One destroyed `NetPlayer` aborts `Reset()`'s destroy loop, orphaning the rest | Medium | XS | yes |
 | [P2-1](#p2-1) | Dangling transform hack is silent | Low | XS | yes |
@@ -1382,6 +1383,35 @@ decrement that would go negative *while something was live* increments `UNBALANC
 harmfulness still unmeasured. `UNBALANCED-UNSET` is the number that settles it; it did not exist
 during this run. Needs one more 3-player session.
 
+#### SETTLED — negative. The tracker is not the cause either.
+
+That session ran, with all three instances on the current build. A client reported 17 windows:
+
+```
+UNBALANCED-UNSET: 0
+```
+
+Every window, zero. The unbalanced unset — the only mechanism that could take a live attribution
+away from its owner — **never fires**. The `ProjectileBase.HitEnemy` asymmetry is real, produces
+hundreds of `unset-while-clear` per 5s on clients, and is **genuinely harmless**: it only ever
+clears a slot that was already empty.
+
+So every proposed mechanism for P1-5 is now eliminated:
+
+| Mechanism | Verdict |
+|---|---|
+| Shared static `DamageContainer` collapse | Dead code — the value had no consumer |
+| Cross-thread race on `currentPlayerId` | 0 in every window, every machine |
+| `Set()` overwriting a different live id | 0 in every window, every machine |
+| Unbalanced `Unset()` stealing a live id | 0 in every window |
+
+**The originally reported symptom — gold and kill credit landing on the wrong player — remains
+unattributed and unreproduced.** It was never tied to any of these by observation; the link was
+inferred from decompilation. Treat it as an open report with no known cause rather than a
+diagnosed bug, and do not spend more effort here without a fresh in-game reproduction.
+
+The instrumentation is cheap and silent when healthy, so it stays in as a tripwire.
+
 ### Also dead: the `PoolManager` half of this
 
 `PoolManagerPatches.GetAttack_Postfix` reads `ownerId` off a `WeaponBase` and copies it to the
@@ -1692,9 +1722,10 @@ the new session.
 <a name="p2-1"></a>
 ## P2-1 — Dangling transform hack is silent
 
-**Status:** CONFIRMED — instrumented, and the hack is **live, not dead code**: ~144 hits/second
-after a mid-run disconnect in a 3-player session. Owner not yet identified; caller sampling added
-to name it on the next run.
+**Status:** CONFIRMED — **ROOT CAUSE FOUND AND FIXED.** The stale reference was `enemy.target`,
+left pointing at a disconnected peer's destroyed `Rigidbody` because the host never applied its
+own retarget. Caller sampling proved it came from game code, not ours. Fix not yet verified
+in-game.
 **File:** `src/plugin/Patches/Unity/UnityComponent.cs:27-31`
 
 ```csharp
@@ -1808,9 +1839,46 @@ appear as managed frames, so
 - **`no MegabonkTogether frames`** → the access came from game code that we handed a stale
   reference to — a different fix entirely.
 
-One capture per 5s, wrapped in try/catch. Next 3-player run with a mid-run disconnect resolves
-this, and with it investigation target
+One capture per 5s, wrapped in try/catch.
+
+### SOLVED — the host never applied its own retarget
+
+Two further 3-player runs, 57 and 63 report windows, **every one** reading:
+
+```
+Sampled caller: no MegabonkTogether frames (called from game code)
+```
+
+So our code never touched the destroyed object. We handed it to the game. The chain:
+
+1. A peer times out → `playerManagerService.Disconnect` destroys their `NetPlayer` GameObject.
+2. `ReTargetEnemies` rewrites only the **networked** `targetId` in `DynamicData`. It never assigns
+   `enemy.target`.
+3. `ApplyRetargetedEnemies` — the sole assigner of `enemy.target` — was called from exactly one
+   place: `OnReceivedRetargetedEnemies`, the **receive** handler. The host broadcasts that message
+   and does not receive its own broadcast.
+4. So host enemies kept the departed player's destroyed `Rigidbody` as `target`, and Megabonk's
+   own movement code read `target.transform` every update → the fallback → `GameManager.Instance
+   .player.transform`.
+
+Everything the counters showed follows: exclusively `get_transform` (never `get_position`, which
+is what `TargetSwitcher.CanSwitch` would have produced), a game-code caller, and ~144/s rather
+than 600/frame because `Enemy.MyUpdate` is distance-throttled.
+
+**It was also a live gameplay bug, not just log noise.** Those host enemies silently chased the
+*host* via the fallback, while every client believed they targeted someone else.
+
+**Fixed at all three `ReTargetEnemies` call sites** — `OnPlayerDied`, `OnReceivedPlayerDied` and
+`OnReceivedPlayerDisconnected` — each of which had the identical gap. The same "guard the method,
+not the call site" lesson as [P1-6](#p1-6) applies: one defect, three copies.
+
+This also closes investigation target
 [#8](../reverse-engineering/01-investigation-targets.md#8-netplayer-lifetime-and-the-dangling-transform--nice).
+The dangling reference was never a `NetPlayer` field the mod held — it was a `Rigidbody` the mod
+gave to the game and then failed to replace.
+
+**Do not delete the fallback hack yet.** It should now go quiet after a disconnect; confirm that
+before removing it, since it may still cover other paths.
 
 ---
 
@@ -2011,6 +2079,94 @@ guard now makes it redundant rather than wrong.
 Set `CheckForUpdates = false`, launch, and open the main menu. **Expected:** the "disabled" line,
 no `Checking for updates...`, and no error. Then set it back to `true` and confirm the check runs
 and an available update is still offered.
+
+---
+
+<a name="p0-6"></a>
+## P0-6 — Reviving a disconnected player's coffin corrupts the rest of the run
+
+**Status:** CONFIRMED in-game (host + client logs, 3-player session) — FIXED, not yet verified
+**Files:** `src/plugin/Scripts/Interactables/InteractableReviver.cs:71,152`,
+`src/plugin/Services/SynchronizationService.cs` (`OnReceivedSpawnedEnemy`)
+
+Found by playtesting, not by inspection. Not part of the original fork audit.
+
+### Symptom
+
+After a peer disconnects and someone interacts with a coffin belonging to a **departed** player:
+enemies on the clients **stop moving entirely while still dealing contact damage**, and the host's
+and clients' enemy state diverge completely. It does not recover for the rest of the run.
+
+### Root cause — a four-step cascade from one unguarded string interpolation
+
+```csharp
+// InteractableReviver.SpawnEnemy(), before the fix
+Plugin.Instance.CurrentReviver = reviverId;        // process-wide static
+Plugin.Instance.CurrentReviverOwner = ownerId;     // process-wide static
+var enemy = EnemyManager.Instance.SpawnBoss(...);
+enemyManagerService.AddReviverEnemy_Name(enemy, GetFullName());  // ← THROWS
+Plugin.Instance.CurrentReviver = null;             // never runs
+Plugin.Instance.CurrentReviverOwner = null;        // never runs
+```
+
+1. **`GetFullName()` is `GetPlayer(ownerId).Name`, unguarded.** The owner disconnected; their
+   coffin did not. `GetPlayer` returns null → NRE inside a coroutine `MoveNext`.
+2. **The two statics stay latched for the rest of the run**, because the clearing lines sit after
+   the throw with no `finally`.
+3. **Every subsequent enemy spawn on the host** reads them in `OnSpawnedEnemy`:
+   `RebalanceIfNeededReviverEnemy` stops early-returning and rewrites the HP of the next five
+   unrelated enemies (×0.167, ×0.333, ×0.5, ×0.667, ×0.833), and every `SpawnedEnemy` message goes
+   out stamped with a stale `ReviverId`.
+4. **Every client then fails to process every enemy.** `OnReceivedSpawnedEnemy` ran its reviver
+   block *before* registration, with two unguarded derefs — `GetSpawnedObject(...)` before
+   `.GetComponent<>()`, and `reviver?.` on one line followed by bare `reviver.` on the next. The
+   same `GetFullName()` throws, the handler aborts, and the three statements at the end of the
+   method never run:
+
+   ```csharp
+   var interpolator = enemy.gameObject.AddComponent<EnemyInterpolator>();
+   interpolator.Initialize(enemy);                              // ← never runs
+   enemyManagerService.SetSpawnedEnemy(spawnedEnemy.Id, enemy); // ← never runs
+   DynamicData.For(enemy).Set("targetId", ...);                 // ← never runs
+   ```
+
+The game had already instantiated the GameObject, so it is solid and damaging. The mod never
+registered it, so no host snapshot can ever move it. **Frozen, unregistered, still lethal** —
+exactly the reported symptom.
+
+Client evidence: **581 consecutive failures**, enemy id 491 through 1071, each
+`NullReferenceException at InteractableReviver.GetFullName() line 71`. Every enemy from the moment
+of the failed revive onward.
+
+### Fix
+
+Four changes, because each layer failed independently:
+
+1. **`GetFullName()` falls back to the raw id** instead of throwing. A cosmetic name is never worth
+   an exception.
+2. **`SpawnEnemy()` clears the statics in a `finally`.** Legal in an iterator as long as no
+   `yield return` is inside the block, and none is. This is the important one — it converts "one
+   failed revive" back into "one failed revive" instead of a run-ending fault.
+3. **The client's reviver block is fully guarded** — null-checked object, null-checked component,
+   and wrapped in its own `try/catch`.
+4. **It moved to *after* registration.** Ordering is the structural fix: cosmetic decoration must
+   never be able to cost an enemy its interpolator and registry entry.
+
+### Lesson
+
+Two general rules this cost a run to learn, both worth applying elsewhere:
+
+- **Global state set around a call that can throw needs `try/finally`,** always. The blast radius
+  is unbounded and outlives the operation.
+- **Order operations by importance.** Anything cosmetic belongs after everything load-bearing, in
+  its own `try`. Three separate handlers in this codebase have now aborted partway and skipped
+  their most important statement — [P1-6](#p1-6), [P1-7](#p1-7), and this.
+
+### Test
+
+3 players. One dies, leaving a coffin, then disconnects. A remaining player interacts with that
+coffin. **Expected:** the revive fails gracefully with one warning, and enemies keep spawning,
+moving and syncing normally for everyone afterwards.
 
 ---
 

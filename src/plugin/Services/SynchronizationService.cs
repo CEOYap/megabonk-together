@@ -911,12 +911,8 @@ namespace MegabonkTogether.Services
                 Il2CppFindHelper.RuntimeSetSharedMaterials(enemy.renderer, [original, clone]);
             }
 
-            if (spawnedEnemy.ReviverId.HasValue)
-            {
-                var reviver = spawnedObjectManagerService.GetSpawnedObject(spawnedEnemy.ReviverId.Value).GetComponent<InteractableReviver>();
-                reviver?.SetSpawnedEnemy(enemy);
-                enemyManagerService.AddReviverEnemy_Name(enemy, reviver.GetFullName());
-            }
+            // FIX 4/6: the reviver block used to sit here, BEFORE the registration at the end of
+            // this method. It has moved below that registration — see the comment there.
 
             enemy.hp = spawnedEnemy.Hp;
             enemy.controlHp = spawnedEnemy.Hp;
@@ -991,6 +987,41 @@ namespace MegabonkTogether.Services
             enemyManagerService.SetSpawnedEnemy(spawnedEnemy.Id, enemy);
 
             DynamicData.For(enemy).Set("targetId", spawnedEnemy.TargetId);
+
+            // FIX 3/6 + 4/6: reviver naming, moved to AFTER registration and isolated.
+            //
+            // This block used to run before the three lines above, with two unguarded
+            // dereferences: GetSpawnedObject() can return null before .GetComponent<>(), and it
+            // used `reviver?.` on one line then bare `reviver.` on the next. When a reviver's
+            // owner had disconnected, GetFullName() threw, the whole handler aborted here, and
+            // the enemy was therefore never given an EnemyInterpolator and never entered the
+            // registry — so it stood still while remaining solid and damaging on contact.
+            // A 3-player session lost 581 consecutive enemy spawns this way.
+            //
+            // The naming is cosmetic; registration is not. Ordering and the catch make it
+            // impossible for the former to cost the latter again.
+            if (spawnedEnemy.ReviverId.HasValue)
+            {
+                try
+                {
+                    var reviverObject = spawnedObjectManagerService.GetSpawnedObject(spawnedEnemy.ReviverId.Value);
+                    var reviver = reviverObject != null ? reviverObject.GetComponent<InteractableReviver>() : null;
+
+                    if (reviver != null)
+                    {
+                        reviver.SetSpawnedEnemy(enemy);
+                        enemyManagerService.AddReviverEnemy_Name(enemy, reviver.GetFullName());
+                    }
+                    else
+                    {
+                        logger.LogWarning($"Reviver {spawnedEnemy.ReviverId.Value} not found for enemy {spawnedEnemy.Id}; enemy is registered, only its ghost name is missing.");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning($"Could not name the reviver ghost for enemy {spawnedEnemy.Id}: {ex.Message}");
+                }
+            }
         }
 
         public void OnSpawnedProjectile(Il2CppObjectBase proj, uint? owner = null)
@@ -3602,9 +3633,15 @@ namespace MegabonkTogether.Services
                 var allPlayersAliveIdWithout = playerManagerService.GetAllPlayersAlive().Where(p => p.ConnectionId != playerId).Select(p => p.ConnectionId).ToList();
                 var updated = enemyManagerService.ReTargetEnemies(playerId, allPlayersAliveIdWithout);
 
+                // FIX 5/6: apply locally too — see OnReceivedPlayerDisconnected for why. All three
+                // ReTargetEnemies call sites shared this gap; the host's enemy.target was never
+                // updated, only the networked targetId.
+                var updatedList = updated as IList<(uint, uint)> ?? updated.ToList();
+                enemyManagerService.ApplyRetargetedEnemies(updatedList, playerManagerService.GetConnectionIdsAndRigidBodies());
+
                 IGameNetworkMessage message = new RetargetedEnemies
                 {
-                    Enemy_NewTargetids = updated
+                    Enemy_NewTargetids = updatedList
                 };
 
                 udpClientService.SendToAllClients(message, LiteNetLib.DeliveryMethod.ReliableOrdered);
@@ -3647,9 +3684,13 @@ namespace MegabonkTogether.Services
                 var allPlayersAliveIdWithout = playerManagerService.GetAllPlayersAlive().Where(p => p.ConnectionId != died.PlayerId).Select(p => p.ConnectionId).ToList();
                 var updated = enemyManagerService.ReTargetEnemies(died.PlayerId, allPlayersAliveIdWithout);
 
+                // FIX 5/6: apply locally too — see OnReceivedPlayerDisconnected.
+                var updatedList = updated as IList<(uint, uint)> ?? updated.ToList();
+                enemyManagerService.ApplyRetargetedEnemies(updatedList, playerManagerService.GetConnectionIdsAndRigidBodies());
+
                 IGameNetworkMessage message = new RetargetedEnemies
                 {
-                    Enemy_NewTargetids = updated
+                    Enemy_NewTargetids = updatedList
                 };
 
                 udpClientService.SendToAllClients(message, LiteNetLib.DeliveryMethod.ReliableOrdered);
@@ -3836,9 +3877,26 @@ namespace MegabonkTogether.Services
             var allPlayersAliveIdWithout = playerManagerService.GetAllPlayersAlive().Where(p => p.ConnectionId != disconnected.ConnectionId).Select(p => p.ConnectionId).ToList();
             var updated = enemyManagerService.ReTargetEnemies(disconnected.ConnectionId, allPlayersAliveIdWithout);
 
+            // FIX 5/6: apply the retarget locally too, not just broadcast it.
+            //
+            // ReTargetEnemies only rewrites the network "targetId" in DynamicData. The physics
+            // target — enemy.target, a Rigidbody — is set exclusively by ApplyRetargetedEnemies,
+            // which until now ran only on RECEIVERS of this message. The host does not receive
+            // its own broadcast, so its enemies kept pointing at the departed player's destroyed
+            // Rigidbody. Megabonk's own movement code then read target.transform every frame,
+            // which is what drove the dangling-transform fallback to ~144 hits/second after any
+            // disconnect (P2-1) — the sampled caller was consistently "no MegabonkTogether
+            // frames (called from game code)", i.e. we had handed the game a dead reference.
+            //
+            // Side effect worth naming: those host enemies were silently falling back to the
+            // local player's transform, so they chased the host while every client believed they
+            // targeted someone else.
+            var updatedList = updated as IList<(uint, uint)> ?? updated.ToList();
+            enemyManagerService.ApplyRetargetedEnemies(updatedList, playerManagerService.GetConnectionIdsAndRigidBodies());
+
             IGameNetworkMessage message = new RetargetedEnemies
             {
-                Enemy_NewTargetids = updated
+                Enemy_NewTargetids = updatedList
             };
 
             udpClientService.SendToAllClients(message, LiteNetLib.DeliveryMethod.ReliableOrdered);

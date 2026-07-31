@@ -229,6 +229,15 @@ namespace MegabonkTogether.Patches.Unity
                 return;
             }
 
+            // FIX 6/6: obj.Pointer was dereferenced unguarded. UnityEngine.Object.Destroy(null) is
+            // legal and a no-op, so any game code calling it threw an NRE straight out of this
+            // patch into the IL2CPP trampoline — where nothing catches it. Observed twice in a
+            // 3-player session, during a disconnect.
+            if (obj == null)
+            {
+                return;
+            }
+
             var finalOrbManagerService = Plugin.Services.GetService<IFinalBossOrbManagerService>();
             var resultAsObj = IL2CPP.PointerToValueGeneric<GameObject>(obj.Pointer, false, false);
 

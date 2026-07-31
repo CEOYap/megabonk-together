@@ -66,9 +66,18 @@ namespace MegabonkTogether.Scripts.Interactables
             Enemy.A_EnemyDied += enemyDiedDelegate;
         }
 
+        /// <summary>
+        /// FIX 1/6: was `GetPlayer(ownerId).Name`, unguarded. `GetPlayer` returns null once that
+        /// player has disconnected, and their coffin outlives them — so reviving a departed peer
+        /// threw here. Confirmed in a 3-player session: this single NRE latched the reviver
+        /// globals (see <see cref="SpawnEnemy"/>) and cost every client 581 consecutive enemy
+        /// spawns. Falls back to the raw id rather than throwing; a cosmetic name is never worth
+        /// an exception.
+        /// </summary>
         public string GetFullName()
         {
-            return $"{playerManagerService.GetPlayer(ownerId).Name} Ghost";
+            var owner = playerManagerService.GetPlayer(ownerId);
+            return owner != null ? $"{owner.Name} Ghost" : $"Player {ownerId} Ghost";
         }
 
         public override bool CanInteract()
@@ -146,13 +155,35 @@ namespace MegabonkTogether.Scripts.Interactables
 
             chargeFx.SetActive(false);
 
-            Plugin.Instance.CurrentReviver = reviverId;
-            Plugin.Instance.CurrentReviverOwner = ownerId;
-            var enemy = EnemyManager.Instance.SpawnBoss(Actors.Enemies.EEnemy.GhostGrave4, 0, EEnemyFlag.Boss, this.transform.position, 2f);
-            enemyManagerService.AddReviverEnemy_Name(enemy, GetFullName());
+            // FIX 2/6: CurrentReviver / CurrentReviverOwner are process-wide statics read by
+            // SynchronizationService.OnSpawnedEnemy for EVERY enemy spawn. They used to be set
+            // here and cleared four lines later, with an unguarded throw in between — so one
+            // failed revive latched them for the rest of the run, and from then on the host
+            // rebalanced the HP of unrelated enemies and stamped a stale ReviverId onto every
+            // SpawnedEnemy message. Observed in a 3-player session: 581 consecutive enemy spawns
+            // broken on the client.
+            //
+            // try/finally is legal in an iterator as long as no `yield return` sits inside it,
+            // and none does here — the yields are before and after this block.
+            Enemy enemy = null;
+            try
+            {
+                Plugin.Instance.CurrentReviver = reviverId;
+                Plugin.Instance.CurrentReviverOwner = ownerId;
+                enemy = EnemyManager.Instance.SpawnBoss(Actors.Enemies.EEnemy.GhostGrave4, 0, EEnemyFlag.Boss, this.transform.position, 2f);
+                enemyManagerService.AddReviverEnemy_Name(enemy, GetFullName());
+            }
+            finally
+            {
+                Plugin.Instance.CurrentReviver = null;
+                Plugin.Instance.CurrentReviverOwner = null;
+            }
 
-            Plugin.Instance.CurrentReviver = null;
-            Plugin.Instance.CurrentReviverOwner = null;
+            if (enemy == null)
+            {
+                Plugin.Log.LogWarning("Reviver failed to spawn its ghost; skipping decoration.");
+                yield break;
+            }
 
             var renderers = Il2CppFindHelper.RuntimeGetComponentsInChildren<Renderer>(enemy.gameObject, true);
 
