@@ -129,6 +129,7 @@ namespace MegabonkTogether
             ClassInjector.RegisterTypeInIl2Cpp<UpdateAvailableModal>();
             ClassInjector.RegisterTypeInIl2Cpp<ChangelogModal>();
             ClassInjector.RegisterTypeInIl2Cpp<TargetSwitcher>();
+            ClassInjector.RegisterTypeInIl2Cpp<TargetSwitcherManager>();
             ClassInjector.RegisterTypeInIl2Cpp<InteractableReviver>();
             ClassInjector.RegisterTypeInIl2Cpp<NotificationQueueManager>();
 
@@ -220,6 +221,13 @@ namespace MegabonkTogether
             var goNotificationQueueManager = new GameObject("NotificationQueueManager");
             GameObject.DontDestroyOnLoad(goNotificationQueueManager);
             NotificationQueueManager = goNotificationQueueManager.AddComponent<NotificationQueueManager>();
+
+            // PERF 1A: ticks every enemy's TargetSwitcher from one Update instead of ~600 injected
+            // MonoBehaviour Updates per frame. Its Update no-ops while the registry is empty, so it
+            // costs one call per frame in singleplayer.
+            var goTargetSwitcherManager = new GameObject("TargetSwitcherManager");
+            GameObject.DontDestroyOnLoad(goTargetSwitcherManager);
+            goTargetSwitcherManager.AddComponent<TargetSwitcherManager>();
         }
 
         public void AddPrefab(GameObject prefab)

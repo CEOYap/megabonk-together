@@ -85,7 +85,16 @@ namespace MegabonkTogether.Patches.Enemies
                     DynamicData.For(__instance).Set("targetId", host.ConnectionId);
                 }
 
-                var switcher = __instance.gameObject.AddComponent<TargetSwitcher>();
+                // PERF 1A: reuse an existing switcher rather than adding a second one. This method
+                // is InitEnemy's postfix, and enemies are pooled — the Cleanup + renderer re-enable
+                // at the top of this method only make sense for a recycled GameObject — so an
+                // unconditional AddComponent stacked a new TargetSwitcher on the same object every
+                // time it came back out of the pool. Each one ticked independently.
+                var switcher = __instance.gameObject.GetComponent<TargetSwitcher>();
+                if (switcher == null)
+                {
+                    switcher = __instance.gameObject.AddComponent<TargetSwitcher>();
+                }
                 if (__instance.enemyData.enemyName == Actors.Enemies.EEnemy.GhostGrave1
                     || __instance.enemyData.enemyName == Actors.Enemies.EEnemy.GhostGrave2
                     || __instance.enemyData.enemyName == Actors.Enemies.EEnemy.GhostGrave3

@@ -2,7 +2,6 @@ using Assets.Scripts.Actors.Enemies;
 using MegabonkTogether.Services;
 using Microsoft.Extensions.DependencyInjection;
 using MonoMod.Utils;
-using System.Linq;
 using UnityEngine;
 
 namespace MegabonkTogether.Scripts.Enemies
@@ -32,6 +31,15 @@ namespace MegabonkTogether.Scripts.Enemies
             enemy = targetEnemy;
             enemyData = DynamicData.For(enemy);
             ResetTimer();
+
+            // PERF 1A: belt-and-braces. OnEnable below is the intended registration hook, but no
+            // other injected MonoBehaviour in this repo relies on OnEnable, so there is no local
+            // evidence Il2CppInterop wires it. If it does not fire, nothing would ever register and
+            // target switching would silently stop entirely — the exact silent-dead-component
+            // failure the il2cpp skill warns about. StartSwitching is called unconditionally from
+            // Enemy.init_PostFix, so registering here too makes that impossible. Register is
+            // idempotent, so the overlap is free.
+            TargetSwitcherManager.Register(this);
 
             if (pickACloseTarget)
             {
@@ -114,11 +122,47 @@ namespace MegabonkTogether.Scripts.Enemies
             currentTargetNetplayId = closestNetplayId;
         }
 
-        private void Update()
+        /// <summary>
+        /// Position in <see cref="TargetSwitcherManager"/>'s registry, or -1 when unregistered.
+        /// Stored here so removal is O(1) rather than a linear search.
+        /// </summary>
+        internal int RegistryIndex { get; set; } = -1;
+
+        /// <summary>
+        /// 04-performance-and-gc.md item 1A: registration follows Unity's own enable/disable, so a
+        /// pooled enemy being deactivated stops ticking exactly as it did when this was a real
+        /// <c>Update</c>.
+        /// </summary>
+        private void OnEnable()
+        {
+            TargetSwitcherManager.Register(this);
+        }
+
+        private void OnDisable()
+        {
+            TargetSwitcherManager.Unregister(this);
+        }
+
+        /// <summary>
+        /// Unlike OnEnable/OnDisable, private OnDestroy is already used by injected types in this
+        /// repo (NetPlayer, NetPlayersDisplayer), so this path is known to work. The manager also
+        /// drops Unity-null entries defensively when it ticks.
+        /// </summary>
+        private void OnDestroy()
+        {
+            TargetSwitcherManager.Unregister(this);
+        }
+
+        /// <summary>
+        /// Was <c>Update()</c>. Driven by <see cref="TargetSwitcherManager"/> instead, so the
+        /// managed↔native crossing happens once per frame for all enemies rather than once per
+        /// enemy. Body is unchanged apart from taking the delta as a parameter.
+        /// </summary>
+        internal void Tick(float deltaTime)
         {
             if (enemy == null) return;
 
-            timer += Time.deltaTime;
+            timer += deltaTime;
             if (timer >= delay)
             {
                 if (!synchronizationService.HasNetplaySessionStarted()) return;

@@ -193,6 +193,10 @@ namespace MegabonkTogether.Scripts
             Patches.Unity.TransformFallbackDiagnostics.Reset();
             Services.TrackerAttributionDiagnostics.Reset();
 
+            // PERF 1A: drop switcher registrations from the finished session. Their enemies are
+            // gone, so OnDisable may never fire for them.
+            Enemies.TargetSwitcherManager.Clear();
+
             try
             {
                 udpClientService?.Reset();

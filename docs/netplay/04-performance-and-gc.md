@@ -79,10 +79,17 @@ boss-only branch into `InitEnemy`.
 <a name="targetswitcher"></a>
 ## 1. `TargetSwitcher` — the dominant managed cost
 
-**File:** `src/plugin/Scripts/Enemies/TargetSwitcher.cs`
-**Status:** CONFIRMED (allocation sites), LIKELY (that this dominates)
+**Files:** `src/plugin/Scripts/Enemies/TargetSwitcher.cs`,
+`src/plugin/Scripts/Enemies/TargetSwitcherManager.cs`
+**Status:** CONFIRMED (allocation sites), LIKELY (that this dominates) — **A and B FIXED, C open.
+Neither fix is measured.**
 
-Not touched by any fork. This is the biggest remaining win.
+Not touched by any fork. This was the biggest remaining win.
+
+> **No profiler capture has been taken, before or after.** Both fixes are justified structurally
+> — removing ~600 interop crossings per frame, and removing four allocations per switch — but
+> "this dominates" remains LIKELY, and the improvement is unquantified. A GC Alloc + CPU capture
+> during a final swarm at 4+ players is still the outstanding task for this whole document.
 
 ### Problem A — one `MonoBehaviour.Update` per enemy
 
@@ -133,6 +140,56 @@ internal sealed class TargetSwitcherManager : MonoBehaviour
 This also removes 600 injected-MonoBehaviour instances, which is itself a memory and
 `AddComponent` cost at spawn.
 
+### FIXED — not measured
+
+`TargetSwitcherManager` (`src/plugin/Scripts/Enemies/TargetSwitcherManager.cs`) ticks every
+registered switcher from one `Update`. `TargetSwitcher.Update` became `internal void Tick(float)`,
+so the managed↔native crossing happens once per frame instead of once per enemy.
+
+**Three deliberate departures from the sketch above.**
+
+**1. No frame-slicing.** The sketch proposed 1/4 of the list per frame with a compensated delta.
+The cost being removed is the interop crossing, not the arithmetic — `Tick` is an add and a
+compare for all but a handful of entries, and delays are randomised 2–6s so firings already
+spread themselves. Slicing would add cursor bookkeeping and an approximated delta for no measured
+gain. Slice later if profiling says the loop itself matters.
+
+**2. `TargetSwitcher` stays a MonoBehaviour** rather than becoming a plain object. Keeping it a
+component means Unity's own enable/disable still governs it, so a pooled enemy being deactivated
+stops ticking exactly as before. As a plain object in a list, that would need an explicit
+`activeInHierarchy` check per entry per frame — a marshalled call, reintroducing the cost being
+removed. The consequence is that the sketch's secondary win (600 fewer component instances) is
+**not** realised.
+
+**3. Registration is doubled up.** `OnEnable` is the intended hook, but **no other injected
+MonoBehaviour in this repo uses `OnEnable`/`OnDisable`**, so there is no local evidence
+Il2CppInterop wires them. If `OnEnable` silently did not fire, nothing would register and target
+switching would stop entirely — a silent dead component. So `StartSwitching` also registers
+(it is called unconditionally from `Enemy.init_PostFix`), and `Register` is idempotent.
+`OnDestroy` unregisters as well; unlike `OnEnable`, private `OnDestroy` is already relied on by
+`NetPlayer` and `NetPlayersDisplayer`, so that path is known-good. The manager also drops
+Unity-null entries when it ticks.
+
+Registry removal is an O(1) swap-remove using an index stored on the switcher — a linear
+`List.Remove` would be O(n) per despawn, and despawns are frequent at a swarm.
+`NetworkHandler.ResetNetworking()` clears the registry between sessions.
+
+### Found while fixing: switchers accumulated on pooled enemies
+
+`Enemy.init_PostFix` called `gameObject.AddComponent<TargetSwitcher>()` **unconditionally**, and
+nothing ever removed one. Enemies are pooled — the same method opens by calling
+`EnemiesDistanceThrottler.Cleanup(GetInstanceID())` and force-re-enabling the renderer, neither
+of which makes sense except for a recycled GameObject — so every time an enemy came back out of
+the pool it gained *another* `TargetSwitcher`, each ticking independently and each fighting the
+others to set `targetId`.
+
+That makes the "600 `Update` calls" figure a floor rather than the real number, and it means the
+enemy's target was being reassigned several times per switch interval by competing switchers.
+
+Now guarded with a `GetComponent` first. **Pooling is inferred, not confirmed against the dump —
+LIKELY, not CONFIRMED.** The guard is correct either way; if enemies are not pooled, it is a
+no-op costing one `GetComponent` per spawn.
+
 ### Problem B — allocations per target switch
 
 ```csharp
@@ -155,6 +212,9 @@ var alives = playerManagerService.GetAllPlayersAliveNonAlloc();
 if (alives.Count == 0) return;
 var selectedPlayer = alives[Random.Range(0, alives.Count)];
 ```
+
+**FIXED** alongside [P1-4](01-critical-fixes.md#p1-4), in both `PickANewTarget` and
+`PickACloseTarget`. Not measured.
 
 ### Problem C — `PickACloseTarget` is O(enemies × players)
 
