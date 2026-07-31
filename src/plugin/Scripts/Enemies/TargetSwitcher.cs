@@ -19,6 +19,11 @@ namespace MegabonkTogether.Scripts.Enemies
         private IPlayerManagerService playerManagerService;
         private ISynchronizationService synchronizationService;
         private DynamicData enemyData;
+        // PERF 1C: every `enemy.transform` is a native property call through interop, and the
+        // distance checks below did one per candidate player, per switch, per enemy. Refreshed in
+        // StartSwitching, which is the only place `enemy` changes — a Transform outlives pooling
+        // and deactivation, so the pair cannot drift apart.
+        private Transform enemyTransform;
 
         private void Awake()
         {
@@ -30,6 +35,7 @@ namespace MegabonkTogether.Scripts.Enemies
         {
             enemy = targetEnemy;
             enemyData = DynamicData.For(enemy);
+            enemyTransform = targetEnemy.transform;
             ResetTimer();
 
             // PERF 1A: belt-and-braces. OnEnable below is the intended registration hook, but no
@@ -75,7 +81,15 @@ namespace MegabonkTogether.Scripts.Enemies
 
             if (playerManagerService.IsRemoteConnectionId(selectedPlayer.ConnectionId))
             {
+                // A player can be in the alive set with no spawned NetPlayer — most obviously in
+                // the window where one peer has processed a disconnect and another has not.
+                // Dereferencing it here would NRE on a path that runs per enemy every 2-6s.
                 var netplayer = playerManagerService.GetNetPlayerByNetplayId(selectedPlayer.ConnectionId);
+                if (netplayer == null || netplayer.Model == null)
+                {
+                    return; // keep the existing target rather than clearing it
+                }
+
                 currentTarget = (netplayer.Model.transform, netplayer.Rigidbody);
             }
             else
@@ -93,16 +107,32 @@ namespace MegabonkTogether.Scripts.Enemies
             var alives = playerManagerService.GetAllPlayersAliveNonAlloc();
             if (alives.Count == 0) return;
 
-            var closestDistance = float.MaxValue;
+            if (enemyTransform == null)
+            {
+                return;
+            }
+
+            // PERF 1C: one native position read for the enemy instead of one per candidate, and
+            // squared distances throughout — comparing distances never needs the square root that
+            // Vector3.Distance takes.
+            var enemyPosition = enemyTransform.position;
+
+            var closestSqrDistance = float.MaxValue;
             (Transform transform, Rigidbody rigidBody) closestTarget = (null, null);
-            
+
             uint closestNetplayId = 0;
             foreach (var player in alives)
             {
                 (Transform transform, Rigidbody rigidBody) target;
                 if (playerManagerService.IsRemoteConnectionId(player.ConnectionId))
                 {
+                    // Same guard as PickANewTarget: alive does not imply spawned.
                     var netplayer = playerManagerService.GetNetPlayerByNetplayId(player.ConnectionId);
+                    if (netplayer == null || netplayer.Model == null)
+                    {
+                        continue;
+                    }
+
                     target = (netplayer.Model.transform, netplayer.Rigidbody);
                 }
                 else
@@ -110,14 +140,20 @@ namespace MegabonkTogether.Scripts.Enemies
                     target = (GameManager.Instance.player.transform, GameManager.Instance.player.playerMovement.rb);
                 }
 
-                var distance = Vector3.Distance(enemy.transform.position, target.transform.position);
-                if (distance < closestDistance)
+                var sqrDistance = (enemyPosition - target.transform.position).sqrMagnitude;
+                if (sqrDistance < closestSqrDistance)
                 {
-                    closestDistance = distance;
+                    closestSqrDistance = sqrDistance;
                     closestTarget = target;
                     closestNetplayId = player.ConnectionId;
                 }
             }
+
+            if (closestTarget.transform == null)
+            {
+                return; // nobody resolvable; leave whatever target was already set
+            }
+
             currentTarget = closestTarget;
             currentTargetNetplayId = closestNetplayId;
         }
@@ -184,10 +220,12 @@ namespace MegabonkTogether.Scripts.Enemies
 
         private bool CanSwitch()
         {
-            if (enemy.transform == null) return false;
+            if (enemyTransform == null) return false;
 
-            float distance = Vector3.Distance(enemy.transform.position, currentTarget.transform.position);
-            return distance <= switchMaxDistance;
+            // PERF 1C: squared comparison, and the cached transform rather than a native
+            // `enemy.transform` fetch. This runs per enemy on every switch attempt.
+            float sqrDistance = (enemyTransform.position - currentTarget.transform.position).sqrMagnitude;
+            return sqrDistance <= switchMaxDistance * switchMaxDistance;
         }
 
         private void ResetTimer()

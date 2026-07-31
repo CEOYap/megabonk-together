@@ -102,12 +102,22 @@ namespace MegabonkTogether.Services
 
         public void ApplyRetargetedEnemies(IEnumerable<(uint, uint)> enemy_NewTargetids, IEnumerable<(uint, Rigidbody)> playerId_rigidbody)
         {
+            // PERF 04 item 4: this was a FirstOrDefault over the player list *per enemy* — with a
+            // closure allocated each time — making the whole apply O(enemies x players). It runs on
+            // the death and disconnect paths, at up to 600 enemies, which is a hitch at exactly the
+            // worst moment. Index the players once instead.
+            var rigidbodyByPlayerId = new Dictionary<uint, Rigidbody>();
+            foreach (var (playerId, rigidbody) in playerId_rigidbody)
+            {
+                rigidbodyByPlayerId[playerId] = rigidbody;
+            }
+
             foreach (var (enemyId, newTargetId) in enemy_NewTargetids)
             {
                 var enemy = GetEnemyById(enemyId);
                 if (enemy != null)
                 {
-                    var playerRigidbody = playerId_rigidbody.FirstOrDefault(pr => pr.Item1 == newTargetId).Item2;
+                    rigidbodyByPlayerId.TryGetValue(newTargetId, out var playerRigidbody);
                     if (playerRigidbody != null)
                     {
                         DynamicData.For(enemy).Set("targetId", newTargetId);

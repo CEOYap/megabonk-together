@@ -156,13 +156,22 @@ handed to `ProjectileInterpolator` by the sender's id — so nothing removes the
 leaves; they keep interpolating with no updates. Needs owner tracking inside the interpolator plus
 an unregister-by-owner in the disconnect path.
 
-### 6. Remaining `04-performance-and-gc.md` items
+### 6. `04-performance-and-gc.md` — 1C, 3 and 4 done; 5 still blocked
 
-- **1C** — `PickACloseTarget` is O(enemies × players).
-- **3** — `GameBalanceService.StageIndex` does an `IndexOf` per access; nothing is cached.
-- **4** — `EnemyManagerService.GetEnemyByReference` linear scan with a closure, per call.
+- **1C** — FIXED. Cached enemy `Transform`, hoisted position, `sqrMagnitude` comparisons. Also
+  fixed an unguarded `netplayer.Model.transform` in both target pickers — an NRE per enemy every
+  2-6s in exactly P1-8's disconnect window.
+- **3** — FIXED, `StageIndex` only. Memoised on the stage's native pointer, not on stage-change
+  events (a missed event serves a wrong difficulty silently; this cannot). `PlayersCount` left
+  alone deliberately — non-allocating since P1-4, and caching it needs invalidation on join,
+  death, disconnect and revive.
+- **4** — FIXED. `ApplyRetargetedEnemies` indexes the players once instead of a `FirstOrDefault`
+  per enemy. `GetEnemyByReference` had already been fixed; that entry was stale.
 - **5** — network payload thresholds. **Blocked on measurement**: nothing counts bytes today.
   Phase 0 of the Steamworks plan already asks for those counters; build them there.
+
+**None of this is measured.** No profiler capture has ever been taken on this project; the claims
+are structural (fewer native calls, no square roots, no per-enemy scans).
 
 ### 7. P1-2 (golden shrine sync) — blocked
 
