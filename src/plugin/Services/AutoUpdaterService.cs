@@ -1,4 +1,5 @@
 ﻿using BepInEx.Logging;
+using MegabonkTogether.Configuration;
 using MegabonkTogether.Services;
 using System;
 using System.Diagnostics;
@@ -137,6 +138,15 @@ namespace MegabonkTogether.Common
 
         public async Task<bool> CheckAndUpdate()
         {
+            // FIX P2-4: guard here rather than trusting every caller. Initialize() only runs
+            // inside Plugin.cs's CheckForUpdates gate and is the sole assignment of
+            // currentVersion/pluginPath, so reaching this method with the setting off ran the
+            // whole check against null state and NRE'd after the network call.
+            if (!ModConfig.CheckForUpdates.Value)
+            {
+                return false;
+            }
+
             if (isUpdateAvailable)
             {
                 return true;

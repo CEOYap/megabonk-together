@@ -1273,8 +1273,9 @@ retargets enemies — the Reviver is what the abort was costing.
 <a name="p1-7"></a>
 ## P1-7 — One destroyed `NetPlayer` aborts `Reset()`'s destroy loop, orphaning the rest
 
-**Status:** CONFIRMED — observed in a live session log, buildid 21750826
-**File:** `src/plugin/Services/PlayerManagerService.cs:509`
+**Status:** CONFIRMED — observed in a live session log, buildid 21750826. FIXED, not yet
+verified in-game.
+**File:** `src/plugin/Services/PlayerManagerService.cs:507`
 
 ### Symptom
 
@@ -1360,6 +1361,29 @@ foreach (var kv in spawnedPlayers.ToList())
 Note the null check alone is **not** sufficient: `netPlayer == null` uses Unity's overloaded
 operator and catches the common case, but a native object freed underneath the managed wrapper
 can still throw on `.gameObject` — see the **il2cpp** skill. Keep the try.
+
+### The same defect, one line down
+
+`Reset()` continues:
+
+```csharp
+playerInventories.ToList().ForEach(kv => kv.Value.Cleanup());   // no try at all
+playerInventories.Clear();
+localConnectionId = 0;
+isLocalPlayerSet = false;
+hasSelectedCharacter = false;
+seed = 0;
+```
+
+Identical `ForEach`-abandons-on-throw shape, and this one is not wrapped at all — so a throw
+from `Cleanup()` propagates out of `Reset()` and skips `playerInventories.Clear()` **and all
+four field resets below it**, leaving `localConnectionId`, `isLocalPlayerSet`,
+`hasSelectedCharacter` and `seed` carrying the previous session's values into the next one.
+That is a wider blast radius than the `NetPlayer` loop, not a narrower one.
+
+Not observed in a log — `Cleanup()` throwing is hypothetical where the `.gameObject` throw is
+evidenced — but it is the same class of bug in the same method, so it was fixed in the same
+pass with a per-item try and a `?.` on the value.
 
 ### Test
 
@@ -1488,7 +1512,8 @@ and the dedup is a pure refactor.
 <a name="p2-4"></a>
 ## P2-4 — `CheckForUpdates = false` is ignored, and the un-initialised service then NREs
 
-**Status:** CONFIRMED — observed in a live session log, buildid 21750826
+**Status:** CONFIRMED — observed in a live session log, buildid 21750826. FIXED, not yet
+verified in-game.
 **Files:** `src/plugin/Plugin.cs:169-192`, `src/plugin/Patches/WindowManager.cs:64-66`,
 `src/plugin/Services/AutoUpdaterService.cs:138`
 
@@ -1586,6 +1611,9 @@ public async Task<bool> CheckAndUpdate()
 
 Moving `Initialize()` out of the `if` in `Plugin.cs` is a *third* option and would also stop the
 NRE — but it would leave the config still being ignored, so prefer the two above.
+
+Both landed. `Plugin.cs` was left untouched: its gate was already correct, and the service-level
+guard now makes it redundant rather than wrong.
 
 ### Test
 

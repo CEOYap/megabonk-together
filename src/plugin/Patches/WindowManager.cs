@@ -61,6 +61,10 @@ namespace MegabonkTogether.Patches
 
                 if (autoUpdaterService.IsCustomBuild() && hasShownUpdateModal) return;
 
+                // FIX P2-4: this call site never respected the setting, so turning auto-update
+                // off still hit the GitHub API every time the main menu opened.
+                if (!ModConfig.CheckForUpdates.Value) return;
+
                 Task.Run(async () =>
                 {
                     await autoUpdaterService.CheckAndUpdate();
