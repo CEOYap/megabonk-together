@@ -2750,15 +2750,31 @@ namespace MegabonkTogether.Services
             Plugin.CAN_SEND_MESSAGES = true;
         }
 
-        public bool OnStartingToChargingShrine(uint shrineNetplayId)
+        /// <summary>
+        /// FIX P2-3: shared by shrine / pylon / lamp, which had three byte-identical copies of this
+        /// apart from the message type, the dictionary and a noun in the log line. Resolves
+        /// upstream's "pylon and lamp should be refactored to use the same logic" TODO.
+        ///
+        /// <para>Carries the P0-1 and P2-2 fixes in one place: the occupancy check happens BEFORE
+        /// the write (the old order overwrote the current charger with the rejected one, so the
+        /// later stop removed nothing and the object stayed locked forever), it uses
+        /// <c>TryGetValue</c> rather than an O(n) LINQ scan, and the <c>GetAllPlayers()</c> call
+        /// that used to sit here was never read.</para>
+        ///
+        /// <para>Kept <c>private</c> deliberately — this takes internal charging state, and putting
+        /// it on <c>ISynchronizationService</c> would leak that through the API surface.</para>
+        /// </summary>
+        /// <param name="message">Built by the caller, because each message type names its id
+        /// property differently.</param>
+        /// <param name="label">Noun for the log lines: "shrine", "pylon", "lamp".</param>
+        /// <returns>True when the caller should let the vanilla charge start run locally.</returns>
+        private bool HandleChargingStart(
+            uint netplayId,
+            ConcurrentDictionary<uint, ICollection<uint>> chargingPlayers,
+            IGameNetworkMessage message,
+            string label)
         {
             var isHost = IsServerMode() ?? false;
-
-            IGameNetworkMessage message = new StartingChargingShrine
-            {
-                ShrineNetplayId = shrineNetplayId,
-                PlayerChargingId = playerManagerService.GetLocalPlayer().ConnectionId
-            };
 
             if (!isHost)
             {
@@ -2766,22 +2782,74 @@ namespace MegabonkTogether.Services
                 return false;
             }
 
-            // FIX P0-1: check BEFORE writing. The old order overwrote the current charger with the
-            // rejected one, so the later stop removed nothing and the shrine stayed locked forever.
-            // Also TryGetValue instead of an O(n) LINQ scan, and Count > 0 instead of Any().
-            // FIX P2-2: the GetAllPlayers() call that used to be here was never read.
-            if (shrineChargingPlayers.TryGetValue(shrineNetplayId, out var chargers)
+            if (chargingPlayers.TryGetValue(netplayId, out var chargers)
                 && chargers != null && chargers.Count > 0)
             {
-                logger.LogInfo("Another player is already charging this shrine. Preventing re trigger.");
+                logger.LogInfo($"Another player is already charging this {label}. Preventing re trigger.");
                 return false;
             }
 
-            shrineChargingPlayers[shrineNetplayId] = [playerManagerService.GetLocalPlayer().ConnectionId];
+            chargingPlayers[netplayId] = [playerManagerService.GetLocalPlayer().ConnectionId];
 
             udpClientService.SendToAllClients(message, LiteNetLib.DeliveryMethod.ReliableOrdered);
 
             return true;
+        }
+
+        /// <summary>
+        /// FIX P2-3: the stop counterpart of <see cref="HandleChargingStart"/>. See that method for
+        /// why this is private and why the caller builds the message.
+        ///
+        /// <para>Carries the P0-2 and P2-2 fixes: the key is guarded (the old unguarded indexer
+        /// threw <c>KeyNotFoundException</c> when a stop arrived with no recorded start — a packet
+        /// reorder, a late join, or a player disconnecting mid-charge), and the dead
+        /// <c>GetAllPlayers()</c> call is gone.</para>
+        /// </summary>
+        /// <returns>True when the caller should let the vanilla charge stop run locally, i.e. this
+        /// was the last charger.</returns>
+        private bool HandleChargingStop(
+            uint netplayId,
+            ConcurrentDictionary<uint, ICollection<uint>> chargingPlayers,
+            IGameNetworkMessage message,
+            string label)
+        {
+            var isHost = IsServerMode() ?? false;
+
+            if (!isHost)
+            {
+                udpClientService.SendToHost(message, LiteNetLib.DeliveryMethod.ReliableOrdered);
+                return false;
+            }
+
+            if (!chargingPlayers.TryGetValue(netplayId, out var chargers)
+                || chargers == null || chargers.Count == 0)
+            {
+                logger.LogInfo($"No one is charging this {label}; ignoring stop.");
+                return false;
+            }
+
+            chargers.Remove(playerManagerService.GetLocalPlayer().ConnectionId);
+
+            if (chargers.Count > 0)
+            {
+                logger.LogInfo($"Another player is still charging this {label}. Preventing stop trigger.");
+                return false;
+            }
+
+            udpClientService.SendToAllClients(message, LiteNetLib.DeliveryMethod.ReliableOrdered);
+
+            return true;
+        }
+
+        public bool OnStartingToChargingShrine(uint shrineNetplayId)
+        {
+            IGameNetworkMessage message = new StartingChargingShrine
+            {
+                ShrineNetplayId = shrineNetplayId,
+                PlayerChargingId = playerManagerService.GetLocalPlayer().ConnectionId
+            };
+
+            return HandleChargingStart(shrineNetplayId, shrineChargingPlayers, message, "shrine");
         }
 
         private void OnReceivedStartingToChargingShrine(StartingChargingShrine shrine)
@@ -2847,41 +2915,13 @@ namespace MegabonkTogether.Services
 
         public bool OnStoppingChargingShrine(uint shrineNetplayId)
         {
-            var isHost = IsServerMode() ?? false;
-
             IGameNetworkMessage message = new StoppingChargingShrine
             {
                 ShrineNetplayId = shrineNetplayId,
                 PlayerChargingId = playerManagerService.GetLocalPlayer().ConnectionId
             };
 
-            if (!isHost)
-            {
-                udpClientService.SendToHost(message, LiteNetLib.DeliveryMethod.ReliableOrdered);
-                return false;
-            }
-
-            // FIX P0-2: guard the key. The old unguarded indexer threw KeyNotFoundException when a
-            // stop arrived with no recorded start — a packet reorder, a late join, or a player
-            // disconnecting mid-charge. FIX P2-2: GetAllPlayers() here was never read.
-            if (!shrineChargingPlayers.TryGetValue(shrineNetplayId, out var chargers)
-                || chargers == null || chargers.Count == 0)
-            {
-                logger.LogInfo("No one is charging this shrine; ignoring stop.");
-                return false;
-            }
-
-            chargers.Remove(playerManagerService.GetLocalPlayer().ConnectionId);
-
-            if (chargers.Count > 0)
-            {
-                logger.LogInfo("Another player is still charging this shrine. Preventing stop trigger.");
-                return false;
-            }
-
-            udpClientService.SendToAllClients(message, LiteNetLib.DeliveryMethod.ReliableOrdered);
-
-            return true;
+            return HandleChargingStop(shrineNetplayId, shrineChargingPlayers, message, "shrine");
         }
 
         private void OnReceivedStoppingChargingShrine(StoppingChargingShrine shrine)
@@ -3073,33 +3113,13 @@ namespace MegabonkTogether.Services
 
         public bool OnStartingToChargingPylon(uint pylonNetplayId)
         {
-            var isHost = IsServerMode() ?? false;
-
             IGameNetworkMessage message = new StartingChargingPylon
             {
                 PylonNetplayId = pylonNetplayId,
                 PlayerChargingId = playerManagerService.GetLocalPlayer().ConnectionId
             };
 
-            if (!isHost)
-            {
-                udpClientService.SendToHost(message, LiteNetLib.DeliveryMethod.ReliableOrdered);
-                return false;
-            }
-
-            // FIX P0-1 / P2-2 — see OnStartingToChargingShrine.
-            if (pylonChargingPlayers.TryGetValue(pylonNetplayId, out var chargers)
-                && chargers != null && chargers.Count > 0)
-            {
-                logger.LogInfo("Another player is already charging this pylon. Preventing re trigger.");
-                return false;
-            }
-
-            pylonChargingPlayers[pylonNetplayId] = [playerManagerService.GetLocalPlayer().ConnectionId];
-
-            udpClientService.SendToAllClients(message, LiteNetLib.DeliveryMethod.ReliableOrdered);
-
-            return true;
+            return HandleChargingStart(pylonNetplayId, pylonChargingPlayers, message, "pylon");
         }
 
         private void OnReceivedStartingToChargingPylon(StartingChargingPylon pylon)
@@ -3163,35 +3183,15 @@ namespace MegabonkTogether.Services
             }
         }
 
-        public bool OnStartingToChargingLamp(uint lampNetplayId) //TODO: this is ass, pylon and lamp should be refactored to use the same logic, but i'm in holidays and lazy right now zzzz
+        public bool OnStartingToChargingLamp(uint lampNetplayId)
         {
-            var isHost = IsServerMode() ?? false;
-
             IGameNetworkMessage message = new StartingChargingLamp
             {
                 LampNetplayId = lampNetplayId,
                 PlayerChargingId = playerManagerService.GetLocalPlayer().ConnectionId
             };
 
-            if (!isHost)
-            {
-                udpClientService.SendToHost(message, LiteNetLib.DeliveryMethod.ReliableOrdered);
-                return false;
-            }
-
-            // FIX P0-1 / P2-2 — see OnStartingToChargingShrine.
-            if (lampsChargingPlayers.TryGetValue(lampNetplayId, out var chargers)
-                && chargers != null && chargers.Count > 0)
-            {
-                logger.LogInfo("Another player is already charging this lamp. Preventing re trigger.");
-                return false;
-            }
-
-            lampsChargingPlayers[lampNetplayId] = [playerManagerService.GetLocalPlayer().ConnectionId];
-
-            udpClientService.SendToAllClients(message, LiteNetLib.DeliveryMethod.ReliableOrdered);
-
-            return true;
+            return HandleChargingStart(lampNetplayId, lampsChargingPlayers, message, "lamp");
         }
 
         private void OnReceivedStartingToChargingLamp(StartingChargingLamp lamp)
@@ -3257,8 +3257,8 @@ namespace MegabonkTogether.Services
 
         public bool OnStoppingChargingPylon(uint pylonNetplayId)
         {
-            var isHost = IsServerMode() ?? false;
-
+            // Kept at the call site: this log line exists only on the pylon path, and the point of
+            // P2-3 is a behaviour-preserving dedup.
             logger.LogInfo($"Player {playerManagerService.GetLocalPlayer().ConnectionId} stopping charging pylon {pylonNetplayId}");
 
             IGameNetworkMessage message = new StoppingChargingPylon
@@ -3267,31 +3267,7 @@ namespace MegabonkTogether.Services
                 PlayerChargingId = playerManagerService.GetLocalPlayer().ConnectionId
             };
 
-            if (!isHost)
-            {
-                udpClientService.SendToHost(message, LiteNetLib.DeliveryMethod.ReliableOrdered);
-                return false;
-            }
-
-            // FIX P0-2 / P2-2 — see OnStoppingChargingShrine.
-            if (!pylonChargingPlayers.TryGetValue(pylonNetplayId, out var chargers)
-                || chargers == null || chargers.Count == 0)
-            {
-                logger.LogInfo("No one is charging this pylon; ignoring stop.");
-                return false;
-            }
-
-            chargers.Remove(playerManagerService.GetLocalPlayer().ConnectionId);
-
-            if (chargers.Count > 0)
-            {
-                logger.LogInfo("Another player is still charging this pylon. Preventing stop trigger.");
-                return false;
-            }
-
-            udpClientService.SendToAllClients(message, LiteNetLib.DeliveryMethod.ReliableOrdered);
-
-            return true;
+            return HandleChargingStop(pylonNetplayId, pylonChargingPlayers, message, "pylon");
         }
 
         private void OnReceivedStoppingChargingPylon(StoppingChargingPylon pylon)
@@ -3360,39 +3336,13 @@ namespace MegabonkTogether.Services
 
         public bool OnStoppingChargingLamp(uint lampNetplayId)
         {
-            var isHost = IsServerMode() ?? false;
-
             IGameNetworkMessage message = new StoppingChargingLamp
             {
                 LampNetplayId = lampNetplayId,
                 PlayerChargingId = playerManagerService.GetLocalPlayer().ConnectionId
             };
 
-            if (!isHost)
-            {
-                udpClientService.SendToHost(message, LiteNetLib.DeliveryMethod.ReliableOrdered);
-                return false;
-            }
-
-            // FIX P0-2 / P2-2 — see OnStoppingChargingShrine.
-            if (!lampsChargingPlayers.TryGetValue(lampNetplayId, out var chargers)
-                || chargers == null || chargers.Count == 0)
-            {
-                logger.LogInfo("No one is charging this lamp; ignoring stop.");
-                return false;
-            }
-
-            chargers.Remove(playerManagerService.GetLocalPlayer().ConnectionId);
-
-            if (chargers.Count > 0)
-            {
-                logger.LogInfo("Another player is still charging this lamp. Preventing stop trigger.");
-                return false;
-            }
-
-            udpClientService.SendToAllClients(message, LiteNetLib.DeliveryMethod.ReliableOrdered);
-
-            return true;
+            return HandleChargingStop(lampNetplayId, lampsChargingPlayers, message, "lamp");
         }
 
         private void OnReceivedStoppingChargingLamp(StoppingChargingLamp lamp)

@@ -25,7 +25,7 @@ an environment with no .NET SDK. Build and playtest each one.
 | [P1-7](#p1-7) | One destroyed `NetPlayer` aborts `Reset()`'s destroy loop, orphaning the rest | Medium | XS | yes |
 | [P2-1](#p2-1) | Dangling transform hack is silent | Low | XS | yes |
 | [P2-2](#p2-2) | Dead `GetAllPlayers()` calls in charging paths | Low | XS | yes |
-| [P2-3](#p2-3) | Charging logic triplicated across shrine / pylon / lamp | Low | M | yes |
+| [P2-3](#p2-3) | Charging logic triplicated across shrine / pylon / lamp — **FIXED** | Low | M | yes |
 | [P2-4](#p2-4) | `CheckForUpdates = false` is ignored, and the un-initialised service then NREs | Low | XS | yes |
 
 ### Suggested order
@@ -1753,8 +1753,8 @@ an allocation. Do this as part of P0-1/P0-2 since you are already editing those 
 <a name="p2-3"></a>
 ## P2-3 — Charging logic triplicated across shrine / pylon / lamp
 
-**Status:** CONFIRMED
-Upstream's own note at `SynchronizationService.cs:3145`:
+**Status:** CONFIRMED — FIXED, not yet verified in-game
+Upstream's own note, now removed along with the duplication:
 `//TODO: this is ass, pylon and lamp should be refactored to use the same logic, but i'm in holidays and lazy right now zzzz`
 
 Six ~30-line methods differ only in which dictionary they touch and which message type they
@@ -1769,6 +1769,49 @@ right shape — with two corrections:
 
 Do this **after** P0-1 and P0-2 land, so the fixes are verified in the duplicated form first
 and the dedup is a pure refactor.
+
+### What landed
+
+`HandleChargingStart` / `HandleChargingStop`, both `private`, taking
+`(uint netplayId, ConcurrentDictionary<uint, ICollection<uint>> chargingPlayers,
+IGameNetworkMessage message, string label)`. Net **−50 lines**; the six public methods are now
+~10 lines each and differ only in the message they build and which dictionary they pass.
+
+Both corrections above were applied: the helpers stay off `ISynchronizationService`, and the
+`TryGetValue` form from P0-1/P0-2 carried across rather than reverting to `FirstOrDefault`.
+
+The caller still builds the message, because each type names its id property differently
+(`ShrineNetplayId` / `PylonNetplayId` / `LampNetplayId`). Passing a factory delegate instead
+would allocate a closure per call for no benefit.
+
+**Behaviour-preserving, deliberately:**
+
+- `IsServerMode()` now runs *after* message construction rather than before. Safe — it is
+  `udpClientService.IsHost()`, a pure read with no side effects.
+- `OnStoppingChargingPylon` has a `LogInfo` line the shrine and lamp paths do not. Kept at the
+  call site rather than folded into the helper or quietly dropped.
+- `GetLocalPlayer()` is still dereferenced unguarded, exactly as before. It is nullable
+  (`Player?`) and this is the same hazard as [P0-4](#p0-4) — but fixing it here would make this
+  more than a pure refactor, and the charging path only runs when a local player physically
+  touches the object, so the value is set. **Left as-is deliberately; flagged, not fixed.**
+
+### Not covered: the six `OnReceived*` methods
+
+`OnReceivedStartingToChargingShrine` and its five siblings were **not** deduplicated. They look
+similar but differ in the component type they fetch (`ChargeShrine` / `BossPylon` / `BossLamp`)
+and the game method they invoke, so unifying them needs generics plus a delegate per call —
+more machinery than the duplication costs.
+
+Each of them does carry a *separate* duplication worth noting: the `isHost` and client branches
+are identical apart from the host additionally broadcasting. That is a smaller, self-contained
+cleanup if anyone wants it.
+
+### Test
+
+Pure refactor, so the test is that charging still behaves as it did after P0-1/P0-2: with two
+players, one starts charging a shrine and the other cannot re-trigger it; the first stops and
+the shrine unlocks. Repeat for pylon and lamp — the pylon path is the one with the extra log
+line, so confirm it still appears.
 
 ---
 
