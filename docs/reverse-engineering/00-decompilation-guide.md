@@ -225,6 +225,37 @@ assets.
 Will open the interop proxies (`stripped-libs/interop/*.dll`) but every body is a stub. Fine
 for browsing type shapes; useless for behaviour. `Il2CppDumper`'s `dump.cs` is easier to grep.
 
+### 6. `dnfile` — "does this member exist?", with nothing installed
+
+The one question the committed stubs *can* answer is whether a type or member exists and what its
+shape is. That does not need the game, the dump, or a GUI — the interop assemblies are ordinary
+.NET assemblies, and `pip install dnfile` reads their metadata directly:
+
+```python
+import dnfile
+pe = dnfile.dnPE('src/plugin/stripped-libs/interop/Assembly-CSharp.dll')
+for t in pe.net.mdtables.TypeDef.rows:
+    if str(t.TypeName) != 'MapController':
+        continue
+    print(str(t.Extends.row.TypeName))          # base type
+    for f in t.FieldList:                        # Il2CppInterop's stubs carry every member as a
+        print(str(f.row.Name))                   # NativeMethodInfoPtr_/NativeFieldInfoPtr_ field,
+    for m in t.MethodList:                       # with the full signature in the name
+        print(str(m.row.Name))
+```
+
+Those `NativeMethodInfoPtr_*` field names encode the whole signature —
+`NativeMethodInfoPtr_get_currentStage_Public_Static_get_StageData_0` says `currentStage` is a
+public static property of type `StageData`. Two things this settled in one minute, with no game
+install: `MapController.currentStage` is a `StageData : ScriptableObject` (so it has a `.Pointer`,
+and Unity's `==` applies), and `MapController.GetStageIndex()` exists as
+`Public_Static_Int32_0` — see
+[`../netplay/04-performance-and-gc.md`](../netplay/04-performance-and-gc.md) item 3, which now
+depends on someone checking what it indexes.
+
+**It still cannot tell you what anything does.** Existence and signature only — a body is a stub.
+Everything the UNVERIFIED tag exists for stays UNVERIFIED.
+
 ---
 
 ## Ghidra walkthrough

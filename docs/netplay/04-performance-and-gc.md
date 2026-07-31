@@ -352,6 +352,13 @@ instance for a given pointer, but `Il2CppObjectBase` does not overload `==`, so 
 comparison would have silently never hit and left the cost exactly where it was — while looking
 fixed.
 
+**The game may already have this.** `MapController.GetStageIndex()` — static, returns `Int32` —
+is present in `Assembly-CSharp`'s interop metadata. If it indexes the same list, it replaces the
+memo entirely. **UNVERIFIED and therefore not used:** the stripped assemblies carry no method
+body, and if it indexes global progression rather than position within the map's stage list, every
+difficulty multiplier shifts silently. Resolve it against `dump.cs` — this is a cheap, high-value
+check for whoever next has the dump open.
+
 **Not the event-driven cache this doc proposed.** A subscription that misses one stage change
 serves a wrong difficulty silently; memoising on the value's own identity cannot go stale. The same
 argument does not rescue `PlayersCount`, which has no cheap identity to compare — but after
