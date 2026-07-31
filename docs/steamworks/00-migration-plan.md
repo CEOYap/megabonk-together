@@ -180,22 +180,70 @@ needs sequencing, implement it as a sequence number plus drop-if-older on `Unrel
 Each phase is independently shippable and independently revertable.
 
 ### Phase 0 — Prerequisites
-- Land P0-1, P0-2, P0-4, P0-3, P1-3.
+- ~~Land P0-1, P0-2, P0-4, P0-3, P1-3.~~ P0-1, P0-2, P0-3, P0-4 are landed (also P0-5, P1-7,
+  P2-1, P2-4).
+- **P1-3 is not a prerequisite and cannot be one — it is now a *deliverable of this
+  migration*.** The version gate was attempted on the LiteNetLib path and disproved in-game:
+  `ConnectionRequestEvent` never fires after NAT introduction, because both peers `Connect`
+  at each other and LiteNetLib reconciles the cross-connect internally. See P1-3 in
+  [`../netplay/01-critical-fixes.md`](../netplay/01-critical-fixes.md) for the evidence. The
+  gate lands in Phase 3 as lobby metadata instead, where it also covers relayed sessions.
 - Add per-message-type byte counters and a latency/loss readout so the migration can be
   measured rather than asserted.
 - **Exit criteria:** charging bugs fixed; a baseline bandwidth profile recorded at 2 / 4 / 6
   players.
+
+> **Knock-on:** P1-2 (golden shrine sync) changes the wire format and was blocked behind P1-3.
+> It is therefore blocked behind this migration too — or it ships accepting that a
+> version-mismatched pair desyncs silently instead of refusing to connect.
 
 ### Phase 1 — Introduce the seam (no behaviour change)
 - Add `INetTransport` and `NetDelivery`.
 - Make `UdpClientService` implement it; map `NetDelivery` → `LiteNetLib.DeliveryMethod`.
 - Replace all 91 `udpClientService.` call sites with `netTransport.`.
 - Replace `SendToClient(NetPeer, ...)` with `SendToClient(uint connectionId, ...)`.
+- **Decide the `RelayEnvelope.ToFilters` question here** — see below.
 - **Exit criteria:** `LiteNetLib` types appear only inside `LiteNetTransport`. Behaviour and
   bandwidth identical to Phase 0.
 
 This is the largest mechanical step and the one most likely to introduce a regression. Do it
 alone, and playtest it as a no-op change before continuing.
+
+#### The two-id-space collapse, and `ToFilters`
+
+Today's signature takes **two ids in different spaces**:
+
+```csharp
+void SendToAllClientsExcept<T>(int netPlayerId, uint sender, T data)
+//                             ^ LiteNetLib NetPeer.Id   ^ game connection id
+```
+
+`netPlayerId` filters direct peers (`gamePeers.Where(p => p.Value.Id != netPlayerId)`);
+`sender` builds `RelayEnvelope.ToFilters` for relayed peers. Transposing them is easy and
+silent — it already cost one wrong fix attempt on P1-1, where passing `OwnerId` for both would
+have echoed a gold *delta* back to its originator and double-counted it.
+
+The new `SendToAllClientsExcept(uint excludedConnectionId, ...)` takes one id in one space,
+which makes that mistake unrepresentable. Good — but the mapping does not vanish, it moves
+inside `LiteNetTransport`, which must still resolve a connection id to a `NetPeer.Id` for the
+direct path and to a `ToFilters` entry for the relay path.
+
+While doing that, resolve this **UNVERIFIED** item: `SendToAllClientsExcept`'s relay branch
+(`UdpClientService.cs:1687-1714`) falls back to an **empty** `ToFilters` when the sender is not
+found in `gamePeersIntroducedByRelay`. An empty filter appears to mean "send to all relayed
+peers", which is harmless when the sender is a direct peer but would double-count if it can
+ever be reached with the sender among the relayed set. Only the direct-peer path has been
+traced; the server's forwarding logic has not.
+
+Two acceptable outcomes, either is fine:
+
+1. Trace it, and either fix or document it as safe.
+2. Delete the relay branch as part of this phase rather than porting a mechanism Phase 5
+   removes anyway — provided relay fallback is still needed until SDR lands in Phase 4, which
+   it is, so this really means "port it deliberately, not by copy-paste".
+
+What is **not** acceptable is carrying it across the seam unexamined, because after Phase 1 the
+call sites no longer show the id-space split that makes the hazard visible.
 
 ### Phase 2 — Steam plumbing (no transport change yet)
 - Reference `Steamworks.NET`. See [Gotcha 1](#gotcha-1) for which copy.
@@ -214,7 +262,16 @@ is demonstrably stable with the reference added.
 - Publish `Protocol.Version`, host name, player count, and mode as lobby data.
 - Handle `GameLobbyJoinRequested_t` (friends-list "Join Game") and `LobbyDataUpdate_t`.
 - Filter the lobby list by protocol version — this is [P1-3](../netplay/01-critical-fixes.md#p1-3)
-  in its final form.
+  in its final form, and the **only** form of it that works. Three carried-over decisions:
+  - `src/common/Protocol.cs` was written and then reverted with the failed LiteNetLib attempt.
+    **Re-create it here**; it does not currently exist.
+  - **Treat a lobby publishing no version as incompatible**, not as compatible-by-default.
+    That is the only way a new build refuses an old one — and it means the first release
+    carrying the gate cannot join any earlier version's lobby, which needs a loud changelog
+    entry, not a quiet one.
+  - **Do not key the gate off the plugin's semantic version.** Two releases differing only in
+    gameplay or UI stay wire-compatible; bump the protocol number only when a type under
+    `Messages/` changes.
 - Set `SteamFriends.SetRichPresence` for lobby/in-game status.
 - **Exit criteria:** players can find and join a lobby without the rendezvous server. The old
   transport still carries gameplay traffic.
