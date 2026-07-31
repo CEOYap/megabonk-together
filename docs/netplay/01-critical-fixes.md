@@ -905,7 +905,8 @@ the legendary reward.
 <a name="p1-3"></a>
 ## P1-3 — No protocol version gate
 
-**Status:** CONFIRMED (by absence)
+**Status:** CONFIRMED (by absence) — FIXED for direct P2P, **relay mode still ungated**, not
+yet verified in-game
 **Files:** `src/common/Messages/`, connection handshake in `UdpClientService.cs` /
 `WebsocketClientService.cs`
 
@@ -963,6 +964,43 @@ rather than a generic timeout.
 
 **3. Surface it in the UI.** On rejection, tell the player which side is out of date.
 
+### What landed
+
+`src/common/Protocol.cs` holds `Protocol.Version` (currently `1`) plus `ConnectKey` /
+`TryParseConnectKey`. The key format is `MBT|<version>`; the prefix exists so the pre-gate
+`"yourKey"` placeholder fails to parse and is reported as an outdated peer rather than as a
+malformed one.
+
+`UdpClientService.ConnectionRequestEvent` now parses the key and rejects on mismatch, writing
+a tagged payload (`MBT_PROTO`, our version, the version we saw) that the refused side reads in
+`PeerDisconnectedEvent` to pick between two messages: *update yours* or *theirs*. The rejected
+path returns to the menu instead of falling through to `HandleDisconnectedPeer`, which has
+nothing to clean up for a connection that never established. Any rejection payload that is
+absent, malformed, or untagged falls through to the ordinary disconnect path.
+
+**This is a hard break with every shipped release.** Existing builds send `"yourKey"` and are
+now refused, which is the point of the gate — but it means the first release carrying this
+cannot play with 5.1.0 or earlier at all, and the refusal is one-directional in the log: the
+old build has no code to read the rejection payload, so its player still sees a plain timeout.
+Only the updated side gets the readable message.
+
+### Not covered: relay mode
+
+The gate lives on the direct peer-to-peer connect path only. **In relay mode two peers never
+exchange a `ConnectionRequest` with each other** — each connects to `RendezVousServer` and the
+server forwards packets between them, so there is no peer-to-peer handshake to validate.
+
+The relay connect key could not be reused for this either: `RendezVousServer` parses it
+strictly as `id|endpoint|RELAY` (`RendezVousServer.cs:311-328`) and rejects anything whose
+third part is not `RELAY`, so the version cannot ride along without a coordinated server
+deploy.
+
+Closing this needs either an application-level version exchange as the first message after
+connect — which means a new `[MemoryPackUnion]` tag, and an old peer hitting an unknown tag
+throws in the deserializer rather than reporting a version mismatch — or the Steamworks lobby
+metadata approach below, which is the cleaner one. Left undone deliberately: the P2P gate is
+what unblocks P1-2, and a half-working relay gate would be worse than a documented gap.
+
 ### Interaction with the Steamworks migration
 
 This gets *easier* after the migration — publish the protocol version as lobby metadata via
@@ -972,7 +1010,16 @@ anyone connects. Do the LiteNetLib version now anyway; it is small and it unbloc
 ### Test
 
 Build two plugin versions with different `Protocol.Version`. Confirm the join is refused with
-a readable message rather than silently proceeding.
+a readable message rather than silently proceeding, and that the message names the correct
+side as out of date in both directions.
+
+Then confirm the gate does **not** fire on the normal path: two peers on the same build must
+still connect. The version is checked on every direct connection, so a mistake here breaks all
+multiplayer rather than failing quietly — test the matching case first.
+
+Relay mode cannot be tested for this, since it is ungated (above). Force it (IPv6, or block the
+hole-punch) and confirm the session still forms — the gate must not have broken the relay path
+as a side effect.
 
 ---
 
