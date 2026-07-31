@@ -28,7 +28,7 @@ an environment with no .NET SDK. Build and playtest each one.
 | [P1-5](#p1-5) | ~~Damage ownership misattributed through shared static `DamageContainer`s~~ **every mechanism eliminated in-game; symptom unattributed** | — | — | — |
 | [P1-6](#p1-6) | `ReTargetEnemies` throws on an empty alive-set, aborting the death handler — **FIXED**, plus 4 more sites via P1-4 | Medium | XS | yes |
 | [P1-7](#p1-7) | One destroyed `NetPlayer` aborts `Reset()`'s destroy loop, orphaning the rest | Medium | XS | yes |
-| [P2-1](#p2-1) | Dangling transform hack is silent | Low | XS | yes |
+| [P2-1](#p2-1) | Dangling transform hack is silent — instrumented, **two root causes found, both FIXED** (second unverified in-game) | Low | XS | yes |
 | [P2-2](#p2-2) | Dead `GetAllPlayers()` calls in charging paths | Low | XS | yes |
 | [P2-3](#p2-3) | Charging logic triplicated across shrine / pylon / lamp — **FIXED** | Low | M | yes |
 | [P2-4](#p2-4) | `CheckForUpdates = false` is ignored, and the un-initialised service then NREs | Low | XS | yes |
@@ -1726,9 +1726,10 @@ the new session.
 <a name="p2-1"></a>
 ## P2-1 — Dangling transform hack is silent
 
-**Status:** CONFIRMED — **PARTIALLY FIXED. There are TWO independent dangling paths, not one.**
-The host-side `enemy.target` path is found and fixed. A second, client-side path through
-`Plugin.GetDistanceToPlayer` was named by caller sampling on 2026-07-31 and is **still open**.
+**Status:** CONFIRMED — **TWO independent dangling paths, not one. Both now fixed; the second is
+not yet verified in-game.** The host-side `enemy.target` path was found and fixed first. The
+second, client-side path through `Plugin.GetDistanceToPlayer` was named by caller sampling on
+2026-07-31 and fixed the same day — see the last two subsections of this entry.
 **File:** `src/plugin/Patches/Unity/UnityComponent.cs:27-31`
 
 ```csharp
@@ -1929,6 +1930,55 @@ therefore never ran its own retarget for that peer.** A plausible contributor to
 "our code is not involved". It only ever meant "our code is not involved *in the frames that were
 sampled*" — and the sampler captures one stack per 5s window, so a path that only fires in the
 first few windows is easy to miss entirely. Read the counters per-window, not in aggregate.
+
+### FIXED (not yet verified in-game) — the spectator camera never invalidated its target
+
+The owner named by the sampled stack is `CameraSwitcher.targetTransform`.
+
+`Plugin.GetDistanceToPlayer:510` only reads the camera target when the **local player is dead**,
+which is exactly when `CameraSwitcher` is spectating a remote peer, holding that peer's
+`NetPlayer.Model.transform`. When the spectated peer leaves,
+`PlayerManagerService.RemovePlayer` destroys their `NetPlayer` GameObject and **nothing tells
+`CameraSwitcher`**. The field is left dangling, and every subsequent frame reads `.position` off
+it from two per-frame paths.
+
+That also explains the run's shape without any further assumption:
+
+- **Client-side only** — the host was alive; only a dead player spectates.
+- **`get_position`, not `get_transform`** — the read is `Transform.position` on the camera
+  target, not `Component.transform`.
+- **Only the first few windows after the disconnect** — the read is gated on `player.IsDead()`,
+  so it stops the moment that client stops spectating. A revive is the obvious candidate
+  (`RestoreDeath` → `ResetToLocalPlayer` clears `targetTransform`), but the log was not checked
+  for one: **LIKELY**, not confirmed. From the fifth window on, that client saw only the
+  host-side `enemy.target` leak arriving through its own enemies.
+
+Three changes, all in the same commit:
+
+1. **`Plugin.GetDistanceToPlayer` guards the read** (`Plugin.cs`). `Instance?.CameraSwitcher` and
+   the returned transform are both null-checked — Unity's overloaded `==` catches a destroyed
+   object — falling back to the local player's position. That fallback is *exactly* what
+   `TransformPatches.get_position_Prefix` was already substituting, so **no distance result
+   changes**; the deref of the destroyed object does not happen.
+2. **`CameraSwitcher.Update` recovers from a destroyed target** (`Scripts/CameraSwitcher.cs`) —
+   switches to another spawned player, or returns to the local player if none is left. This is
+   the user-visible half: previously `LateUpdate` early-returned on the dangling transform and the
+   spectator camera simply **froze** on the departed peer. Recovery lives in `Update` rather than
+   the disconnect handlers because two independent paths remove a player — the host's
+   `PlayerDisconnected` and the websocket `ClientDisconnected` — and they race (see the open item
+   about `OnReceivedPlayerDisconnected`'s early return). One Unity null check per frame, only
+   while spectating.
+3. **`CameraSwitcher.SwitchToTarget` resolves the target before touching the camera.** It called
+   `SaveOriginalCamera()` and disabled `playerCamera` *first*, then dereferenced a
+   `FirstOrDefault` result — so a peer who disconnected between the id being chosen and the switch
+   both threw and left the camera disabled with nothing driving it. Same ordering lesson as P0-6
+   and P1-7: do the important thing first, and bail before you have mutated anything.
+
+**What verification needs:** a 3-player session where a *dead, spectating* client is watching the
+peer who disconnects. Two players is not enough (the session ends), and the local player must
+actually be dead at the moment of the disconnect or this path never opens. Expect: no
+`get_position` hits in the fallback counters, the spectator camera moving to another player, and
+one `Spectated player is gone` warning rather than a per-frame stream of them.
 
 ---
 

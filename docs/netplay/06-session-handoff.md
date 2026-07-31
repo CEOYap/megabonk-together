@@ -30,7 +30,7 @@ bugs surfaced by in-game testing. Commits `1b2f486` through `893d566`, all on `m
 |---|---|---|
 | **P1-4** | Non-allocating `GetAlivePlayerCount` / `GetAllPlayersAliveNonAlloc`; four latent P1-6-class crashes fixed | Unity Profiler GC Alloc capture during a final swarm at 4+ players. **No profiler capture has ever been taken.** |
 | **04 item 1A** | `TargetSwitcherManager` ticks all switchers from one `Update`; guarded the `AddComponent` that stacked switchers on pooled enemies | CPU capture; also confirm enemies still switch targets (silent failure mode) |
-| **P2-1 (partial)** | Host now applies its own retarget at all three `ReTargetEnemies` call sites | second path still open — see below |
+| **P2-1** | Host now applies its own retarget at all three `ReTargetEnemies` call sites; the second, client-side path (a spectator camera holding a destroyed `NetPlayer` transform) is fixed too | 3 players, with the watching client **dead and spectating** when a peer disconnects — see open item 1 |
 
 ### Struck as not-defects
 
@@ -48,17 +48,18 @@ bugs surfaced by in-game testing. Commits `1b2f486` through `893d566`, all on `m
 
 ## Open work, in priority order
 
-### 1. `Plugin.GetDistanceToPlayer` holds a destroyed NetPlayer — the second dangling path
+### 1. ~~`Plugin.GetDistanceToPlayer` holds a destroyed NetPlayer~~ — FIXED, needs verification
 
-**This is the highest-value item and it is fully diagnosed.** See
-[P2-1 → "STILL OPEN"](01-critical-fixes.md#p2-1) for the sampled stacks.
+The owner was `CameraSwitcher.targetTransform`: the spectated peer's `NetPlayer.Model.transform`,
+which nothing invalidated when that peer disconnected. `Plugin.GetDistanceToPlayer` only reads it
+while the local player is dead, which is why the path was client-side and short-lived. Guarded the
+read, made `CameraSwitcher` recover from a destroyed target (the camera used to freeze on the
+departed peer), and reordered `SwitchToTarget` to bail before it disables the player camera. Full
+write-up in [P2-1](01-critical-fixes.md#p2-1).
 
-`Plugin.GetDistanceToPlayer:510` reads `.position` off a disconnected peer's destroyed NetPlayer.
-It sits on two per-frame paths — `DistanceThrottler.ShouldUpdate` (per enemy, per FixedUpdate) and
-`ProjectileBasePatches.Update_Prefix:157` (per projectile, per frame) — at ~700 hits per 5s each,
-client-side, after any disconnect.
-
-Guard it against a destroyed/missing NetPlayer. Correctness *and* per-frame cost.
+**Verification needs a dead, spectating client at the moment a peer disconnects** — 3 players, and
+the watcher must actually be dead or the path never opens. Expect zero `get_position` fallback
+hits, the camera moving to another player, and a single `Spectated player is gone` warning.
 
 ### 2. `OnReceivedPlayerDisconnected` skips the retarget when the player is already gone
 

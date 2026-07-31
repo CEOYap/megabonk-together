@@ -507,7 +507,26 @@ namespace MegabonkTogether
                 var target = player.transform.position;
                 if (player.IsDead())
                 {
-                    target = Instance.CameraSwitcher.GetCurrentTarget().position;
+                    // FIX P2-1 (second dangling path): while spectating, the camera target is a
+                    // remote peer's NetPlayer transform. Nothing tells CameraSwitcher when that
+                    // peer disconnects, so after PlayerManagerService.RemovePlayer destroys their
+                    // GameObject this read hit a destroyed Transform — landing in the
+                    // get_position fallback ~700 times per 5s on each of the two per-frame paths
+                    // that call this method (DistanceThrottler.ShouldUpdate per enemy per
+                    // FixedUpdate, ProjectileBasePatches.Update_Prefix per projectile per frame).
+                    //
+                    // Falling back to the local player's position is what that patch fallback was
+                    // already substituting, so this changes no distance result — it just stops
+                    // dereferencing a destroyed object to get there.
+                    var cameraSwitcher = Instance?.CameraSwitcher;
+                    if (cameraSwitcher != null) // Unity's overloaded == also catches a destroyed object
+                    {
+                        var spectateTarget = cameraSwitcher.GetCurrentTarget();
+                        if (spectateTarget != null) // ditto: a destroyed NetPlayer transform reads as null
+                        {
+                            target = spectateTarget.position;
+                        }
+                    }
                 }
 
                 distanceTarget = target;
