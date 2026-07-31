@@ -607,8 +607,8 @@ correct by construction.
 <a name="p0-4"></a>
 ## P0-4 — `NullReferenceException` on enemy target assignment
 
-**Status:** CONFIRMED
-**File:** `src/plugin/Patches/Enemies/Enemy.cs:60-63`
+**Status:** CONFIRMED — FIXED, not yet verified in-game
+**File:** `src/plugin/Patches/Enemies/Enemy.cs:51-84`
 
 ### Symptom
 
@@ -616,6 +616,8 @@ Host throws NRE inside the `Enemy.InitEnemy` postfix. Since this is a Harmony pa
 spawn, a throw here can abort enemy initialisation entirely.
 
 ### Root cause
+
+Two separate nullable derefs in the same block.
 
 ```csharp
 // Enemy.cs:59-63  (current)
@@ -625,29 +627,73 @@ __instance.target = randomPlayer.Rigidbody;      // randomPlayer may be null
 DynamicData.For(__instance).Set("targetId", randomPlayer.ConnectionId);
 ```
 
-`GetNetPlayerByNetplayId` can return `null` — the netplayer may not be spawned yet during a
-join, or may have just disconnected. Nothing guards it.
+`GetNetPlayerByNetplayId` returns `null` when the connection id has no entry in
+`spawnedPlayers` — the peer disconnected. Nothing guards it.
+
+Drop-in joining is **not** a factor: a run can only start once everyone is in the lobby, so
+every netplayer is spawned before the first enemy. The reachable paths are all disconnects:
+
+- **3+ players.** `UdpClientService.cs:435` only returns to the main menu when
+  `gamePeers.IsEmpty`. With a third player still connected the session continues, the host
+  broadcasts `PlayerDisconnected`, and `RemovePlayer` drops the departed peer from
+  `spawnedPlayers` while enemies keep spawning. This window is the whole rest of the run.
+- **2 players, teardown race.** The session does end here (confirmed in a live host log), but
+  `Plugin.GoToMainMenu()` is not instantaneous — `InitEnemy` can still fire between
+  `RemovePlayer` and scene unload.
+- **Stale queue ids.** `RemovePlayer` cleans `getNetplayerPositionQueue`
+  (`PlayerManagerService.cs:238`) only if it gets that far. Three early returns above it —
+  player absent, `GameManager.Instance.player` null, netplayer already destroyed — skip the
+  cleanup, leaving the departed peer's id queued for `TryGetGetNetplayerPosition` to hand
+  back later.
+
+The guard also covers a case a plain dictionary lookup does not: on the third path above,
+`spawnedPlayers` can still hold a *destroyed* `NetPlayer`. `NetPlayer` is a `MonoBehaviour`,
+so `!= null` uses Unity's overloaded operator and treats the destroyed object as null —
+which is the behaviour we want, since `.Rigidbody` on it would throw.
+
+`GetLocalPlayer()` is declared `Player?` and is likewise dereferenced unguarded — twice, once
+per branch — so simply falling back to it moves the NRE rather than removing it.
 
 ### Fix
 
-Keep the physics-target assignment (this is the line `Sea-Bass-cmd` accidentally dropped) and
-add the guard:
+Keep the physics-target assignment (this is the line `Sea-Bass-cmd` accidentally dropped),
+hoist the local-player lookup so all three uses share one guard, and add the netplayer guard:
 
 ```csharp
-var randomPlayer = playerManagerService.GetNetPlayerByNetplayId(id);
+var host = playerManagerService.GetLocalPlayer();
 
-if (randomPlayer != null)
+if (playerManagerService.TryGetGetNetplayerPosition(out uint id))
 {
-    __instance.target = randomPlayer.Rigidbody;
-    DynamicData.For(__instance).Set("targetId", randomPlayer.ConnectionId);
+    if (host != null && host.ConnectionId == id)
+    {
+        DynamicData.For(__instance).Set("targetId", host.ConnectionId);
+    }
+    else
+    {
+        var randomPlayer = playerManagerService.GetNetPlayerByNetplayId(id);
+
+        if (randomPlayer != null)
+        {
+            __instance.target = randomPlayer.Rigidbody;
+            DynamicData.For(__instance).Set("targetId", randomPlayer.ConnectionId);
+        }
+        else if (host != null)
+        {
+            // FIX P0-4: that peer's netplayer is gone — they disconnected. Fall back to the
+            // host so targetId is never left unset.
+            DynamicData.For(__instance).Set("targetId", host.ConnectionId);
+        }
+    }
 }
-else
+else if (host != null)
 {
-    // FIX P0-4: netplayer not spawned yet or already gone — fall back to the local player
-    var fallback = playerManagerService.GetLocalPlayer();
-    DynamicData.For(__instance).Set("targetId", fallback.ConnectionId);
+    DynamicData.For(__instance).Set("targetId", host.ConnectionId);
 }
 ```
+
+A null `host` leaves `targetId` unset rather than throwing — that state only occurs during
+teardown, and an unset target is recoverable where an aborted `InitEnemy` is not. Not logged:
+`InitEnemy` runs once per spawn, so a warning there floods during a swarm.
 
 > Do **not** copy the Sea-Bass version of this block. It collapses the branch in a way that
 > silently deletes `__instance.target = randomPlayer.Rigidbody`, leaving the enemy's physics
@@ -657,8 +703,11 @@ else
 
 ### Test
 
-Join a session mid-run while enemies are spawning. Watch the host log for NREs in
-`init_PostFix`.
+Needs **3 players** — at 2 the disconnect ends the session almost immediately and the window
+is too narrow to hit reliably. Start a 3-player run, have one peer alt-F4 mid-run while
+enemies are spawning around them, and keep the remaining two playing for another stage. Watch
+the host log for NREs in `init_PostFix`, and confirm enemies keep spawning and re-targeting
+rather than freezing at their spawn point.
 
 ---
 

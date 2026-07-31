@@ -48,10 +48,17 @@ namespace MegabonkTogether.Patches.Enemies
             var isServer = synchronizationService.IsServerMode();
             if (isServer.HasValue && isServer.Value)
             {
+                // FIX P0-4: GetLocalPlayer() is nullable and was dereferenced unguarded on every
+                // branch below. Hoisted to a single lookup so all three uses share one guard.
+                // A null host means the local Player record is gone, which only happens as the
+                // session is tearing down — leave targetId unset rather than throwing out of
+                // InitEnemy and aborting the rest of enemy initialisation. Deliberately not
+                // logged: InitEnemy runs per spawn, so a warning here would flood during a swarm.
+                var host = playerManagerService.GetLocalPlayer();
+
                 if (playerManagerService.TryGetGetNetplayerPosition(out uint id)) //TODO: this could be simplifed but too lazy
                 {
-                    var host = playerManagerService.GetLocalPlayer();
-                    if (host.ConnectionId == id)
+                    if (host != null && host.ConnectionId == id)
                     {
                         DynamicData.For(__instance).Set("targetId", host.ConnectionId);
                     }
@@ -59,13 +66,22 @@ namespace MegabonkTogether.Patches.Enemies
                     {
                         var randomPlayer = playerManagerService.GetNetPlayerByNetplayId(id);
 
-                        __instance.target = randomPlayer.Rigidbody;
-                        DynamicData.For(__instance).Set("targetId", randomPlayer.ConnectionId);
+                        if (randomPlayer != null)
+                        {
+                            __instance.target = randomPlayer.Rigidbody;
+                            DynamicData.For(__instance).Set("targetId", randomPlayer.ConnectionId);
+                        }
+                        else if (host != null)
+                        {
+                            // FIX P0-4: that peer's netplayer is gone — they disconnected. Fall
+                            // back to the host so targetId is never left unset; TargetSwitcher
+                            // moves it onto a real peer on its next switch.
+                            DynamicData.For(__instance).Set("targetId", host.ConnectionId);
+                        }
                     }
                 }
-                else
+                else if (host != null)
                 {
-                    var host = playerManagerService.GetLocalPlayer();
                     DynamicData.For(__instance).Set("targetId", host.ConnectionId);
                 }
 
