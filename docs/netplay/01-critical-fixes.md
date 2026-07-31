@@ -30,7 +30,8 @@ an environment with no .NET SDK. Build and playtest each one.
 | [P1-7](#p1-7) | One destroyed `NetPlayer` aborts `Reset()`'s destroy loop, orphaning the rest | Medium | XS | yes |
 | [P1-8](#p1-8) | A lost race in `OnReceivedPlayerDisconnected` skips the whole disconnect handler, host retarget included — **FIXED** | High | XS | yes |
 | [P1-9](#p1-9) | Save/restore pairs on game statics use nullness as the "saved?" flag, stranding the mod's handlers — **FIXED** | Medium | XS | yes |
-| [P1-10](#p1-10) | 28 `CAN_SEND_MESSAGES = false` latches with no `try/finally` — one throw and the peer stops sending | High | M | yes |
+| [P1-10](#p1-10) | 28 `CAN_SEND_MESSAGES = false` latches with no `try/finally` — one throw and the peer stops sending — **FIXED** | High | M | yes |
+| [P1-11](#p1-11) | ~47 netplayer-position push/pop pairs with no `try/finally` — one throw and the local player's transforms resolve to a netplayer | High | M | yes |
 | [P2-5](#p2-5) | `RemoveProjectilesByOwnerId` matches the projectile id against the connection id, so it removes nothing | Medium | S | yes |
 | [P2-1](#p2-1) | Dangling transform hack is silent — instrumented, **two root causes found, both FIXED** (second unverified in-game) | Low | XS | yes |
 | [P2-2](#p2-2) | Dead `GetAllPlayers()` calls in charging paths | Low | XS | yes |
@@ -1855,11 +1856,11 @@ saved` warnings.
 ---
 
 <a name="p1-10"></a>
-## P1-10 — 28 `CAN_SEND_MESSAGES = false` latches with no `try/finally`
+## P1-10 — `CAN_SEND_MESSAGES = false` latches with no `try/finally`
 
-**Status:** CONFIRMED by inspection — **NOT fixed.** Counted 2026-07-31 in
-`src/plugin/Services/SynchronizationService.cs` (all 29 sites live in that one file; one now has a
-`finally`, from [P1-9](#p1-9)).
+**Status:** CONFIRMED by inspection — **FIXED, not yet verified in-game.** 28 uncommented sites,
+all in `src/plugin/Services/SynchronizationService.cs`; one was converted with [P1-9](#p1-9) and
+the remaining 27 here.
 
 The pattern is everywhere in the receive handlers:
 
@@ -1876,11 +1877,64 @@ the others. That is a total, unrecoverable desync from a single unlucky exceptio
 [P0-6](#p0-6) proved this exact failure happens in practice (a string interpolation threw and
 latched two statics for 581 spawns).
 
-Not fixed here because it is a 28-site mechanical sweep and folding it into an unrelated commit
-would bury it. Do it as one commit of its own, `try/finally` per site, no behaviour change
-otherwise. Worth pairing with a check on whether the flag should be a scoped `IDisposable`
-(`using var _ = Plugin.SuppressOutbound();`) rather than a raw static — 29 sites is enough to
-justify the type.
+### Fix
+
+`Plugin.SuppressOutbound()` returns a `Plugin.OutboundSuppression` scope; every site is now
+
+```csharp
+using (Plugin.SuppressOutbound())
+{
+    <game call that applies the received state>
+}
+```
+
+- A `readonly struct`, so `using` allocates nothing on paths that run per received message.
+- It restores the **previous** value rather than hard-coding `true`. Identical at every current
+  site (all are entered with the flag set) and the only version that stays correct if two
+  suppressed regions ever nest — the hand-written pairs would have re-enabled sending inside an
+  outer suppressed region.
+- Mechanical, and verified as such: a whitespace-insensitive diff of the whole file against the
+  previous revision shows **only** the 27 paired `false;`/`true;` lines replaced by the scope. No
+  statement moved, and only blank lines at the edges of the new blocks were dropped.
+
+One site (`OnReceivedWeaponAdded`) keeps an explicit `try/finally` from [P1-9](#p1-9), because it
+also restores the inventory actions.
+
+Two more nulled-out game statics were fixed the same way while sweeping — `TomeInventory.A_TomeUpgrade`
+in `OnReceivedTomeAdded`, and `ItemInventory.A_ItemAdded` / `A_ItemRemoved` in
+`NetPlayer.AddItem` / `RemoveItem`. See [P1-11](#p1-11) for the queue half of those two.
+
+### Test
+
+Nothing to observe directly — a clean session proves only that the sweep did not break the happy
+path, which is the main risk in a 27-site mechanical change. Play a full session and confirm
+weapons, tomes, items, pickups, portals and interactables all still replicate.
+
+---
+
+<a name="p1-11"></a>
+## P1-11 — ~47 netplayer-position-request push/pop pairs with no `try/finally`
+
+**Status:** CONFIRMED by inspection — **NOT fixed** (two sites fixed incidentally in
+[P1-10](#p1-10)). Found while sweeping P1-10.
+
+`AddGetNetplayerPositionRequest(id)` pushes a connection id; the transform patches
+(`UnityComponentPatches.get_transform_Prefix`, `TransformPatches.get_position_Prefix` /
+`get_rotation_Prefix`) read the front of that queue via `PeakNetplayerPositionRequest()` and
+**redirect the local player's transform reads to that netplayer**. `UnqueueNetplayerPositionRequest()`
+pops it again.
+
+The pattern appears at ~48 call sites across `Patches/Projectiles/`, `Patches/SpecialAttack/`,
+`Scripts/NetPlayer/` and `Services/`, and **exactly one of them** — in `OnReceivedItemApplied` —
+wraps the bracketed work in `try/finally`. Everywhere else, a throw between push and pop leaves the
+id on the queue, and from that moment the local player's `"Player"`, `"Hips"` and `"Renderer"`
+transforms resolve to a remote netplayer for the rest of the session. That is a visible,
+permanent corruption from a single exception, and the one existing `finally` suggests somebody has
+already been bitten by it.
+
+Same family as [P1-9](#p1-9) and [P1-10](#p1-10), and the largest of the three. Do it as its own
+commit; a scoped `IDisposable` (mirroring `Plugin.SuppressOutbound`) is the obvious shape, since
+the pop is unconditional at every site.
 
 ---
 

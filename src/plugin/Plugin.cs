@@ -80,6 +80,49 @@ namespace MegabonkTogether
         public bool IS_MANUAL_INVINCIBLE = false;
         public bool IS_NETPLAYER_ADDING_TOME = false;
 
+        /// <summary>
+        /// FIX P1-10: scoped replacement for the bare
+        /// `CAN_SEND_MESSAGES = false; …game call…; CAN_SEND_MESSAGES = true;` pattern that every
+        /// receive handler used.
+        ///
+        /// <para>The flag stops this peer echoing back the state it is applying on someone else's
+        /// behalf. Written by hand, the restore is skipped whenever the game call between the two
+        /// assignments throws — and then <b>this peer never sends anything again for the rest of
+        /// the run</b>: a total, unrecoverable desync from one exception. That is not theoretical;
+        /// P0-6 is the same failure, where one throw latched two statics for 581 enemy spawns.</para>
+        ///
+        /// <para>Restores the <i>previous</i> value rather than hard-coding `true`. Identical at
+        /// every current call site (all are entered with the flag set), and it is the only version
+        /// that stays correct if two suppressed regions ever nest.</para>
+        ///
+        /// <para>A struct, so `using` costs no allocation on paths that run per received message.</para>
+        /// </summary>
+        public readonly struct OutboundSuppression : IDisposable
+        {
+            private readonly bool previous;
+
+            internal OutboundSuppression(bool previous)
+            {
+                this.previous = previous;
+            }
+
+            public void Dispose()
+            {
+                CAN_SEND_MESSAGES = previous;
+            }
+        }
+
+        /// <summary>
+        /// Suppresses this peer's outbound messages until the returned scope is disposed. Use with
+        /// `using`, never bare — the whole point is that the restore survives an exception.
+        /// </summary>
+        public static OutboundSuppression SuppressOutbound()
+        {
+            var scope = new OutboundSuppression(CAN_SEND_MESSAGES);
+            CAN_SEND_MESSAGES = false;
+            return scope;
+        }
+
         public uint? CurrentReviver = null;
         public uint? CurrentReviverOwner = null;
 

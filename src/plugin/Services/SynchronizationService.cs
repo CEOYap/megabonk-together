@@ -1644,13 +1644,14 @@ namespace MegabonkTogether.Services
 
             damageContainer.procCoefficient = died.DamageProcCoefficient;
 
-            Plugin.CAN_SEND_MESSAGES = false;
-            trackerService.SetCurrentPlayerId(died.DiedByOwnerId);
+            using (Plugin.SuppressOutbound())
+            {
+                trackerService.SetCurrentPlayerId(died.DiedByOwnerId);
 
-            enemy.EnemyDied(damageContainer);
+                enemy.EnemyDied(damageContainer);
 
-            trackerService.UnsetCurrentPlayerId();
-            Plugin.CAN_SEND_MESSAGES = true;
+                trackerService.UnsetCurrentPlayerId();
+            }
 
             var isHost = IsServerMode() ?? false;
             if (!isHost)
@@ -1834,9 +1835,10 @@ namespace MegabonkTogether.Services
 
             if (pickup.ePickup == EPickup.Time || pickup.ePickup == EPickup.Magnet) //Apply for all clients
             {
-                Plugin.CAN_SEND_MESSAGES = false;
-                pickup.ApplyPickup();
-                Plugin.CAN_SEND_MESSAGES = true;
+                using (Plugin.SuppressOutbound())
+                {
+                    pickup.ApplyPickup();
+                }
             }
             //else if (pickup.ePickup == EPickup.Xp && IsSharedExperienceEnabled()) //Apply xp pickup for all clients if shared xp enabled
             //{
@@ -1940,9 +1942,10 @@ namespace MegabonkTogether.Services
             var dynPickup = DynamicData.For(pickup);
             dynPickup.Set("ownerId", player.PlayerId);
 
-            Plugin.CAN_SEND_MESSAGES = false;
-            pickup.StartFollowingPlayer(target);
-            Plugin.CAN_SEND_MESSAGES = true;
+            using (Plugin.SuppressOutbound())
+            {
+                pickup.StartFollowingPlayer(target);
+            }
         }
 
         public void OnWantToStartFollowingPickup(Pickup instance)
@@ -2222,15 +2225,25 @@ namespace MegabonkTogether.Services
                     };
                     upgradeModifiers.Add(modifier);
                 }
-                Plugin.CAN_SEND_MESSAGES = false;
-
-                var callbacks = TomeInventory.A_TomeUpgrade;
-                TomeInventory.A_TomeUpgrade = null;
-                player.Inventory.tomeInventory.AddTome(tomeData, upgradeModifiers, (ERarity)added.Rarity);
-                player.RefreshConstantAttack(upgradeModifiers);
-                TomeInventory.A_TomeUpgrade = callbacks;
-
-                Plugin.CAN_SEND_MESSAGES = true;
+                using (Plugin.SuppressOutbound())
+                {
+                    // Same shape as P1-9: a game static nulled out around game code that can throw.
+                    // AddTome throwing used to leave A_TomeUpgrade null for the rest of the
+                    // process, killing tome-upgrade handling in every later run, singleplayer
+                    // included. Unlike the inventory pair this one saves into a local, so a
+                    // finally is the whole fix.
+                    var callbacks = TomeInventory.A_TomeUpgrade;
+                    TomeInventory.A_TomeUpgrade = null;
+                    try
+                    {
+                        player.Inventory.tomeInventory.AddTome(tomeData, upgradeModifiers, (ERarity)added.Rarity);
+                        player.RefreshConstantAttack(upgradeModifiers);
+                    }
+                    finally
+                    {
+                        TomeInventory.A_TomeUpgrade = callbacks;
+                    }
+                }
             }
         }
 
@@ -2441,10 +2454,11 @@ namespace MegabonkTogether.Services
                     var portal = bossSpawner.portal.GetComponent<InteractablePortal>();
                     if (portal != null)
                     {
-                        Plugin.CAN_SEND_MESSAGES = false;
-                        portal.Interact();
-                        TransitionToState(GameEvent.PortalOpened);
-                        Plugin.CAN_SEND_MESSAGES = true;
+                        using (Plugin.SuppressOutbound())
+                        {
+                            portal.Interact();
+                            TransitionToState(GameEvent.PortalOpened);
+                        }
                     }
                 }
 
@@ -2456,10 +2470,11 @@ namespace MegabonkTogether.Services
                 var finalPortal = Il2CppFindHelper.FindAllGameObjects().FirstOrDefault(go => go.GetComponent<InteractablePortalFinal>() != null).GetComponent<InteractablePortalFinal>(); //Find the componnt somehow instead of whole gameobject search
                 if (finalPortal != null)
                 {
-                    Plugin.CAN_SEND_MESSAGES = false;
-                    finalPortal.Interact();
-                    TransitionToState(GameEvent.FinalPortalOpened);
-                    Plugin.CAN_SEND_MESSAGES = true;
+                    using (Plugin.SuppressOutbound())
+                    {
+                        finalPortal.Interact();
+                        TransitionToState(GameEvent.FinalPortalOpened);
+                    }
                 }
                 else
                 {
@@ -2500,296 +2515,295 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            Plugin.CAN_SEND_MESSAGES = false;
-
-            switch (used.Action)
+            using (Plugin.SuppressOutbound())
             {
-                case InteractableAction.Destroy:
-                    //var chest = interactableObj.GetComponent<InteractableChest>();
-                    GameObject.DestroyImmediate(interactableObj);
-                    break;
-                case InteractableAction.Used:
-                    logger.LogInfo($"Net player used interactable with ID: {used.NetplayId}");
-                    break;
-                case InteractableAction.Interact:
-                    var microwave = interactableObj.GetComponentInChildren<InteractableMicrowave>();
-                    if (microwave != null)
-                    {
-
-                        if (used.IsMicrowaveAndHaveItem && !microwave.hasItem)
+                switch (used.Action)
+                {
+                    case InteractableAction.Destroy:
+                        //var chest = interactableObj.GetComponent<InteractableChest>();
+                        GameObject.DestroyImmediate(interactableObj);
+                        break;
+                    case InteractableAction.Used:
+                        logger.LogInfo($"Net player used interactable with ID: {used.NetplayId}");
+                        break;
+                    case InteractableAction.Interact:
+                        var microwave = interactableObj.GetComponentInChildren<InteractableMicrowave>();
+                        if (microwave != null)
                         {
+
+                            if (used.IsMicrowaveAndHaveItem && !microwave.hasItem)
+                            {
+                                break;
+                            }
+
+                            if (microwave.hasItem && !used.IsMicrowaveAndHaveItem)
+                            {
+                                microwave.Interact();
+                                MyTime.Pause();
+                                RewardFinished();
+                                ScreenTextHelper.Show("Waiting for other player(s) choices in Microwave...", new Vector2(0, -350));
+                                break;
+                            }
+
+                            var uniqueItemsInRarity = GameManager.Instance.player.inventory.itemInventory.GetUniqueItemsInRarity(microwave.rarity);
+
+                            if (!microwave.hasItem && (GameManager.Instance.player.IsDead() || !microwave.CanInteract() || uniqueItemsInRarity < 2))
+                            {
+                                MyTime.Pause();
+                                RewardFinished();
+                                ScreenTextHelper.Show("Waiting for other player(s) choices in Microwave...", new Vector2(0, -350));
+                            }
+                            else
+                            {
+                                microwave.Interact();
+                            }
                             break;
                         }
 
-                        if (microwave.hasItem && !used.IsMicrowaveAndHaveItem)
+                        var shrineBalance = interactableObj.GetComponentInChildren<InteractableShrineBalance>();
+                        if (shrineBalance != null)
                         {
-                            microwave.Interact();
-                            MyTime.Pause();
-                            RewardFinished();
-                            ScreenTextHelper.Show("Waiting for other player(s) choices in Microwave...", new Vector2(0, -350));
+                            if (GameManager.Instance.player.IsDead())
+                            {
+                                MyTime.Pause();
+                                RewardFinished();
+                                ScreenTextHelper.Show("Waiting for other player(s) choices in Balance Shrine...", new Vector2(0, -350));
+                            }
+                            else
+                            {
+                                shrineBalance.Interact();
+                            }
                             break;
                         }
 
-                        var uniqueItemsInRarity = GameManager.Instance.player.inventory.itemInventory.GetUniqueItemsInRarity(microwave.rarity);
-
-                        if (!microwave.hasItem && (GameManager.Instance.player.IsDead() || !microwave.CanInteract() || uniqueItemsInRarity < 2))
+                        var moai = interactableObj.GetComponentInChildren<InteractableShrineMoai>();
+                        if (moai != null)
                         {
-                            MyTime.Pause();
-                            RewardFinished();
-                            ScreenTextHelper.Show("Waiting for other player(s) choices in Microwave...", new Vector2(0, -350));
-                        }
-                        else
-                        {
-                            microwave.Interact();
-                        }
-                        break;
-                    }
-
-                    var shrineBalance = interactableObj.GetComponentInChildren<InteractableShrineBalance>();
-                    if (shrineBalance != null)
-                    {
-                        if (GameManager.Instance.player.IsDead())
-                        {
-                            MyTime.Pause();
-                            RewardFinished();
-                            ScreenTextHelper.Show("Waiting for other player(s) choices in Balance Shrine...", new Vector2(0, -350));
-                        }
-                        else
-                        {
-                            shrineBalance.Interact();
-                        }
-                        break;
-                    }
-
-                    var moai = interactableObj.GetComponentInChildren<InteractableShrineMoai>();
-                    if (moai != null)
-                    {
-                        if (GameManager.Instance.player.IsDead())
-                        {
-                            MyTime.Pause();
-                            RewardFinished();
-                            ScreenTextHelper.Show("Waiting for other player(s) choices in Moai Shrine...", new Vector2(0, -350));
-                        }
-                        else
-                        {
-                            moai.Interact();
-                        }
-                        break;
-                    }
-
-                    var chest = interactableObj.GetComponent<InteractableChest>();
-                    if (chest != null)
-                    {
-                        if (GameManager.Instance.player.IsDead() || !chest.CanAfford())
-                        {
-                            MyTime.Pause();
-                            RewardFinished();
-                            ScreenTextHelper.Show("Waiting for other player(s) choices in Chest...", new Vector2(0, -350));
-                        }
-                        else
-                        {
-                            chest.Interact();
-                        }
-                        break;
-                    }
-
-                    var shadyGuy = interactableObj.GetComponentInChildren<InteractableShadyGuy>();
-                    if (shadyGuy != null)
-                    {
-                        if (GameManager.Instance.player.IsDead())
-                        {
-                            MyTime.Pause();
-                            RewardFinished();
-                            ScreenTextHelper.Show("Waiting for other player(s) choices with Shady Guy...", new Vector2(0, -350));
-                        }
-                        else
-                        {
-                            shadyGuy.Interact();
-                        }
-                        break;
-                    }
-
-                    var shrineCursed = interactableObj.GetComponent<InteractableShrineCursed>();
-                    if (shrineCursed != null)
-                    {
-                        shrineCursed.Interact();
-                        break;
-                    }
-
-                    var shrineGreed = interactableObj.GetComponent<InteractableShrineGreed>();
-                    if (shrineGreed != null)
-                    {
-                        shrineGreed.Interact();
-                        break;
-                    }
-
-                    var shrineChallenge = interactableObj.GetComponent<InteractableShrineChallenge>();
-                    if (shrineChallenge != null)
-                    {
-                        var isHost = IsServerMode() ?? false;
-                        if (isHost)
-                        {
-                            shrineChallenge.Interact();
-                        }
-                        else
-                        {
-                            shrineChallenge.done = true;
-                            shrineChallenge.fx.SetActive(true);
-                            GameObject.Destroy(shrineChallenge.alertIcon);
+                            if (GameManager.Instance.player.IsDead())
+                            {
+                                MyTime.Pause();
+                                RewardFinished();
+                                ScreenTextHelper.Show("Waiting for other player(s) choices in Moai Shrine...", new Vector2(0, -350));
+                            }
+                            else
+                            {
+                                moai.Interact();
+                            }
+                            break;
                         }
 
-                        break;
-                    }
-
-                    var shrineMagnet = interactableObj.GetComponent<InteractableShrineMagnet>();
-                    if (shrineMagnet != null)
-                    {
-                        shrineMagnet.Interact();
-                        break;
-                    }
-
-                    var bossSpawner = interactableObj.GetComponent<InteractableBossSpawner>();
-                    if (bossSpawner != null)
-                    {
-                        bossSpawner.Interact();
-                        break;
-                    }
-
-                    var finalBossSpawner = interactableObj.GetComponent<InteractableBossSpawnerFinal>();
-                    if (finalBossSpawner != null)
-                    {
-                        finalBossSpawner.Interact();
-                        TransitionToState(GameEvent.PortalOpened);
-                        break;
-                    }
-
-                    var characterFight = interactableObj.GetComponentInChildren<InteractableCharacterFight>();
-                    if (characterFight != null)
-                    {
-                        characterFight.chargeFx.SetActive(true);
-                        interactableObj.SetActive(false);
-                        break;
-                    }
-
-                    var interactableTumbleWeed = interactableObj.GetComponent<InteractableTumbleWeed>();
-                    if (interactableTumbleWeed != null)
-                    {
-                        playerManagerService.AddGetNetplayerPositionRequest(used.OwnerId);
-                        interactableTumbleWeed.Interact();
-                        playerManagerService.UnqueueNetplayerPositionRequest();
-                        break;
-                    }
-
-                    var interactablePot = interactableObj.GetComponent<InteractablePot>();
-                    if (interactablePot != null)
-                    {
-                        playerManagerService.AddGetNetplayerPositionRequest(used.OwnerId);
-                        interactablePot.Interact();
-                        playerManagerService.UnqueueNetplayerPositionRequest();
-                        break;
-                    }
-
-                    var interactableBoombox = interactableObj.GetComponentInChildren<InteractableBoombox>();
-                    if (interactableBoombox != null)
-                    {
-                        interactableBoombox.Interact();
-                        break;
-                    }
-
-                    var interactableDesertGrave = interactableObj.GetComponentInChildren<InteractableDesertGrave>();
-                    if (interactableDesertGrave != null)
-                    {
-                        interactableDesertGrave.Interact();
-                        interactableObj.SetActive(false);
-                        break;
-                    }
-
-                    var interactableSkeletonKingStatue = interactableObj.GetComponentInChildren<InteractableSkeletonKingStatue>();
-                    if (interactableSkeletonKingStatue != null)
-                    {
-                        interactableSkeletonKingStatue.Interact();
-                        interactableObj.SetActive(false);
-                        break;
-                    }
-
-                    var interactableCryptLeave = interactableObj.GetComponentInChildren<InteractableCryptLeave>();
-                    if (interactableCryptLeave != null)
-                    {
-                        interactableCryptLeave.Interact();
-                        break;
-                    }
-
-                    var interactableCoffin = interactableObj.GetComponentInChildren<InteractableCoffin>();
-                    if (interactableCoffin != null)
-                    {
-                        interactableCoffin.Interact();
-                        currentCoffin = interactableCoffin;
-
-                        if (IsServerMode() == false)
+                        var chest = interactableObj.GetComponent<InteractableChest>();
+                        if (chest != null)
                         {
-                            currentCoffin.minibossEnemies = new Il2CppSystem.Collections.Generic.HashSet<Enemy>();
+                            if (GameManager.Instance.player.IsDead() || !chest.CanAfford())
+                            {
+                                MyTime.Pause();
+                                RewardFinished();
+                                ScreenTextHelper.Show("Waiting for other player(s) choices in Chest...", new Vector2(0, -350));
+                            }
+                            else
+                            {
+                                chest.Interact();
+                            }
+                            break;
                         }
-                        break;
-                    }
 
-                    var interactableCrypt = interactableObj.GetComponentInChildren<InteractableCrypt>();
-                    if (interactableCrypt != null)
-                    {
-                        interactableCrypt.Interact();
-                        break;
-                    }
-
-                    var interactableGhostBossLeave = interactableObj.GetComponentInChildren<InteractableGhostBossLeave>();
-                    if (interactableGhostBossLeave != null)
-                    {
-                        interactableGhostBossLeave.Interact();
-                        break;
-                    }
-
-                    var interactableGift = interactableObj.GetComponentInChildren<InteractableGift>();
-                    if (interactableGift != null)
-                    {
-                        interactableGift.Interact();
-                        break;
-                    }
-
-                    var interactableGravestone = interactableObj.GetComponentInChildren<InteractableGravestone>();
-                    if (interactableGravestone != null)
-                    {
-                        interactableGravestone.Interact();
-                        break;
-                    }
-
-                    var interactableReviver = interactableObj.GetComponentInChildren<InteractableReviver>();
-                    if (interactableReviver != null)
-                    {
-                        interactableReviver.Interact();
-                        break;
-                    }
-
-                    var interactableEgg = interactableObj.GetComponentInChildren<InteractableEgg>();
-                    if (interactableEgg != null)
-                    {
-                        var isHost = IsServerMode() ?? false;
-                        if (isHost)
+                        var shadyGuy = interactableObj.GetComponentInChildren<InteractableShadyGuy>();
+                        if (shadyGuy != null)
                         {
-                            interactableEgg.Interact();
+                            if (GameManager.Instance.player.IsDead())
+                            {
+                                MyTime.Pause();
+                                RewardFinished();
+                                ScreenTextHelper.Show("Waiting for other player(s) choices with Shady Guy...", new Vector2(0, -350));
+                            }
+                            else
+                            {
+                                shadyGuy.Interact();
+                            }
+                            break;
                         }
-                        else
+
+                        var shrineCursed = interactableObj.GetComponent<InteractableShrineCursed>();
+                        if (shrineCursed != null)
                         {
-                            interactableEgg.done = true;
-                            interactableEgg.breakFx.SetActive(true);
-                            GameObject.Destroy(interactableObj);
+                            shrineCursed.Interact();
+                            break;
                         }
+
+                        var shrineGreed = interactableObj.GetComponent<InteractableShrineGreed>();
+                        if (shrineGreed != null)
+                        {
+                            shrineGreed.Interact();
+                            break;
+                        }
+
+                        var shrineChallenge = interactableObj.GetComponent<InteractableShrineChallenge>();
+                        if (shrineChallenge != null)
+                        {
+                            var isHost = IsServerMode() ?? false;
+                            if (isHost)
+                            {
+                                shrineChallenge.Interact();
+                            }
+                            else
+                            {
+                                shrineChallenge.done = true;
+                                shrineChallenge.fx.SetActive(true);
+                                GameObject.Destroy(shrineChallenge.alertIcon);
+                            }
+
+                            break;
+                        }
+
+                        var shrineMagnet = interactableObj.GetComponent<InteractableShrineMagnet>();
+                        if (shrineMagnet != null)
+                        {
+                            shrineMagnet.Interact();
+                            break;
+                        }
+
+                        var bossSpawner = interactableObj.GetComponent<InteractableBossSpawner>();
+                        if (bossSpawner != null)
+                        {
+                            bossSpawner.Interact();
+                            break;
+                        }
+
+                        var finalBossSpawner = interactableObj.GetComponent<InteractableBossSpawnerFinal>();
+                        if (finalBossSpawner != null)
+                        {
+                            finalBossSpawner.Interact();
+                            TransitionToState(GameEvent.PortalOpened);
+                            break;
+                        }
+
+                        var characterFight = interactableObj.GetComponentInChildren<InteractableCharacterFight>();
+                        if (characterFight != null)
+                        {
+                            characterFight.chargeFx.SetActive(true);
+                            interactableObj.SetActive(false);
+                            break;
+                        }
+
+                        var interactableTumbleWeed = interactableObj.GetComponent<InteractableTumbleWeed>();
+                        if (interactableTumbleWeed != null)
+                        {
+                            playerManagerService.AddGetNetplayerPositionRequest(used.OwnerId);
+                            interactableTumbleWeed.Interact();
+                            playerManagerService.UnqueueNetplayerPositionRequest();
+                            break;
+                        }
+
+                        var interactablePot = interactableObj.GetComponent<InteractablePot>();
+                        if (interactablePot != null)
+                        {
+                            playerManagerService.AddGetNetplayerPositionRequest(used.OwnerId);
+                            interactablePot.Interact();
+                            playerManagerService.UnqueueNetplayerPositionRequest();
+                            break;
+                        }
+
+                        var interactableBoombox = interactableObj.GetComponentInChildren<InteractableBoombox>();
+                        if (interactableBoombox != null)
+                        {
+                            interactableBoombox.Interact();
+                            break;
+                        }
+
+                        var interactableDesertGrave = interactableObj.GetComponentInChildren<InteractableDesertGrave>();
+                        if (interactableDesertGrave != null)
+                        {
+                            interactableDesertGrave.Interact();
+                            interactableObj.SetActive(false);
+                            break;
+                        }
+
+                        var interactableSkeletonKingStatue = interactableObj.GetComponentInChildren<InteractableSkeletonKingStatue>();
+                        if (interactableSkeletonKingStatue != null)
+                        {
+                            interactableSkeletonKingStatue.Interact();
+                            interactableObj.SetActive(false);
+                            break;
+                        }
+
+                        var interactableCryptLeave = interactableObj.GetComponentInChildren<InteractableCryptLeave>();
+                        if (interactableCryptLeave != null)
+                        {
+                            interactableCryptLeave.Interact();
+                            break;
+                        }
+
+                        var interactableCoffin = interactableObj.GetComponentInChildren<InteractableCoffin>();
+                        if (interactableCoffin != null)
+                        {
+                            interactableCoffin.Interact();
+                            currentCoffin = interactableCoffin;
+
+                            if (IsServerMode() == false)
+                            {
+                                currentCoffin.minibossEnemies = new Il2CppSystem.Collections.Generic.HashSet<Enemy>();
+                            }
+                            break;
+                        }
+
+                        var interactableCrypt = interactableObj.GetComponentInChildren<InteractableCrypt>();
+                        if (interactableCrypt != null)
+                        {
+                            interactableCrypt.Interact();
+                            break;
+                        }
+
+                        var interactableGhostBossLeave = interactableObj.GetComponentInChildren<InteractableGhostBossLeave>();
+                        if (interactableGhostBossLeave != null)
+                        {
+                            interactableGhostBossLeave.Interact();
+                            break;
+                        }
+
+                        var interactableGift = interactableObj.GetComponentInChildren<InteractableGift>();
+                        if (interactableGift != null)
+                        {
+                            interactableGift.Interact();
+                            break;
+                        }
+
+                        var interactableGravestone = interactableObj.GetComponentInChildren<InteractableGravestone>();
+                        if (interactableGravestone != null)
+                        {
+                            interactableGravestone.Interact();
+                            break;
+                        }
+
+                        var interactableReviver = interactableObj.GetComponentInChildren<InteractableReviver>();
+                        if (interactableReviver != null)
+                        {
+                            interactableReviver.Interact();
+                            break;
+                        }
+
+                        var interactableEgg = interactableObj.GetComponentInChildren<InteractableEgg>();
+                        if (interactableEgg != null)
+                        {
+                            var isHost = IsServerMode() ?? false;
+                            if (isHost)
+                            {
+                                interactableEgg.Interact();
+                            }
+                            else
+                            {
+                                interactableEgg.done = true;
+                                interactableEgg.breakFx.SetActive(true);
+                                GameObject.Destroy(interactableObj);
+                            }
+                            break;
+                        }
+
+                        logger.LogWarning("Interactable type for Interact action not recognized.");
+
                         break;
-                    }
-
-                    logger.LogWarning("Interactable type for Interact action not recognized.");
-
-                    break;
+                }
             }
-
-            Plugin.CAN_SEND_MESSAGES = true;
         }
 
         /// <summary>
@@ -2924,9 +2938,10 @@ namespace MegabonkTogether.Services
                 }
 
 
-                Plugin.CAN_SEND_MESSAGES = false;
-                shrineObj.OnTriggerEnter();
-                Plugin.CAN_SEND_MESSAGES = true;
+                using (Plugin.SuppressOutbound())
+                {
+                    shrineObj.OnTriggerEnter();
+                }
 
                 udpClientService.SendToAllClients(shrine, LiteNetLib.DeliveryMethod.ReliableOrdered);
             }
@@ -2948,9 +2963,10 @@ namespace MegabonkTogether.Services
                     return;
                 }
 
-                Plugin.CAN_SEND_MESSAGES = false;
-                shrineObj.OnTriggerEnter();
-                Plugin.CAN_SEND_MESSAGES = true;
+                using (Plugin.SuppressOutbound())
+                {
+                    shrineObj.OnTriggerEnter();
+                }
 
             }
         }
@@ -3001,9 +3017,10 @@ namespace MegabonkTogether.Services
                 }
 
 
-                Plugin.CAN_SEND_MESSAGES = false;
-                shrineObj.OnTriggerExit();
-                Plugin.CAN_SEND_MESSAGES = true;
+                using (Plugin.SuppressOutbound())
+                {
+                    shrineObj.OnTriggerExit();
+                }
 
                 udpClientService.SendToAllClients(shrine, LiteNetLib.DeliveryMethod.ReliableOrdered);
             }
@@ -3024,9 +3041,10 @@ namespace MegabonkTogether.Services
                     return;
                 }
 
-                Plugin.CAN_SEND_MESSAGES = false;
-                shrineObj.OnTriggerExit();
-                Plugin.CAN_SEND_MESSAGES = true;
+                using (Plugin.SuppressOutbound())
+                {
+                    shrineObj.OnTriggerExit();
+                }
 
             }
         }
@@ -3194,9 +3212,10 @@ namespace MegabonkTogether.Services
                 }
 
 
-                Plugin.CAN_SEND_MESSAGES = false;
-                pylonObj.OnTriggerEnter();
-                Plugin.CAN_SEND_MESSAGES = true;
+                using (Plugin.SuppressOutbound())
+                {
+                    pylonObj.OnTriggerEnter();
+                }
 
                 udpClientService.SendToAllClients(pylon, LiteNetLib.DeliveryMethod.ReliableOrdered);
             }
@@ -3218,9 +3237,10 @@ namespace MegabonkTogether.Services
                     return;
                 }
 
-                Plugin.CAN_SEND_MESSAGES = false;
-                pylonObj.OnTriggerEnter();
-                Plugin.CAN_SEND_MESSAGES = true;
+                using (Plugin.SuppressOutbound())
+                {
+                    pylonObj.OnTriggerEnter();
+                }
 
             }
         }
@@ -3266,9 +3286,10 @@ namespace MegabonkTogether.Services
                 }
 
 
-                Plugin.CAN_SEND_MESSAGES = false;
-                lampObj.OnTriggerEnter();
-                Plugin.CAN_SEND_MESSAGES = true;
+                using (Plugin.SuppressOutbound())
+                {
+                    lampObj.OnTriggerEnter();
+                }
 
                 udpClientService.SendToAllClients(lamp, LiteNetLib.DeliveryMethod.ReliableOrdered);
             }
@@ -3290,9 +3311,10 @@ namespace MegabonkTogether.Services
                     return;
                 }
 
-                Plugin.CAN_SEND_MESSAGES = false;
-                lampObj.OnTriggerEnter();
-                Plugin.CAN_SEND_MESSAGES = true;
+                using (Plugin.SuppressOutbound())
+                {
+                    lampObj.OnTriggerEnter();
+                }
 
             }
         }
@@ -3347,9 +3369,10 @@ namespace MegabonkTogether.Services
                 }
 
 
-                Plugin.CAN_SEND_MESSAGES = false;
-                pylonObj.OnTriggerExit();
-                Plugin.CAN_SEND_MESSAGES = true;
+                using (Plugin.SuppressOutbound())
+                {
+                    pylonObj.OnTriggerExit();
+                }
 
                 udpClientService.SendToAllClients(pylon, LiteNetLib.DeliveryMethod.ReliableOrdered);
             }
@@ -3370,9 +3393,10 @@ namespace MegabonkTogether.Services
                     return;
                 }
 
-                Plugin.CAN_SEND_MESSAGES = false;
-                pylonObj.OnTriggerExit();
-                Plugin.CAN_SEND_MESSAGES = true;
+                using (Plugin.SuppressOutbound())
+                {
+                    pylonObj.OnTriggerExit();
+                }
             }
         }
 
@@ -3422,9 +3446,10 @@ namespace MegabonkTogether.Services
                 }
 
 
-                Plugin.CAN_SEND_MESSAGES = false;
-                lampObj.OnTriggerExit();
-                Plugin.CAN_SEND_MESSAGES = true;
+                using (Plugin.SuppressOutbound())
+                {
+                    lampObj.OnTriggerExit();
+                }
 
                 udpClientService.SendToAllClients(lamp, LiteNetLib.DeliveryMethod.ReliableOrdered);
             }
@@ -3445,9 +3470,10 @@ namespace MegabonkTogether.Services
                     return;
                 }
 
-                Plugin.CAN_SEND_MESSAGES = false;
-                lampObj.OnTriggerExit();
-                Plugin.CAN_SEND_MESSAGES = true;
+                using (Plugin.SuppressOutbound())
+                {
+                    lampObj.OnTriggerExit();
+                }
             }
         }
 
@@ -3723,9 +3749,10 @@ namespace MegabonkTogether.Services
         private void SpawnReviver(Vector3 position, Material[] materials, uint ownerConnectionId, uint reviverId = 0)
         {
             var desertGraves = EffectManager.Instance.desertGraves;
-            Plugin.CAN_SEND_MESSAGES = false;
-            var desertGraveInstance = GameObject.Instantiate(desertGraves[0], position, Quaternion.Euler(-90, 0, 0));
-            Plugin.CAN_SEND_MESSAGES = true;
+            using (Plugin.SuppressOutbound())
+            {
+                var desertGraveInstance = GameObject.Instantiate(desertGraves[0], position, Quaternion.Euler(-90, 0, 0));
+            }
             var interactable = desertGraveInstance.GetComponent<InteractableDesertGrave>();
             var chargeFx = GameObject.Instantiate(interactable.chargeFx, desertGraveInstance.transform);
             var explodeFx = GameObject.Instantiate(interactable.explodeFx, desertGraveInstance.transform);
@@ -3996,15 +4023,16 @@ namespace MegabonkTogether.Services
             damageContainer.damageSource = lightningStrike.DamageSource;
             damageContainer.procCoefficient = lightningStrike.DamageProcCoefficient;
 
-            Plugin.CAN_SEND_MESSAGES = false;
-            WeaponUtility.LightningStrike(
-                enemy,
-                lightningStrike.Bounces,
-                damageContainer,
-                lightningStrike.BounceRange,
-                lightningStrike.BounceProcCoefficient
-            );
-            Plugin.CAN_SEND_MESSAGES = true;
+            using (Plugin.SuppressOutbound())
+            {
+                WeaponUtility.LightningStrike(
+                    enemy,
+                    lightningStrike.Bounces,
+                    damageContainer,
+                    lightningStrike.BounceRange,
+                    lightningStrike.BounceProcCoefficient
+                );
+            }
         }
 
         public void OnTornadoesSpawned(int amount)
@@ -4207,9 +4235,10 @@ namespace MegabonkTogether.Services
             }
 
             var item = (EItem)added.EItem;
-            Plugin.CAN_SEND_MESSAGES = false;
-            netPlayer.AddItem(item);
-            Plugin.CAN_SEND_MESSAGES = true;
+            using (Plugin.SuppressOutbound())
+            {
+                netPlayer.AddItem(item);
+            }
         }
 
         public void OnItemRemoved(EItem item)
@@ -4241,9 +4270,10 @@ namespace MegabonkTogether.Services
             }
 
             var item = (EItem)removed.EItem;
-            Plugin.CAN_SEND_MESSAGES = false;
-            netPlayer.RemoveItem(item);
-            Plugin.CAN_SEND_MESSAGES = true;
+            using (Plugin.SuppressOutbound())
+            {
+                netPlayer.RemoveItem(item);
+            }
         }
 
         public void OnWeaponToggled(WeaponInventory instance, EWeapon eWeapon, bool enable)
@@ -4280,11 +4310,10 @@ namespace MegabonkTogether.Services
                 logger.LogWarning("WeaponInventory not found on NetPlayer when processing OnReceivedWeaponToggled.");
                 return;
             }
-            Plugin.CAN_SEND_MESSAGES = false;
-
-            netPlayer.ToggleWeapon((EWeapon)toggled.EWeapon, toggled.Enabled);
-
-            Plugin.CAN_SEND_MESSAGES = true;
+            using (Plugin.SuppressOutbound())
+            {
+                netPlayer.ToggleWeapon((EWeapon)toggled.EWeapon, toggled.Enabled);
+            }
         }
 
         public void OnSpawnedObjectInCrypt(GameObject obj)
@@ -4373,9 +4402,10 @@ namespace MegabonkTogether.Services
 
             var hatData = DataManager.Instance.GetHat((EHat)changed.EHat);
 
-            Plugin.CAN_SEND_MESSAGES = false;
-            netPlayer.SetHat(hatData);
-            Plugin.CAN_SEND_MESSAGES = true;
+            using (Plugin.SuppressOutbound())
+            {
+                netPlayer.SetHat(hatData);
+            }
         }
 
         public void OnSkinSelected(SkinData skinData)
@@ -4476,12 +4506,13 @@ namespace MegabonkTogether.Services
 
         private void OnReceivedAddXp(AddXp xp)
         {
-            Plugin.CAN_SEND_MESSAGES = false;
-            var playerXp = GameManager.Instance.player.inventory.playerXp;
-            playerXp.xp = xp.Xp;
-            playerXp.leftOverXp = xp.LeftOverXp;
-            playerXp.AddXp(0);
-            Plugin.CAN_SEND_MESSAGES = true;
+            using (Plugin.SuppressOutbound())
+            {
+                var playerXp = GameManager.Instance.player.inventory.playerXp;
+                playerXp.xp = xp.Xp;
+                playerXp.leftOverXp = xp.LeftOverXp;
+                playerXp.AddXp(0);
+            }
         }
 
         public void RewardFinished()
@@ -4553,9 +4584,10 @@ namespace MegabonkTogether.Services
 
         private void OnReceivedChangeGold(GoldChanged changed)
         {
-            Plugin.CAN_SEND_MESSAGES = false;
-            GameManager.Instance.player.inventory.ChangeGold(changed.Amount);
-            Plugin.CAN_SEND_MESSAGES = true;
+            using (Plugin.SuppressOutbound())
+            {
+                GameManager.Instance.player.inventory.ChangeGold(changed.Amount);
+            }
         }
     }
 }

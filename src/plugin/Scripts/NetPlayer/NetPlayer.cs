@@ -554,17 +554,28 @@ namespace MegabonkTogether.Scripts.NetPlayer
             }
         }
 
+        // FIX P1-9: both of these bracket game code with TWO pieces of global state swapped out —
+        // a game static, and an entry on the netplayer-position request queue. A throw from
+        // AddItem/RemoveItem or the EffectManager call used to leak both: the static stayed null
+        // (item callbacks dead for the rest of the process) and the queue entry stayed on the
+        // front, where PeakNetplayerPositionRequest feeds it to the transform patches — so the
+        // LOCAL player's transform reads would keep resolving to this netplayer, permanently.
         public void AddItem(EItem item)
         {
             var original = ItemInventory.A_ItemAdded;
             ItemInventory.A_ItemAdded = null;
 
             playerManagerService.AddGetNetplayerPositionRequest(connectionId);
-            inventory.itemInventory.AddItem(item);
-            EffectManager.Instance.OnItemAdded(item);
-            playerManagerService.UnqueueNetplayerPositionRequest();
-
-            ItemInventory.A_ItemAdded = original;
+            try
+            {
+                inventory.itemInventory.AddItem(item);
+                EffectManager.Instance.OnItemAdded(item);
+            }
+            finally
+            {
+                playerManagerService.UnqueueNetplayerPositionRequest();
+                ItemInventory.A_ItemAdded = original;
+            }
         }
 
         public void RemoveItem(EItem item)
@@ -573,11 +584,16 @@ namespace MegabonkTogether.Scripts.NetPlayer
             ItemInventory.A_ItemRemoved = null;
 
             playerManagerService.AddGetNetplayerPositionRequest(connectionId);
-            inventory.itemInventory.RemoveItem(item, false);
-            EffectManager.Instance.OnItemRemoved(item, true);
-            playerManagerService.UnqueueNetplayerPositionRequest();
-
-            ItemInventory.A_ItemRemoved = original;
+            try
+            {
+                inventory.itemInventory.RemoveItem(item, false);
+                EffectManager.Instance.OnItemRemoved(item, true);
+            }
+            finally
+            {
+                playerManagerService.UnqueueNetplayerPositionRequest();
+                ItemInventory.A_ItemRemoved = original;
+            }
         }
 
         public void ToggleWeapon(EWeapon eWeapon, bool enabled)

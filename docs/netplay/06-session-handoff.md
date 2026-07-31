@@ -101,13 +101,19 @@ While containing it, two more defects of the same family turned up and are fixed
 nullness as the "did we save?" flag, so a null original stranded the mod's handler (or a hard
 `null`) on a game static for the rest of the process, singleplayer included.
 
-### 4. 28 unguarded `CAN_SEND_MESSAGES = false` latches — new, found this session
+### 4. ~47 unguarded netplayer-position push/pop pairs — new, found this session
 
-Every receive handler nulls the flag around a game call and sets it back afterwards, with no
-`try/finally`. One throw and the peer **stops sending anything for the rest of the run** — total
-silent desync. All 29 sites are in `SynchronizationService.cs`; one now has a `finally`. Mechanical
-sweep, its own commit, and worth considering a scoped `IDisposable` instead of a raw static.
-[P1-10](01-critical-fixes.md#p1-10). **Highest-value open item now.**
+**Highest-value open item.** `AddGetNetplayerPositionRequest` pushes a connection id that the
+transform patches read to redirect the local player's transform lookups to a netplayer;
+`UnqueueNetplayerPositionRequest` pops it. Across ~48 call sites, **one** wraps the work between
+them in `try/finally`. Anywhere else, a throw strands the id and the local player's `"Player"`,
+`"Hips"` and `"Renderer"` transforms resolve to a remote netplayer for the rest of the session.
+Its own commit; a scoped `IDisposable` mirroring `Plugin.SuppressOutbound()` is the shape.
+[P1-11](01-critical-fixes.md#p1-11).
+
+The sibling defect — 28 `CAN_SEND_MESSAGES = false` latches with no `try/finally`, one throw and
+the peer stops sending for the rest of the run — is **fixed**: all of them now go through
+`using (Plugin.SuppressOutbound())`. [P1-10](01-critical-fixes.md#p1-10).
 
 ### 5. `RemoveProjectilesByOwnerId` removes nothing — new, found this session
 
