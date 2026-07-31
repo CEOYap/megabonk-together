@@ -32,7 +32,7 @@ an environment with no .NET SDK. Build and playtest each one.
 | [P1-9](#p1-9) | Save/restore pairs on game statics use nullness as the "saved?" flag, stranding the mod's handlers — **FIXED** | Medium | XS | yes |
 | [P1-10](#p1-10) | 28 `CAN_SEND_MESSAGES = false` latches with no `try/finally` — one throw and the peer stops sending — **FIXED** | High | M | yes |
 | [P1-11](#p1-11) | Stranded netplayer-position requests redirect the local player's transforms to a peer — **FIXED** | High | S | yes |
-| [P2-5](#p2-5) | `RemoveProjectilesByOwnerId` matches the projectile id against the connection id, so it removes nothing — **FIXED** (interpolated remote projectiles still uncovered) | Medium | S | yes |
+| [P2-5](#p2-5) | `RemoveProjectilesByOwnerId` matches the projectile id against the connection id, so it removes nothing — **FIXED**, both id spaces | Medium | S | yes |
 | [P2-1](#p2-1) | Dangling transform hack is silent — instrumented, **two root causes found, both FIXED** (second unverified in-game) | Low | XS | yes |
 | [P2-2](#p2-2) | Dead `GetAllPlayers()` calls in charging paths | Low | XS | yes |
 | [P2-3](#p2-3) | Charging logic triplicated across shrine / pylon / lamp — **FIXED** | Low | M | yes |
@@ -2503,23 +2503,25 @@ projectile now, so one already-destroyed GameObject cannot abandon the rest ([P1
 Both keys stay in one id space — the ids this peer allocated. That matters: **remote** projectiles
 carry an id allocated by the *sender*, so mixing them into the same map would collide.
 
-### Still open — the interpolated remote projectiles
+### The other half — interpolated remote projectiles — also fixed
 
-`RemoveProjectilesByOwnerId` only covers projectiles this peer simulates. Projectiles received from
-a peer are never added to `spawnedProjectile`: `OnReceivedSpawnedProjectile` instantiates a
-GameObject, stamps `netplayId`/`ownerId` on it with `DynamicData`, and hands it to
-`ProjectileInterpolator` by id. **Nothing removes those when their owner leaves** — they keep being
-interpolated with no further updates.
+`RemoveProjectilesByOwnerId` initially covered only projectiles this peer simulates. Projectiles
+*received* from a peer never enter `spawnedProjectile`: `OnReceivedSpawnedProjectile` instantiates
+a GameObject, stamps `netplayId`/`ownerId` on it with `DynamicData`, and registers it with
+`ProjectileInterpolator` under **the sender's id**. Nothing removed those when their owner left, so
+they stayed in `activeProjectiles` — walked by every `Update` — waiting for snapshots that would
+never arrive.
 
-Fixing that means owner tracking inside `ProjectileInterpolator` (its ids are the sender's, so it
-needs its own map) plus an unregister-by-owner call in the disconnect path. Left out here because
-it is a second, independent mechanism, and this fix is worth landing testable on its own.
+`ProjectileInterpolator` now keeps its own `id → ownerId` map, populated by
+`RegisterProjectile(id, projectile, ownerId)`, and exposes `UnregisterProjectilesByOwner`, which
+the disconnect sweep calls. **Two maps rather than one, deliberately:** the interpolator's ids are
+allocated by the sender and `spawnedProjectile`'s by this peer, so merging them would collide.
 
 ### Test
 
 3 players, one peer disconnects while their weapons are firing. **Expected:** their in-flight
-projectiles vanish on the remaining peers instead of continuing. The ones spawned from received
-messages (see above) will still linger — that is the known remainder, not a failed fix.
+projectiles vanish on the remaining peers — both the ones those peers were simulating and the ones
+being interpolated from that peer's messages — instead of hanging in the air.
 
 ---
 

@@ -1444,7 +1444,9 @@ namespace MegabonkTogether.Services
                     }
 
 
-                    projectileManagerService.RegisterProjectileForInterpolation(projectile.Id, proj);
+                    // FIX P2-5 (remainder): the owner travels with the registration now, so these
+                    // can be dropped when that peer leaves. Same id the DynamicData stamp above uses.
+                    projectileManagerService.RegisterProjectileForInterpolation(projectile.Id, proj, projectile.OwnerId);
 
                 }
             }

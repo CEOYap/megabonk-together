@@ -20,7 +20,7 @@ namespace MegabonkTogether.Services
         public ProjectileBase RemoveProjectileById(uint id);
         public void ResetForNextLevel();
         public void RemoveProjectile(Projectile projectileId);
-        public void RegisterProjectileForInterpolation(uint id, GameObject projectile);
+        public void RegisterProjectileForInterpolation(uint id, GameObject projectile, uint ownerId);
         public void UnregisterProjectileFromInterpolation(uint id);
         public void UpdateProjectileSnapshots(List<ProjectileSnapshot> projectileSnapshots);
         public void RemoveProjectilesByOwnerId(uint connectionId);
@@ -160,10 +160,10 @@ namespace MegabonkTogether.Services
             GameObject.Destroy(removed.gameObject);
         }
 
-        public void RegisterProjectileForInterpolation(uint id, GameObject projectile)
+        public void RegisterProjectileForInterpolation(uint id, GameObject projectile, uint ownerId)
         {
             EnsureInterpolatorExists();
-            projectileInterpolator.RegisterProjectile(id, projectile);
+            projectileInterpolator.RegisterProjectile(id, projectile, ownerId);
         }
 
         public void UnregisterProjectileFromInterpolation(uint id)
@@ -218,6 +218,21 @@ namespace MegabonkTogether.Services
                 catch (System.Exception ex)
                 {
                     Plugin.Log.LogWarning($"Could not destroy projectile {projectileId} of departed player {connectionId}: {ex.Message}");
+                }
+            }
+
+            // The other half: projectiles RECEIVED from that peer. They never enter
+            // spawnedProjectile — they are instantiated and handed to the interpolator under the
+            // sender's id — so they need their own sweep, in their own id space.
+            if (projectileInterpolator != null)
+            {
+                try
+                {
+                    projectileInterpolator.UnregisterProjectilesByOwner(connectionId);
+                }
+                catch (System.Exception ex)
+                {
+                    Plugin.Log.LogWarning($"Could not unregister interpolated projectiles of departed player {connectionId}: {ex.Message}");
                 }
             }
         }

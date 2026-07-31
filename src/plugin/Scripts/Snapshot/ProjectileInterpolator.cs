@@ -7,6 +7,11 @@ namespace MegabonkTogether.Scripts.Snapshot
     {
         private readonly Dictionary<uint, GameObject> activeProjectiles = new Dictionary<uint, GameObject>();
         private readonly Dictionary<uint, List<ProjectileSnapshot>> snapshotsBuffers = new Dictionary<uint, List<ProjectileSnapshot>>();
+        // FIX P2-5 (remainder): id -> owning connection id. These ids come from the SENDER's
+        // counter, so they are a different id space from ProjectileManagerService.spawnedProjectile
+        // and cannot share its map. Without an owner here, a departed peer's received projectiles
+        // stayed registered and kept being interpolated against snapshots that would never arrive.
+        private readonly Dictionary<uint, uint> projectileOwners = new Dictionary<uint, uint>();
 
         protected float interpolationDelayMs = 0.1f;
         protected int maxBufferSize = 30;
@@ -124,13 +129,45 @@ namespace MegabonkTogether.Scripts.Snapshot
             }
         }
 
-        public void RegisterProjectile(uint id, GameObject projectile)
+        public void RegisterProjectile(uint id, GameObject projectile, uint ownerId)
         {
             activeProjectiles[id] = projectile;
+            projectileOwners[id] = ownerId;
 
             if (!snapshotsBuffers.ContainsKey(id))
             {
                 snapshotsBuffers[id] = new List<ProjectileSnapshot>();
+            }
+        }
+
+        /// <summary>
+        /// Drops every projectile received from <paramref name="ownerId"/>. Called when that peer
+        /// disconnects: no further snapshots will arrive for them, so they would otherwise sit in
+        /// <see cref="activeProjectiles"/> for the rest of the run, walked by every Update.
+        /// </summary>
+        public void UnregisterProjectilesByOwner(uint ownerId)
+        {
+            List<uint> toRemove = null;
+
+            foreach (var kv in projectileOwners)
+            {
+                if (kv.Value != ownerId)
+                {
+                    continue;
+                }
+
+                toRemove ??= new List<uint>();
+                toRemove.Add(kv.Key);
+            }
+
+            if (toRemove == null)
+            {
+                return;
+            }
+
+            foreach (var id in toRemove)
+            {
+                UnregisterProjectile(id);
             }
         }
 
@@ -149,6 +186,7 @@ namespace MegabonkTogether.Scripts.Snapshot
             }
 
             snapshotsBuffers.Remove(id);
+            projectileOwners.Remove(id);
         }
 
         private Transform GetProjectileTransform(GameObject projectile)

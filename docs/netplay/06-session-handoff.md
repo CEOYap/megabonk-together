@@ -150,11 +150,10 @@ remote player's position.
 An `id → ownerId` map now backs it, written at `AddSpawnedProjectile` (one caller, which already
 had the owner id in hand). [P2-5](01-critical-fixes.md#p2-5).
 
-**Remainder, still open:** this only covers projectiles *this* peer simulates. Projectiles received
-from a peer never enter `spawnedProjectile` — they are instantiated, stamped via `DynamicData`, and
-handed to `ProjectileInterpolator` by the sender's id — so nothing removes them when their owner
-leaves; they keep interpolating with no updates. Needs owner tracking inside the interpolator plus
-an unregister-by-owner in the disconnect path.
+The remainder is fixed too: `ProjectileInterpolator` keeps its own `id → ownerId` map (its ids are
+the *sender's*, a different id space, so the two maps stay separate) and the disconnect sweep now
+calls `UnregisterProjectilesByOwner`. Received projectiles used to stay in `activeProjectiles`,
+walked by every `Update`, waiting for snapshots that would never arrive.
 
 ### 6. `04-performance-and-gc.md` — 1C, 3 and 4 done; 5 still blocked
 
