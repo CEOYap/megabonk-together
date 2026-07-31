@@ -16,7 +16,7 @@ an environment with no .NET SDK. Build and playtest each one.
 | [P0-2](#p0-2) | `KeyNotFoundException` in every charging stop path | Critical | S | yes |
 | [P0-3](#p0-3) | Non-atomic network ID allocation | High | S | yes |
 | [P0-4](#p0-4) | `NullReferenceException` on enemy target assignment | High | XS | yes |
-| [P1-1](#p1-1) | Client-originated XP / gold / encounter-close never reach peers | High | M | yes |
+| [P1-1](#p1-1) | ~~Client-originated XP / gold / encounter-close never reach peers~~ **not a defect, entry was wrong** | — | — | — |
 | [P1-2](#p1-2) | Legendary (golden) shrine state not synced | Medium | XS | yes |
 | [P1-3](#p1-3) | No protocol version gate — mismatched builds corrupt sessions | High | M | mostly |
 | [P1-4](#p1-4) | `GetAllPlayersAlive()` allocates on every call, including per-tick paths | Medium | S | yes |
@@ -723,53 +723,85 @@ rather than freezing at their spawn point.
 <a name="p1-1"></a>
 ## P1-1 — Client-originated XP / gold / encounter-close never reach peers
 
-**Status:** CONFIRMED
-**File:** `src/plugin/Services/SynchronizationService.cs`
-**Handlers:** `OnReceivedAddXp` (L4387), `OnReceivedCloseEncounter` (L4425),
-`OnReceivedChangeGold` (L4464)
+**Status:** ~~CONFIRMED~~ → **NOT A DEFECT. This entry was wrong when written.** Already
+handled in upstream `f023d1e` (2026-02-12), five months before this plan was written
+(2026-07-29). No code change made.
+**File:** `src/plugin/Services/UdpClientService.cs:992-1013` (`HandleMessage`, host branch)
 
-### Symptom
+### Why the entry was wrong
 
-When a **client** (not the host) triggers a gold change, an XP grant, or an encounter close,
-the host applies it locally but never forwards it. Every other client stays out of sync. In a
-3+ player session this is visible immediately as divergent gold totals.
+The relay does not live in `SynchronizationService`. It lives one layer up, in the transport,
+and the original analysis only read the sync service.
 
-### Root cause
-
-Send side handles both roles:
+`UdpClientService.HandleMessage(message, netPeerId)` splits on `isHost`. The **host branch**
+already forwards all three:
 
 ```csharp
-// OnChangeGold — client sends to host, host broadcasts
-if (isHost) udpClientService.SendToAllClients(message, ReliableOrdered);
-else        udpClientService.SendToHost(message, ReliableOrdered);
+case AddXp addXp:
+    EventManager.OnAddXp(addXp);
+    SendToAllClientsExcept(netPeerId, addXp.OwnerId, addXp);      // sender excluded
+    break;
+case EncounterClosed encounterClosed:
+    encounterService.AddClosedEncounterForPlayer(encounterClosed.OwnerId);
+    if (encounterService.IsClosable())                            // vote, then broadcast
+    {
+        SendToAllClients(closeMessage, DeliveryMethod.ReliableOrdered);
+        EventManager.OnCloseEncounter(closeMessage as CloseEncounter);
+    }
+    break;
+case GoldChanged goldChanged:
+    EventManager.OnGoldChanged(goldChanged);
+    SendToAllClientsExcept(netPeerId, goldChanged.OwnerId, goldChanged);
+    break;
 ```
 
-Receive side does not:
+and the **client branch** (L727-735) applies what arrives. The full round trip closes:
+
+```
+Client B  ChangeGold(+50) locally, SendToHost(GoldChanged{OwnerId=B})
+Host      EventManager.OnGoldChanged  → applies locally
+          SendToAllClientsExcept(B's peer id, ...) → every peer except B
+Client C  EventManager.OnGoldChanged  → applies       ✓ C is in sync
+Client B  excluded, no echo                           ✓ no double-count
+```
+
+`EncounterClosed` is deliberately not a straight relay — it is a per-player vote accumulated by
+`encounterService`, and the resulting `CloseEncounter` broadcast fires once the set is
+complete. That is correct as written, not a missing forward.
+
+`OnReceivedChangeGold` in `SynchronizationService` really does only apply locally, exactly as
+this entry quoted. That is the right split: only the transport layer holds the LiteNetLib peer
+id the exclusion needs.
+
+### The fix this entry proposed would have introduced the bug it warns about
+
+It suggested calling, from the sync service:
 
 ```csharp
-// SynchronizationService.cs:4464  (current)
-private void OnReceivedChangeGold(GoldChanged changed)
-{
-    Plugin.CAN_SEND_MESSAGES = false;
-    GameManager.Instance.player.inventory.ChangeGold(changed.Amount);
-    Plugin.CAN_SEND_MESSAGES = true;
-}
+udpClientService.SendToAllClientsExcept((int)changed.OwnerId, changed.OwnerId, changed);
 ```
 
-The host applies it and stops. There is no relay.
+`SendToAllClientsExcept` filters with `gamePeers.Where(p => p.Value.Id != netPlayerId)`
+(`UdpClientService.cs:1731`). `p.Value.Id` is the **LiteNetLib peer id** — a small int LiteNetLib
+assigns (0, 1, 2…) — not the game connection id. `OwnerId` is a game connection id like
+`84989678`. The two are different id spaces, so the filter would never match, the originator
+would receive the echo, and `ChangeGold` — which applies a *delta* — would double-count.
 
-### Fix — and the trap to avoid
+That is precisely the duplication exploit this entry set out to prevent. It would also have
+relayed twice, since the transport already forwards. The entry's own warning to "check
+`SendToAllClientsExcept`'s two parameters against its implementation" was the right instinct
+aimed at the wrong line.
 
-`Sea-Bass-cmd` added the relay, which is the right idea:
+Correct usage is what the existing ~25 call sites do: pass the `netPeerId` handed to
+`HandleMessage`, which came from `HandleMessage(deserializedMsg, peer.Id)`.
 
-```csharp
-if (IsServerMode() == true) udpClientService.SendToAllClients(changed, ReliableOrdered);
-```
+### Still worth knowing: the trap this entry identified is real
 
-**Do not copy this.** `SendToAllClients` fans out to every peer in `gamePeers` with no sender
-filter, so the message is echoed back to the client that sent it. For `AddXp` that is
-harmless — `playerXp.xp = xp.Xp` is an absolute assignment and therefore idempotent. For
-`GoldChanged` it is a **duplication exploit**: `ChangeGold(changed.Amount)` applies a *delta*.
+The reasoning about `SendToAllClients` was sound, and applies to any *future* relay added here.
+It fans out to every peer in `gamePeers` with no sender filter, so the message is echoed back
+to the client that sent it. For `AddXp` that is harmless — `playerXp.xp = xp.Xp` is an absolute
+assignment and therefore idempotent. For `GoldChanged` it would be a **duplication exploit**,
+because `ChangeGold(changed.Amount)` applies a *delta*:
 
 ```
 Client A picks up gold  → ChangeGold(+50) locally
@@ -779,43 +811,25 @@ Host                    → relays to ALL clients, including A
 Client A receives echo  → ChangeGold(+50) again        <-- A now has +100
 ```
 
-`IUdpClientService` already exposes the right primitive
-(`UdpClientService.cs:54`), and `GoldChanged` already carries `OwnerId`:
+The shipped code already uses `SendToAllClientsExcept` for exactly this reason. **Any new
+delta-carrying message relayed from the host must do the same** — absolute-value messages are
+forgiving, deltas are not.
 
-```csharp
-public void SendToAllClientsExcept<T>(int netPlayerId, uint sender, T data) where T : IGameNetworkMessage;
-```
+### Unverified: sender exclusion in relay mode
 
-So:
-
-```csharp
-private void OnReceivedChangeGold(GoldChanged changed)
-{
-    // FIX P1-1: relay to peers, excluding the originator — ChangeGold applies a DELTA
-    if (IsServerMode() == true)
-    {
-        udpClientService.SendToAllClientsExcept((int)changed.OwnerId, changed.OwnerId, changed);
-    }
-
-    Plugin.CAN_SEND_MESSAGES = false;
-    GameManager.Instance.player.inventory.ChangeGold(changed.Amount);
-    Plugin.CAN_SEND_MESSAGES = true;
-}
-```
-
-Check `SendToAllClientsExcept`'s two parameters against its implementation at
-`UdpClientService.cs:1669` before wiring — the `netPlayerId`/`sender` split is not obvious
-from the signature.
-
-Same treatment for `OnReceivedCloseEncounter`. `OnReceivedAddXp` is idempotent, so a plain
-`SendToAllClients` is defensible there, but excluding the sender is still cheaper and more
-consistent — do it uniformly.
+Only the direct-peer path was traced. `SendToAllClientsExcept`'s relay branch
+(`UdpClientService.cs:1687-1714`) builds `RelayEnvelope.ToFilters` by looking `sender` up in
+`gamePeersIntroducedByRelay`, and falls back to an **empty filter list** when the lookup misses.
+An empty filter presumably means "send to all relayed peers" — harmless when the sender is a
+direct peer, but a double-count if it can ever be reached with the sender among the relayed
+set. Not traced through the server's forwarding logic and not tested. **UNVERIFIED** — worth a
+look before adding any new delta message, not urgent otherwise.
 
 ### Test
 
-1. Three players. **Client B** (not host) picks up gold.
-2. Assert B's total increases by exactly the pickup amount, not twice.
-3. Assert client C's total also increases. **Currently:** C never sees it.
+No change to test. If confirming the existing behaviour anyway: three players, **client B**
+(not host) picks up gold; B's total must increase by exactly the pickup amount and client C's
+total must increase too. Force relay mode to exercise the unverified path above.
 
 ---
 
