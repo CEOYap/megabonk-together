@@ -80,7 +80,7 @@ namespace MegabonkTogether.Patches
                 return;
             }
 
-            if (openButton == null)
+            if (openButton == null && __instance.b_open != null)
             {
                 openButton = __instance.b_open;
             }
@@ -131,16 +131,43 @@ namespace MegabonkTogether.Patches
                 return;
             }
 
+            // FIX #93: restore b_open BEFORE the routine check, not after it.
+            //
+            // Open_Postfix nulls b_open (non-shared experience only) and this is the only place
+            // that puts it back — but it used to sit below an early return that fires whenever no
+            // invulnerability routine is running, which is the normal case if OpeningFinished_Postfix
+            // bailed on !CanInput(). b_open then stayed null, and the next ChestWindowUi.Open()
+            // dereferenced it: "NullReferenceException ... Component.gameObject" inside
+            // ChestWindowUi.Open, which is #93's stack trace exactly.
+            //
+            // Unity's == also catches a destroyed button: openButton is a static that outlives the
+            // run it was captured in, so after a stage change or a new session it can hold a
+            // destroyed Component. Assigning that back is the same crash one step later.
+            if (openButton != null)
+            {
+                __instance.b_open = openButton;
+            }
+
             if (CurrentRoutine == null)
             {
                 Plugin.Log.LogDebug("No active invulnerability routine, skipping.");
                 return;
             }
 
-            __instance.b_open = openButton;
-
             CoroutineRunner.Instance.Stop(CurrentRoutine);
             CurrentRoutine = CoroutineRunner.Instance.Run(CancelWaitForVulnerabilityAfter1sec());
+        }
+
+        /// <summary>
+        /// Drops the statics this class caches across a session. `openButton` in particular holds a
+        /// MyButton from the run it was captured in; keeping it into the next session means handing
+        /// the game a destroyed Component (see the #93 note in OnClose_Postfix).
+        /// </summary>
+        internal static void Reset()
+        {
+            CurrentRoutine = null;
+            openButton = null;
+            infoText = null;
         }
 
         private static IEnumerator CancelWaitForVulnerabilityAfter1sec()

@@ -128,6 +128,9 @@ namespace MegabonkTogether.Services
         public bool IsSharedExperienceEnabled();
         public void PlayerXpAddXp(int xp, int amount, float leftOverXp);
         public void RewardFinished();
+
+        /// <summary>Breaks a stuck shared-experience barrier. See the audit doc.</summary>
+        public void ForceCloseEncounter(string reason);
         public void OnChangeGold(int amount);
     }
     internal class SynchronizationService : ISynchronizationService
@@ -289,6 +292,12 @@ namespace MegabonkTogether.Services
 
             shrineChargingPlayers.Clear();
             pylonChargingPlayers.Clear();
+
+            // The barrier used to survive teardown: closedEncounterPerPlayer and forceClose were
+            // cleared only by a successful release, so a session that ended mid-encounter poisoned
+            // the next one — the next round would either release instantly without anyone
+            // reporting, or never release at all. Matches "requires a game restart to recover".
+            encounterService.ClearClosedEncounters();
             cancellationTokenSource.Cancel();
             cancellationTokenSource = new CancellationTokenSource();
             cancellationToken = cancellationTokenSource.Token;
@@ -705,6 +714,10 @@ namespace MegabonkTogether.Services
 
         public void PrepareForNextLevel()
         {
+            // A stage change ends any round in flight — the encounter windows are torn down with
+            // the stage, so a report that arrives after this point belongs to nothing.
+            encounterService.ClearClosedEncounters();
+
             spawnedObjectManagerService.ResetForNextLevel();
             enemyManagerService.ResetForNextLevel();
             projectileManagerService.ResetForNextLevel();
@@ -4526,6 +4539,12 @@ namespace MegabonkTogether.Services
 
         public void RewardFinished()
         {
+            // The failsafe clock starts the moment this peer reports, not when it renders the
+            // "waiting" text: every caller of this method is about to block on the barrier, and
+            // several of them (the opt-out paths in OnReceivedInteractableUsed) never touch the
+            // encounter window at all.
+            encounterService.BeginWaiting();
+
             IGameNetworkMessage message = new EncounterClosed
             {
                 OwnerId = playerManagerService.GetLocalPlayer().ConnectionId,
@@ -4560,9 +4579,14 @@ namespace MegabonkTogether.Services
 
         private void OnCloseEncounter()
         {
-            if (UiManager.Instance.encounterWindows.encounterInProgress)
+            // Guarded: this runs from a network callback, so the UI can be mid-teardown (returning
+            // to the menu, changing stage). An NRE here used to abandon the release entirely,
+            // leaving every peer paused behind a barrier that had already been satisfied.
+            var encounterWindows = UiManager.Instance == null ? null : UiManager.Instance.encounterWindows;
+
+            if (encounterWindows != null && encounterWindows.encounterInProgress)
             {
-                UiManager.Instance.encounterWindows.RewardFinished();
+                encounterWindows.RewardFinished();
             }
             else
             {
@@ -4570,6 +4594,58 @@ namespace MegabonkTogether.Services
                 MyTime.Unpause();
             }
             //EncounterWindows.A_WindowClosed.Invoke();
+        }
+
+        /// <summary>
+        /// Failsafe release for a barrier that will never complete on its own — the answer to
+        /// upstream #88's "add a 60 second failsafe that closes the menus for both players".
+        ///
+        /// <para>A client also re-sends its own <c>EncounterClosed</c>: the likeliest reason it is
+        /// still waiting is that the host never counted its report (a round-attribution mistake,
+        /// not packet loss — the channel is reliable), and re-reporting is what lets the host's
+        /// barrier complete for everyone else rather than only unsticking this peer.</para>
+        /// </summary>
+        public void ForceCloseEncounter(string reason)
+        {
+            var waited = encounterService.WaitedSeconds;
+            var isHost = IsServerMode() ?? false;
+
+            logger.LogWarning(
+                $"Shared-experience failsafe fired after {waited:F1}s ({reason}). Releasing the " +
+                "encounter barrier locally" + (isHost ? " and for every client." : " and re-reporting to the host."));
+
+            try
+            {
+                if (isHost)
+                {
+                    IGameNetworkMessage closeMessage = new CloseEncounter
+                    {
+                    };
+
+                    udpClientService.SendToAllClients(closeMessage, LiteNetLib.DeliveryMethod.ReliableOrdered);
+                }
+                else
+                {
+                    var localPlayer = playerManagerService.GetLocalPlayer();
+                    if (localPlayer != null)
+                    {
+                        IGameNetworkMessage message = new EncounterClosed
+                        {
+                            OwnerId = localPlayer.ConnectionId,
+                        };
+
+                        udpClientService.SendToHost(message, LiteNetLib.DeliveryMethod.ReliableOrdered);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // Telling the others is best effort; unsticking this peer is not.
+                logger.LogWarning($"Failsafe could not notify peers: {ex.Message}");
+            }
+
+            encounterService.Close();
+            OnCloseEncounter();
         }
 
         public void OnChangeGold(int amount)

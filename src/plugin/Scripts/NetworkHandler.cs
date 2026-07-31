@@ -197,6 +197,13 @@ namespace MegabonkTogether.Scripts
             // gone, so OnDisable may never fire for them.
             Enemies.TargetSwitcherManager.Clear();
 
+            // Encounter-UI statics hold references from the finished session — a MyButton, a
+            // Coroutine handle, a TMP component parented to UI the session destroys. Handing any
+            // of those back to the game in the next session is a NullReferenceException on a
+            // destroyed Component, which is upstream issue #93's signature.
+            Patches.ChestWindowUiPatches.Reset();
+            Patches.LevelUpScreenPatches.Reset();
+
             try
             {
                 udpClientService?.Reset();

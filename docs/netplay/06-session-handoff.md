@@ -112,7 +112,26 @@ enemies off the departed peer". Clients never retarget locally by design — `Re
 targets with `Random.Range`, so a client doing its own would desync. They apply the host's
 `RetargetedEnemies`, which is why the *host's* copy of this handler must not be skippable.
 
-### 3. `Plugin.RestoreDeath` NREs at game over — CONTAINED, still undiagnosed
+### 3. Shared experience — barrier holes closed, round identity still missing
+
+Full audit: [`07-shared-experience-audit.md`](07-shared-experience-audit.md). The reported symptom
+(one player stuck on "Waiting for other player(s) choices…" while the rest play on, freed when
+someone else opens a chest) is **SE-1**: a release that exits early on a non-empty reward queue
+leaves `forceClose` set, so that peer's *next* round closes instantly without reporting and every
+other peer waits for a report that never comes.
+
+Fixed here: SE-1/2 (barrier state cleared on every release path, on stage change and on teardown),
+SE-3 (no "waiting" UI for a round released re-entrantly), SE-8 (null guards), SE-9 (upstream #93's
+`b_open` NRE), and **SE-4 — a 20s failsafe that force-closes a stuck barrier**, which is upstream
+#88's request. The failsafe logs `Shared-experience failsafe fired after …s`; **that line is the
+thing to collect** — it says whether a hole remains.
+
+**Still open and needing a wire change:** the barrier has no round identity (SE-5, SE-6), and
+shared XP is last-writer-wins on an absolute value, which silently discards concurrent pickups
+(SE-7, upstream #74). The audit proposes appending new union tags rather than adding fields to the
+existing messages.
+
+### 4. `Plugin.RestoreDeath` NREs at game over — CONTAINED, still undiagnosed
 
 `Animator.set_speed` throws inside the saved death `Il2CppSystem.Action` invoked from
 `Plugin.RestoreDeath`, via `OnReceivedGameOver` → `TransitionToState`. Appears on host and
@@ -136,7 +155,7 @@ While containing it, two more defects of the same family turned up and are fixed
 nullness as the "did we save?" flag, so a null original stranded the mod's handler (or a hard
 `null`) on a game static for the rest of the process, singleplayer included.
 
-### 4. ~~Unguarded global-state pairs~~ — FIXED (three of them), needs verification
+### 5. ~~Unguarded global-state pairs~~ — FIXED (three of them), needs verification
 
 Three families of "mod swaps a global, game code runs, mod swaps it back", each with no guard:
 
@@ -155,7 +174,7 @@ Three families of "mod swaps a global, game code runs, mod swaps it back", each 
 `Dropped N stale netplayer position request(s)` line, and no local player model snapping to a
 remote player's position.
 
-### 5. ~~`RemoveProjectilesByOwnerId` removes nothing~~ — FIXED, with a known remainder
+### 6. ~~`RemoveProjectilesByOwnerId` removes nothing~~ — FIXED, with a known remainder
 
 An `id → ownerId` map now backs it, written at `AddSpawnedProjectile` (one caller, which already
 had the owner id in hand). [P2-5](01-critical-fixes.md#p2-5).
@@ -165,7 +184,7 @@ the *sender's*, a different id space, so the two maps stay separate) and the dis
 calls `UnregisterProjectilesByOwner`. Received projectiles used to stay in `activeProjectiles`,
 walked by every `Update`, waiting for snapshots that would never arrive.
 
-### 6. `04-performance-and-gc.md` — 1C, 3 and 4 done; 5 still blocked
+### 7. `04-performance-and-gc.md` — 1C, 3 and 4 done; 5 still blocked
 
 - **1C** — FIXED. Cached enemy `Transform`, hoisted position, `sqrMagnitude` comparisons. Also
   fixed an unguarded `netplayer.Model.transform` in both target pickers — an NRE per enemy every
@@ -182,12 +201,12 @@ walked by every `Update`, waiting for snapshots that would never arrive.
 **None of this is measured.** No profiler capture has ever been taken on this project; the claims
 are structural (fewer native calls, no square roots, no per-enemy scans).
 
-### 7. P1-2 (golden shrine sync) — blocked
+### 8. P1-2 (golden shrine sync) — blocked
 
 Changes the wire format, and the version gate that would make that safe is now a Steamworks
 deliverable. Either wait, or ship knowing a version-mismatched pair desyncs silently.
 
-### 8. `RelayEnvelope.ToFilters` — UNVERIFIED, scheduled
+### 9. `RelayEnvelope.ToFilters` — UNVERIFIED, scheduled
 
 `SendToAllClientsExcept`'s relay branch falls back to an empty filter list on lookup miss. Only
 the direct-peer path was traced. Resolve during Steamworks **Phase 1**, which is where the

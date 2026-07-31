@@ -121,6 +121,17 @@ namespace MegabonkTogether.Patches
                 return;
             }
 
+            // The shared-experience failsafe, checked before every other guard below on purpose: a
+            // peer stuck on the barrier is usually *also* unable to input (it is paused) and may
+            // be dead, so any of the early returns below would skip the one check that can rescue
+            // it. LateUpdate keeps running at timeScale 0, which is why it is the hook.
+            if (synchronizationService.IsSharedExperienceEnabled() && encounterService.HasWaitedTooLong())
+            {
+                synchronizationService.ForceCloseEncounter(
+                    $"no release after {encounterService.WaitFailsafeSeconds:F0}s");
+                return;
+            }
+
             if (!GameManager.Instance.player.playerInput.CanInput())
             {
                 return;
@@ -171,6 +182,18 @@ namespace MegabonkTogether.Patches
             }
 
             synchronizationService.RewardFinished();
+
+            // Reporting can complete the round *synchronously* — on the host, RewardFinished()
+            // counts itself, finds the barrier satisfied, and re-enters this method through
+            // OnCloseEncounter -> encounterWindows.RewardFinished(), which takes the branch above
+            // and closes the window. Falling through to the "waiting" UI after that left the last
+            // player to choose staring at a message for a round that was already over, with the
+            // window hidden and the particles disabled behind it. ClearClosedEncounters ends the
+            // wait, so IsWaiting is the signal that the re-entrant release happened.
+            if (!encounterService.IsWaiting)
+            {
+                return false;
+            }
 
             var ui = UiManager.Instance;
             ui.encounterWindows?.activeEncounterWindow?.gameObject.SetActive(false);
