@@ -249,12 +249,12 @@ fork has already diverged.
 
 | Issue | Assessment |
 |---|---|
-| **#93** — soft lock when opening chest, `NullReferenceException` in `ChestWindowUi.Open` | **Root cause identified: SE-9**, and fixed on this branch. The reporter's "if any player lacks banish tokens the screen stays stuck" is a second, separate path worth reproducing — that is the barrier, not the NRE. |
+| **#93** — soft lock when opening chest, `NullReferenceException` in `ChestWindowUi.Open` | **Re-audited in [SE-13](#se-13).** The NRE is [SE-9](#se-9) and the "second chest" timing confirms it; fixed here, with a stated caveat about how `b_open` gets nulled in a shared-experience session at all. The banish-token half is [SE-12](#se-12)'s undiagnosed defect. Almost certainly the same underlying issue as #81. |
 | **#88** — permanent softlock at "waiting for other player's choice" | **Same family as SE-1/SE-2.** The reporter's own workaround ("one player can unfreeze the other through interaction") is the stale-barrier signature. Their requested 60s failsafe is implemented at 20s. The other two items in that issue are unrelated to shared experience — see below. |
 | **#37** — chest selection cannot be waited out / no pause on interactions | The first complaint maps to **SE-5** (a duplicate release closing a window the player was still using). The "no pause" complaint is by design outside shared experience: `MyTimePatches` blocks `MyTime.Pause` entirely in non-shared netplay, because one player's menu must not freeze everyone. Shared experience is the mode that pauses. The reset complaint is unrelated (see #90's family). |
 | **#80** — "waiting for other players stuck" | No log in the issue, but the title is SE-1's exact symptom. Expect the failsafe to convert it into a 20s stall; if it still occurs afterwards, the failsafe log line names the peer. |
 | **#76** — shared-experience chest soft-lock (closed) | **Audited in [SE-11](#se-11).** The fix (upstream `8bd58a6`, v4.0.3 — shared gains / local losses, plus a `!chest.CanAfford()` opt-out) is correct for its trigger and is present here. Two defects *in the fix* are fixed on this branch: no duplicate-delivery guard on the delta gold, and an unguarded deref on a per-coin network path. The reporter's actual request — identical prices for everyone — was not implemented, by design. |
-| **#81** — shared-experience chest soft-lock (closed) | Same family as #76. Closed upstream without a mechanism being named, so treat it as evidence the symptom recurs rather than as fixed. |
+| **#81** — shared-experience chest soft-lock (closed) | **Audited in [SE-12](#se-12): closed without any fix.** No commit after the report touches chests or encounters, and a later commit adds logging to hunt a chest bug. The deadlock half is [SE-1](#se-1) — introduced by v4.0.1, the release the reporter was on, whose own changelog claims to prevent deadlocks. The "only banish after the first item" half is undiagnosed; a diagnostic for the leading hypothesis is now in the build. |
 | **#77** — random freezes with IL2CPP + shared experience | Consistent with the barrier, but "random freeze" also covers the main-thread stalls this fork has been fixing elsewhere. Not attributable without a log. |
 | **#74** — shared XP breaks after many levels | ⚠️ **Reassessed after reading the issue body — the first assessment here was wrong.** It is a barrier freeze, not XP arithmetic. Full analysis in [SE-10](#se-10). |
 | **#88 (2nd item)** — quantity tome / projectile-count shrine do nothing for guests | Not shared-experience. Not evaluated in this audit. Starting point: the projectile patches index by `projectileIndex` against `attackQuantity` (`ProjectileAxePatches.CalculateAngleOffset`), and remote spawns are reconstructed from the sender's message rather than re-simulated, so a stat that changes projectile *count* is the kind that would not survive that path. Needs its own investigation. |
@@ -431,6 +431,127 @@ behaviour.
 
 ---
 
+<a name="se-12"></a>
+## SE-12 — audit of upstream #81 (closed **without a fix**)
+
+**#81** ("Soft lock when opening chest in shared experience", closed): *"you can collect your first
+item, after this every chest will only give you the banish option"*, escalating to **seven banish
+screens in a row** and both players trapped on the banish screen. Every run. Mod version **4.0.1**.
+
+### There is no fix. The issue was closed anyway.
+
+Checked against this fork's history, which contains upstream's:
+
+| Commit | Date | What |
+|---|---|---|
+| `61f2607` | Feb 22 | v4.0.1 — "attempt to fix multiple encounter bug … should prevent deadlocks" |
+| — | **Feb 25** | **#81 reported, on 4.0.1** |
+| `8bd58a6` | Feb 24 | v4.0.3 — gold rework + the chest `CanAfford` opt-out ([SE-11](#se-11)) |
+| `ba18f51` … `24f5004` | Feb 27 – Mar 17 | optimizations, damage rework, packet delivery, tomes |
+| `041881b` | later | *"chore: added some logs to identify a chest open issue"* |
+
+Nothing after the report touches chests or encounters. The last entry is the tell: the maintainer
+was **still hunting a chest bug** after #81 was closed. Treat #81 as open.
+
+### The deadlock half is SE-1, and v4.0.1 is where it came from
+
+`61f2607` is the commit that added these three lines to `RewardFinished_Prefix`:
+
+```csharp
+var currentQueue = __instance.rewardQueue;
+if (currentQueue.Count > 0) //Keep popping reward until queue is empty
+{
+    return true;
+}
+```
+
+That is [SE-1](#se-1) verbatim — the release path that exits without clearing the barrier. So the
+release shipped to fix an encounter deadlock **introduced the deadlock this audit traced**, and
+#81 arrived three days later reporting "both players trapped". Its "seven banish screens in a row"
+is the other half of the same commit: `AddEncounter_Prefix` queues every encounter that arrives
+while one is in progress, and in shared experience every peer's chest interaction feeds that queue,
+so seven queued encounters pop one after another.
+
+**That part is fixed on this branch** (SE-1, SE-2, SE-3), with [SE-4](#se-4)'s failsafe behind it.
+
+### The "only banish" half is NOT explained, and is not fixed — LIKELY hypothesis only
+
+The mod never patches the take/banish buttons; nothing in `ChestWindowUiPatches` or
+`OpenChestPatches` touches them. So a chest that offers only banish is the *game* deciding that,
+and the only way this mod plausibly reaches that decision is by stranding a game static it borrows.
+
+`NetPlayer.AddItem` / `RemoveItem` null out `ItemInventory.A_ItemAdded` / `A_ItemRemoved` while
+applying a remote player's item and put them back afterwards — **and until [P1-9](01-critical-fixes.md#p1-9)
+on this branch there was no `finally`**. One throw in `itemInventory.AddItem` or
+`EffectManager.Instance.OnItemAdded` left the game's own item callbacks dead for the rest of the
+process.
+
+"The first item works and every chest after it is broken, until you restart the game" is precisely
+that shape. It is **LIKELY, not CONFIRMED**: proving that a null `A_ItemAdded` degrades the chest's
+take option needs the IL2CPP dump, and the stripped assemblies have no bodies.
+
+**A diagnostic now tests it directly.** `ChestWindowUiPatches` records whether those statics were
+set when the first chest of the session opened, and logs `[chest #81]` once if they later become
+null. It assumes nothing about their normal value — it reports a *transition*, so it is silent both
+if they are normally null and if they are never stranded.
+
+If that line appears, P1-9's `try/finally` is the fix and the exception it was hiding is in the same
+log. If it does not, the "only banish" half needs the dump and a different hypothesis.
+
+<a name="se-13"></a>
+## SE-13 — re-audit of upstream #93 (open)
+
+**#93** ("Soft lock when opening chest", open): shared experience, first chest gives both players an
+item, **second chest freezes the game for everyone**, *"if any player lacks banish tokens for their
+selected item, the screen remains permanently stuck"*, with a `NullReferenceException` on
+`Component.gameObject` inside `ChestWindowUi.Open()`.
+
+### #93 and #81 are almost certainly the same defect
+
+Same "first chest fine, second chest broken" timing, same banish involvement, same mode. #93 adds
+the stack trace #81 lacked, and was filed after #81 was closed — which is the usual signature of a
+closed-not-fixed issue coming back.
+
+### The NRE is SE-9, and the timing is what confirms it
+
+[SE-9](#se-9) is exact about the second chest: `Open_Postfix` nulls `b_open` on the **first** chest;
+`OnClose_Postfix` restored it only *below* an early return that fires whenever no invulnerability
+routine is running; so the **second** `ChestWindowUi.Open()` dereferences null — a
+`NullReferenceException` on a `Component`, which is #93's stack. Fixed on this branch: restored
+before that return, only from a live button, and the statics are dropped on session teardown.
+
+**One caveat, stated because it decides whether SE-9 is the whole story.** `Open_Postfix` returns
+early in shared experience, so in a *pure* shared-experience session `b_open` is never nulled. For
+SE-9 to fire in #93's scenario one of these must hold:
+
+- `IsSharedExperienceEnabled()` was false at that moment — it returns false whenever
+  `Mode.EnabledSharedExperience` has no value, i.e. before the match info has been applied; or
+- the process had run a non-shared session earlier, and `openButton` / `b_open` state leaked
+  across it — the statics were never reset until this branch.
+
+Both are real and both are now closed. But if #93 recurs with the `[chest #93]` diagnostic showing
+`b_open=False`, then the NRE is coming from a different field and SE-9 is not the cause.
+
+### Why it freezes *everyone*, not just the player who hit it
+
+Because a broken chest window never reports to the barrier. Whatever stops one peer choosing — an
+NRE mid-`Open` (SE-9), or a banish-only window on a player with no banish tokens (SE-12's
+undiagnosed half) — that peer never reaches `RewardFinished`, and every other peer waits forever.
+The NRE and the banish bug are two different faults funnelling into one symptom, which is why #93
+reads as two issues in one report.
+
+[SE-4](#se-4)'s failsafe bounds the symptom regardless of which fault caused it.
+
+### Verdict
+
+| Part of #93 | Status |
+|---|---|
+| `NullReferenceException` in `ChestWindowUi.Open` on the second chest | **Fixed** (SE-9), pending confirmation, with the caveat above |
+| Everyone freezing behind the broken window | **Bounded** by the 20s failsafe (SE-4); the barrier holes it rode on are fixed (SE-1/2/3) |
+| "Stuck when a player lacks banish tokens" | **Not fixed** — this is SE-12's undiagnosed half; a diagnostic is now in place |
+
+---
+
 ## How to test this
 
 Shared experience, **3 players** — two is not enough, for the same reason the disconnect work needed
@@ -452,7 +573,11 @@ three ([`06-session-handoff.md`](06-session-handoff.md)).
    unable to afford the chest. **Expected:** the player who cannot afford is paused with the
    "Waiting … in Chest" text and everyone releases together; no repeated
    `NullReferenceException`; gold gains stay equal across peers while spending diverges.
-6. **#74's condition** ([SE-10](#se-10)): a long shared-experience run, past level 100. This is the
+6. **#81 / #93** ([SE-12](#se-12), [SE-13](#se-13)): shared experience, open **several chests in a
+   row** across the party and take an item each time. **Expected:** every chest offers take/banish
+   normally, no `[chest #81]` or `[chest #93]` line, and nobody is trapped on a banish screen. The
+   `[chest #81]` line, if it appears, resolves the one hypothesis this audit could not settle.
+7. **#74's condition** ([SE-10](#se-10)): a long shared-experience run, past level 100. This is the
    one that needs *duration* rather than a specific action — the defect is a per-round probability,
    so it only shows up once the rounds are near-continuous. Count the
    `Shared-experience failsafe fired` lines per stage; that number is the finding, whatever it is.

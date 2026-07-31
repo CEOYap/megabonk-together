@@ -1,4 +1,5 @@
-﻿using Assets.Scripts.Utility;
+﻿using Assets.Scripts.Inventory__Items__Pickups.Items;
+using Assets.Scripts.Utility;
 using HarmonyLib;
 using MegabonkTogether.Helpers;
 using Microsoft.Extensions.DependencyInjection;
@@ -43,6 +44,11 @@ namespace MegabonkTogether.Patches
         private static TMPro.TextMeshProUGUI infoText;
         private static MyButton openButton;
 
+        // SE-12 diagnostic: was ItemInventory.A_ItemAdded set the first time we saw a chest?
+        // null means "not sampled yet".
+        private static bool? itemCallbacksWereSet;
+        private static bool reportedStrandedItemCallbacks;
+
         /// <summary>
         /// Diagnostic for issue #93 (soft lock when opening chest)
         /// </summary>
@@ -60,6 +66,48 @@ namespace MegabonkTogether.Patches
                     $"b_leave={__instance.b_leave == null} b_take={__instance.b_take == null} " +
                     $"b_banish={__instance.b_banish == null} t_itemName={__instance.t_itemName == null}");
             }
+
+            ReportStrandedItemCallbacks();
+        }
+
+        /// <summary>
+        /// Diagnostic for upstream #81 ("first item works, then every chest only offers banish").
+        ///
+        /// <para>The mod never touches the take/banish buttons, so the most plausible way it could
+        /// break them is by stranding a game static it borrows: <c>NetPlayer.AddItem</c> /
+        /// <c>RemoveItem</c> null out <c>ItemInventory.A_ItemAdded</c> / <c>A_ItemRemoved</c> while
+        /// applying a remote player's item, and until P1-9 there was no <c>finally</c> — one throw
+        /// in there left the game's own item callbacks dead for the rest of the process. "The first
+        /// item works and nothing after it does, until a restart" is exactly that shape.</para>
+        ///
+        /// <para>This does not assume anything about the *normal* value: it records what the
+        /// statics were the first time a chest opened, and only reports a **transition to null**.
+        /// Silent if they are normally null, silent if they are never stranded, and once per
+        /// session either way.</para>
+        /// </summary>
+        private static void ReportStrandedItemCallbacks()
+        {
+            var setNow = ItemInventory.A_ItemAdded != null && ItemInventory.A_ItemRemoved != null;
+
+            if (!itemCallbacksWereSet.HasValue)
+            {
+                itemCallbacksWereSet = setNow;
+                return;
+            }
+
+            if (!itemCallbacksWereSet.Value || setNow || reportedStrandedItemCallbacks)
+            {
+                return;
+            }
+
+            reportedStrandedItemCallbacks = true;
+            Plugin.Log.LogError(
+                "[chest #81] ItemInventory.A_ItemAdded/A_ItemRemoved were set when the first chest " +
+                $"opened and are null now (added={ItemInventory.A_ItemAdded == null} " +
+                $"removed={ItemInventory.A_ItemRemoved == null}). The mod borrows and restores those " +
+                "around NetPlayer.AddItem/RemoveItem, so something threw in between and the game's " +
+                "item callbacks are dead for the rest of the process — the suspected cause of " +
+                "chests only offering banish after the first one.");
         }
 
         /// <summary>
@@ -168,6 +216,8 @@ namespace MegabonkTogether.Patches
             CurrentRoutine = null;
             openButton = null;
             infoText = null;
+            itemCallbacksWereSet = null;
+            reportedStrandedItemCallbacks = false;
         }
 
         private static IEnumerator CancelWaitForVulnerabilityAfter1sec()
