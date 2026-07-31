@@ -504,19 +504,54 @@ namespace MegabonkTogether.Services
         public void Reset()
         {
             players.Clear();
-            try
+
+            // FIX P1-7: guard per item. The try used to wrap the whole ForEach, and List<T>.ForEach
+            // abandons the iteration on the first throw — so one already-destroyed NetPlayer meant
+            // every remaining one was never destroyed, and the Clear() below then dropped the only
+            // references to them. They survived into the next session, untracked and undestroyed.
+            foreach (var kv in spawnedPlayers.ToList())
             {
-                spawnedPlayers.ToList().ForEach(p => GameObject.Destroy(p.Value.gameObject));
+                try
+                {
+                    var netPlayer = kv.Value;
+                    if (netPlayer == null) // Unity's overloaded == also catches a destroyed object
+                    {
+                        continue;
+                    }
+
+                    var go = netPlayer.gameObject;
+                    if (go != null)
+                    {
+                        GameObject.Destroy(go);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // The null check above is not sufficient on its own: a native object freed
+                    // underneath the managed wrapper still throws on .gameObject through interop.
+                    logger.LogWarning($"Could not destroy spawned player {kv.Key} during reset: {ex.Message}");
+                }
             }
-            catch (Exception ex)
-            {
-                logger.LogError($"Error while destroying spawned player game objects during reset: {ex}");
-            }
+
             spawnedPlayers.Clear();
             projectileToSpawnQueue.Clear();
             getNetplayerPositionQueue.Clear();
             getNetplayerPositionRequestQueue.Clear();
-            playerInventories.ToList().ForEach(kv => kv.Value.Cleanup());
+            // FIX P1-7: same shape as the loop above, and this one had no try at all — a throw
+            // from Cleanup() escaped Reset() entirely, skipping the Clear() and every field reset
+            // below it and leaving the service half-reset for the next session.
+            foreach (var kv in playerInventories.ToList())
+            {
+                try
+                {
+                    kv.Value?.Cleanup();
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning($"Could not clean up inventory for player {kv.Key} during reset: {ex.Message}");
+                }
+            }
+
             playerInventories.Clear();
             localConnectionId = 0;
             isLocalPlayerSet = false;
