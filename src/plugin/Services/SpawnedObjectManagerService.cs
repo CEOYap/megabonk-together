@@ -6,6 +6,7 @@ using MegabonkTogether.Scripts.Snapshot;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using UnityEngine;
 
 namespace MegabonkTogether.Services
@@ -38,7 +39,9 @@ namespace MegabonkTogether.Services
         private readonly ConcurrentDictionary<uint, TumbleWeedModel> previousTumbleWeedsDelta = [];
         private ConcurrentQueue<EItemRarity> shadyGuyRarityRequest = [];
         private TumbleWeedInterpolator tumbleWeedInterpolator;
-        private uint currentObjectId = 0; //TODO: concurrency?
+        // FIX P0-3: see EnemyManagerService — int so allocation can go through Interlocked,
+        // 0 stays reserved as the failure sentinel.
+        private int currentObjectId = 0;
 
         private const float TUMBLEWEED_POSITION_THRESHOLD = 0.1f;
 
@@ -47,13 +50,15 @@ namespace MegabonkTogether.Services
         /// </summary>
         public uint AddSpawnedObject(GameObject obj)
         {
-            currentObjectId++;
-            if (!spawnedObjects.TryAdd(currentObjectId, obj))
+            // FIX P0-3: atomic allocation, single read.
+            var newId = (uint)Interlocked.Increment(ref currentObjectId);
+
+            if (!spawnedObjects.TryAdd(newId, obj))
             {
-                Plugin.Log.LogWarning($"Attempted to add an object that already exists. ObjectId: {currentObjectId} , stackTrace: {System.Environment.StackTrace}");
+                Plugin.Log.LogWarning($"Attempted to add an object that already exists. ObjectId: {newId} , stackTrace: {System.Environment.StackTrace}");
                 return 0;
             }
-            return currentObjectId;
+            return newId;
         }
 
         /// <summary>
@@ -131,7 +136,7 @@ namespace MegabonkTogether.Services
 
         public void ResetForNextLevel()
         {
-            currentObjectId = 0;
+            Interlocked.Exchange(ref currentObjectId, 0);
             previousTumbleWeedsDelta.Clear();
             //spawnedObjects.Values.ToList().ForEach(Object.Destroy);
             spawnedObjects.Clear();

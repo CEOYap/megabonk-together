@@ -521,14 +521,14 @@ public bool OnStoppingChargingShrine(uint shrineNetplayId)
 <a name="p0-3"></a>
 ## P0-3 — Non-atomic network ID allocation
 
-**Status:** CONFIRMED
+**Status:** CONFIRMED — FIXED, not yet verified in-game
 **Files:**
-- `src/plugin/Services/EnemyManagerService.cs:165`
-- `src/plugin/Services/PickupManagerService.cs:47`
+- `src/plugin/Services/EnemyManagerService.cs:185`
+- `src/plugin/Services/PickupManagerService.cs:46`
 - `src/plugin/Services/SpawnedObjectManagerService.cs:50`
 
-The `//TODO: concurrency?` markers sit at `EnemyManagerService.cs:40`,
-`PickupManagerService.cs:25`, `SpawnedObjectManagerService.cs:41`.
+The `//TODO: concurrency?` markers sat at `EnemyManagerService.cs:40`,
+`PickupManagerService.cs:25`, `SpawnedObjectManagerService.cs:41`, and are now resolved.
 
 > `Sea-Bass-cmd/optimized-netplay` claims to have fixed this in commit `0c7e313`. It did not
 > — the automated script's regex failed to match, so only the `//TODO` comments were deleted.
@@ -588,12 +588,21 @@ public uint AddSpawnedEnemy(Enemy enemy)
 }
 ```
 
-Check the reset paths too — `EnemyManagerService.cs:198` and equivalents do
-`currentEnemyId = 0;`. With the field now `int` that still compiles; prefer
-`Interlocked.Exchange(ref currentEnemyId, 0)` for symmetry.
+Because `Interlocked.Increment` returns the *new* value, the first id handed out is 1 and `0`
+stays reserved as the failure sentinel these methods already return — the same guarantee the
+`++`-then-read version had.
 
 Apply the same shape to `PickupManagerService.AddSpawnedPickup` and
 `SpawnedObjectManagerService.AddSpawnedObject`.
+
+Reset paths: `PickupManagerService.ResetForNextLevel` and
+`SpawnedObjectManagerService.ResetForNextLevel` zero their counter, and now do it via
+`Interlocked.Exchange` for symmetry. **`EnemyManagerService.ResetForNextLevel` does not zero
+`currentEnemyId`** — an earlier draft of this entry claimed it did, at a line number that has
+never held that statement. Leave it alone: enemy ids staying monotonic across a stage boundary
+is the safer behaviour, since a client holding a stale `netplayId` from the previous stage
+cannot then collide with a freshly allocated one. The two that do reset are only safe because
+they `Clear()` the dictionary in the same call.
 
 ### Test
 

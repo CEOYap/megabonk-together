@@ -4,6 +4,7 @@ using MegabonkTogether.Extensions;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 
 namespace MegabonkTogether.Services
 {
@@ -22,7 +23,9 @@ namespace MegabonkTogether.Services
     internal class PickupManagerService : IPickupManagerService
     {
         private readonly ConcurrentDictionary<uint, Pickup> spawnedPickups = [];
-        private uint currentPickupId = 0; //TODO: concurrency?
+        // FIX P0-3: see EnemyManagerService — int so allocation can go through Interlocked,
+        // 0 stays reserved as the failure sentinel.
+        private int currentPickupId = 0;
 
         public IEnumerable<PickupModel> GetAllPickups()
         {
@@ -44,14 +47,16 @@ namespace MegabonkTogether.Services
         /// </summary>
         public uint AddSpawnedPickup(Pickup pickup)
         {
-            currentPickupId++;
-            if (!spawnedPickups.TryAdd(currentPickupId, pickup))
+            // FIX P0-3: atomic allocation, single read.
+            var newId = (uint)Interlocked.Increment(ref currentPickupId);
+
+            if (!spawnedPickups.TryAdd(newId, pickup))
             {
-                Plugin.Log.LogWarning($"Attempted to add an pickup that already exists. PickupId: {currentPickupId}");
+                Plugin.Log.LogWarning($"Attempted to add an pickup that already exists. PickupId: {newId}");
                 return 0;
             }
 
-            return currentPickupId;
+            return newId;
         }
 
         /// <summary>
@@ -102,7 +107,7 @@ namespace MegabonkTogether.Services
 
         public void ResetForNextLevel()
         {
-            currentPickupId = 0;
+            Interlocked.Exchange(ref currentPickupId, 0);
             //spawnedPickups.Select(kv => kv.Value).ToList().ForEach(p => GameObject.Destroy(p.gameObject));
             spawnedPickups.Clear();
         }

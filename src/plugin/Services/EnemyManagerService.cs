@@ -8,6 +8,7 @@ using MonoMod.Utils;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using UnityEngine;
 
 namespace MegabonkTogether.Services
@@ -37,7 +38,10 @@ namespace MegabonkTogether.Services
         private Dictionary<uint, EnemyModel> previousSpawnedEnemiesDelta = [];
         private readonly ConcurrentDictionary<Enemy, string> reviverEnemies_NetplayNames = [];
         private readonly ConcurrentDictionary<uint, int> reviverSpawnCountPerOwner = [];
-        private uint currentEnemyId = 0; //TODO: concurrency?
+        // FIX P0-3: int rather than uint so Interlocked.Increment can allocate ids atomically.
+        // Increment returns the new value, so the first id handed out is 1 and 0 stays free as
+        // the "allocation failed" sentinel AddSpawnedEnemy returns.
+        private int currentEnemyId = 0;
 
         private const float POSITION_TRESHOLD = 0.1f;
         private const float YAW_TRESHOLD = 5.0f;
@@ -184,16 +188,20 @@ namespace MegabonkTogether.Services
         /// </summary>
         public uint AddSpawnedEnemy(Enemy enemy)
         {
-            currentEnemyId++;
-            if (!spawnedEnemies.TryAdd(currentEnemyId, enemy))
+            // FIX P0-3: allocate once, atomically, then use the local. The previous code did a
+            // non-atomic read-modify-write and then re-read the shared field three more times,
+            // so two concurrent spawns could collide on an id or skip one.
+            var newId = (uint)Interlocked.Increment(ref currentEnemyId);
+
+            if (!spawnedEnemies.TryAdd(newId, enemy))
             {
-                Plugin.Log.LogWarning($"Attempted to add an enemy that already exists. EnemyId: {currentEnemyId}");
+                Plugin.Log.LogWarning($"Attempted to add an enemy that already exists. EnemyId: {newId}");
                 return 0;
             }
 
-            DynamicData.For(enemy).Set("netplayId", currentEnemyId);
+            DynamicData.For(enemy).Set("netplayId", newId);
 
-            return currentEnemyId;
+            return newId;
         }
 
         /// <summary>
