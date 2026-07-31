@@ -4669,9 +4669,35 @@ namespace MegabonkTogether.Services
 
         private void OnReceivedChangeGold(GoldChanged changed)
         {
+            // SE-11: ignore our own gain coming back.
+            //
+            // Gold is shared as a DELTA (upstream 4.0.3 — gains shared, losses local), and a delta
+            // applied twice is a permanent divergence, not the no-op it would be under an absolute
+            // value. The host excludes the sender when relaying, but that exclusion runs through
+            // SendToAllClientsExcept, whose relay branch falls back to an EMPTY filter list on a
+            // lookup miss — UNVERIFIED, and open work in its own right (`RelayEnvelope.ToFilters`).
+            // A cheap owner check makes the delta model safe regardless of how that resolves.
+            var localPlayer = playerManagerService.GetLocalPlayer();
+            if (localPlayer != null && changed.OwnerId == localPlayer.ConnectionId)
+            {
+                return;
+            }
+
+            // Runs from a network callback, and gold changes with every coin — an unguarded deref
+            // here during teardown or a stage change is a repeating NullReferenceException, which
+            // is what upstream #76 reported alongside the freeze.
+            var inventory = GameManager.Instance == null || GameManager.Instance.player == null
+                ? null
+                : GameManager.Instance.player.inventory;
+
+            if (inventory == null)
+            {
+                return;
+            }
+
             using (Plugin.SuppressOutbound())
             {
-                GameManager.Instance.player.inventory.ChangeGold(changed.Amount);
+                inventory.ChangeGold(changed.Amount);
             }
         }
     }

@@ -253,7 +253,8 @@ fork has already diverged.
 | **#88** — permanent softlock at "waiting for other player's choice" | **Same family as SE-1/SE-2.** The reporter's own workaround ("one player can unfreeze the other through interaction") is the stale-barrier signature. Their requested 60s failsafe is implemented at 20s. The other two items in that issue are unrelated to shared experience — see below. |
 | **#37** — chest selection cannot be waited out / no pause on interactions | The first complaint maps to **SE-5** (a duplicate release closing a window the player was still using). The "no pause" complaint is by design outside shared experience: `MyTimePatches` blocks `MyTime.Pause` entirely in non-shared netplay, because one player's menu must not freeze everyone. Shared experience is the mode that pauses. The reset complaint is unrelated (see #90's family). |
 | **#80** — "waiting for other players stuck" | No log in the issue, but the title is SE-1's exact symptom. Expect the failsafe to convert it into a 20s stall; if it still occurs afterwards, the failsafe log line names the peer. |
-| **#81, #76** — shared-experience chest soft-lock (both closed upstream) | Same family. Closed upstream without a mechanism being named, so treat them as evidence the symptom recurs rather than as fixed. |
+| **#76** — shared-experience chest soft-lock (closed) | **Audited in [SE-11](#se-11).** The fix (upstream `8bd58a6`, v4.0.3 — shared gains / local losses, plus a `!chest.CanAfford()` opt-out) is correct for its trigger and is present here. Two defects *in the fix* are fixed on this branch: no duplicate-delivery guard on the delta gold, and an unguarded deref on a per-coin network path. The reporter's actual request — identical prices for everyone — was not implemented, by design. |
+| **#81** — shared-experience chest soft-lock (closed) | Same family as #76. Closed upstream without a mechanism being named, so treat it as evidence the symptom recurs rather than as fixed. |
 | **#77** — random freezes with IL2CPP + shared experience | Consistent with the barrier, but "random freeze" also covers the main-thread stalls this fork has been fixing elsewhere. Not attributable without a log. |
 | **#74** — shared XP breaks after many levels | ⚠️ **Reassessed after reading the issue body — the first assessment here was wrong.** It is a barrier freeze, not XP arithmetic. Full analysis in [SE-10](#se-10). |
 | **#88 (2nd item)** — quantity tome / projectile-count shrine do nothing for guests | Not shared-experience. Not evaluated in this audit. Starting point: the projectile patches index by `projectileIndex` against `attackQuantity` (`ProjectileAxePatches.CalculateAngleOffset`), and remote spawns are reconstructed from the sender's message rather than re-simulated, so a stat that changes projectile *count* is the kind that would not survive that path. Needs its own investigation. |
@@ -351,6 +352,85 @@ same build as the barrier fixes would make the playtest above unreadable.
 
 ---
 
+<a name="se-11"></a>
+## SE-11 — audit of upstream #76 and the fix that closed it
+
+**#76** ("Shared Experience chest soft-lock", closed) reported: three players, chest prices of
+400 / 500 / 600 and gold of 1000 / 2000 / 300 — **the two players who *could* afford the chest
+froze, while the one who could not kept moving**, with a repeating
+`NullReferenceException` in the log.
+
+### The fix
+
+Upstream `8bd58a6`, shipped as v4.0.3, and it is in this fork. Two changes:
+
+1. **Gold model reworked.** Only *gains* are shared — `ChangeGold_Postfix` returns early on
+   `amount < 0` — and `OnReceivedChangeGold` applies the delta. The previous version computed a
+   delta against captured state and clamped at zero on both sides.
+2. **A chest opt-out**: `if (GameManager.Instance.player.IsDead() || !chest.CanAfford())` → pause,
+   report to the barrier, show "Waiting for other player(s) choices in Chest…".
+
+### Is the fix right? Yes — and the diagnosis behind it is worth stating, because it was left implicit
+
+The inverted symptom is the tell. Before the fix, the peer who *could not afford* fell into the
+`else` branch and called `chest.Interact()` anyway. Whatever the game does there for a player who
+cannot pay, it did **not** open a reward window — so that peer never reported to the barrier and
+never paused, which is why it stayed mobile. The two who could afford opened their windows, chose,
+reported, and then waited forever for a third report that was never coming. The opt-out fixes
+exactly that.
+
+### But it is an allowlist, and the failure mode of a missing entry is a permanent freeze
+
+`OnReceivedInteractableUsed` is a chain of `if (component != null)` branches, and the ones that can
+opt a peer out of a barrier round are enumerated by hand: microwave-without-item, microwave with
+too few unique items, balance shrine when dead, moai when dead, **chest when dead or unaffordable**,
+shady guy when dead, and object-not-found. Each was added as its own bug report came in — #76 is
+the chest entry.
+
+Every unenumerated way of not reaching a reward window is the same bug wearing different clothes.
+Ones visible in the code today:
+
+- `PopReward_Prefix` returns early, without reporting, when `!CanInput()` ([SE-6](#se-6));
+- a reward window that throws on open never reports — which is [SE-9](#se-9) / #93, and would
+  explain #76's *repeated* NRE if it landed there;
+- interactable branches with no opt-out at all (`shrineCursed`, `shrineGreed`, `shrineMagnet`,
+  `shrineChallenge`, the boss spawners) — none currently open a reward window, so none needs one
+  *today*, which is exactly the kind of assumption that breaks when the game updates.
+
+**This is why the failsafe in [SE-4](#se-4) matters more than any individual entry in that list.**
+The allowlist makes known cases correct; the failsafe makes unknown cases survivable. They are
+complementary, and #76's history — three separate chest soft-lock issues (#76, #81, #93) closed or
+open over four months — is the argument for having both.
+
+### Two defects found in the fix itself, and fixed here
+
+**The delta gold model has no protection against a duplicate delivery.** Under the old absolute
+model, a `GoldChanged` echoed back to its own sender was a harmless no-op. Under a delta it is a
+permanent overcount. The host excludes the sender when relaying, but that exclusion goes through
+`SendToAllClientsExcept`, whose relay branch **falls back to an empty filter list on a lookup
+miss** — the UNVERIFIED item scheduled for Steamworks Phase 1. `OnReceivedChangeGold` now ignores
+any `GoldChanged` whose `OwnerId` is the local player, which makes the delta model safe regardless
+of how that resolves. (The same guard is a prerequisite for moving XP to deltas — see
+[SE-10](#se-10)'s recommendation.)
+
+**`OnReceivedChangeGold` dereferenced `GameManager.Instance.player.inventory` unguarded**, from a
+network callback, on a path that fires for *every coin picked up by any player*. During teardown or
+a stage change that is a repeating `NullReferenceException` — a better match for #76's "repeated"
+NRE than any one-shot UI failure. Now guarded.
+
+### What the fix deliberately does not do
+
+The reporter asked for **identical gold prices for everyone**. The fix does not do that, and the
+issue was closed anyway. With gains shared and losses local, balances diverge by exactly what each
+player has spent, while the game's own per-player price escalation diverges too — so `CanAfford()`
+disagreeing between peers is not an edge case, it is the steady state, and the opt-out will keep
+firing for the rest of the run. That is a defensible design (you spend your own gold), but it is a
+different design from the one requested, and it means #76's *underlying* asymmetry is still there
+by choice. Worth knowing before treating the chest opt-out as a bug rather than the intended
+behaviour.
+
+---
+
 ## How to test this
 
 Shared experience, **3 players** — two is not enough, for the same reason the disconnect work needed
@@ -368,7 +448,11 @@ three ([`06-session-handoff.md`](06-session-handoff.md)).
    stage/run behaves normally — neither instant nor stuck.
 4. **#93** (non-shared experience): open chests while teleporting/unable to input, then open another
    chest. **Expected:** no `[chest #93]` diagnostic line, no NRE in `ChestWindowUi.Open`.
-5. **#74's condition** ([SE-10](#se-10)): a long shared-experience run, past level 100. This is the
+5. **#76's repro** ([SE-11](#se-11)): three players with deliberately different gold, one of them
+   unable to afford the chest. **Expected:** the player who cannot afford is paused with the
+   "Waiting … in Chest" text and everyone releases together; no repeated
+   `NullReferenceException`; gold gains stay equal across peers while spending diverges.
+6. **#74's condition** ([SE-10](#se-10)): a long shared-experience run, past level 100. This is the
    one that needs *duration* rather than a specific action — the defect is a per-round probability,
    so it only shows up once the rounds are near-continuous. Count the
    `Shared-experience failsafe fired` lines per stage; that number is the finding, whatever it is.
