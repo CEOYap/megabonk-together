@@ -8,7 +8,32 @@ is the state summary and the open-work queue.
 
 ---
 
-## What this session did
+## Session 2 — branch `claude/megabonk-distance-player-null-1ggr92`, not yet merged
+
+Worked open items 1-3 and the two defects they surfaced. Six commits, `ac57c12` through `27571ba`.
+
+| Item | What |
+|---|---|
+| [P2-1](01-critical-fixes.md#p2-1) | The second dangling path: `CameraSwitcher` never invalidated its spectate target |
+| [P1-8](01-critical-fixes.md#p1-8) | A lost disconnect race skipped the entire handler, host retarget included |
+| [P1-9](01-critical-fixes.md#p1-9) | Save/restore pairs on game statics keyed off nullness; the game-over NRE is now contained (its cause is still open) |
+| [P1-10](01-critical-fixes.md#p1-10) | 28 `CAN_SEND_MESSAGES` latches → `using (Plugin.SuppressOutbound())` |
+| [P1-11](01-critical-fixes.md#p1-11) | Stranded netplayer-position requests, purged by frame |
+| [P2-5](01-critical-fixes.md#p2-5) | `RemoveProjectilesByOwnerId` now has an owner to filter on |
+
+**None of it is compiled or run.** There is no .NET SDK in that environment and the network policy
+blocks installing one, so `dotnet build` was never executed. What *was* verified: every changed
+file, and all 264 `.cs` files in `src/`, parse cleanly under a tree-sitter C# parser. That rules out
+the structural risk in P1-10's 27-site mechanical rewrite; it says nothing about types, overloads
+or nullability. **Treat "builds clean" as unknown, not assumed** — build before the first playtest.
+
+Signature changes to look for if the build does fail:
+`AddSpawnedProjectile(ProjectileBase, uint)`, `Plugin.SuppressOutbound()` /
+`Plugin.OutboundSuppression`, and `getNetplayerPositionRequestQueue`'s element type.
+
+---
+
+## Session 1 — what it did
 
 Worked the `01-critical-fixes.md` queue, then moved to `04-performance-and-gc.md`, then chased
 bugs surfaced by in-game testing. Commits `1b2f486` through `893d566`, all on `main`.
