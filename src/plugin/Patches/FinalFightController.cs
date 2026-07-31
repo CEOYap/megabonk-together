@@ -108,11 +108,17 @@ namespace MegabonkTogether.Patches
             var isServer = synchronizationService.IsServerMode() ?? false;
             if (isServer)
             {
-                var allPlayers = playerManagerService.GetAllPlayersAlive();
-                var randomIndex = UnityEngine.Random.Range(0, allPlayers.Count());
-                var targetPlayer = allPlayers.ElementAt(randomIndex);
-
-                finalBossOrbManagerService.QueueNextTarget(targetPlayer.ConnectionId);
+                // FIX P1-4 / P1-6: was a Player[] plus iterators, enumerated twice (Count then
+                // ElementAt), with the unguarded shape P1-6 fixed in ReTargetEnemies —
+                // Random.Range(0, 0) returns 0 and ElementAt(0) throws on an empty set. This is a
+                // Harmony prefix, so that throw would escape into the IL2CPP trampoline rather
+                // than being caught. GetRandomPlayerAliveConnectionId is guarded and allocates
+                // one list.
+                var targetPlayerId = playerManagerService.GetRandomPlayerAliveConnectionId();
+                if (targetPlayerId.HasValue)
+                {
+                    finalBossOrbManagerService.QueueNextTarget(targetPlayerId.Value);
+                }
             }
 
             return true;
@@ -133,11 +139,17 @@ namespace MegabonkTogether.Patches
             var isServer = synchronizationService.IsServerMode() ?? false;
             if (isServer)
             {
-                var allPlayers = playerManagerService.GetAllPlayersAlive();
-                var randomIndex = UnityEngine.Random.Range(0, allPlayers.Count());
-                var targetPlayer = allPlayers.ElementAt(randomIndex);
-
-                finalBossOrbManagerService.QueueNextTarget(targetPlayer.ConnectionId);
+                // FIX P1-4 / P1-6: was a Player[] plus iterators, enumerated twice (Count then
+                // ElementAt), with the unguarded shape P1-6 fixed in ReTargetEnemies —
+                // Random.Range(0, 0) returns 0 and ElementAt(0) throws on an empty set. This is a
+                // Harmony prefix, so that throw would escape into the IL2CPP trampoline rather
+                // than being caught. GetRandomPlayerAliveConnectionId is guarded and allocates
+                // one list.
+                var targetPlayerId = playerManagerService.GetRandomPlayerAliveConnectionId();
+                if (targetPlayerId.HasValue)
+                {
+                    finalBossOrbManagerService.QueueNextTarget(targetPlayerId.Value);
+                }
             }
 
             return true;
@@ -158,11 +170,17 @@ namespace MegabonkTogether.Patches
             var isServer = synchronizationService.IsServerMode() ?? false;
             if (isServer)
             {
-                var allPlayers = playerManagerService.GetAllPlayersAlive();
-                var randomIndex = UnityEngine.Random.Range(0, allPlayers.Count());
-                var targetPlayer = allPlayers.ElementAt(randomIndex);
-
-                finalBossOrbManagerService.QueueNextTarget(targetPlayer.ConnectionId);
+                // FIX P1-4 / P1-6: was a Player[] plus iterators, enumerated twice (Count then
+                // ElementAt), with the unguarded shape P1-6 fixed in ReTargetEnemies —
+                // Random.Range(0, 0) returns 0 and ElementAt(0) throws on an empty set. This is a
+                // Harmony prefix, so that throw would escape into the IL2CPP trampoline rather
+                // than being caught. GetRandomPlayerAliveConnectionId is guarded and allocates
+                // one list.
+                var targetPlayerId = playerManagerService.GetRandomPlayerAliveConnectionId();
+                if (targetPlayerId.HasValue)
+                {
+                    finalBossOrbManagerService.QueueNextTarget(targetPlayerId.Value);
+                }
             }
 
             return true;

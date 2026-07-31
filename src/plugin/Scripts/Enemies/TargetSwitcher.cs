@@ -57,7 +57,10 @@ namespace MegabonkTogether.Scripts.Enemies
 
         private void PickANewTarget()
         {
-            var alives = playerManagerService.GetAllPlayersAlive().ToList();
+            // FIX P1-4: this runs per enemy on a 2-6s timer, so at a full swarm it was the mod's
+            // worst allocation site — a Player[], two LINQ iterators and a List copy per call.
+            // The buffer is safe here: Update is main thread, and nothing below re-enters it.
+            var alives = playerManagerService.GetAllPlayersAliveNonAlloc();
             if (alives.Count == 0) return;
 
             var selectedPlayer = alives[Random.Range(0, alives.Count)];
@@ -77,7 +80,9 @@ namespace MegabonkTogether.Scripts.Enemies
 
         private void PickACloseTarget()
         {
-            var alives = playerManagerService.GetAllPlayersAlive().ToList();
+            // FIX P1-4: as above. The loop below only reads the buffer and calls lookups that do
+            // not re-enter it, so holding it across the iteration is safe.
+            var alives = playerManagerService.GetAllPlayersAliveNonAlloc();
             if (alives.Count == 0) return;
 
             var closestDistance = float.MaxValue;

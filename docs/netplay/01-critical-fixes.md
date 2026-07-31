@@ -19,9 +19,9 @@ an environment with no .NET SDK. Build and playtest each one.
 | [P1-1](#p1-1) | ~~Client-originated XP / gold / encounter-close never reach peers~~ **not a defect, entry was wrong** | — | — | — |
 | [P1-2](#p1-2) | Legendary (golden) shrine state not synced | Medium | XS | yes |
 | [P1-3](#p1-3) | No protocol version gate — mismatched builds corrupt sessions | High | M | mostly |
-| [P1-4](#p1-4) | `GetAllPlayersAlive()` allocates on every call, including per-tick paths | Medium | S | yes |
+| [P1-4](#p1-4) | `GetAllPlayersAlive()` allocates on every call, including per-tick paths — **FIXED** | Medium | S | yes |
 | [P1-5](#p1-5) | ~~Damage ownership misattributed through shared static `DamageContainer`s~~ **dead code, deleted; symptom unattributed** | — | — | — |
-| [P1-6](#p1-6) | `ReTargetEnemies` throws on an empty alive-set, aborting the death handler | Medium | XS | yes |
+| [P1-6](#p1-6) | `ReTargetEnemies` throws on an empty alive-set, aborting the death handler — **FIXED**, plus 4 more sites via P1-4 | Medium | XS | yes |
 | [P1-7](#p1-7) | One destroyed `NetPlayer` aborts `Reset()`'s destroy loop, orphaning the rest | Medium | XS | yes |
 | [P2-1](#p2-1) | Dangling transform hack is silent | Low | XS | yes |
 | [P2-2](#p2-2) | Dead `GetAllPlayers()` calls in charging paths | Low | XS | yes |
@@ -1067,7 +1067,7 @@ multiplayer rather than failing quietly.
 <a name="p1-4"></a>
 ## P1-4 — `GetAllPlayersAlive()` allocates on every call
 
-**Status:** CONFIRMED
+**Status:** CONFIRMED — FIXED, not yet verified in-game (no profiler capture taken)
 **File:** `src/plugin/Services/PlayerManagerService.cs:133-136`
 
 ### Root cause
@@ -1141,9 +1141,63 @@ Keep the existing `GetAllPlayersAlive()` for callers that retain the result. The
 > does not hold today, it will after the Steamworks migration; until then, give
 > `SynchronizationService` its own buffer instance rather than sharing.
 
+### What landed
+
+Both helpers added. The thread-safety question above was resolved by **not sharing the buffer
+with the network path at all**:
+
+| Caller | Now uses | Why |
+|---|---|---|
+| `GameBalanceService.PlayersCount` | `GetAlivePlayerCount()` | only ever wanted the length; allocates nothing and has no shared state, so thread-safety is moot |
+| `TargetSwitcher.PickANewTarget` / `PickACloseTarget` | `GetAllPlayersAliveNonAlloc()` | the hot path, and unambiguously main-thread (Unity `Update`) |
+| `SynchronizationService:3009` | `GetRandomPlayerAliveConnectionId()` | see below |
+| `FinalFightController` ×3 | `GetRandomPlayerAliveConnectionId()` | see below |
+| `SynchronizationService:3652`, `:3697`, `:3886` | unchanged | they feed `ReTargetEnemies`, run once per death/disconnect, and already `.ToList()`. Cold path — not worth the buffer's aliasing risk |
+
+`GetAllPlayersAliveNonAlloc()` is therefore called from exactly one file, on the main thread.
+`SynchronizationService` never touches it, so the shared buffer cannot be reached from a network
+handler and no second buffer instance is needed.
+
+### Four latent P1-6 crashes found on the way through
+
+Mechanically replacing the call sites surfaced the **same defect [P1-6](#p1-6) fixed in
+`ReTargetEnemies`**, in four more places that P1-6 never mentioned:
+
+```csharp
+var allPlayers = playerManagerService.GetAllPlayersAlive();
+var randomIndex = UnityEngine.Random.Range(0, allPlayers.Count());
+var targetPlayer = allPlayers.ElementAt(randomIndex);   // throws when the set is empty
+```
+
+`Random.Range(0, 0)` returns `0`, and `ElementAt(0)` on an empty sequence throws
+`ArgumentOutOfRangeException`. Identical shape, no guard, at `SynchronizationService:3009` and all
+three `FinalFightController` prefixes.
+
+The `FinalFightController` three are the worse ones: they are **Harmony prefixes**, so the throw
+escapes into the IL2CPP trampoline rather than being caught by `MainThreadDispatcher` — the same
+"worse failure mode" P1-6 identified for its local path. All three sit on final-boss orb spawning,
+which is precisely when players are dying.
+
+All four now use `PlayerManagerService.GetRandomPlayerAliveConnectionId()`, which already existed,
+already guards the empty case, already logs it, and does the pick in one pass instead of
+enumerating twice. Nothing new was written — the fix was to stop hand-rolling a guarded helper
+that was already there.
+
+> **Lesson for P1-6:** its conclusion — "guard inside `ReTargetEnemies` so a fourth caller cannot
+> reintroduce it" — was right about that method and wrong about the codebase. The pattern was
+> already duplicated in four unrelated methods. A repo-wide grep for
+> `Random.Range` + `ElementAt` is the check that would have caught it; it now returns only
+> guarded sites.
+
 ### Test
 
-Unity Profiler → GC Alloc, during a final swarm at 4+ players. Compare before/after.
+Unity Profiler → GC Alloc, during a final swarm at 4+ players. Compare before/after. **Not done —
+no capture has been taken, so the improvement is reasoned, not measured.**
+
+Separately, for the crash fixes: reach the final boss in a 3+ player session and have players die
+during the orb phase. **Expected:** no `ArgumentOutOfRangeException`, and specifically no
+`[Error:Il2CppInterop] During invoking native->managed trampoline` from the
+`FinalFightController` prefixes.
 
 ---
 
@@ -1391,6 +1445,12 @@ aborts partway; on the local path that means `SendToAllClients(RetargetedEnemies
 
 Because all three callers share the same defect, **guard inside `ReTargetEnemies` itself** rather
 than at each call site — one edit, and a fourth caller cannot reintroduce it.
+
+> **This was scoped too narrowly.** Guarding inside `ReTargetEnemies` protects that method's
+> callers, but the same `Random.Range(0, count)` + `ElementAt(index)` shape was independently
+> duplicated in **four other methods** that do not go through `ReTargetEnemies` at all —
+> `SynchronizationService:3009` and all three `FinalFightController` prefixes. Found while doing
+> [P1-4](#p1-4) and fixed there; see "Four latent P1-6 crashes" in that entry.
 
 ### Why it matters more than "an exception at game over"
 

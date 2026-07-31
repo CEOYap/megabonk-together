@@ -3006,15 +3006,23 @@ namespace MegabonkTogether.Services
             }
 
 
-            var rand = UnityEngine.Random.Range(0, playerManagerService.GetAllPlayersAlive().Count());
-            var randomPlayer = playerManagerService.GetAllPlayersAlive().ElementAt(rand);
-            DynamicData.For(enemy).Set("targetId", randomPlayer.ConnectionId); //Random target
+            // FIX P1-4 / P1-6: was two GetAllPlayersAlive() calls on consecutive lines — two
+            // Player[] allocations plus four iterators — and the same unguarded shape P1-6 fixed
+            // in ReTargetEnemies: Random.Range(0, 0) returns 0 and ElementAt(0) throws on an empty
+            // set. GetRandomPlayerAliveConnectionId does the pick once and returns null instead.
+            var randomTargetId = playerManagerService.GetRandomPlayerAliveConnectionId();
+            if (!randomTargetId.HasValue)
+            {
+                return; // nobody alive to target — the run is over
+            }
+
+            DynamicData.For(enemy).Set("targetId", randomTargetId.Value); //Random target
 
             IGameNetworkMessage message = new SpawnedEnemySpecialAttack
             {
                 EnemyId = enemySpawned.Key,
                 AttackName = attack.attackName,
-                TargetId = randomPlayer.ConnectionId
+                TargetId = randomTargetId.Value
             };
 
             udpClientService.SendToAllClients(message, LiteNetLib.DeliveryMethod.ReliableOrdered);

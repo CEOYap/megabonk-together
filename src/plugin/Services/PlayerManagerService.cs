@@ -22,6 +22,8 @@ namespace MegabonkTogether.Services
         public IEnumerable<Player> GetAllNonHostPlayers();
         public IEnumerable<Player> GetAllPlayers();
         public IEnumerable<Player> GetAllPlayersAlive();
+        public int GetAlivePlayerCount();
+        public IReadOnlyList<Player> GetAllPlayersAliveNonAlloc();
         public IEnumerable<Player> GetAllPlayersExceptLocal();
         public IEnumerable<NetPlayer> GetAllSpawnedNetPlayers();
         public bool AddPlayer(uint connectionId, bool isHost, bool isSelf, string name = "Player");
@@ -72,6 +74,12 @@ namespace MegabonkTogether.Services
     public class PlayerManagerService : IPlayerManagerService
     {
         private readonly ConcurrentDictionary<uint, Player> players = new();
+
+        /// <summary>
+        /// FIX P1-4: reused by <see cref="GetAllPlayersAliveNonAlloc"/>. Sized for the 6-player cap.
+        /// Main-thread only — see that method's remarks.
+        /// </summary>
+        private readonly List<Player> alivePlayersBuffer = new(8);
         private readonly ManualLogSource logger;
         private ConcurrentDictionary<uint, NetPlayer> spawnedPlayers = [];
         private uint localConnectionId = 0;
@@ -133,6 +141,50 @@ namespace MegabonkTogether.Services
         public IEnumerable<Player> GetAllPlayersAlive()
         {
             return [.. players.Where(p => p.Value.Hp > 0).Select(p => p.Value)];
+        }
+
+        /// <summary>
+        /// FIX P1-4: allocation-free alive count. <see cref="GetAllPlayersAlive"/> materialises a
+        /// Player[] plus two LINQ iterators on every call, and most callers only wanted
+        /// <c>.Count()</c> of it.
+        /// </summary>
+        public int GetAlivePlayerCount()
+        {
+            var count = 0;
+            foreach (var kv in players)
+            {
+                if (kv.Value.Hp > 0)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        /// <summary>
+        /// FIX P1-4: non-allocating alive list for hot callers.
+        ///
+        /// <para><b>The returned list is a shared buffer that the next call overwrites.</b> Read it
+        /// and finish before calling anything that might call this again; copy it if you need to
+        /// retain it past that point.</para>
+        ///
+        /// <para><b>Main thread only.</b> There is one buffer and no lock. Every current caller is
+        /// a Unity <c>Update</c>. Do not call this from a network receive handler — use
+        /// <see cref="GetAllPlayersAlive"/> there, which allocates but is safe.</para>
+        /// </summary>
+        public IReadOnlyList<Player> GetAllPlayersAliveNonAlloc()
+        {
+            alivePlayersBuffer.Clear();
+            foreach (var kv in players)
+            {
+                if (kv.Value.Hp > 0)
+                {
+                    alivePlayersBuffer.Add(kv.Value);
+                }
+            }
+
+            return alivePlayersBuffer;
         }
 
         public uint? GetRandomPlayerAliveConnectionId()

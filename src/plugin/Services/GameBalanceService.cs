@@ -28,7 +28,9 @@ namespace MegabonkTogether.Services
     internal class GameBalanceService(IPlayerManagerService playerManagerService) : IGameBalanceService
     {
         private const float hpScalingPerAdditionalPlayer = 0.1f;
-        private int PlayersCount => playerManagerService.GetAllPlayersAlive().Count();
+        // FIX P1-4: was GetAllPlayersAlive().Count(), which materialised a Player[] plus two LINQ
+        // iterators just to read its length. Six multiplier getters read this property.
+        private int PlayersCount => playerManagerService.GetAlivePlayerCount();
         private static int StageIndex => MapController.runConfig?.mapData.stages.IndexOf(MapController.currentStage) ?? 0;
         private const float baseBossLampInitialChargeTimeSeconds = 3.0f;
 
