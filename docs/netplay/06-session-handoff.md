@@ -61,16 +61,21 @@ write-up in [P2-1](01-critical-fixes.md#p2-1).
 the watcher must actually be dead or the path never opens. Expect zero `get_position` fallback
 hits, the camera moving to another player, and a single `Spectated player is gone` warning.
 
-### 2. `OnReceivedPlayerDisconnected` skips the retarget when the player is already gone
+### 2. ~~`OnReceivedPlayerDisconnected` skips work when the player is already gone~~ — FIXED, needs verification
 
-`SynchronizationService.OnReceivedPlayerDisconnected` early-returns if
-`GetPlayer(disconnected.ConnectionId)` is null. On a client that has already processed the
-websocket `ClientDisconnected` path, the player *is* already removed — so the host's
-`PlayerDisconnected` arrives, hits the early return, and **the client never retargets its enemies
-off the departed peer.** Observed as
-`Disconnected player not found in PlayerManagerService when processing OnReceivedPlayerDisconnected`.
+The early return skipped the *whole* handler, not just a retarget: player-card and inventory
+cleanup, projectile cleanup, and — on a host — the retarget itself, which silently reinstates
+P2-1's host-side dangling `Rigidbody`. The host is subscribed to the websocket `ClientDisconnected`
+too, so the host loses this race as readily as a client does.
 
-Retarget even when the record is gone; the connection id is all the retarget needs.
+Now: the record gates only the notification, the host retarget moved into
+`RetargetAfterDisconnect`, and the notification runs last in its own `try` (it used to run first,
+with `AudioManager.Instance` on the path). Write-up: [P1-8](01-critical-fixes.md#p1-8).
+
+**Correction carried into the docs:** the original entry said the client "never retargets its
+enemies off the departed peer". Clients never retarget locally by design — `ReTargetEnemies` picks
+targets with `Random.Range`, so a client doing its own would desync. They apply the host's
+`RetargetedEnemies`, which is why the *host's* copy of this handler must not be skippable.
 
 ### 3. `Plugin.RestoreDeath` NREs at game over
 
@@ -79,7 +84,14 @@ Retarget even when the record is gone; the connection id is all the retarget nee
 on host and clients, every session, pre-existing. `MainThreadDispatcher` catches it, so it
 degrades rather than crashes — but it aborts the rest of `RestoreDeath`.
 
-### 4. Remaining `04-performance-and-gc.md` items
+### 4. `RemoveProjectilesByOwnerId` removes nothing — new, found this session
+
+`spawnedProjectile` is keyed by projectile id, but the filter compares that key to the *connection*
+id, so a departed peer's projectiles are never cleaned up. Fixing it means recording an owner at
+`AddSpawnedProjectile` time and updating its call sites — a real change, not a predicate tweak.
+[P2-5](01-critical-fixes.md#p2-5).
+
+### 5. Remaining `04-performance-and-gc.md` items
 
 - **1C** — `PickACloseTarget` is O(enemies × players).
 - **3** — `GameBalanceService.StageIndex` does an `IndexOf` per access; nothing is cached.
@@ -87,12 +99,12 @@ degrades rather than crashes — but it aborts the rest of `RestoreDeath`.
 - **5** — network payload thresholds. **Blocked on measurement**: nothing counts bytes today.
   Phase 0 of the Steamworks plan already asks for those counters; build them there.
 
-### 5. P1-2 (golden shrine sync) — blocked
+### 6. P1-2 (golden shrine sync) — blocked
 
 Changes the wire format, and the version gate that would make that safe is now a Steamworks
 deliverable. Either wait, or ship knowing a version-mismatched pair desyncs silently.
 
-### 6. `RelayEnvelope.ToFilters` — UNVERIFIED, scheduled
+### 7. `RelayEnvelope.ToFilters` — UNVERIFIED, scheduled
 
 `SendToAllClientsExcept`'s relay branch falls back to an empty filter list on lookup miss. Only
 the direct-peer path was traced. Resolve during Steamworks **Phase 1**, which is where the

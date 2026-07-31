@@ -28,6 +28,8 @@ an environment with no .NET SDK. Build and playtest each one.
 | [P1-5](#p1-5) | ~~Damage ownership misattributed through shared static `DamageContainer`s~~ **every mechanism eliminated in-game; symptom unattributed** | — | — | — |
 | [P1-6](#p1-6) | `ReTargetEnemies` throws on an empty alive-set, aborting the death handler — **FIXED**, plus 4 more sites via P1-4 | Medium | XS | yes |
 | [P1-7](#p1-7) | One destroyed `NetPlayer` aborts `Reset()`'s destroy loop, orphaning the rest | Medium | XS | yes |
+| [P1-8](#p1-8) | A lost race in `OnReceivedPlayerDisconnected` skips the whole disconnect handler, host retarget included — **FIXED** | High | XS | yes |
+| [P2-5](#p2-5) | `RemoveProjectilesByOwnerId` matches the projectile id against the connection id, so it removes nothing | Medium | S | yes |
 | [P2-1](#p2-1) | Dangling transform hack is silent — instrumented, **two root causes found, both FIXED** (second unverified in-game) | Low | XS | yes |
 | [P2-2](#p2-2) | Dead `GetAllPlayers()` calls in charging paths | Low | XS | yes |
 | [P2-3](#p2-3) | Charging logic triplicated across shrine / pylon / lamp — **FIXED** | Low | M | yes |
@@ -1723,6 +1725,72 @@ the new session.
 
 ---
 
+<a name="p1-8"></a>
+## P1-8 — A lost race in `OnReceivedPlayerDisconnected` skipped the whole disconnect handler
+
+**Status:** CONFIRMED from a 2026-07-31 log — **FIXED, not yet verified in-game.**
+**File:** `src/plugin/Services/SynchronizationService.cs:3835`
+
+The handler opened with:
+
+```csharp
+var disconnectedPeer = playerManagerService.GetPlayer(disconnected.ConnectionId);
+if (disconnectedPeer == null)
+{
+    logger.LogWarning("Disconnected player not found in PlayerManagerService when processing OnReceivedPlayerDisconnected.");
+    return;
+}
+```
+
+**Two independent paths remove a player, and they race on every peer:**
+
+| Path | Where |
+|---|---|
+| The host's `PlayerDisconnected` message | `UdpClientService` → `EventManager.OnPlayerDisconnected` → this handler |
+| The rendezvous server's `ClientDisconnected` over the websocket | `WebsocketClientService.HandleClientDisconnected` → `PlayerManagerService.RemovePlayer` |
+
+The websocket path removes the player record without doing any of the rest. When it won, this
+handler found no record and returned, skipping **everything**:
+
+- `playerManagerService.Disconnect` — so the departed peer's **player card stayed on screen** and
+  their inventory was never released;
+- `projectileManagerService.RemoveProjectilesByOwnerId`;
+- on a host, the entire retarget — **which reinstates [P2-1](#p2-1)'s host-side dangling
+  `Rigidbody`, the exact bug that retarget exists to prevent.** The host is subscribed to the
+  websocket too, so the host can and does lose this race.
+
+The observed log line was on a client, which is why the cost was first read as client-only. It is
+not: the same early return sits in front of the host's retarget.
+
+### Fix
+
+The record is needed for exactly one thing — the notification's player name. Everything else needs
+only the connection id. So:
+
+1. The lookup no longer gates anything. `Disconnect` and the projectile cleanup always run.
+2. The host's encounter-close and retarget moved into `RetargetAfterDisconnect(uint)`, called
+   behind `isHost && GameManager.Instance?.player != null` rather than behind an early return.
+3. The notification — cosmetic — **runs last, in its own `try`**. It used to run *first*, with
+   `AudioManager.Instance.uiAbort` and a localisation lookup on the path, so a throw there took
+   the retarget with it. Same lesson as [P0-6](#p0-6), [P1-6](#p1-6) and [P1-7](#p1-7): order by
+   importance, and never let the least important statement abort the most important one.
+4. The warning is kept but reworded — losing the race is not itself an error, it just means this
+   peer showed no disconnect notification.
+
+**Clients still do not retarget locally, deliberately.** `ReTargetEnemies` picks each new target
+with `Random.Range`; a client running its own would diverge from the host. Clients apply the
+host's `RetargetedEnemies` list, which is precisely why the host's copy of this handler must not
+be skippable.
+
+### Test
+
+3 players, mid-run disconnect, all three logs. **Expected:** the departed player's card
+disappears on every remaining peer; no `Disconnected player ... was already removed` line is fatal
+(it is informational, and may legitimately appear on whichever peer lost the race); no
+`get_transform` fallback burst on the host.
+
+---
+
 <a name="p2-1"></a>
 ## P2-1 — Dangling transform hack is silent
 
@@ -1922,9 +1990,14 @@ Disconnected player not found in PlayerManagerService when processing OnReceived
 ```
 
 It had already removed that player via the `ClientDisconnected` websocket path, so the host's
-`PlayerDisconnected` message hit the early return at the top of the handler — **and the client
-therefore never ran its own retarget for that peer.** A plausible contributor to the residual
-`get_transform` hits on the client side.
+`PlayerDisconnected` message hit the early return at the top of the handler.
+
+**Correction to what that early return was originally thought to cost.** It was written up as
+"the client never retargets its enemies off the departed peer". That is wrong in the detail:
+clients never retarget locally *by design* — `ReTargetEnemies` picks each new target with
+`Random.Range`, so a client running its own would pick different targets than the host and desync.
+The client's retarget only ever arrives as the host's `RetargetedEnemies` message. What the early
+return actually cost is below, and the host is the peer that had the most to lose.
 
 **Lesson, and it is the same one three times now.** "Sampled caller says game code" was taken as
 "our code is not involved". It only ever meant "our code is not involved *in the frames that were
@@ -2179,6 +2252,33 @@ guard now makes it redundant rather than wrong.
 Set `CheckForUpdates = false`, launch, and open the main menu. **Expected:** the "disabled" line,
 no `Checking for updates...`, and no error. Then set it back to `true` and confirm the check runs
 and an available update is still offered.
+
+---
+
+<a name="p2-5"></a>
+## P2-5 — `RemoveProjectilesByOwnerId` filters on the wrong key
+
+**Status:** CONFIRMED by inspection — **NOT fixed.** Found while fixing [P1-8](#p1-8).
+**File:** `src/plugin/Services/ProjectileManagerService.cs:175`
+
+```csharp
+var projectilesToRemove = spawnedProjectile
+    .Where(kv => kv.Value != null && kv.Key == connectionId)
+```
+
+`spawnedProjectile` is keyed by **projectile id** — `AddSpawnedProjectile` allocates
+`currentProjectileId++` — not by owner. So this removes, at most, the one projectile whose id
+happens to equal the departed player's connection id, and normally nothing at all. The method has
+one caller: the disconnect handler. **A departed peer's projectiles are therefore never cleaned
+up**, and they sit on the per-frame `ProjectileBasePatches.Update_Prefix` path.
+
+Nothing in `ProjectileManagerService` records an owner, so the fix is not a one-line predicate: it
+needs an owner recorded at `AddSpawnedProjectile` time (a parallel `id → ownerId` map, cleared in
+`ResetForNextLevel`), and every call site of `AddSpawnedProjectile` has to supply it — the local
+player's id for locally spawned projectiles, the message's `OwnerId` for received ones.
+
+Left unfixed deliberately: it is a separate change with its own call-site sweep, and folding it
+into the P1-8 commit would have made that fix untestable in isolation.
 
 ---
 

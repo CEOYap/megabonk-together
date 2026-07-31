@@ -3834,36 +3834,67 @@ namespace MegabonkTogether.Services
 
         private void OnReceivedPlayerDisconnected(PlayerDisconnected disconnected)
         {
+            // FIX: this used to look the player up and return early when the record was gone.
+            //
+            // Two independent paths remove a player — this message, and the rendezvous server's
+            // ClientDisconnected over the websocket (WebsocketClientService.HandleClientDisconnected
+            // → PlayerManagerService.RemovePlayer) — and they race on every peer, host included.
+            // Whichever arrived second used to skip *everything* below: the projectile and UI
+            // cleanup on a client, and on a host the retarget, which is what stops enemies holding
+            // the departed player's destroyed Rigidbody (P2-1). Losing that race silently
+            // reinstated the exact bug the retarget exists to prevent.
+            //
+            // Only the notification needs the player record; every other step needs the connection
+            // id alone. So the record is now optional, and the notification — cosmetic — runs last
+            // in its own try, per the P0-6 / P1-6 / P1-7 lesson that a throw in the least important
+            // statement must not take the most important one with it. AudioManager.Instance and
+            // the localisation lookup are both reachable throw sites.
             var disconnectedPeer = playerManagerService.GetPlayer(disconnected.ConnectionId);
-            if (disconnectedPeer == null)
-            {
-                logger.LogWarning("Disconnected player not found in PlayerManagerService when processing OnReceivedPlayerDisconnected.");
-                return;
-            }
-
-            Plugin.StartNotification(
-                ("MegabonkTogether", "PlayerDisconnected"),
-                ("MegabonkTogether", "PlayerDisconnected_Description"),
-                [disconnectedPeer.Name],
-                AudioManager.Instance.uiAbort,
-                item: EItem.BobDead
-            );
 
             playerManagerService.Disconnect(disconnected.ConnectionId);
             projectileManagerService.RemoveProjectilesByOwnerId(disconnected.ConnectionId);
 
             var isHost = IsServerMode() ?? false;
+            var canRetarget = isHost && GameManager.Instance != null && GameManager.Instance.player != null;
 
-            if (!isHost)
+            if (canRetarget)
             {
-                return;
+                RetargetAfterDisconnect(disconnected.ConnectionId);
             }
 
-            if (GameManager.Instance == null || GameManager.Instance.player == null)
+            try
             {
-                return;
+                if (disconnectedPeer == null)
+                {
+                    // Not an error on its own — it means the websocket path got here first. It is
+                    // logged because it also means this peer showed no disconnect notification.
+                    logger.LogWarning($"Disconnected player {disconnected.ConnectionId} was already removed from PlayerManagerService (websocket ClientDisconnected won the race); cleanup ran, notification skipped.");
+                }
+                else
+                {
+                    Plugin.StartNotification(
+                        ("MegabonkTogether", "PlayerDisconnected"),
+                        ("MegabonkTogether", "PlayerDisconnected_Description"),
+                        [disconnectedPeer.Name],
+                        AudioManager.Instance.uiAbort,
+                        item: EItem.BobDead
+                    );
+                }
             }
+            catch (Exception ex)
+            {
+                logger.LogWarning($"Could not show the disconnect notification for {disconnected.ConnectionId}: {ex.Message}");
+            }
+        }
 
+        /// <summary>
+        /// Host-side half of a disconnect: close a blocked encounter if it can be closed, then move
+        /// every enemy off the departed player and tell the clients. Split out of
+        /// <see cref="OnReceivedPlayerDisconnected"/> so the retarget no longer sits behind an early
+        /// return that a lost race can trip.
+        /// </summary>
+        private void RetargetAfterDisconnect(uint disconnectedConnectionId)
+        {
             if (IsSharedExperienceEnabled() && encounterService.IsClosable()) //Making sure to unblock people if somemone leave and we can close
             {
                 IGameNetworkMessage closeMessage = new CloseEncounter
@@ -3874,8 +3905,8 @@ namespace MegabonkTogether.Services
                 OnCloseEncounter();
             }
 
-            var allPlayersAliveIdWithout = playerManagerService.GetAllPlayersAlive().Where(p => p.ConnectionId != disconnected.ConnectionId).Select(p => p.ConnectionId).ToList();
-            var updated = enemyManagerService.ReTargetEnemies(disconnected.ConnectionId, allPlayersAliveIdWithout);
+            var allPlayersAliveIdWithout = playerManagerService.GetAllPlayersAlive().Where(p => p.ConnectionId != disconnectedConnectionId).Select(p => p.ConnectionId).ToList();
+            var updated = enemyManagerService.ReTargetEnemies(disconnectedConnectionId, allPlayersAliveIdWithout);
 
             // FIX 5/6: apply the retarget locally too, not just broadcast it.
             //
