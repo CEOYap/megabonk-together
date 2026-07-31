@@ -20,7 +20,7 @@ an environment with no .NET SDK. Build and playtest each one.
 | [P1-2](#p1-2) | Legendary (golden) shrine state not synced | Medium | XS | yes |
 | [P1-3](#p1-3) | No protocol version gate — mismatched builds corrupt sessions | High | M | mostly |
 | [P1-4](#p1-4) | `GetAllPlayersAlive()` allocates on every call, including per-tick paths | Medium | S | yes |
-| [P1-5](#p1-5) | Damage ownership misattributed through shared static `DamageContainer`s | High | M | yes |
+| [P1-5](#p1-5) | ~~Damage ownership misattributed through shared static `DamageContainer`s~~ **dead code, deleted; symptom unattributed** | — | — | — |
 | [P1-6](#p1-6) | `ReTargetEnemies` throws on an empty alive-set, aborting the death handler | Medium | XS | yes |
 | [P1-7](#p1-7) | One destroyed `NetPlayer` aborts `Reset()`'s destroy loop, orphaning the rest | Medium | XS | yes |
 | [P2-1](#p2-1) | Dangling transform hack is silent | Low | XS | yes |
@@ -1150,15 +1150,21 @@ Unity Profiler → GC Alloc, during a final swarm at 4+ players. Compare before/
 <a name="p1-5"></a>
 ## P1-5 — Damage ownership misattributed through shared static `DamageContainer`s
 
-**Status:** CONFIRMED (via Ghidra, buildid 21750826)
-**Files:** `src/plugin/Patches/WeaponUtility.cs:51` (`//TODO: track DamageContainer so we dont
-have to do this check`), `Services/SynchronizationService.cs:1537`, `:1608`, `:1612`
+**Status:** Decompilation CONFIRMED (Ghidra, buildid 21750826) — but the mechanism was
+**write-only dead code**, now DELETED. The stated symptom, if real, has a different cause; see
+"Where attribution actually happens" below.
+**Files:** ~~`src/plugin/Patches/WeaponUtility.cs:51`~~ (removed)
 
 ### Symptom
 
 Gold and kill credit are attributed to the wrong player, intermittently, and more often under
 load. Item- and passive-sourced damage is usually correct; damage through weapons and the shared
 combat utilities is not.
+
+> **Caveat added after investigation:** this symptom was never tied to the `DamageContainer`
+> path by observation — the link was inferred from the decompilation. Since that path turns out
+> to have no consumer, the symptom cannot have come from it. Treat the symptom as **unattributed**
+> until reproduced.
 
 ### Root cause
 
@@ -1189,33 +1195,72 @@ statics misattribute — which is why some damage sources look fine and others d
 > the changelog (v4.0.1, v4.0.2, v4.0.3). Those fixes addressed shared-experience delta
 > computation, which is a different mechanism. Do not assume this closes them — verify.
 
-### Fix
+### The missing check: nothing ever read it
 
-Reference identity cannot work for the three statics; there is no per-owner instance to key on.
-Attribution must be captured **at the damage site**, from the call context, and carried
-explicitly rather than looked up from the container afterwards.
+The decompilation above is correct and the reasoning from it is sound. What neither established
+is whether the `ownerId` being clobbered was **used**. It was not.
 
-Sketch, in order of preference:
+A repo-wide search for a read of a `DamageContainer`'s `ownerId` returns exactly one site:
 
-1. **Capture the owner where the attack originates** and pass it through the existing message,
-   rather than resolving it from the container on receipt. This removes the side table entirely
-   for the affected paths.
-2. If a side table must remain for the 19 per-instance holders, **clear it on `Reuse`**
-   (Harmony postfix on VA `0x1804A64D0`), never on `OnDestroy` — pooled objects are not
-   destroyed. This is necessary but **not sufficient** for the statics.
-3. Delete the "already assigned?" guard; it is actively harmful.
+```
+src/plugin/Patches/WeaponUtility.cs:51   ← the postfix's own "already assigned?" guard
+```
 
-**Do P1-3 first if the fix changes any message shape.**
+That guard reads a value only that same postfix writes. There is no other consumer anywhere in
+the plugin. `DynamicData.For(<a DamageContainer>)` appeared in exactly one place in the entire
+codebase — the same method.
 
-> A spare-field approach was considered and is **not** currently viable:
-> `damageBlockedByArmor` and `canProcJoe` looked like unused carriers, but `GetDamageContainer`
-> is observed writing `canProcJoe`, so it is in use. `damageBlockedByArmor` remains unverified.
+So the shared-static collapse was real and had **no observable effect**: it corrupted a value
+nobody consumed. Fixing the attribution would have fixed nothing, and a spare-field or
+`Reuse`-hook approach would have been effort spent making a dead value accurate.
+
+### Fix — deleted, not repaired
+
+`GetDamageContainer_Postfix` is removed. `GetDamageContainer` is on the per-hit path, so this
+was a `DynamicData` lookup plus a possible dictionary write on **every weapon attack** in the
+game, for a value with no reader. The `LightningStrike` postfix in the same file is unrelated
+and stays.
+
+Removing it changes no behaviour by construction — a write-only value cannot influence anything.
+
+### Where attribution actually happens
+
+None of these touch the `DamageContainer`:
+
+| Path | Mechanism |
+|---|---|
+| Kill / money-flying / item procs | `ITrackerService.currentPlayerId`, set around `enemy.EnemyDied(...)` on the receive path and read in `EnemyPatch.EnemyDied_Prefix` |
+| Constant attacks (Aura, Aegis, Laser, DragonBreath…) | `ownerId` on the **attack instance**, set in `NetPlayer.RefreshConstantAttack` |
+| Projectiles | `ownerId` on the **projectile instance**, set per-type in `SynchronizationService` |
+| Pickups | `ownerId` on the **pickup**, set in `PickupManager` / `SynchronizationService` |
+
+**If the reported symptom is real, `ITrackerService` is the place to look.** `currentPlayerId` is
+a single process-wide mutable field, and `UnsetCurrentPlayerId()` clears it unconditionally — so
+any nesting or interleaving of `EnemyDied` (chain damage, explosions, a remote death processed
+while a local one is in flight) credits the wrong player or nobody. That is a far better fit for
+"intermittent, worse under load" than a value nothing reads. **UNVERIFIED** — not traced, not
+reproduced, and deliberately not fixed here on suspicion.
+
+### Also dead: the `PoolManager` half of this
+
+`PoolManagerPatches.GetAttack_Postfix` reads `ownerId` off a `WeaponBase` and copies it to the
+pooled `WeaponAttack`. Nothing sets `ownerId` on a `WeaponBase` — the only writer,
+`NetPlayer.RefreshWeaponOwnerId()`, is **commented out** (`NetPlayer.cs:320-327`). So that
+postfix reads null and no-ops on every pooled attack fetch.
+
+Left in place rather than deleted: it and the commented-out method are a coherent dormant pair,
+and removing half of someone's disabled work is worse than documenting it. Decide together —
+either re-enable both or delete both.
 
 ### Test
 
-Three players, each using a different weapon, damaging the same enemy. Assert gold and kill
-credit land on the player who actually dealt the killing blow. Repeat with item- and
-passive-sourced damage (expected to already work) to confirm the split.
+Nothing to test for the deletion; a write-only value has no observable behaviour, and the build
+is the only check that applies.
+
+To chase the **symptom** properly: three players, each on a different weapon, damaging the same
+enemy. Assert gold and kill credit land on whoever dealt the killing blow, then repeat with
+chain damage (Lightning Strike) and explosions specifically — those are the nesting cases the
+`ITrackerService` hypothesis predicts will fail.
 
 ---
 
