@@ -33,11 +33,17 @@ You get i-frames when leveling up/getting a reward/openning a chest. This is to 
 
 ## Save / Steam interaction
 
-**Leaderboard scores are never uploaded during a netplay session.** Submitting a co-op score to
-a competitive leaderboard is the one thing that could actually get you in trouble, so the mod
-blocks it outright. This is verified against the game's own code, not assumed — the game does
-carry its own mod detection on that path, but it only covers part of it, so the mod does the
-blocking itself.
+**Leaderboard scores are never uploaded while this mod is installed** — not in netplay, and not
+in singleplayer either.
+
+That is deliberate. The game detects mods by looking for their files on disk, so a solo run with
+MegabonkTogether installed is just as detectable as a co-op one. Blocking only during netplay
+would leave your singleplayer scores exposed to exactly the risk this is meant to avoid. Getting
+your run onto the leaderboard is the one thing that could actually get you in trouble, so the mod
+refuses to submit at all.
+
+**If you want to post a legitimate score, disable or remove the mod first** — the leaderboard
+then works normally.
 
 **Saving is disabled by default** during netplay, so your run progression is not written over.
 There is an option to allow it if you would rather keep progression (`AllowSavesDuringNetplay`)

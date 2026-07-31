@@ -180,6 +180,14 @@ namespace MegabonkTogether.Scripts
             Plugin.Instance.Mode = new();
             isHost = false;
 
+            // FIX P0-5: clear the match flag on teardown. HasNetplaySessionInitialized() reads
+            // this, and ~40 patch sites gate on it — SaveManager most importantly. It was
+            // previously only reset in HandleNetworking(), i.e. when STARTING a session, so after
+            // any netplay game it stayed true and singleplayer silently kept taking the netplay
+            // path — progression not saved — until the game was restarted.
+            // (Leaderboards no longer reads this; that block is unconditional. See P0-0.)
+            hasFoundMatch = null;
+
             // Clear transform-fallback counters so each session's diagnostics start from zero,
             // rather than a new session inheriting counts pending from the previous one.
             Patches.Unity.TransformFallbackDiagnostics.Reset();

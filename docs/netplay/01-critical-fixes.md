@@ -11,6 +11,7 @@ an environment with no .NET SDK. Build and playtest each one.
 | ID | Title | Severity | Effort | Transport-independent |
 |---|---|---|---|---|
 | [P0-0](#p0-0) | Steam upload suppression unverified — ban risk | Critical | S | yes |
+| [P0-5](#p0-5) | Netplay flag never cleared on teardown — singleplayer keeps taking the netplay path | Critical | XS | yes |
 | [P0-1](#p0-1) | Shrine/pylon/lamp claim clobbering locks the object permanently | Critical | S | yes |
 | [P0-2](#p0-2) | `KeyNotFoundException` in every charging stop path | Critical | S | yes |
 | [P0-3](#p0-3) | Non-atomic network ID allocation | High | S | yes |
@@ -95,11 +96,23 @@ Two facts make the mod's own suppression load-bearing rather than belt-and-brace
    achievements manager only, and it does gate `TryUnlockAchievement` completely (confirmed at
    VA `0x1803EBDE0`) — but `Leaderboards` has no equivalent.
 
-### Resolution — leaderboards VERIFIED, scope reduced
+### Resolution — leaderboards blocked UNCONDITIONALLY, achievements and stats allowed
 
-**Decision:** the mod blocks **leaderboard uploads only**. Steam achievements and stats are
-deliberately allowed, because playing co-op is still playing. Only the competitive leaderboard
-carries real risk.
+**Decision:** the mod blocks **leaderboard uploads whenever it is loaded** — netplay session or
+not. Steam achievements and stats are deliberately allowed, because playing co-op is still
+playing. Only the competitive leaderboard carries real risk.
+
+> **Why unconditional rather than netplay-only.** `UploadScore` calls
+> `LeaderboardsNew_Sus.CheckMods`, which detects the mod by **probing directories on disk**. A
+> solo run with this mod installed is therefore exactly as detectable as a netplay one — the
+> detection has nothing to do with whether a session is running. Gating the block on
+> `HasNetplaySessionInitialized()` would have left every singleplayer score exposed.
+>
+> The player's route to a legitimate leaderboard entry is to remove or disable the mod. This is
+> stated plainly in `NETPLAY_CHANGES.md` rather than left as a surprise.
+>
+> A side benefit: the block no longer depends on session-state bookkeeping, so it cannot be
+> broken by a teardown bug of the [P0-5](#p0-5) kind.
 
 **Leaderboard suppression is confirmed correct and sufficient.** `Patches/LeaderBoards.cs`
 prefixes `Leaderboards.UploadScore` and returns `false`. Decompilation shows:
@@ -153,13 +166,20 @@ un-inflate the local stat store, which can be pushed later from singleplayer.
 ### Test
 
 - [x] **Netplay run produces no leaderboard entry.** Confirmed in-game on a two-client localhost
-      session, buildid 21750826. The suppression works as intended.
+      session, buildid 21750826.
+- [x] **Singleplayer run produces no leaderboard entry either** — now the intended behaviour, not
+      a bug. Confirmed in-game: `Blocking leaderboard upload (MegabonkTogether is installed)`
+      appears both during the netplay session **and** in a later solo run in the same process,
+      after networking had been torn down. The unconditional prefix does not depend on session
+      state, so there is nothing left here that a teardown bug could break.
+- [x] **Leaderboard works with the mod removed/disabled.** Confirmed in-game. This is the
+      supported route to a legitimate entry.
 - [ ] Confirm an achievement earned during netplay **does** unlock.
-- [ ] **Play a singleplayer run afterwards and confirm the leaderboard upload still works.**
-      Not yet checked, and it is the check that matters most: a prefix that never stops returning
-      `false` looks identical to a correct one in every netplay test, while silently breaking
-      legitimate progression. `HasNetplaySessionInitialized()` is the only thing standing between
-      the two outcomes.
+
+> **The singleplayer check found a Critical bug on the way — see [P0-5](#p0-5).** It is no longer
+> a *leaderboard* concern, since that block is now unconditional and does not read session state.
+> But the same stale flag still gates `SaveManager` and ~38 other patch sites, so singleplayer
+> progression was silently not saving after any netplay session. Fixed; needs the re-test in P0-5.
 
 > **Testing caveat.** The above was verified on localhost, which has no packet loss, latency, or
 > reordering, and always takes the direct P2P path rather than the relay. That is sufficient for
@@ -170,6 +190,99 @@ un-inflate the local stat store, which can be pushed later from singleplayer.
 > Recorded so the mod reliably **avoids** submitting modded runs to leaderboards. Do not attempt
 > to influence or work around the game's detection; the goal is that no netplay run ever reaches
 > the upload path.
+
+---
+
+<a name="p0-5"></a>
+## P0-5 — Netplay flag never cleared on teardown; singleplayer keeps taking the netplay path
+
+**Status:** CONFIRMED by inspection — FIXED, not yet verified in-game
+**File:** `src/plugin/Scripts/NetworkHandler.cs` (`ResetNetworking`)
+
+### Symptom
+
+After playing **any** netplay session, returning to the menu and starting a **singleplayer** run:
+
+- progression is **not saved** (`SaveStats`, `SaveProgression`, `SaveConfig` all skipped)
+- map generation, spawning, interactables and skin selection keep taking their netplay branches
+
+It persists until the game is restarted, or until another netplay session begins.
+
+> Leaderboards are **not** affected: [P0-0](#p0-0) blocks that unconditionally and never reads
+> session state. Silent progression loss is the whole of this bug — which makes it worse, not
+> better, since there is no visible symptom at all.
+
+### Root cause
+
+`ISynchronizationService.HasNetplaySessionInitialized()` is:
+
+```csharp
+return Plugin.Instance.NetworkHandler.HasFoundMatch.HasValue
+    && Plugin.Instance.NetworkHandler.HasFoundMatch.Value;
+```
+
+`hasFoundMatch` has exactly two assignments in `NetworkHandler`:
+
+| Where | Value | When it runs |
+|---|---|---|
+| `OnMatchFound(bool success)` | `success` | a netplay match is found |
+| `HandleNetworking()` | `null` | **starting** a session — the connect path |
+
+`ResetNetworking()` — the teardown path, called from `WindowManager`, `NetworkMenuTab` (7 sites)
+and `WebsocketClientService` — clears `isConnectedToMatchMaker`, `Plugin.Instance.Mode`,
+`isHost`, and every service. **It never touched `hasFoundMatch`.** So the flag latched `true` at
+the first match and stayed true for the rest of the process.
+
+Nulling the service references in `ResetNetworking` does not help: the patches hold the DI
+singleton, and that singleton reads `Plugin.Instance.NetworkHandler.HasFoundMatch` directly.
+
+### Blast radius
+
+`HasNetplaySessionInitialized()` gates **~40 patch sites**: `SaveManager` (×4),
+`SteamStatsManager` (×2), `MapController`, `MapGeneration/*` (×8), `SpawnInteractables` (×3),
+`RandomObjectSpawner`, `GenerateTileObjects`, `Interactables/*`, `SkinSelection`, `GameManager`,
+`EffectManager`, `Unity/UnityObject`, and more.
+
+**The saving failure is the serious one** — silent progression loss, with no error and no visible
+symptom until the player notices their run did not count.
+
+This is the root cause of the "mod breaks singleplayer after playing multiplayer" class that the
+**bepinex** skill lists as recurring in this project.
+
+### Fix
+
+One line in `ResetNetworking()`:
+
+```csharp
+hasFoundMatch = null;
+```
+
+Safe: `Update()` already early-returns on `hasFoundMatch == null` (`NetworkHandler.cs:80`), which
+is the correct state once a session has ended.
+
+> **Why this hid so well.** Every netplay test passes — the flag is *supposed* to be true then.
+> It only shows up in singleplayer *after* netplay, in the same process. Testing singleplayer with
+> the mod disabled — the obvious check — cannot see it either, because the patches are not loaded.
+
+### Test — and the trap in it
+
+1. **Set `AllowSavesDuringNetplay = false`** (the default). This is essential — see below.
+2. Play a netplay session, return to the menu.
+3. **Without restarting**, play a singleplayer run to completion.
+4. **Expected:** progression saves, and the log shows **no**
+   `Skipping SaveStats during netplay session` lines during the solo run.
+
+> **Two ways to get a false pass.**
+>
+> **`AllowSavesDuringNetplay = true` bypasses the bug entirely.** The guard is
+> `if (HasNetplaySessionInitialized() || IsLoadingNextLevel()) { if (!AllowSavesDuringNetplay) { skip } }`
+> — with the config on, it never skips regardless of the flag's value. Saves will work whether or
+> not P0-5 is fixed, so the test proves nothing. It must run with the default `false`.
+>
+> **Testing with the mod disabled** also proves nothing: the patches are not loaded at all.
+>
+> The bug only shows as *mod enabled*, *saves not allowed during netplay*, *singleplayer after
+> netplay*, *same process*.
 
 ---
 
@@ -993,14 +1106,30 @@ var randomNewTargetId = currentPlayersAliveExcludingOldOneId.ElementAt(randomInd
 When the sequence is empty, `Random.Range(0, 0)` returns `0` and `ElementAt(0)` throws. There is
 no guard.
 
-The caller builds it as
-`GetAllPlayersAlive().Where(p => p.ConnectionId != died.PlayerId)`. `players` **includes** the
-local player — `IPlayerManagerService` exposes a separate `GetAllPlayersExceptLocal()`, which
-would be redundant otherwise — so the set is non-empty whenever anyone is still alive. The empty
-case is therefore *everyone dead*, i.e. the final death of a run.
+The callers build it as
+`GetAllPlayersAlive().Where(p => p.ConnectionId != <diedId>)`. `players` **includes** the local
+player — `IPlayerManagerService` exposes a separate `GetAllPlayersExceptLocal()`, which would be
+redundant otherwise — so the set is non-empty whenever anyone is still alive. The empty case is
+therefore *everyone dead*, i.e. the final death of a run.
 
-**So this fires at every multiplayer game over**, is swallowed by `MainThreadDispatcher` into a
-warning, and is invisible without reading the log.
+**There are three call sites, all unguarded**, and two have now been observed throwing in
+separate sessions:
+
+| Call site | Trigger | Observed |
+|---|---|---|
+| `OnPlayerDied()` — `:3645` | the **local** player dies | yes — via `PlayerHealthPatches.PlayerDied_Postfix` |
+| `OnReceivedPlayerDied()` — `:3690` | a **remote** player dies | yes |
+| `OnReceivedPlayerDisconnected()` — `:3879` | a player disconnects | not yet, same pattern |
+
+**The two paths fail differently, and the local one is worse.** The remote path runs inside an
+enqueued action, so `MainThreadDispatcher` catches it and logs a warning. The local path runs
+inside a **Harmony postfix**, so the exception escapes into the IL2CPP trampoline —
+`[Error:Il2CppInterop] During invoking native->managed trampoline`. In both cases the handler
+aborts partway; on the local path that means `SendToAllClients(RetargetedEnemies)` and
+**`SpawnReviver(...)`** never run (`:3652-3654`).
+
+Because all three callers share the same defect, **guard inside `ReTargetEnemies` itself** rather
+than at each call site — one edit, and a fourth caller cannot reintroduce it.
 
 ### Why it matters more than "an exception at game over"
 
@@ -1060,11 +1189,26 @@ already handle.
 > hits in practice today. Keep the fallback anyway — the parameter is typed `IEnumerable<uint>`
 > and a future caller may not materialise.
 
+### FIXED — buildid 21750826, not yet verified in-game
+
+Guard added inside `ReTargetEnemies` rather than at the three call sites, so a fourth caller
+cannot reintroduce it. The alive-set is materialised once via
+`as IList<uint> ?? .ToList()`, an empty set returns an empty result, and the loop indexes
+`candidates[Random.Range(0, candidates.Count)]` — removing the per-enemy double walk that
+[`04-performance-and-gc.md`](04-performance-and-gc.md#4-enemymanagerservice--remaining-linq)
+flagged as O(enemies × players).
+
+The `as IList<uint>` path hits in practice: all three callers already pass a `.ToList()`. The
+fallback stays because the parameter is typed `IEnumerable<uint>`.
+
 ### Test
 
 Play a two-player session to game over. **Expected:** no `ArgumentOutOfRangeException` in either
-client's log. Then confirm in a 3+ player session that a mid-run death still spawns the Reviver
-and still retargets enemies.
+client's log, from **either** failure mode — `[Warning]` via `MainThreadDispatcher` on the remote
+path, or `[Error:Il2CppInterop] During invoking native->managed trampoline` on the local path.
+
+Then confirm in a 3+ player session that a mid-run death still spawns the Reviver and still
+retargets enemies — the Reviver is what the abort was costing.
 
 ---
 

@@ -49,6 +49,29 @@ namespace MegabonkTogether.Services
         public IEnumerable<(uint, uint)> ReTargetEnemies(uint oldTargetId, IEnumerable<uint> currentPlayersAliveExcludingOldOneId)
         {
             var retargetedEnemies = new List<(uint, uint)>();
+
+            // FIX P1-6: materialise once, and bail out when there is nobody left to retarget onto.
+            //
+            // The loop below used to call .Count() then .ElementAt() on the sequence per enemy.
+            // With an empty set that threw ArgumentOutOfRangeException — Random.Range(0, 0)
+            // returns 0, and ElementAt(0) on an empty sequence throws — which aborted the caller
+            // partway and skipped SpawnReviver. All three call sites (OnPlayerDied,
+            // OnReceivedPlayerDied, OnReceivedPlayerDisconnected) were affected, so the guard
+            // lives here rather than being repeated at each of them.
+            //
+            // Materialising also removes the per-enemy double walk of the sequence, which is the
+            // O(enemies x players) cost noted in docs/netplay/04-performance-and-gc.md.
+            var candidates = currentPlayersAliveExcludingOldOneId as IList<uint>
+                             ?? currentPlayersAliveExcludingOldOneId?.ToList();
+
+            if (candidates == null || candidates.Count == 0)
+            {
+                // Everyone is dead, or the last remaining player disconnected. There is no valid
+                // target, so the caller's RetargetedEnemies message carries an empty list -
+                // which receivers already handle.
+                return retargetedEnemies;
+            }
+
             var oldTargetEnemies = spawnedEnemies.Values.Where(enemy =>
             {
                 var currentTargetid = DynamicData.For(enemy).Get<uint?>("targetId");
@@ -62,8 +85,7 @@ namespace MegabonkTogether.Services
 
             foreach (var oldEnemy in oldTargetEnemies)
             {
-                var randomIndex = Random.Range(0, currentPlayersAliveExcludingOldOneId.Count());
-                var randomNewTargetId = currentPlayersAliveExcludingOldOneId.ElementAt(randomIndex);
+                var randomNewTargetId = candidates[Random.Range(0, candidates.Count)];
 
                 DynamicData.For(oldEnemy).Set("targetId", randomNewTargetId);
                 var enemyId = GetEnemyByReference(oldEnemy).Key;
