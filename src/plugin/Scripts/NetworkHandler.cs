@@ -191,6 +191,7 @@ namespace MegabonkTogether.Scripts
             // Clear transform-fallback counters so each session's diagnostics start from zero,
             // rather than a new session inheriting counts pending from the previous one.
             Patches.Unity.TransformFallbackDiagnostics.Reset();
+            Services.TrackerAttributionDiagnostics.Reset();
 
             try
             {

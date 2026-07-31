@@ -1238,8 +1238,64 @@ None of these touch the `DamageContainer`:
 a single process-wide mutable field, and `UnsetCurrentPlayerId()` clears it unconditionally — so
 any nesting or interleaving of `EnemyDied` (chain damage, explosions, a remote death processed
 while a local one is in flight) credits the wrong player or nobody. That is a far better fit for
-"intermittent, worse under load" than a value nothing reads. **UNVERIFIED** — not traced, not
-reproduced, and deliberately not fixed here on suspicion.
+"intermittent, worse under load" than a value nothing reads.
+
+#### Named suspect: `ProjectileBase.HitEnemy`'s set/unset pair is asymmetric
+
+Found while instrumenting, by inspection rather than from a log. There are three set/unset pairs:
+
+| Site | Sets when | Unsets when |
+|---|---|---|
+| `ProjectileBase.cs:71` / `:91` | **host AND** the weapon maps to a remote netplayer | **always** |
+| `SynchronizationService.cs:1551` / `:1555` | always | always |
+| `SynchronizationService.cs:1617` / `:1621` | always | always |
+
+The first pair does not balance. `HitEnemy_Prefix` sets only when `isServer` *and*
+`GetNetPlayerByWeapon(...)` resolves — a local player's own projectile returns null and sets
+nothing — while `HitEnemy_Postfix` unsets on every call. Harmony also runs postfixes when a
+prefix returns `false`, and this prefix returns `isServer`, so on a **client** the postfix still
+fires having never set anything.
+
+That gives a concrete misattribution path:
+
+```
+Client receives EnemyDied      → SetCurrentPlayerId(died.DiedByOwnerId)
+  enemy.EnemyDied(dc)
+    → a projectile HitEnemy fires during it
+      → HitEnemy_Postfix         → UnsetCurrentPlayerId()   ← outer attribution destroyed
+  EnemyPatch.EnemyDied_Prefix   → GetCurrentPlayerId() is now null
+                                → falls through to RegisterTrack()
+                                → credit lands on the LOCAL player
+```
+
+`EnemyDied_Prefix` (`Enemy.cs:124-127`) only skips `RegisterTrack()` when the current id is
+present *and* is not the local player. A null reads as "mine", so a stray unset does not merely
+lose credit — it actively awards it to whoever is running the code.
+
+**Still UNVERIFIED.** This is inferred from control flow, and the P1-3 and P1-5 lessons both say
+inference is not evidence. The instrumentation below exists to settle it.
+
+#### Instrumentation (landed)
+
+`TrackerAttributionDiagnostics` in `src/plugin/Services/TrackerService.cs`, following the
+`TransformFallbackDiagnostics` shape: count on the anomalous branch, report at most once per 5s
+with counts since the last report, cleared by `NetworkHandler.ResetNetworking()`.
+
+| Counter | Meaning |
+|---|---|
+| `overwrite-while-set` | `Set()` while a **different** id was live — outer attribution lost. Logs the id pair. |
+| `redundant-set` | `Set()` with the same id — harmless, but proves nesting happens |
+| `unset-while-clear` | `Unset()` with nothing set — the `ProjectileBase` asymmetry above |
+| `track-with-no-owner` | `RegisterTrack()` with no id set — credit defaulted to the local player |
+| `cross-thread` | calls arriving on more than one thread — would be a race, a *different* bug |
+
+Two deliberate choices. It throttles on `DateTime.UtcNow`, not `Time.unscaledTime`, because
+`UdpClientService.Poll()` also runs on a background task during connection setup and a Unity API
+off the main thread throws — a diagnostic must not be able to crash what it measures. And it
+stays silent when every counter is zero, so a healthy session produces no noise.
+
+**It is built to falsify.** All counters zero across a real 3-player session with chain damage
+means this hypothesis is wrong and this whole subsection should be struck.
 
 ### Also dead: the `PoolManager` half of this
 
@@ -1257,10 +1313,24 @@ either re-enable both or delete both.
 Nothing to test for the deletion; a write-only value has no observable behaviour, and the build
 is the only check that applies.
 
-To chase the **symptom** properly: three players, each on a different weapon, damaging the same
-enemy. Assert gold and kill credit land on whoever dealt the killing blow, then repeat with
-chain damage (Lightning Strike) and explosions specifically — those are the nesting cases the
-`ITrackerService` hypothesis predicts will fail.
+To chase the **symptom** properly, run the instrumentation: three players, each on a different
+weapon, damaging the same enemy, then specifically provoke the nesting cases — **Lightning
+Strike** (one hit, several deaths) and **exploder enemies** (one death causes more). Play to a
+game over so `ResetNetworking()` runs.
+
+Then read the host *and* both client logs for `Kill-attribution anomalies`:
+
+- **No line at all** → every counter stayed zero. Hypothesis dead; strike the subsection.
+- **`unset-while-clear` only** → the `ProjectileBase` asymmetry is real but benign in practice
+  (nothing was pending when it cleared). Worth tidying, not a live bug.
+- **`track-with-no-owner` or `overwrite-while-set` above zero** → credit is being misassigned.
+  The logged id pair names which two players collided.
+- **`cross-thread` above zero** → stop and treat it as a race first; nesting is then a
+  secondary concern.
+
+Counts matter more than presence. A couple per session is a rare interleave; hundreds means the
+pairing is structurally broken and the fix is to make set/unset balance rather than to chase
+individual call sites.
 
 ---
 
