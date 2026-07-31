@@ -8,6 +8,10 @@ an environment with no .NET SDK. Build and playtest each one.
 
 ## Priority summary
 
+> **Picking this up fresh?** Read [`06-session-handoff.md`](06-session-handoff.md) first. It has
+> the current state of every item, the open-work queue in priority order, and the testing traps
+> that have each cost a wasted session.
+
 | ID | Title | Severity | Effort | Transport-independent |
 |---|---|---|---|---|
 | [P0-0](#p0-0) | Steam upload suppression unverified — ban risk | Critical | S | yes |
@@ -1722,10 +1726,9 @@ the new session.
 <a name="p2-1"></a>
 ## P2-1 — Dangling transform hack is silent
 
-**Status:** CONFIRMED — **ROOT CAUSE FOUND AND FIXED.** The stale reference was `enemy.target`,
-left pointing at a disconnected peer's destroyed `Rigidbody` because the host never applied its
-own retarget. Caller sampling proved it came from game code, not ours. Fix not yet verified
-in-game.
+**Status:** CONFIRMED — **PARTIALLY FIXED. There are TWO independent dangling paths, not one.**
+The host-side `enemy.target` path is found and fixed. A second, client-side path through
+`Plugin.GetDistanceToPlayer` was named by caller sampling on 2026-07-31 and is **still open**.
 **File:** `src/plugin/Patches/Unity/UnityComponent.cs:27-31`
 
 ```csharp
@@ -1879,6 +1882,53 @@ gave to the game and then failed to replace.
 
 **Do not delete the fallback hack yet.** It should now go quiet after a disconnect; confirm that
 before removing it, since it may still cover other paths.
+
+### STILL OPEN — a second dangling path, client-side, via `Plugin.GetDistanceToPlayer`
+
+**"Root cause found" above was premature.** It was *a* root cause, not *the* root cause. A
+3-player session on 2026-07-31 — with the P0-6 fixes in and all three instances on the current
+build — produced the first sampled caller that names our own code:
+
+```
+get_position: 696   Sampled caller: TransformPatches.get_position_Prefix:244
+                    <- Plugin.GetDistanceToPlayer:510
+                    <- ProjectileBasePatches.Update_Prefix:157
+
+get_position: 703   Sampled caller: TransformPatches.get_position_Prefix:244
+                    <- Plugin.GetDistanceToPlayer:510
+                    <- DistanceThrottler.ShouldUpdate:14
+                    <- EnemyPatch.MyFixedUpdate_Prefix:402
+```
+
+Two things this overturns:
+
+1. **It is `get_position`, not `get_transform`.** Every earlier run showed `get_position: 0` in
+   every window, and that zero is what the "it cannot be the distance throttler" reasoning above
+   rested on. That reasoning was right about the host and wrong about the client — this path only
+   surfaces on a client, and only in the first few windows after a disconnect.
+2. **`Plugin.GetDistanceToPlayer` holds a destroyed `NetPlayer`** and reads `.position` off it. It
+   sits on two per-frame paths: `DistanceThrottler.ShouldUpdate` (per enemy, per FixedUpdate) and
+   `ProjectileBasePatches.Update_Prefix` (per projectile, per frame). ~700 hits per 5s from each.
+
+From the fifth window on, that client reverts to `get_transform` / "no MegabonkTogether frames" —
+the host-side `enemy.target` path arriving through its own enemies. So the two leaks are genuinely
+independent and this run separated them for the first time.
+
+**Related, found in the same log:** the client logged
+
+```
+Disconnected player not found in PlayerManagerService when processing OnReceivedPlayerDisconnected
+```
+
+It had already removed that player via the `ClientDisconnected` websocket path, so the host's
+`PlayerDisconnected` message hit the early return at the top of the handler — **and the client
+therefore never ran its own retarget for that peer.** A plausible contributor to the residual
+`get_transform` hits on the client side.
+
+**Lesson, and it is the same one three times now.** "Sampled caller says game code" was taken as
+"our code is not involved". It only ever meant "our code is not involved *in the frames that were
+sampled*" — and the sampler captures one stack per 5s window, so a path that only fires in the
+first few windows is easy to miss entirely. Read the counters per-window, not in aggregate.
 
 ---
 
@@ -2085,7 +2135,10 @@ and an available update is still offered.
 <a name="p0-6"></a>
 ## P0-6 — Reviving a disconnected player's coffin corrupts the rest of the run
 
-**Status:** CONFIRMED in-game (host + client logs, 3-player session) — FIXED, not yet verified
+**Status:** CONFIRMED in-game — **FIXED and VERIFIED in-game** (3-player session, 2026-07-31:
+one player died leaving a coffin, disconnected, and a remaining player interacted with that
+coffin — enemies stayed in sync for everyone, and none of `Failed to process spawned enemy`,
+the `GetFullName()` NRE or the `Destroy_Postfix` NRE appears in any of the three logs)
 **Files:** `src/plugin/Scripts/Interactables/InteractableReviver.cs:71,152`,
 `src/plugin/Services/SynchronizationService.cs` (`OnReceivedSpawnedEnemy`)
 
