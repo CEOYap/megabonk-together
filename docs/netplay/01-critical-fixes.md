@@ -616,7 +616,9 @@ correct by construction.
 <a name="p0-4"></a>
 ## P0-4 — `NullReferenceException` on enemy target assignment
 
-**Status:** CONFIRMED — FIXED, not yet verified in-game
+**Status:** CONFIRMED — FIXED and **VERIFIED in-game** (3-player session, buildid 21750826: two
+peer disconnects with enemies spawning throughout, no NRE in `init_PostFix` in any of the three
+logs)
 **File:** `src/plugin/Patches/Enemies/Enemy.cs:51-84`
 
 ### Symptom
@@ -1351,6 +1353,35 @@ stays silent when every counter is zero, so a healthy session produces no noise.
 **It is built to falsify.** All counters zero across a real 3-player session with chain damage
 means this hypothesis is wrong and this whole subsection should be struck.
 
+#### Results — 3-player session, buildid 21750826
+
+| Counter | Host | Client 2 | Client 3 | Reading |
+|---|---|---|---|---|
+| `cross-thread` | 0 | 0 | 0 | **No race.** That hypothesis is dead. |
+| `overwrite-while-set` | 0 | 0 | 0 | **No live attribution replaced by a different one.** The primary hypothesis — credit stolen mid-flight — is not happening. |
+| `unset-while-clear` | 0 | up to 657/5s | up to 1042/5s | **The `ProjectileBase.HitEnemy` asymmetry is real**, exactly as predicted, and client-only. |
+| `track-with-no-owner` | 2–11/5s | 0 | 0 | **False positive — counter removed.** See below. |
+
+**Two defects in the instrumentation, both mine.**
+
+**1. `track-with-no-owner` measured nothing.** On the host, killing an enemy with your own weapon
+leaves `currentPlayerId` null *by design* — `HitEnemy_Prefix` only sets an owner when the weapon
+maps to a **remote** netplayer. So a null owner is the normal "I killed it" path, and
+`EnemyDied_Prefix` treating null as "mine" is correct there. The host figure was just its own kill
+rate; clients read 0 because their kills arrive via `OnReceivedEnemyDied`, which always sets.
+Counter deleted rather than relabelled.
+
+**2. The damaging case was never counted.** `RecordUnset(wasSet)` only incremented when
+`!wasSet` — the *harmless* direction. The dangerous case, an unbalanced unset clearing a live
+attribution it did not set, has `wasSet == true` and was lumped in with every legitimate paired
+unset. So the run could rule out a race and an overwrite but **could not rule out the actual
+bug**. Now fixed with depth tracking: `setDepth` increments on set, decrements on unset, and a
+decrement that would go negative *while something was live* increments `UNBALANCED-UNSET`.
+
+**Status after this run:** race ruled out, overwrite ruled out, asymmetry confirmed real but its
+harmfulness still unmeasured. `UNBALANCED-UNSET` is the number that settles it; it did not exist
+during this run. Needs one more 3-player session.
+
 ### Also dead: the `PoolManager` half of this
 
 `PoolManagerPatches.GetAttack_Postfix` reads `ownerId` off a `WeaponBase` and copies it to the
@@ -1536,8 +1567,10 @@ retargets enemies — the Reviver is what the abort was costing.
 <a name="p1-7"></a>
 ## P1-7 — One destroyed `NetPlayer` aborts `Reset()`'s destroy loop, orphaning the rest
 
-**Status:** CONFIRMED — observed in a live session log, buildid 21750826. FIXED, not yet
-verified in-game.
+**Status:** CONFIRMED — observed in a live session log, buildid 21750826. FIXED and **VERIFIED
+in-game**: a 3-player session reached `All players disconnected, returning to main menu` with no
+`Error while destroying spawned player game objects during reset` — the line that was present
+before the fix.
 **File:** `src/plugin/Services/PlayerManagerService.cs:507`
 
 ### Symptom
@@ -1659,7 +1692,9 @@ the new session.
 <a name="p2-1"></a>
 ## P2-1 — Dangling transform hack is silent
 
-**Status:** CONFIRMED
+**Status:** CONFIRMED — instrumented, and the hack is **live, not dead code**: ~144 hits/second
+after a mid-run disconnect in a 3-player session. Owner not yet identified; caller sampling added
+to name it on the next run.
 **File:** `src/plugin/Patches/Unity/UnityComponent.cs:27-31`
 
 ```csharp
@@ -1731,6 +1766,52 @@ dead code; they may mean the leak lives outside the window being watched.
 Before deleting anything, test 3+ players with mid-run disconnects — and treat P1-7 as the more
 promising lead, since it names where the stale reference is held (`spawnedPlayers`).
 
+### CONFIRMED — 3 players, mid-run disconnect. It is not dead code.
+
+That test was run. **The hack fires ~144 times per second the moment a peer disconnects**, on
+every remaining machine.
+
+| | before the disconnect | after |
+|---|---|---|
+| `get_transform` | 1 per 5s | **720**, then **702** / **715** per 5s |
+| `get_position` | 0 | **0** |
+| `get_rotation` | 0 | **0** |
+| `netplayer-not-found` | 0 | **0** |
+
+Two-player sessions showed zero because the session *ends* the instant the only peer leaves. With
+three players the session survives the disconnect and the leak becomes observable. The counters
+were right to be kept.
+
+**Two constraints this pins down, both useful:**
+
+- **It is exclusively `get_transform`.** Zero `get_position` and zero `get_rotation` across every
+  window. So it is `.transform` on a destroyed `Component`, not `TargetSwitcher.CanSwitch`, which
+  reads `currentTarget.transform.position` and would show up as `get_position`.
+- **~144/s is close to the enemy retarget rate** (600 enemies ÷ ~4s average switch interval
+  ≈ 150/s). Suggestive, not conclusive.
+
+The same disconnect also produced **668 unthrottled `Player not found for ConnectionId` warnings**
+from `PlayerManagerService.GetPlayer`, all for the departed id — so a per-frame caller is also
+still asking for the player by id, not only holding their transform. That warning is now throttled
+per id and carries a suppressed count.
+
+**Deliberately not guessing the owner.** Three entries in this document were written from
+inference and did not survive contact with the code ([P1-1](#p1-1) stale, [P1-3](#p1-3) disproved,
+[P1-5](#p1-5) dead). Instead, `TransformFallbackDiagnostics` now samples **one managed stack trace
+per report window** and prints the MegabonkTogether frames from it.
+
+That sampling is decisive rather than merely suggestive: under IL2CPP, native game frames do not
+appear as managed frames, so
+
+- **frames present** → our own code is dereferencing the destroyed object, and the line numbers
+  name it (symbols ship beside the DLL);
+- **`no MegabonkTogether frames`** → the access came from game code that we handed a stale
+  reference to — a different fix entirely.
+
+One capture per 5s, wrapped in try/catch. Next 3-player run with a mid-run disconnect resolves
+this, and with it investigation target
+[#8](../reverse-engineering/01-investigation-targets.md#8-netplayer-lifetime-and-the-dangling-transform--nice).
+
 ---
 
 <a name="p2-2"></a>
@@ -1753,7 +1834,11 @@ an allocation. Do this as part of P0-1/P0-2 since you are already editing those 
 <a name="p2-3"></a>
 ## P2-3 — Charging logic triplicated across shrine / pylon / lamp
 
-**Status:** CONFIRMED — FIXED, not yet verified in-game
+**Status:** CONFIRMED — FIXED and **VERIFIED in-game**. A 3-player session exercised both guard
+branches of the extracted helpers, logging `Another player is already charging this shrine.
+Preventing re trigger.` and `Another player is still charging this shrine. Preventing stop
+trigger.` — so the `{label}` interpolation and both paths work, with no `KeyNotFoundException`
+(P0-2 holds through the dedup).
 Upstream's own note, now removed along with the duplication:
 `//TODO: this is ass, pylon and lamp should be refactored to use the same logic, but i'm in holidays and lazy right now zzzz`
 

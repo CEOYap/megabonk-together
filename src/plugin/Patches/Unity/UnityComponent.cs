@@ -31,10 +31,94 @@ namespace MegabonkTogether.Patches.Unity
         private static int danglingRotationHits;
         private static int missingNetPlayerHits;
 
-        internal static void RecordDanglingTransform() { danglingTransformHits++; MaybeReport(); }
-        internal static void RecordDanglingPosition() { danglingPositionHits++; MaybeReport(); }
-        internal static void RecordDanglingRotation() { danglingRotationHits++; MaybeReport(); }
+        private static string lastCallerSample = "not sampled";
+        private static bool sampledThisWindow;
+
+        internal static void RecordDanglingTransform() { danglingTransformHits++; SampleCaller(); MaybeReport(); }
+        internal static void RecordDanglingPosition() { danglingPositionHits++; SampleCaller(); MaybeReport(); }
+        internal static void RecordDanglingRotation() { danglingRotationHits++; SampleCaller(); MaybeReport(); }
         internal static void RecordMissingNetPlayer() { missingNetPlayerHits++; MaybeReport(); }
+
+        /// <summary>
+        /// Captures **one** managed stack trace per report window to identify who is holding the
+        /// dangling reference. A 3-player session showed ~144 of these per second the moment a peer
+        /// disconnects, so per-hit capture is out of the question; once per 5s is free.
+        ///
+        /// <para>The discriminator this gives is exactly the one that matters: under IL2CPP, native
+        /// game frames do not appear as managed frames, so <b>if any MegabonkTogether frame shows
+        /// up, our own code is dereferencing the destroyed object.</b> An empty result means the
+        /// access came from game code and the stale reference was handed to it — a different fix.</para>
+        ///
+        /// <para>Symbols ship next to the DLL (the csproj xcopies the whole output), so this
+        /// resolves file and line, as the P1-7 stack trace in an earlier log did.</para>
+        /// </summary>
+        private static void SampleCaller()
+        {
+            if (sampledThisWindow)
+            {
+                return;
+            }
+            sampledThisWindow = true;
+
+            try
+            {
+                // Skip this method and the Record* wrapper that called it.
+                var trace = new System.Diagnostics.StackTrace(2, true);
+                var frames = trace.GetFrames();
+                if (frames == null || frames.Length == 0)
+                {
+                    lastCallerSample = "empty stack";
+                    return;
+                }
+
+                var ours = new System.Text.StringBuilder();
+                var count = 0;
+
+                foreach (var frame in frames)
+                {
+                    var method = frame.GetMethod();
+                    var declaring = method?.DeclaringType;
+                    if (declaring?.FullName == null
+                        || !declaring.FullName.StartsWith("MegabonkTogether", System.StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    // The patch itself is always on the stack; it is not the caller we want.
+                    if (declaring == typeof(UnityComponentPatches) || declaring == typeof(TransformFallbackDiagnostics))
+                    {
+                        continue;
+                    }
+
+                    if (count > 0)
+                    {
+                        ours.Append(" <- ");
+                    }
+
+                    ours.Append(declaring.Name).Append('.').Append(method.Name);
+
+                    var line = frame.GetFileLineNumber();
+                    if (line > 0)
+                    {
+                        ours.Append(':').Append(line);
+                    }
+
+                    if (++count >= 4)
+                    {
+                        break; // four frames is plenty to name the owner
+                    }
+                }
+
+                lastCallerSample = count == 0
+                    ? "no MegabonkTogether frames (called from game code)"
+                    : ours.ToString();
+            }
+            catch (System.Exception ex)
+            {
+                // A diagnostic must never be able to break what it measures.
+                lastCallerSample = $"capture failed: {ex.GetType().Name}";
+            }
+        }
 
         /// <summary>
         /// Reports at most once per <see cref="REPORT_INTERVAL_SECONDS"/>, then resets the counts.
@@ -56,13 +140,16 @@ namespace MegabonkTogether.Patches.Unity
                 $"get_position: {danglingPositionHits}, " +
                 $"get_rotation: {danglingRotationHits}, " +
                 $"netplayer-not-found: {missingNetPlayerHits}. " +
-                "Dangling hits are a destroyed reference the mod still holds (suspected NetPlayer); " +
-                "falling back to the local player.");
+                $"Sampled caller: {lastCallerSample}. " +
+                "Dangling hits are a destroyed reference the mod still holds (suspected: a " +
+                "disconnected peer's NetPlayer); falling back to the local player.");
 
             danglingTransformHits = 0;
             danglingPositionHits = 0;
             danglingRotationHits = 0;
             missingNetPlayerHits = 0;
+            sampledThisWindow = false;
+            lastCallerSample = "not sampled";
         }
 
         /// <summary>Clears counters and the throttle so each session starts from zero.</summary>
@@ -73,6 +160,8 @@ namespace MegabonkTogether.Patches.Unity
             danglingPositionHits = 0;
             danglingRotationHits = 0;
             missingNetPlayerHits = 0;
+            sampledThisWindow = false;
+            lastCallerSample = "not sampled";
         }
     }
 

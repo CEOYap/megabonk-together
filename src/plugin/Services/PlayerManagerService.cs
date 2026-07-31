@@ -308,8 +308,42 @@ namespace MegabonkTogether.Services
                 return player;
             }
 
-            logger.LogWarning("Player not found for ConnectionId: " + connectionId);
+            // This warning was unthrottled and fired 668 times in one 3-player session, all for the
+            // same id, immediately after that peer disconnected — i.e. this sits on a per-frame path
+            // and something keeps asking for a player who is gone. Each hit was a string concat plus
+            // BepInEx disk I/O, which the bepinex skill calls out explicitly.
+            //
+            // Throttled per connection id so a genuinely new missing player is still reported at
+            // once, while a stuck caller reports every 5s with a count instead of every frame. The
+            // repetition is the signal, not each line.
+            ReportMissingPlayer(connectionId);
             return null;
+        }
+
+        private const double MISSING_PLAYER_REPORT_INTERVAL_SECONDS = 5d;
+        private readonly ConcurrentDictionary<uint, (DateTime LastReport, int Suppressed)> missingPlayerReports = new();
+
+        private void ReportMissingPlayer(uint connectionId)
+        {
+            var now = DateTime.UtcNow;
+
+            missingPlayerReports.TryGetValue(connectionId, out var previous);
+
+            if (previous.LastReport != default
+                && (now - previous.LastReport).TotalSeconds < MISSING_PLAYER_REPORT_INTERVAL_SECONDS)
+            {
+                missingPlayerReports[connectionId] = (previous.LastReport, previous.Suppressed + 1);
+                return;
+            }
+
+            missingPlayerReports[connectionId] = (now, 0);
+
+            // Carry the suppressed count into the line. The rate is the diagnosis — "+667 more"
+            // says a per-frame caller is stuck on a departed player, which one line per 5s alone
+            // would not convey.
+            logger.LogWarning(previous.Suppressed > 0
+                ? $"Player not found for ConnectionId: {connectionId} (+{previous.Suppressed} more in the last ~5s)"
+                : $"Player not found for ConnectionId: {connectionId}");
         }
 
         public void UpdatePlayer(Player player)
@@ -605,6 +639,7 @@ namespace MegabonkTogether.Services
             }
 
             playerInventories.Clear();
+            missingPlayerReports.Clear();
             localConnectionId = 0;
             isLocalPlayerSet = false;
             hasSelectedCharacter = false;

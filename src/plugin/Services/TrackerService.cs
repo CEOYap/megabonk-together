@@ -39,14 +39,31 @@ namespace MegabonkTogether.Services
         private static int redundantSet;
 
         /// <summary>
-        /// Unset() with nothing set. Expected to be the common one: `ProjectileBase.HitEnemy_Postfix`
-        /// unsets unconditionally while its prefix only sets when host AND the weapon maps to a
-        /// remote netplayer, so the pairing is asymmetric by construction.
+        /// Unset() with nothing set. CONFIRMED in a 3-player session: 0 on the host, up to 1042 per
+        /// 5s on clients. `ProjectileBase.HitEnemy_Postfix` unsets unconditionally while its prefix
+        /// only sets when host AND the weapon maps to a remote netplayer — and Harmony runs the
+        /// postfix even when the prefix returns false, which it does for clients. Harmless in
+        /// itself: nothing was pending to lose.
         /// </summary>
         private static int unsetWhileClear;
 
-        /// <summary>RegisterTrack() with no attribution set — credit falls to the local player by default.</summary>
-        private static int trackWithNoOwner;
+        /// <summary>
+        /// <b>The one that actually misattributes.</b> An Unset() that clears a live attribution
+        /// it did not set — i.e. depth would go negative. That takes someone else's credit away
+        /// mid-flight, and because EnemyDied_Prefix reads a null owner as "mine", the credit is
+        /// then awarded to whoever is running the code rather than merely lost.
+        ///
+        /// <para>The first version of this class did not count this at all. It only counted
+        /// <see cref="unsetWhileClear"/> — the harmless direction — so the 3-player run could rule
+        /// out a race and an overwrite but could not rule this out. Depth tracking fixes that.</para>
+        /// </summary>
+        private static int unbalancedUnset;
+
+        /// <summary>
+        /// Nesting depth: incremented on Set, decremented on Unset. A decrement that would take it
+        /// below zero is an <see cref="unbalancedUnset"/>.
+        /// </summary>
+        private static int setDepth;
 
         private static int crossThreadCalls;
 
@@ -69,6 +86,8 @@ namespace MegabonkTogether.Services
                 }
             }
 
+            Interlocked.Increment(ref setDepth);
+
             MaybeReport();
         }
 
@@ -81,16 +100,16 @@ namespace MegabonkTogether.Services
                 Interlocked.Increment(ref unsetWhileClear);
             }
 
-            MaybeReport();
-        }
-
-        internal static void RecordTrack(bool hasOwner)
-        {
-            NoteThread();
-
-            if (!hasOwner)
+            // An unset that takes depth negative is one that never had a matching set. If an
+            // attribution was live at the time, that unset just destroyed it.
+            if (Interlocked.Decrement(ref setDepth) < 0)
             {
-                Interlocked.Increment(ref trackWithNoOwner);
+                Interlocked.Exchange(ref setDepth, 0);
+
+                if (wasSet)
+                {
+                    Interlocked.Increment(ref unbalancedUnset);
+                }
             }
 
             MaybeReport();
@@ -130,23 +149,24 @@ namespace MegabonkTogether.Services
             var overwrites = Interlocked.Exchange(ref overwriteWhileSet, 0);
             var redundant = Interlocked.Exchange(ref redundantSet, 0);
             var strayUnsets = Interlocked.Exchange(ref unsetWhileClear, 0);
-            var ownerless = Interlocked.Exchange(ref trackWithNoOwner, 0);
+            var unbalanced = Interlocked.Exchange(ref unbalancedUnset, 0);
             var crossThread = Interlocked.Exchange(ref crossThreadCalls, 0);
 
-            if ((overwrites | redundant | strayUnsets | ownerless | crossThread) == 0)
+            if ((overwrites | redundant | strayUnsets | unbalanced | crossThread) == 0)
             {
                 return; // nothing to say; do not spam a healthy session
             }
 
             Plugin.Log.LogWarning(
                 "Kill-attribution anomalies in the last ~5s — " +
+                $"UNBALANCED-UNSET: {unbalanced}, " +
                 $"overwrite-while-set: {overwrites} (last {lastOverwrite}), " +
-                $"redundant-set: {redundant}, " +
                 $"unset-while-clear: {strayUnsets}, " +
-                $"track-with-no-owner: {ownerless}, " +
+                $"redundant-set: {redundant}, " +
                 $"cross-thread: {crossThread}. " +
-                "overwrite-while-set and track-with-no-owner are the ones that misattribute credit; " +
-                "see P1-5 in docs/netplay/01-critical-fixes.md.");
+                "Only UNBALANCED-UNSET and overwrite-while-set misattribute credit. " +
+                "unset-while-clear is expected on clients (ProjectileBase.HitEnemy pairing) and is " +
+                "harmless. See P1-5 in docs/netplay/01-critical-fixes.md.");
         }
 
         /// <summary>Clears counters and the throttle so each session starts from zero.</summary>
@@ -157,7 +177,8 @@ namespace MegabonkTogether.Services
             Interlocked.Exchange(ref overwriteWhileSet, 0);
             Interlocked.Exchange(ref redundantSet, 0);
             Interlocked.Exchange(ref unsetWhileClear, 0);
-            Interlocked.Exchange(ref trackWithNoOwner, 0);
+            Interlocked.Exchange(ref unbalancedUnset, 0);
+            Interlocked.Exchange(ref setDepth, 0);
             Interlocked.Exchange(ref crossThreadCalls, 0);
             lastOverwrite = "none";
         }
@@ -205,7 +226,13 @@ namespace MegabonkTogether.Services
 
         public void RegisterTrack()
         {
-            TrackerAttributionDiagnostics.RecordTrack(currentPlayerId.HasValue);
+            // NOTE: the first version of this class counted RegisterTrack-with-no-owner here as an
+            // anomaly. It is not one. On the host, killing an enemy with your own weapon leaves
+            // currentPlayerId null by design — HitEnemy_Prefix only sets an owner when the weapon
+            // maps to a *remote* netplayer — so a null owner is the normal "I killed it" path, and
+            // EnemyDied_Prefix reading null as "mine" is correct there. The 3-player run showed
+            // 2-11 per 5s on the host and 0 on clients, which is just the host's own kill rate.
+            // Counter removed rather than relabelled: it measured nothing actionable.
 
             uint moneyFlying = 1;
             uint kill = 1;
