@@ -88,8 +88,14 @@ namespace MegabonkTogether.Services
         private int seed = 0;
         private ConcurrentQueue<uint> projectileToSpawnQueue = new();
         private ConcurrentQueue<uint> getNetplayerPositionQueue = new();
-        private ConcurrentQueue<uint> getNetplayerPositionRequestQueue = new();
+        // FIX P1-11: carries the frame it was pushed on, so a request that was never popped can be
+        // recognised and dropped instead of redirecting the local player's transforms forever.
+        private ConcurrentQueue<(uint ConnectionId, int Frame)> getNetplayerPositionRequestQueue = new();
         private ConcurrentDictionary<uint, PlayerInventory> playerInventories = new();
+
+        private const float STALE_REQUEST_REPORT_INTERVAL_SECONDS = 5f;
+        private int stalePositionRequests = 0;
+        private float lastStalePositionRequestReport = -999f;
 
         public PlayerManagerService(ManualLogSource logger)
         {
@@ -288,7 +294,7 @@ namespace MegabonkTogether.Services
 
             CleanQueue(projectileToSpawnQueue, connectionId);
             CleanQueue(getNetplayerPositionQueue, connectionId);
-            CleanQueue(getNetplayerPositionRequestQueue, connectionId);
+            CleanPositionRequestQueue(connectionId);
         }
 
         private static void CleanQueue(ConcurrentQueue<uint> queue, uint connectionId)
@@ -298,6 +304,17 @@ namespace MegabonkTogether.Services
             foreach (var id in newQueue)
             {
                 queue.Enqueue(id);
+            }
+        }
+
+        /// <summary>Same as <see cref="CleanQueue"/>, for the frame-stamped request queue.</summary>
+        private void CleanPositionRequestQueue(uint connectionId)
+        {
+            var kept = getNetplayerPositionRequestQueue.Where(r => r.ConnectionId != connectionId).ToList();
+            getNetplayerPositionRequestQueue.Clear();
+            foreach (var request in kept)
+            {
+                getNetplayerPositionRequestQueue.Enqueue(request);
             }
         }
 
@@ -521,18 +538,86 @@ namespace MegabonkTogether.Services
 
         public void AddGetNetplayerPositionRequest(uint connectionId)
         {
-            getNetplayerPositionRequestQueue.Enqueue(connectionId);
+            // FIX P1-11: stamp the frame. Every push/pop pair in this codebase brackets a single
+            // game call, so an entry that outlives its frame is a leak by definition — see
+            // PeakNetplayerPositionRequest.
+            getNetplayerPositionRequestQueue.Enqueue((connectionId, Time.frameCount));
         }
 
 
+        /// <summary>
+        /// The front of this queue tells the transform patches to resolve the local player's
+        /// "Player" / "Hips" / "Renderer" transforms to a netplayer instead. Entries are pushed for
+        /// the duration of one game call and popped afterwards.
+        ///
+        /// <para>FIX P1-11: <b>drops entries left over from earlier frames.</b> ~48 sites push and
+        /// pop, and most of them are a Harmony prefix/postfix pair around a game method, so
+        /// `try/finally` is not available: the pop is skipped outright if the game method throws,
+        /// and — more often — if the postfix's own condition no longer holds. Those conditions are
+        /// re-derived from mutable state rather than recorded by the push:
+        /// `EnemySpecialAttackTargetLaser` re-reads `targetId`, which a retarget can clear between
+        /// prefix and postfix; `WeaponAttack` re-runs `GetNetPlayerByWeapon`, which a steal/return
+        /// can invalidate; several re-check `HasNetplaySessionStarted()`, which teardown can flip.
+        /// Any of those strands an id at the front of the queue, and from then on the LOCAL
+        /// player's transforms silently resolve to a remote netplayer for the rest of the
+        /// session.</para>
+        ///
+        /// <para>Purging by frame fixes every site at once, including ones not written yet, which
+        /// is why it is here rather than at 48 call sites. It is also exact rather than
+        /// approximate: nothing in the codebase intends a request to span frames.</para>
+        /// </summary>
         public uint? PeakNetplayerPositionRequest()
         {
-            if (getNetplayerPositionRequestQueue.TryPeek(out var connectionId))
+            var currentFrame = Time.frameCount;
+
+            while (getNetplayerPositionRequestQueue.TryPeek(out var request))
             {
-                return connectionId;
+                if (request.Frame == currentFrame)
+                {
+                    return request.ConnectionId;
+                }
+
+                if (!getNetplayerPositionRequestQueue.TryDequeue(out var stale))
+                {
+                    break;
+                }
+
+                ReportStalePositionRequest(stale.ConnectionId, currentFrame - stale.Frame);
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// Counts dropped stale requests and reports at most once per 5s. Silent when healthy;
+        /// when it fires, the count and the age separate "one unlucky throw" from "a site that
+        /// leaks on every call". Same shape as the other diagnostics in this build.
+        /// </summary>
+        private void ReportStalePositionRequest(uint connectionId, int ageInFrames)
+        {
+            stalePositionRequests++;
+
+            var now = Time.unscaledTime;
+            if (now - lastStalePositionRequestReport < STALE_REQUEST_REPORT_INTERVAL_SECONDS)
+            {
+                return;
+            }
+            lastStalePositionRequestReport = now;
+
+            logger.LogWarning(
+                $"Dropped {stalePositionRequests} stale netplayer position request(s) in the last ~5s " +
+                $"(most recent: ConnectionId {connectionId}, {ageInFrames} frames old). A push was not " +
+                "matched by its pop — without this the local player's transforms would keep resolving " +
+                "to that netplayer.");
+
+            stalePositionRequests = 0;
+        }
+
+        /// <summary>Clears the stale-request counters so they do not bleed between sessions.</summary>
+        private void ResetStalePositionRequestDiagnostics()
+        {
+            stalePositionRequests = 0;
+            lastStalePositionRequestReport = -999f;
         }
 
         public void ResetForNextLevel()
@@ -546,7 +631,7 @@ namespace MegabonkTogether.Services
             projectileToSpawnQueue.Clear();
             getNetplayerPositionQueue.Clear();
             getNetplayerPositionRequestQueue.Clear();
-
+            ResetStalePositionRequestDiagnostics();
         }
 
         //TODO: cleanup inventories at some point
@@ -623,6 +708,7 @@ namespace MegabonkTogether.Services
             projectileToSpawnQueue.Clear();
             getNetplayerPositionQueue.Clear();
             getNetplayerPositionRequestQueue.Clear();
+            ResetStalePositionRequestDiagnostics();
             // FIX P1-7: same shape as the loop above, and this one had no try at all — a throw
             // from Cleanup() escaped Reset() entirely, skipping the Clear() and every field reset
             // below it and leaving the service half-reset for the next session.

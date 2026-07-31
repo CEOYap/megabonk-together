@@ -101,19 +101,24 @@ While containing it, two more defects of the same family turned up and are fixed
 nullness as the "did we save?" flag, so a null original stranded the mod's handler (or a hard
 `null`) on a game static for the rest of the process, singleplayer included.
 
-### 4. ~47 unguarded netplayer-position push/pop pairs — new, found this session
+### 4. ~~Unguarded global-state pairs~~ — FIXED (three of them), needs verification
 
-**Highest-value open item.** `AddGetNetplayerPositionRequest` pushes a connection id that the
-transform patches read to redirect the local player's transform lookups to a netplayer;
-`UnqueueNetplayerPositionRequest` pops it. Across ~48 call sites, **one** wraps the work between
-them in `try/finally`. Anywhere else, a throw strands the id and the local player's `"Player"`,
-`"Hips"` and `"Renderer"` transforms resolve to a remote netplayer for the rest of the session.
-Its own commit; a scoped `IDisposable` mirroring `Plugin.SuppressOutbound()` is the shape.
-[P1-11](01-critical-fixes.md#p1-11).
+Three families of "mod swaps a global, game code runs, mod swaps it back", each with no guard:
 
-The sibling defect — 28 `CAN_SEND_MESSAGES = false` latches with no `try/finally`, one throw and
-the peer stops sending for the rest of the run — is **fixed**: all of them now go through
-`using (Plugin.SuppressOutbound())`. [P1-10](01-critical-fixes.md#p1-10).
+- **[P1-10](01-critical-fixes.md#p1-10)** — 28 `CAN_SEND_MESSAGES = false` latches. One throw and
+  the peer stops sending for the rest of the run. All now `using (Plugin.SuppressOutbound())`.
+- **[P1-9](01-critical-fixes.md#p1-9)** — save/restore pairs on game statics keyed off nullness.
+- **[P1-11](01-critical-fixes.md#p1-11)** — netplayer-position requests. **The obvious fix was
+  wrong**: most pairs are a Harmony prefix/postfix around a game method, so there is no block to
+  wrap, and the commoner leak is the postfix re-deriving its own condition (a retarget clearing
+  `targetId`, a weapon steal moving the weapon, teardown flipping `HasNetplaySessionStarted`).
+  Fixed instead by stamping each request with `Time.frameCount` and dropping stale ones in
+  `PeakNetplayerPositionRequest` — one place, covers all ~48 sites, with a throttled counter that
+  names any site still leaking.
+
+**Verification for P1-11:** heavy remote-projectile traffic plus a mid-run disconnect; expect no
+`Dropped N stale netplayer position request(s)` line, and no local player model snapping to a
+remote player's position.
 
 ### 5. `RemoveProjectilesByOwnerId` removes nothing — new, found this session
 

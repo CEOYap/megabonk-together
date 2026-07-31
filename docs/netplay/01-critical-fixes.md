@@ -31,7 +31,7 @@ an environment with no .NET SDK. Build and playtest each one.
 | [P1-8](#p1-8) | A lost race in `OnReceivedPlayerDisconnected` skips the whole disconnect handler, host retarget included — **FIXED** | High | XS | yes |
 | [P1-9](#p1-9) | Save/restore pairs on game statics use nullness as the "saved?" flag, stranding the mod's handlers — **FIXED** | Medium | XS | yes |
 | [P1-10](#p1-10) | 28 `CAN_SEND_MESSAGES = false` latches with no `try/finally` — one throw and the peer stops sending — **FIXED** | High | M | yes |
-| [P1-11](#p1-11) | ~47 netplayer-position push/pop pairs with no `try/finally` — one throw and the local player's transforms resolve to a netplayer | High | M | yes |
+| [P1-11](#p1-11) | Stranded netplayer-position requests redirect the local player's transforms to a peer — **FIXED** | High | S | yes |
 | [P2-5](#p2-5) | `RemoveProjectilesByOwnerId` matches the projectile id against the connection id, so it removes nothing | Medium | S | yes |
 | [P2-1](#p2-1) | Dangling transform hack is silent — instrumented, **two root causes found, both FIXED** (second unverified in-game) | Low | XS | yes |
 | [P2-2](#p2-2) | Dead `GetAllPlayers()` calls in charging paths | Low | XS | yes |
@@ -1913,10 +1913,16 @@ weapons, tomes, items, pickups, portals and interactables all still replicate.
 ---
 
 <a name="p1-11"></a>
-## P1-11 — ~47 netplayer-position-request push/pop pairs with no `try/finally`
+## P1-11 — netplayer-position requests can be stranded, redirecting the local player's transforms
 
-**Status:** CONFIRMED by inspection — **NOT fixed** (two sites fixed incidentally in
-[P1-10](#p1-10)). Found while sweeping P1-10.
+**Status:** CONFIRMED by inspection — **FIXED, not yet verified in-game.** Found while sweeping
+[P1-10](#p1-10).
+
+> ⚠️ **The original prescription in this entry — "a `try/finally` sweep, one scoped `IDisposable`
+> like `Plugin.SuppressOutbound`" — is wrong, and is kept below because it is the obvious first
+> idea.** Most of these pairs are a Harmony **prefix/postfix pair around a game method**. The push
+> and the pop are in different methods, with the game's own code in between: there is no block to
+> wrap. See "What the sweep actually found".
 
 `AddGetNetplayerPositionRequest(id)` pushes a connection id; the transform patches
 (`UnityComponentPatches.get_transform_Prefix`, `TransformPatches.get_position_Prefix` /
@@ -1935,6 +1941,66 @@ already been bitten by it.
 Same family as [P1-9](#p1-9) and [P1-10](#p1-10), and the largest of the three. Do it as its own
 commit; a scoped `IDisposable` (mirroring `Plugin.SuppressOutbound`) is the obvious shape, since
 the pop is unconditional at every site.
+
+### What the sweep actually found
+
+Both of the last two sentences above are wrong.
+
+**The pop is not unconditional, and it is usually not in the same method.** The dominant shape is a
+Harmony prefix that pushes and a postfix that pops, around a game method — `Rocket.MyFixedUpdate`,
+`ProjectileScythe.TryInit`, `WeaponAttack.SpawnProjectile`, `LaserBeamAttack.Update`, the eight
+`EnemySpecialAttack*` classes, and so on. There is no block to wrap in `try/finally`; the code in
+between is the game's.
+
+**And the postfix re-derives its own condition instead of being told what the prefix did**, which
+is a second, more frequent leak than an exception:
+
+| Site | Prefix pushes when | Postfix pops when | Leaks if |
+|---|---|---|---|
+| `EnemySpecialAttackTargetLaser` and 7 siblings | `targetId.HasValue` | re-reads `targetId`, `HasValue` | a retarget clears `targetId` mid-call — i.e. exactly what a disconnect does |
+| `WeaponAttack.SpawnProjectile` | `GetNetPlayerByWeapon` finds one | re-runs `GetNetPlayerByWeapon` | a steal/return moves the weapon (`StealWeaponWui` / `ReturnWeaponWui` exist for precisely that) |
+| `LaserBeamAttack`, `ProjectileDragonBreath` | owner ≠ local | re-reads owner, compares again | `GetPlayer` returns null after that peer disconnects → NRE in the postfix, pop skipped |
+| all of them | session started | re-checks `HasNetplaySessionStarted()` | teardown flips it between prefix and postfix |
+
+A stranded id sits at the front of the queue, and `PeakNetplayerPositionRequest` is what the three
+transform patches consult to decide whose transform to return — so from that moment **the local
+player's `"Player"`, `"Hips"` and `"Renderer"` transforms resolve to a remote netplayer**, until
+`PlayerManagerService.Reset()` clears the queue at the end of the session.
+
+### Fix — purge by frame, in one place
+
+Every push/pop pair in the codebase brackets a **single game call**, so a request that outlives the
+frame it was pushed on is a leak by definition. The queue now carries the frame:
+
+```csharp
+private ConcurrentQueue<(uint ConnectionId, int Frame)> getNetplayerPositionRequestQueue = new();
+```
+
+and `PeakNetplayerPositionRequest()` drops entries from earlier frames before peeking. That fixes
+every site at once — including the ones whose postfix condition is unreliable, and ones not written
+yet — instead of 48 edits that would each have to reason about a different game method.
+
+A throttled counter reports what it drops (`Dropped N stale netplayer position request(s)…`, at
+most one line per 5s, silent when healthy), so a site that leaks on *every* call is distinguishable
+from one unlucky exception. Cleared on reset like the other diagnostics.
+
+**Per-site `try/finally` was deliberately not added on top.** For the prefix/postfix majority it is
+impossible, and for the handful of same-method pairs it would only narrow a leak the purge already
+closes on the next frame. The two sites that *did* get a `finally` in [P1-9](#p1-9) —
+`NetPlayer.AddItem` / `RemoveItem` — needed it for the **game static** they also swap, which no
+amount of queue purging can restore.
+
+**Known and left alone:** the queue is FIFO but the usage is stack-shaped — with two requests
+pushed in one frame, the pop removes the *older* one. Nothing nests today as far as this sweep
+found, and changing it is a behaviour change that cannot be tested here.
+
+### Test
+
+Play a session with heavy remote-projectile traffic (scythes, shotguns, hero swords) and a
+mid-run disconnect. **Expected:** no `Dropped N stale netplayer position request(s)` line at all;
+if one appears, it names a real leaking site and the count says whether it is systematic. The
+symptom it prevents — the local player's model jumping to a remote player's position — should be
+absent either way.
 
 ---
 
