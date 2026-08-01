@@ -253,8 +253,35 @@ and Unity's `==` applies), and `MapController.GetStageIndex()` exists as
 [`../netplay/04-performance-and-gc.md`](../netplay/04-performance-and-gc.md) item 3, which now
 depends on someone checking what it indexes.
 
-**It still cannot tell you what anything does.** Existence and signature only — a body is a stub.
-Everything the UNVERIFIED tag exists for stays UNVERIFIED.
+#### Reading the *type* of a field, not just its name
+
+Il2CppInterop turns every IL2CPP field into a managed property, so **a field's type is the return
+type of its `get_` accessor**, and that is in the metadata too — it just needs the signature blob
+decoded. [`scripts/re/interop_members.py`](../../scripts/re/interop_members.py) does it:
+
+```
+$ python3 scripts/re/interop_members.py MyInputManager
+=== <global>.MyInputManager  : MonoBehaviour
+    GetButton()                       -> bool
+    Jump                              string
+    UISubmit                          string
+    stoppedInputAtTime                float
+    resumeInputDelay                  float
+    player                            class Rewired.Player
+```
+
+That settled `MyInputManager.UISubmit` — a **string** action name, which is what
+`Helpers/EncounterInputGrace` needed before it could ask whether the confirm button was already
+held. It took seconds, offline, against the committed stubs.
+
+Two other things fell out of the same run, both worth knowing before writing input code:
+`stoppedInputAtTime` and `resumeInputDelay` are floats — **the game has its own input-grace
+mechanism**, and `player` is a `Rewired.Player`, so actions are Rewired actions and `Jump` and
+`UISubmit` are separate ones bound to the same physical button.
+
+**It still cannot tell you what anything does, or what value a field holds.** Existence, shape and
+type only — a body is a stub, and a string field's *contents* need `dump.cs`. Everything the
+UNVERIFIED tag exists for stays UNVERIFIED.
 
 ---
 
