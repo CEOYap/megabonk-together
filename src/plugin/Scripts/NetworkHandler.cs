@@ -205,6 +205,7 @@ namespace MegabonkTogether.Scripts
             Patches.ChestWindowUiPatches.Reset();
             Patches.LevelUpScreenPatches.Reset();
             Patches.Projectiles.ProjectileBasePatches.ClearOpacityCache();
+            Helpers.EncounterInputGrace.Reset();
 
             try
             {

@@ -16,6 +16,7 @@ namespace MegabonkTogether.Configuration
         public static ConfigEntry<string> PreviousVersion { get; private set; }
         public static ConfigEntry<bool> AllowSavesDuringNetplay { get; private set; }
         public static ConfigEntry<bool> EnabledSharedExperience { get; private set; }
+        public static ConfigEntry<float> EncounterInputGraceSeconds { get; private set; }
 
         public static void Initialize(ConfigFile config)
         {
@@ -56,6 +57,15 @@ namespace MegabonkTogether.Configuration
                 "PreviousVersion",
                 "",
                 "Internal flag to store the previous version before an update. Do not modify manually."
+            );
+            EncounterInputGraceSeconds = config.Bind(
+                "Gameplay",
+                "EncounterInputGraceSeconds",
+                0.35f,
+                "Ignore reward-window choices for this many seconds after the window opens. On a " +
+                "controller the confirm button is also jump, and in Shared Experience a window can " +
+                "open while you are mid-jump - without this, that jump press picks an item for you. " +
+                "Set to 0 to disable."
             );
             AllowSavesDuringNetplay = config.Bind(
                 "Gameplay",
