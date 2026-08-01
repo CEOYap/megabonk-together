@@ -196,6 +196,7 @@ namespace MegabonkTogether.Scripts
             // PERF 1A: drop switcher registrations from the finished session. Their enemies are
             // gone, so OnDisable may never fire for them.
             Enemies.TargetSwitcherManager.Clear();
+            Snapshot.EnemyInterpolatorManager.Clear();
 
             // Encounter-UI statics hold references from the finished session — a MyButton, a
             // Coroutine handle, a TMP component parented to UI the session destroys. Handing any
@@ -203,6 +204,7 @@ namespace MegabonkTogether.Scripts
             // destroyed Component, which is upstream issue #93's signature.
             Patches.ChestWindowUiPatches.Reset();
             Patches.LevelUpScreenPatches.Reset();
+            Patches.Projectiles.ProjectileBasePatches.ClearOpacityCache();
 
             try
             {

@@ -568,6 +568,18 @@ namespace MegabonkTogether.Services
         /// </summary>
         public uint? PeakNetplayerPositionRequest()
         {
+            // PERF: this is called from the prefixes on Component.get_transform,
+            // Transform.get_position and Transform.get_rotation — three of the hottest properties
+            // in Unity — so it runs on essentially every transform access in the game while a
+            // session is up, and the queue is empty on the overwhelming majority of those calls.
+            // IsEmpty is a managed field read; Time.frameCount below is a native interop call.
+            // Reading the frame unconditionally (as the first version of the P1-11 fix did) put
+            // that native call on the single hottest path in the mod.
+            if (getNetplayerPositionRequestQueue.IsEmpty)
+            {
+                return null;
+            }
+
             var currentFrame = Time.frameCount;
 
             while (getNetplayerPositionRequestQueue.TryPeek(out var request))

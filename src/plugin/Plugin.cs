@@ -179,6 +179,7 @@ namespace MegabonkTogether
             ClassInjector.RegisterTypeInIl2Cpp<ChangelogModal>();
             ClassInjector.RegisterTypeInIl2Cpp<TargetSwitcher>();
             ClassInjector.RegisterTypeInIl2Cpp<TargetSwitcherManager>();
+            ClassInjector.RegisterTypeInIl2Cpp<EnemyInterpolatorManager>();
             ClassInjector.RegisterTypeInIl2Cpp<InteractableReviver>();
             ClassInjector.RegisterTypeInIl2Cpp<NotificationQueueManager>();
 
@@ -277,6 +278,10 @@ namespace MegabonkTogether
             var goTargetSwitcherManager = new GameObject("TargetSwitcherManager");
             GameObject.DontDestroyOnLoad(goTargetSwitcherManager);
             goTargetSwitcherManager.AddComponent<TargetSwitcherManager>();
+
+            var goEnemyInterpolatorManager = new GameObject("EnemyInterpolatorManager");
+            GameObject.DontDestroyOnLoad(goEnemyInterpolatorManager);
+            goEnemyInterpolatorManager.AddComponent<EnemyInterpolatorManager>();
         }
 
         public void AddPrefab(GameObject prefab)

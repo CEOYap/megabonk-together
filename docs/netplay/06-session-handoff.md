@@ -184,7 +184,25 @@ the *sender's*, a different id space, so the two maps stay separate) and the dis
 calls `UnregisterProjectilesByOwner`. Received projectiles used to stay in `activeProjectiles`,
 walked by every `Update`, waiting for snapshots that would never arrive.
 
-### 7. `04-performance-and-gc.md` — 1C, 3 and 4 done; 5 still blocked
+### 7. Performance — second pass done, one measurement blocks the rest
+
+Full re-audit: [`09-performance-audit.md`](09-performance-audit.md). Fixed this session: the
+per-enemy `EnemyInterpolator.Update` (the 1A defect, missed on the client side), remote projectiles
+calling `Refresh(true)` and `GetComponentInChildren` every frame, a doubled `enemy.transform` read
+in `ToModel`, a pointless `GetComponent<Rigidbody>()` per enemy per movement tick, and a
+`Time.frameCount` regression this branch had put on the hottest path in the mod.
+
+Open and ranked there: the three **globally patched Unity properties**
+(`Component.get_transform`, `Transform.get_position`, `get_rotation`) — the largest single cost,
+and the null-fallback half of it may now be deletable; `GetNetPlayerByWeapon` per projectile per
+frame; `DynamicData` as per-enemy hot storage; and ~24,000 `EnemyModel` allocations per second on
+the host.
+
+**One capture unblocks most of it.** A Unity Profiler GC-Alloc/CPU capture on the host during a
+final swarm at 3+ players settles the `EnemyModel` churn, the `DynamicData` claim, and the still
+outstanding verification for `04` items 1A, 1C and 2. No capture has ever been taken.
+
+### 8. `04-performance-and-gc.md` — 1C, 3 and 4 done; 5 still blocked
 
 - **1C** — FIXED. Cached enemy `Transform`, hoisted position, `sqrMagnitude` comparisons. Also
   fixed an unguarded `netplayer.Model.transform` in both target pickers — an NRE per enemy every
@@ -201,12 +219,12 @@ walked by every `Update`, waiting for snapshots that would never arrive.
 **None of this is measured.** No profiler capture has ever been taken on this project; the claims
 are structural (fewer native calls, no square roots, no per-enemy scans).
 
-### 8. P1-2 (golden shrine sync) — blocked
+### 9. P1-2 (golden shrine sync) — blocked
 
 Changes the wire format, and the version gate that would make that safe is now a Steamworks
 deliverable. Either wait, or ship knowing a version-mismatched pair desyncs silently.
 
-### 9. `RelayEnvelope.ToFilters` — UNVERIFIED, scheduled
+### 10. `RelayEnvelope.ToFilters` — UNVERIFIED, scheduled
 
 `SendToAllClientsExcept`'s relay branch falls back to an empty filter list on lookup miss. Only
 the direct-peer path was traced. Resolve during Steamworks **Phase 1**, which is where the
