@@ -1984,9 +1984,17 @@ A throttled counter reports what it drops (`Dropped N stale netplayer position r
 most one line per 5s, silent when healthy), so a site that leaks on *every* call is distinguishable
 from one unlucky exception. Cleared on reset like the other diagnostics.
 
-**Per-site `try/finally` was deliberately not added on top.** For the prefix/postfix majority it is
-impossible, and for the handful of same-method pairs it would only narrow a leak the purge already
-closes on the next frame. The two sites that *did* get a `finally` in [P1-9](#p1-9) —
+**Per-site `try/finally` was deliberately not added on top.** For the same-method pairs it would
+only narrow a leak the purge already closes on the next frame.
+
+> ⚠️ **Correction.** This entry originally said `try/finally` was *impossible* for the
+> prefix/postfix majority. That is wrong: Harmony (HarmonyX, which BepInEx 6 ships) has
+> **`[HarmonyFinalizer]`**, which runs after the original even when it throws. Combined with the
+> balanced prefix/postfix scope stack described in
+> [`08-delirium-comparison.md`](08-delirium-comparison.md#worth-taking) — the prefix pushes a record
+> even when it decides not to act, and the postfix pops unconditionally instead of re-deriving its
+> condition — that is the fix for the *cause* here, not just the blast radius. The frame purge
+> stands until then. The two sites that *did* get a `finally` in [P1-9](#p1-9) —
 `NetPlayer.AddItem` / `RemoveItem` — needed it for the **game static** they also swap, which no
 amount of queue purging can restore.
 

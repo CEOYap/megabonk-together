@@ -20,6 +20,7 @@ like next.
 | [`netplay/04-performance-and-gc.md`](netplay/04-performance-and-gc.md) | Measured allocation sites, hot paths, and the ordered list of what to fix for 400–600 enemy density |
 | [`netplay/05-local-testing.md`](netplay/05-local-testing.md) | Two netplay clients on one PC and one Steam account — and what that setup cannot prove |
 | [`netplay/07-shared-experience-audit.md`](netplay/07-shared-experience-audit.md) | The shared-experience pause/reward barrier: protocol, its holes, and the upstream softlock issues |
+| [`netplay/08-delirium-comparison.md`](netplay/08-delirium-comparison.md) | `DeliriumPulse/MegaBonk.Multiplayer` — an independent mod for the same game: what its determinism-first design gets right, and the four techniques worth taking |
 
 ### Transport
 
