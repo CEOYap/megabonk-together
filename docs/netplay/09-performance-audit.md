@@ -159,11 +159,64 @@ ever been taken (`04` item 2's verification is still outstanding for the same re
 
 ---
 
+## Tooling — what is actually available here
+
+> ⚠️ **Correction to the first version of this section.** It opened with "take a Unity Profiler
+> capture". **The Unity Profiler can only attach to a development player**, and Megabonk ships a
+> retail IL2CPP build — so that capture cannot be taken at all, and the advice would have sent
+> someone to spend an evening discovering that.
+
+**`BepInEx/BepInEx.Debug` does not apply either**, which is worth recording so nobody re-checks:
+every project in it targets **.NET Framework 3.5 against BepInEx 5.4.19**, and this plugin is
+**net6.0 on BepInEx 6 IL2CPP** — a different chainloader, a different plugin base class, a
+different patcher contract. Tool by tool:
+
+| Tool | Verdict here |
+|---|---|
+| **Simple Mono Profiler** | Impossible, not merely incompatible. It injects `MonoProfiler32/64.dll` and uses the **Mono profiling API**; IL2CPP has no Mono runtime. |
+| **ScriptEngine** (hot-reload plugins) | The most tempting — this project's test loop is build → copy to three installs → launch three games. But the BepInEx 5 build will not load, and a port would have to re-run `ClassInjector.RegisterTypeInIl2Cpp<T>()` for ~20 injected types on every reload. Il2CppInterop has no way to *un*register one. (Inference from the injection API, not tested.) |
+| **DemystifyExceptions** | The value is `Ben.Demystifier`, and it is a NuGet package — reference the library directly if async/iterator frames ever become the problem. Mostly redundant here: symbols already ship next to the DLL, so managed exceptions already carry file and line. |
+| **MirrorInternalLogs** | Captures Unity's internal/native log. Genuinely useful for IL2CPP — but BepInEx 6 already has a Unity log listener; enable it in `BepInEx.cfg` rather than porting a patcher. |
+| **StartupProfiler**, **CtorShotgun** | Solve plugin-startup timing and chainloader entry point. Neither is a problem here. |
+| **ConstructorProfiler** | Counts constructor hits to find allocation sources — the right *idea* for the `EnemyModel` question, wrong runtime, and its own README says it "does not work all that well". |
+
+### What replaces it: `AllocationDiagnostics`
+
+BepInEx 6 runs the plugin on **.NET 6**, so the CoreCLR GC counts *our* allocations — which is
+exactly the population in question. `Services/AllocationDiagnostics` samples
+`GC.GetTotalAllocatedBytes` and `GC.CollectionCount(0..2)` and logs a rate every 10 seconds while a
+session runs, behind `LogAllocationRate` (off by default):
+
+```
+[alloc] 2143 KB/s managed over 10.0s (gen0 +37, gen1 +2, gen2 +0, heap 61.4 MB).
+```
+
+Game-side IL2CPP allocations are invisible to it, and that is the point — it measures the mod.
+
+**How to read it against the hypothesis.** `GetAllEnemiesDeltaAndUpdate` allocates one `EnemyModel`
+per enemy per tick at 40 Hz; 600 enemies predicts ~24,000 objects/second, and an `EnemyModel` with
+its quantized fields is on the order of 40-50 bytes, so roughly **1 MB/s** attributable to that path
+alone. If the rate at a full swarm sits near that and collapses when the swarm ends, pooling the
+models is worth doing. If it is an order of magnitude lower, the hypothesis is wrong and the effort
+belongs elsewhere.
+
+### For everything a log line cannot answer: UnityExplorer
+
+Already documented in
+[`../reverse-engineering/00-decompilation-guide.md`](../reverse-engineering/00-decompilation-guide.md)
+(toolchain §3) and it is the IL2CPP-appropriate runtime inspector. It answers the questions this
+session kept deferring: what `MyInputManager.UISubmit` actually holds, whether `b_open` is null on
+the second chest ([SE-9](07-shared-experience-audit.md#se-9)), and what state a stuck reward window
+is in.
+
+---
+
 ## What to measure first, and why in this order
 
-1. **A Unity Profiler capture on the host during a final swarm at 3+ players.** It settles the
-   `EnemyModel` churn and confirms or kills the `DynamicData` claim, and it is the outstanding
-   verification for `04` items 1A, 1C and 2 as well. One capture answers five open questions.
+1. **Turn on `LogAllocationRate` for one host session through a final swarm at 3+ players.** It
+   settles the `EnemyModel` churn and, by difference, the `DynamicData` claim — and it is the
+   outstanding verification for `04` items 1A, 1C and 2, none of which was ever going to get its
+   Unity Profiler capture.
 2. **The `Transform fallbacks fired` counters over a 3-player session with mid-run disconnects.**
    Zero across the session is the licence to delete the null-fallback branch from three globally
    patched properties, which is the largest single change available (item 1).

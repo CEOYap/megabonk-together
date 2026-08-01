@@ -198,9 +198,13 @@ and the null-fallback half of it may now be deletable; `GetNetPlayerByWeapon` pe
 frame; `DynamicData` as per-enemy hot storage; and ~24,000 `EnemyModel` allocations per second on
 the host.
 
-**One capture unblocks most of it.** A Unity Profiler GC-Alloc/CPU capture on the host during a
-final swarm at 3+ players settles the `EnemyModel` churn, the `DynamicData` claim, and the still
-outstanding verification for `04` items 1A, 1C and 2. No capture has ever been taken.
+**The measurement is now possible — and it was not before.** The Unity Profiler only attaches to a
+development player, and Megabonk ships retail IL2CPP, so the GC-Alloc capture this queue kept asking
+for could never have been taken. `BepInEx.Debug` does not help either: every tool in it is
+net35/BepInEx 5, and its profiler is Mono-only. Instead, set `LogAllocationRate = true` and play one
+host session through a final swarm: BepInEx 6 runs the plugin on .NET 6, so the CoreCLR GC counts
+the mod's own allocations, which is exactly the population in question. See
+[`09-performance-audit.md`](09-performance-audit.md) for how to read the number.
 
 ### 8. `04-performance-and-gc.md` — 1C, 3 and 4 done; 5 still blocked
 

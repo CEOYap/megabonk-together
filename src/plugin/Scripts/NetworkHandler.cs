@@ -85,6 +85,8 @@ namespace MegabonkTogether.Scripts
 
                 if (GameManager.Instance == null || GameManager.Instance.player == null || GameManager.Instance.player.inventory == null) return;
 
+                Services.AllocationDiagnostics.Sample(ModConfig.LogAllocationRate.Value);
+
                 lobbyUpdateAccumulator += Time.deltaTime;
 
                 if (isHost && isGameStarted)
@@ -206,6 +208,7 @@ namespace MegabonkTogether.Scripts
             Patches.LevelUpScreenPatches.Reset();
             Patches.Projectiles.ProjectileBasePatches.ClearOpacityCache();
             Helpers.EncounterInputGrace.Reset();
+            Services.AllocationDiagnostics.Reset();
 
             try
             {
