@@ -70,14 +70,46 @@ namespace MegabonkTogether.Helpers
         /// </summary>
         internal static void MarkRuntimeReady() => runtimeReady = true;
 
+        /// <summary>
+        /// Guards against this class being re-entered through its own IL2CPP calls.
+        ///
+        /// <para>The overflow that <see cref="MarkRuntimeReady"/> describes was unbounded because
+        /// nothing stopped the second entry. That latch keeps the recursion from starting during
+        /// patching, which is the only place it has been seen — but BepInEx's invoke hook is
+        /// installed for the whole process, so "it cannot happen after patching" is reasoning, not
+        /// evidence. This makes the difference between that reasoning being wrong and the game
+        /// dying: re-entry returns "not blocking", which drops the guard for one press rather than
+        /// recursing. Erring toward not blocking is the same direction the rest of this class errs
+        /// in — the worst case is the misfire the guard exists to prevent, never a stranded
+        /// player.</para>
+        ///
+        /// <para>Thread-static because a latch stuck on by a call from an unexpected thread would
+        /// disable the guard for the rest of the process.</para>
+        /// </summary>
+        [System.ThreadStatic]
+        private static bool reentered;
+
         /// <summary>Called when a reward window opens.</summary>
         internal static void Arm()
         {
-            if (!runtimeReady)
+            if (!runtimeReady || reentered)
             {
                 return;
             }
 
+            reentered = true;
+            try
+            {
+                ArmCore();
+            }
+            finally
+            {
+                reentered = false;
+            }
+        }
+
+        private static void ArmCore()
+        {
             armedAt = Time.unscaledTime;
             wasHeldOnOpen = IsSubmitHeld();
 
@@ -99,11 +131,24 @@ namespace MegabonkTogether.Helpers
         internal static bool IsBlocking()
         {
             // First, and before anything that could touch IL2CPP. See MarkRuntimeReady.
-            if (!runtimeReady)
+            if (!runtimeReady || reentered)
             {
                 return false;
             }
 
+            reentered = true;
+            try
+            {
+                return IsBlockingCore();
+            }
+            finally
+            {
+                reentered = false;
+            }
+        }
+
+        private static bool IsBlockingCore()
+        {
             var grace = ModConfig.EncounterInputGraceSeconds?.Value ?? 0f;
             if (grace <= 0f)
             {
