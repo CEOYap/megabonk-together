@@ -43,7 +43,17 @@ namespace MegabonkTogether.Patches
     /// OnInvokeMethod → (il2cpp→managed) ChooseOffer → DMD&lt;ChooseOffer&gt;</c>, unbounded,
     /// inside <c>PatchAll</c>. Every one of this repo's ~70 working patches is non-virtual;
     /// these four were the only virtual ones, which is exactly why this was the only class
-    /// affected. The four are disabled below.</para>
+    /// affected.</para>
+    ///
+    /// <para><b>What the guard covers now.</b> Arming moved to <c>ShowLevelupScreen</c> and
+    /// <c>OpeningFinished</c>, both non-virtual, so no virtual method is patched anywhere in this
+    /// file. Guarded: the chest's <c>TakeButton</c>, <c>BanishButton</c> and <c>DiscardButton</c> —
+    /// its three irreversible commits — plus <c>Skip</c>, <c>Banish</c> and <c>Leave</c> on the
+    /// level-up screen. <b>Not guarded: <c>ChooseOffer</c> on either type</b>, because it is
+    /// virtual. On the chest that is minor, since the real commits are the buttons. On the level-up
+    /// screen it is the item pick itself, which is the accident this feature was written for — so
+    /// the feature is partial by construction, and that gap closes only if the virtual-patching
+    /// question is solved.</para>
     ///
     /// <para><b>UNVERIFIED:</b> that <i>every</i> virtual method is unpatchable this way, rather
     /// than something narrower about these two. The correlation is exact across this repo but the
@@ -53,17 +63,25 @@ namespace MegabonkTogether.Patches
     [HarmonyPatch(typeof(LevelupScreen))]
     internal static class LevelupScreenChoiceGuardPatches
     {
-        // DISABLED — Open and ChooseOffer are virtual overrides, and patching a virtual method
-        // here recurses until the stack overflows, inside Harmony.PatchAll(). See the class
-        // comment above. The guard is inert without an arming hook; that is deliberate for now.
-        //
-        // [HarmonyPostfix]
-        // [HarmonyPatch(nameof(LevelupScreen.Open))]
-        // public static void Open_Postfix() => EncounterInputGrace.Arm();
-        //
-        // [HarmonyPrefix]
-        // [HarmonyPatch(nameof(LevelupScreen.ChooseOffer))]
-        // public static bool ChooseOffer_Prefix() => !EncounterInputGrace.IsBlocking();
+        /// <summary>
+        /// Arms the guard. <c>ShowLevelupScreen</c> is non-virtual, so unlike <c>Open</c> it can be
+        /// patched — see the class comment.
+        ///
+        /// <para><b>UNVERIFIED:</b> that this runs on every level-up window and at the moment the
+        /// window becomes interactive. The name and the non-virtual signature are all the interop
+        /// metadata can tell us; the body is a stub. If it fires late the guard is short, if it
+        /// never fires the guard is inert — both degrade to today's behaviour rather than breaking
+        /// anything, which is why this is worth shipping unverified.</para>
+        /// </summary>
+        [HarmonyPostfix]
+        [HarmonyPatch(nameof(LevelupScreen.ShowLevelupScreen))]
+        public static void ShowLevelupScreen_Postfix() => EncounterInputGrace.Arm();
+
+        // LevelupScreen.ChooseOffer stays unpatched and unguarded: it is virtual, and it is the
+        // level-up item pick — the exact accident e17c6ff was written for. Skip, Banish and Leave
+        // below are non-virtual and are guarded, so what remains unprotected is choosing an item,
+        // not discarding the window. That gap is the cost of not being able to patch a virtual
+        // method here, and it is stated rather than hidden.
 
         [HarmonyPrefix]
         [HarmonyPatch(nameof(LevelupScreen.Banish))]
@@ -81,16 +99,21 @@ namespace MegabonkTogether.Patches
     [HarmonyPatch(typeof(ChestWindowUi))]
     internal static class ChestWindowChoiceGuardPatches
     {
-        // DISABLED — same reason as LevelupScreen above: both are virtual overrides.
-        // ChestWindowUi.ChooseOffer is the exact method the overflow trace names.
-        //
-        // [HarmonyPostfix]
-        // [HarmonyPatch(nameof(ChestWindowUi.Open))]
-        // public static void Open_Postfix() => EncounterInputGrace.Arm();
-        //
-        // [HarmonyPrefix]
-        // [HarmonyPatch(nameof(ChestWindowUi.ChooseOffer))]
-        // public static bool ChooseOffer_Prefix() => !EncounterInputGrace.IsBlocking();
+        /// <summary>
+        /// Arms the guard. <c>OpeningFinished</c> is non-virtual, and is the point the chest's
+        /// opening animation ends and the offer becomes actionable — which is the moment that
+        /// matters here, later and therefore tighter than <c>Open</c> would have been.
+        ///
+        /// <para><b>UNVERIFIED:</b> the same caveat as <c>ShowLevelupScreen_Postfix</c>. Fails
+        /// toward an inert guard, not toward a stranded player.</para>
+        /// </summary>
+        [HarmonyPostfix]
+        [HarmonyPatch(nameof(ChestWindowUi.OpeningFinished))]
+        public static void OpeningFinished_Postfix() => EncounterInputGrace.Arm();
+
+        // ChestWindowUi.ChooseOffer stays unpatched for the same reason as LevelupScreen's. It
+        // matters less here: the chest's irreversible commits are TakeButton, BanishButton and
+        // DiscardButton, all non-virtual and all guarded below.
 
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ChestWindowUi.TakeButton))]
