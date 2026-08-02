@@ -6,6 +6,11 @@ committed on `main` or an explicitly-labelled open question.
 **Start here:** read [`01-critical-fixes.md`](01-critical-fixes.md) for per-item detail. This file
 is the state summary and the open-work queue.
 
+> **If you have a PC and can build and play, read
+> [`10-session-handover.md`](10-session-handover.md) first.** Everything on the
+> `claude/megabonk-distance-player-null-1ggr92` branch is unbuilt and unplayed, and most of the
+> queue below is now gated on data that one or two playtests produce.
+
 ---
 
 ## Session 2 — branch `claude/megabonk-distance-player-null-1ggr92`, not yet merged
