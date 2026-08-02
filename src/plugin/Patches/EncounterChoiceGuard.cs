@@ -55,10 +55,23 @@ namespace MegabonkTogether.Patches
     /// the feature is partial by construction, and that gap closes only if the virtual-patching
     /// question is solved.</para>
     ///
-    /// <para><b>UNVERIFIED:</b> that <i>every</i> virtual method is unpatchable this way, rather
-    /// than something narrower about these two. The correlation is exact across this repo but the
-    /// Il2CppInterop internals have not been read; the six non-virtual patches are left in place
-    /// partly to keep that distinction testable.</para>
+    /// <para><b>CONFIRMED in-game — do not re-add these patches.</b> This was an UNVERIFIED
+    /// correlation until it was tested directly (f378248, reverted by e3eafde). That build patched
+    /// <i>only</i> the two <c>ChooseOffer</c> methods, as prefixes, with no postfix and with arming
+    /// already on the non-virtual hooks — a materially different configuration from the four-patch
+    /// one that first crashed. It crashed identically: stack overflow in <c>Harmony.PatchAll()</c>,
+    /// <c>LogOutput</c> ending at "Already on latest version", 1,524 frames of
+    /// <c>DMD&lt;ChestWindowUi::ChooseOffer&gt;</c> calling itself. So neither the patch count, the
+    /// prefix/postfix split, nor the arming source is the variable — patching these virtual methods
+    /// is. Anyone reaching for this again needs a different mechanism, not a different arrangement
+    /// of Harmony attributes.</para>
+    ///
+    /// <para><b>Where the remaining gap could still be closed.</b> Not by patching
+    /// <c>ChooseOffer</c>. The untried routes are the UI layer beneath it — the offer buttons that
+    /// invoke it, reachable via the <c>MyButtonOffersUtility</c> / <c>b_skip</c> / <c>b_banish</c>
+    /// fields on these types — or the input layer, which the class comment above deliberately
+    /// rejected for good reasons that have not changed. Both are new investigations rather than
+    /// adjustments to this file.</para>
     /// </summary>
     [HarmonyPatch(typeof(LevelupScreen))]
     internal static class LevelupScreenChoiceGuardPatches
