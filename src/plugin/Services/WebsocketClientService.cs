@@ -240,6 +240,20 @@ namespace MegabonkTogether.Services
             var hasFoundMatch = await udpClientService.HandleMatch(matchInfo, connectionId, hostOnly, currentRdvServerPort, matchInfo.EnabledSharedExperience);
 
             Plugin.Log.LogInfo($"HandleMatchInfo result : {hasFoundMatch}");
+
+            if (!hasFoundMatch)
+            {
+                // A failed attempt used to leave its players behind, and a retrying peer comes back
+                // with a NEW ConnectionId. The next MatchInfo then added that identity alongside the
+                // abandoned one, so the host held three players for a two-player match. IsLobbyReady
+                // requires All(p => p.IsReady), and the abandoned identity can never become ready
+                // because it no longer exists on any peer — the host waits on it forever while the
+                // client sits on "Waiting for host". Observed over the internet, where the relay
+                // guarantees a retry, but nothing about it is internet-specific: any client retry
+                // does it, including on a LAN.
+                playerManagerService.ClearLobbyPlayers();
+            }
+
             Plugin.Instance.NetworkHandler.OnMatchFound(hasFoundMatch);
         }
 

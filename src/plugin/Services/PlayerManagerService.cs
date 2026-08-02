@@ -69,6 +69,7 @@ namespace MegabonkTogether.Services
         public bool IsANetPlayerAbility(PassiveAbilityBullseye instance);
         public bool IsRemoteItem(ItemGhost instance);
         public void RemovePlayer(uint clientConnectionId);
+        public void ClearLobbyPlayers();
     }
 
     public class PlayerManagerService : IPlayerManagerService
@@ -264,6 +265,34 @@ namespace MegabonkTogether.Services
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// Drops every player and the local-player identity, for a match attempt that failed before
+        /// a session existed.
+        ///
+        /// <para><b>Why not <see cref="Reset"/>.</b> Reset destroys spawned NetPlayers and cleans
+        /// inventories, which is Unity work. This runs on the WebSocket receive thread — the same
+        /// one <see cref="AddPlayer"/> is already called from — so it must stay purely managed.
+        /// Its footprint is deliberately identical to AddPlayer's: the dictionary plus the two
+        /// local-id fields, nothing else. Nothing has spawned yet at this point, so there is
+        /// nothing for Reset to have destroyed anyway.</para>
+        ///
+        /// <para>Deliberately does not clear the seed or the selected character: those belong to
+        /// the player's menu choices, not to the failed attempt.</para>
+        /// </summary>
+        public void ClearLobbyPlayers()
+        {
+            var cleared = players.Count;
+
+            players.Clear();
+            localConnectionId = 0;
+            isLocalPlayerSet = false;
+
+            if (cleared > 0)
+            {
+                logger.LogInfo($"Cleared {cleared} lobby player(s) left over from a failed match attempt.");
+            }
         }
 
         public void RemovePlayer(uint connectionId)
