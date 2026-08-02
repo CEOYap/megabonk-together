@@ -43,6 +43,12 @@ namespace MegabonkTogether.Server.Services
         public RelayPeer Host;
         public ConcurrentDictionary<uint, RelayPeer> Clients = new();
         public ConcurrentQueue<PendingRelayMessage> PendingToHost = new();
+
+        /// <summary>
+        /// When the session was created. Only used to sweep sessions that never got a UDP peer —
+        /// a live session is kept by its peers, not by its age. See SESSION_SETUP_RETENTION.
+        /// </summary>
+        public DateTime CreatedAt = DateTime.UtcNow;
     }
 
     public class PendingRelayMessage
@@ -90,6 +96,13 @@ namespace MegabonkTogether.Server.Services
         private static readonly TimeSpan PENDING_CLIENT_RETENTION = TimeSpan.FromSeconds(45);
         private static readonly TimeSpan PROCESSED_PAIR_RETENTION = TimeSpan.FromSeconds(45);
         private static readonly TimeSpan PENDING_RELAY_RETENTION = TimeSpan.FromSeconds(30);
+
+        /// <summary>
+        /// How long a relay session may exist with no UDP peer attached at all. This only catches
+        /// sessions whose peers never arrived; once a peer is attached the session lives until the
+        /// peers disconnect, however long the run lasts.
+        /// </summary>
+        private static readonly TimeSpan SESSION_SETUP_RETENTION = TimeSpan.FromSeconds(60);
 
         public RendezVousServer(ILogger<RendezVousServer> logger)
         {
@@ -194,6 +207,21 @@ namespace MegabonkTogether.Server.Services
                 {
                     logger.LogError(ex, $"Error handling connection request from {request.RemoteEndPoint}");
                     request.Reject();
+                }
+            };
+
+            // The relay session's lifetime lives here, on the UDP peers that actually use it.
+            // It used to live on the matchmaking WebSocket, which is a different connection with a
+            // different lifetime - see CleanRelaySession.
+            listener.PeerDisconnectedEvent += (peer, disconnectInfo) =>
+            {
+                try
+                {
+                    HandleRelayPeerDisconnected(peer, disconnectInfo);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, $"Error handling relay peer disconnect from {peer?.Address}:{peer?.Port}");
                 }
             };
 
@@ -696,11 +724,37 @@ namespace MegabonkTogether.Server.Services
                 }
             }
 
-            if (hostsRemoved > 0 || pendingClientsRemoved > 0 || pairsRemoved > 0 || pendingRelayConnectionsRemoved > 0)
+            // Relay sessions are no longer removed when the matchmaking socket closes, so this is
+            // what stops one leaking if its peers never arrive. Age alone is deliberately not
+            // enough: a session with a bound peer is in use and may outlive any fixed timeout.
+            int sessionsRemoved = 0;
+            foreach (var kvp in sessions.ToList())
+            {
+                var sess = kvp.Value;
+
+                if (now - sess.CreatedAt <= SESSION_SETUP_RETENTION)
+                {
+                    continue;
+                }
+
+                if (sess.Host?.NetPeer != null || sess.Clients.Values.Any(c => c?.NetPeer != null))
+                {
+                    continue;
+                }
+
+                if (sessions.TryRemove(kvp.Key, out var abandoned))
+                {
+                    sessionsRemoved++;
+                    abandoned.PendingToHost.Clear();
+                    logger.LogInformation($"Removed relay session for host {kvp.Key} - no peer ever attached");
+                }
+            }
+
+            if (hostsRemoved > 0 || pendingClientsRemoved > 0 || pairsRemoved > 0 || pendingRelayConnectionsRemoved > 0 || sessionsRemoved > 0)
             {
                 logger.LogInformation($"RendezVous Server Cleanup Report at {now}:");
-                logger.LogInformation($"    Cleanup complete: {hostsRemoved} hosts, {pendingClientsRemoved} pending clients, {pairsRemoved} processed pairs, {pendingRelayConnectionsRemoved} pending connections removed");
-                logger.LogInformation($"    Current state: {registeredHosts.Count} hosts, {pendingClients.Count} pending queues, {processedPairs.Count} processed pairs, {pendingRelayConnections.Count} pending relay connections");
+                logger.LogInformation($"    Cleanup complete: {hostsRemoved} hosts, {pendingClientsRemoved} pending clients, {pairsRemoved} processed pairs, {pendingRelayConnectionsRemoved} pending connections, {sessionsRemoved} abandoned relay sessions removed");
+                logger.LogInformation($"    Current state: {registeredHosts.Count} hosts, {pendingClients.Count} pending queues, {processedPairs.Count} processed pairs, {pendingRelayConnections.Count} pending relay connections, {sessions.Count} relay sessions");
             }
         }
 
@@ -710,7 +764,28 @@ namespace MegabonkTogether.Server.Services
             udpServer?.NatPunchModule.PollEvents();
         }
 
+        /// <summary>
+        /// Called when a peer's matchmaking WebSocket closes. That socket is not the relay: the mod
+        /// closes it during the relay handover, and this used to destroy the session the peer was
+        /// in the middle of connecting to, so the relay bind that followed found nothing
+        /// ("Session for host N not found!") and the client was rejected. A relay that is bound, or
+        /// still binding, is therefore left alone here and ends via its UDP peers instead - see
+        /// HandleRelayPeerDisconnected and the SESSION_SETUP_RETENTION sweep.
+        /// </summary>
         public void CleanRelaySession(uint connectionId)
+        {
+            if (HasLiveOrPendingRelay(connectionId))
+            {
+                logger.LogInformation(
+                    $"Matchmaking socket for {connectionId} closed but its relay is live or still binding; " +
+                    "leaving the relay session to the UDP peers.");
+                return;
+            }
+
+            DestroyRelaySessionOrClient(connectionId);
+        }
+
+        private void DestroyRelaySessionOrClient(uint connectionId)
         {
             if (sessions.TryRemove(connectionId, out var session))
             {
@@ -729,33 +804,116 @@ namespace MegabonkTogether.Server.Services
 
             foreach (var sess in sessions.Values)
             {
-                if (sess.Clients.TryRemove(connectionId, out var clientPeer))
+                if (sess.Clients.ContainsKey(connectionId))
                 {
-                    logger.LogInformation($"Cleaning relay client {connectionId} from host {sess.HostConnectionId}");
-                    DisconnectRelayPeer(clientPeer);
-
-                    if (sess.Clients.IsEmpty)
-                    {
-                        logger.LogInformation($"No more clients for host {sess.HostConnectionId}, cleaning up host relay peer");
-                        DisconnectRelayPeer(sess.Host);
-                        sessions.TryRemove(sess.HostConnectionId, out _);
-                    }
-                    else
-                    {
-                        var disconnectedPlayer = new PlayerDisconnected
-                        {
-                            ConnectionId = connectionId
-                        };
-
-                        NetDataWriter writer = new();
-                        var msgBytes = MemoryPackSerializer.Serialize<IGameNetworkMessage>(disconnectedPlayer);
-                        writer.Put(msgBytes);
-
-                        sess.Host.NetPeer.Send(writer, DeliveryMethod.ReliableOrdered);
-                    }
+                    RemoveRelayClient(sess, connectionId);
                     break;
                 }
             }
+        }
+
+        /// <summary>
+        /// Drops one client from a relay session, tearing the session down with it if it was the
+        /// last one. Shared by the UDP disconnect path and <see cref="CleanRelaySession"/>.
+        /// </summary>
+        private void RemoveRelayClient(RelaySession session, uint connectionId)
+        {
+            if (!session.Clients.TryRemove(connectionId, out var clientPeer))
+            {
+                return;
+            }
+
+            logger.LogInformation($"Cleaning relay client {connectionId} from host {session.HostConnectionId}");
+            DisconnectRelayPeer(clientPeer);
+
+            if (session.Clients.IsEmpty)
+            {
+                logger.LogInformation($"No more clients for host {session.HostConnectionId}, cleaning up host relay peer");
+                DisconnectRelayPeer(session.Host);
+                sessions.TryRemove(session.HostConnectionId, out _);
+                return;
+            }
+
+            // Was guarded by nothing: a client can leave in the window between the session being
+            // created and the host's own relay peer binding, and this send is the only place that
+            // dereferenced Host.NetPeer without a null check.
+            if (session.Host?.NetPeer == null)
+            {
+                logger.LogInformation(
+                    $"Host {session.HostConnectionId} relay peer is not bound yet; not announcing client {connectionId}'s departure.");
+                return;
+            }
+
+            var disconnectedPlayer = new PlayerDisconnected
+            {
+                ConnectionId = connectionId
+            };
+
+            NetDataWriter writer = new();
+            var msgBytes = MemoryPackSerializer.Serialize<IGameNetworkMessage>(disconnectedPlayer);
+            writer.Put(msgBytes);
+
+            session.Host.NetPeer.Send(writer, DeliveryMethod.ReliableOrdered);
+        }
+
+        /// <summary>
+        /// True while <paramref name="connectionId"/> has a relay connection that is either bound
+        /// or still being set up. Such a session must outlive the matchmaking WebSocket.
+        /// </summary>
+        private bool HasLiveOrPendingRelay(uint connectionId)
+        {
+            if (pendingRelayConnections.ContainsKey(connectionId))
+            {
+                return true;
+            }
+
+            if (sessions.TryGetValue(connectionId, out var hostSession))
+            {
+                return hostSession.Host?.NetPeer != null;
+            }
+
+            foreach (var sess in sessions.Values)
+            {
+                if (sess.Clients.TryGetValue(connectionId, out var clientPeer))
+                {
+                    return clientPeer?.NetPeer != null;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// A relay peer's UDP connection dropped. This is what ends a relay session now: the host
+        /// leaving tears the session down, the last client leaving does too, and any other client
+        /// leaving is announced to the rest exactly as the WebSocket path used to.
+        /// </summary>
+        private void HandleRelayPeerDisconnected(NetPeer peer, DisconnectInfo disconnectInfo)
+        {
+            if (peer == null || !peerLookup.TryRemove(peer, out var relayPeer))
+            {
+                return;
+            }
+
+            var session = relayPeer.Session;
+            if (session == null)
+            {
+                return;
+            }
+
+            logger.LogInformation(
+                $"Relay peer disconnected: {(relayPeer.IsHost ? "HOST" : "CLIENT")} {relayPeer.ConnectionId} " +
+                $"({disconnectInfo.Reason})");
+
+            if (relayPeer.IsHost)
+            {
+                // Unconditional: this is the UDP side going away, which is the authority on the
+                // session's lifetime. Going through CleanRelaySession would defer to itself.
+                DestroyRelaySessionOrClient(session.HostConnectionId);
+                return;
+            }
+
+            RemoveRelayClient(session, relayPeer.ConnectionId);
         }
 
         private void DisconnectRelayPeer(RelayPeer peer)
