@@ -21,6 +21,16 @@ namespace MegabonkTogether.Patches
     /// player did not trigger. Gating it would mean the mod fixes the annoying case and leaves the
     /// same misfire in singleplayer, which is a worse experience for no reason. The config entry is
     /// the off switch.</para>
+    ///
+    /// <para><b>The paragraph above is kept because its conclusion still stands, but its reasoning
+    /// was incomplete and it cost a launch.</b> It treated <c>HasNetplaySessionStarted()</c> as
+    /// purely a scope decision. It is also, accidentally, load-order protection: it is an enum
+    /// comparison on a managed field, so every other patch in this repo returns from the patching
+    /// context without ever entering the IL2CPP runtime. These patches had no such gate, read
+    /// <c>Time.unscaledTime</c> directly, and recursed to a stack overflow inside
+    /// <c>Harmony.PatchAll()</c> — the game could not start. The scope decision was right; what was
+    /// missing was that <i>something</i> managed has to be checked first. See
+    /// <see cref="EncounterInputGrace.MarkRuntimeReady"/>.</para>
     /// </summary>
     [HarmonyPatch(typeof(LevelupScreen))]
     internal static class LevelupScreenChoiceGuardPatches

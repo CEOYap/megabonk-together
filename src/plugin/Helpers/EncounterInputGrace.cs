@@ -48,10 +48,36 @@ namespace MegabonkTogether.Helpers
         private static bool wasHeldOnOpen;
         private static bool holdCheckAvailable = true;
         private static bool loggedBinding;
+        private static volatile bool runtimeReady;
+
+        /// <summary>
+        /// Set once <c>Harmony.PatchAll()</c> has returned. Until then every member here must stay
+        /// out of the IL2CPP runtime.
+        ///
+        /// <para><b>Why this exists.</b> These patches can be entered <i>while Harmony is still
+        /// installing them</i>: resolving a method patcher runs a game class constructor, that
+        /// class init goes through <c>il2cpp_runtime_invoke</c>, and BepInEx's chainloader hook on
+        /// that function re-entered the <c>ChooseOffer</c> detour it had just installed. The prefix
+        /// then read <c>Time.unscaledTime</c> — itself a runtime invoke — and the same hook
+        /// re-entered the detour again, which is an unbounded loop. It overflowed the stack inside
+        /// <c>Plugin.Load()</c>, so the game did not reach the main menu at all.
+        ///
+        /// <para>Every other patch in this repo is immune by accident: they open with
+        /// <c>HasNetplaySessionStarted()</c>, which is an enum comparison on a managed field and
+        /// never crosses the interop boundary. This class is the only one that deliberately has no
+        /// such gate, which is why it is the only one that could reach the runtime from the
+        /// patching context. A managed bool read is the same shape of protection.</para>
+        /// </summary>
+        internal static void MarkRuntimeReady() => runtimeReady = true;
 
         /// <summary>Called when a reward window opens.</summary>
         internal static void Arm()
         {
+            if (!runtimeReady)
+            {
+                return;
+            }
+
             armedAt = Time.unscaledTime;
             wasHeldOnOpen = IsSubmitHeld();
 
@@ -72,6 +98,12 @@ namespace MegabonkTogether.Helpers
         /// <summary>True while a choice should be ignored as an accidental carry-over press.</summary>
         internal static bool IsBlocking()
         {
+            // First, and before anything that could touch IL2CPP. See MarkRuntimeReady.
+            if (!runtimeReady)
+            {
+                return false;
+            }
+
             var grace = ModConfig.EncounterInputGraceSeconds?.Value ?? 0f;
             if (grace <= 0f)
             {

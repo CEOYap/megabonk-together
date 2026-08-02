@@ -252,6 +252,11 @@ namespace MegabonkTogether
                 Log.LogError($"Harmony patching failed: {ex}");
             }
 
+            // Only now may the encounter-choice guard touch the IL2CPP runtime. Set outside the
+            // catch on purpose: if patching failed, the guard's patches are not installed either,
+            // and leaving it latched off would be a second, silent failure mode.
+            Helpers.EncounterInputGrace.MarkRuntimeReady();
+
             var go = new GameObject("MainThreadDispatcher");
             GameObject.DontDestroyOnLoad(go);
             go.AddComponent<MainThreadDispatcher>();
