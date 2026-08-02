@@ -1527,6 +1527,9 @@ namespace MegabonkTogether.Services
             {
                 peer.Send(writer, deliveryMethod);
             }
+
+            // Counted after the fan-out, not before: a broadcast costs its payload once per peer.
+            BandwidthDiagnostics.Record(typeof(T).Name, msgBytes.Length, gamePeers.Count + (usesRelay.Any() ? 1 : 0));
         }
 
         public void SendToHost<T>(T data, DeliveryMethod? overrideDeliveryMethod = null) where T : IGameNetworkMessage
@@ -1556,6 +1559,8 @@ namespace MegabonkTogether.Services
                 {
                     relayPeer?.Send(relayMsgBytes, DeliveryMethod.ReliableOrdered);
                 }
+
+                BandwidthDiagnostics.Record(typeof(T).Name, msgBytes.Length, 1);
                 return;
             }
 
@@ -1569,6 +1574,8 @@ namespace MegabonkTogether.Services
             }
 
             gamePeers[0].Send(writer, deliveryMethod);
+
+            BandwidthDiagnostics.Record(typeof(T).Name, msgBytes.Length, 1);
         }
 
         public void SendToClient<T>(NetPeer client, T data, uint connectionId) where T : IGameNetworkMessage
@@ -1593,12 +1600,16 @@ namespace MegabonkTogether.Services
                 {
                     relayPeer?.Send(relayMsgBytes, DeliveryMethod.ReliableOrdered);
                 }
+
+                BandwidthDiagnostics.Record(typeof(T).Name, msgBytes.Length, 1);
                 return;
             }
 
             NetDataWriter writer = new NetDataWriter();
             writer.Put(msgBytes);
             client.Send(writer, DeliveryMethod.ReliableOrdered);
+
+            BandwidthDiagnostics.Record(typeof(T).Name, msgBytes.Length, 1);
         }
 
         private bool EnsureIsHost()
@@ -1728,11 +1739,19 @@ namespace MegabonkTogether.Services
             NetDataWriter writer = new NetDataWriter();
             writer.Put(msgBytes);
 
+            var sent = 0;
             var filteredPeers = gamePeers.Where(p => p.Value.Id != netPlayerId);
             foreach (var (_, peer) in filteredPeers)
             {
                 peer.Send(writer, DeliveryMethod.ReliableOrdered);
+                sent++;
             }
+
+            // Counted from the loop rather than gamePeers.Count, because this is the exclusion path:
+            // netPlayerId is a LiteNetLib NetPeer.Id and `sender` is a game connection id, and the
+            // migration plan calls transposing them an easy and silent mistake. Counting what the
+            // loop actually sent cannot inherit that confusion.
+            BandwidthDiagnostics.Record(typeof(T).Name, msgBytes.Length, sent + (usesRelay.Any() ? 1 : 0));
         }
 
         public void SendToAllClients(byte[] data, DeliveryMethod deliveryMethod)
@@ -1760,6 +1779,12 @@ namespace MegabonkTogether.Services
                 //Plugin.Log.LogWarning("No clients connected");
                 return;
             }
+
+            // Bucketed as "(pre-serialized)" because this overload takes bytes, so the message type
+            // is already gone by the time it gets here. Counted anyway — leaving it out would make
+            // the reported total quietly lower than the real one, which is worse for a baseline than
+            // an unnamed bucket.
+            BandwidthDiagnostics.Record("(pre-serialized)", data.Length, gamePeers.Count + (usesRelay.Any() ? 1 : 0));
 
             NetDataWriter writer = new NetDataWriter();
             writer.Put(data);
