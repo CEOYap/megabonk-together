@@ -97,6 +97,18 @@ namespace MegabonkTogether.Helpers
                 return;
             }
 
+            // Re-arming while a window is still live is what made the controller unusable: the
+            // arming hooks fire more than once per window, every call reset armedAt, so elapsed
+            // never reached the grace and the guard never expired — it swallowed every confirm for
+            // as long as the window was open, not for 0.35s. Arming is now idempotent per window:
+            // the first call starts the timer and later ones are ignored until the whole window,
+            // including the hold cap, has run out. Anything longer than HoldCapSeconds is a new
+            // window by definition, because that is the longest this guard can ever block for.
+            if (Time.unscaledTime - armedAt < HoldCapSeconds)
+            {
+                return;
+            }
+
             reentered = true;
             try
             {
