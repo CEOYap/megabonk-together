@@ -85,6 +85,8 @@ namespace MegabonkTogether.Scripts
 
                 if (GameManager.Instance == null || GameManager.Instance.player == null || GameManager.Instance.player.inventory == null) return;
 
+                Services.AllocationDiagnostics.Sample(ModConfig.LogAllocationRate.Value);
+
                 lobbyUpdateAccumulator += Time.deltaTime;
 
                 if (isHost && isGameStarted)
@@ -196,6 +198,17 @@ namespace MegabonkTogether.Scripts
             // PERF 1A: drop switcher registrations from the finished session. Their enemies are
             // gone, so OnDisable may never fire for them.
             Enemies.TargetSwitcherManager.Clear();
+            Snapshot.EnemyInterpolatorManager.Clear();
+
+            // Encounter-UI statics hold references from the finished session — a MyButton, a
+            // Coroutine handle, a TMP component parented to UI the session destroys. Handing any
+            // of those back to the game in the next session is a NullReferenceException on a
+            // destroyed Component, which is upstream issue #93's signature.
+            Patches.ChestWindowUiPatches.Reset();
+            Patches.LevelUpScreenPatches.Reset();
+            Patches.Projectiles.ProjectileBasePatches.ClearOpacityCache();
+            Helpers.EncounterInputGrace.Reset();
+            Services.AllocationDiagnostics.Reset();
 
             try
             {

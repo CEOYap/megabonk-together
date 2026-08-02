@@ -112,6 +112,17 @@ namespace MegabonkTogether.Patches
             CurrentRoutine = CoroutineRunner.Instance.Run(CancelWaitForVulnerabilityAfter1sec(__instance));
         }
 
+        /// <summary>
+        /// Same reasoning as ChestWindowUiPatches.Reset: a Coroutine handle and a TMP component
+        /// from a finished session are stale references, and infoText is parented to UI that the
+        /// session destroys.
+        /// </summary>
+        internal static void Reset()
+        {
+            CurrentRoutine = null;
+            infoText = null;
+        }
+
         private static IEnumerator CancelWaitForVulnerabilityAfter1sec(LevelupScreen __instance)
         {
             if (infoText == null)

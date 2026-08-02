@@ -225,6 +225,64 @@ assets.
 Will open the interop proxies (`stripped-libs/interop/*.dll`) but every body is a stub. Fine
 for browsing type shapes; useless for behaviour. `Il2CppDumper`'s `dump.cs` is easier to grep.
 
+### 6. `dnfile` — "does this member exist?", with nothing installed
+
+The one question the committed stubs *can* answer is whether a type or member exists and what its
+shape is. That does not need the game, the dump, or a GUI — the interop assemblies are ordinary
+.NET assemblies, and `pip install dnfile` reads their metadata directly:
+
+```python
+import dnfile
+pe = dnfile.dnPE('src/plugin/stripped-libs/interop/Assembly-CSharp.dll')
+for t in pe.net.mdtables.TypeDef.rows:
+    if str(t.TypeName) != 'MapController':
+        continue
+    print(str(t.Extends.row.TypeName))          # base type
+    for f in t.FieldList:                        # Il2CppInterop's stubs carry every member as a
+        print(str(f.row.Name))                   # NativeMethodInfoPtr_/NativeFieldInfoPtr_ field,
+    for m in t.MethodList:                       # with the full signature in the name
+        print(str(m.row.Name))
+```
+
+Those `NativeMethodInfoPtr_*` field names encode the whole signature —
+`NativeMethodInfoPtr_get_currentStage_Public_Static_get_StageData_0` says `currentStage` is a
+public static property of type `StageData`. Two things this settled in one minute, with no game
+install: `MapController.currentStage` is a `StageData : ScriptableObject` (so it has a `.Pointer`,
+and Unity's `==` applies), and `MapController.GetStageIndex()` exists as
+`Public_Static_Int32_0` — see
+[`../netplay/04-performance-and-gc.md`](../netplay/04-performance-and-gc.md) item 3, which now
+depends on someone checking what it indexes.
+
+#### Reading the *type* of a field, not just its name
+
+Il2CppInterop turns every IL2CPP field into a managed property, so **a field's type is the return
+type of its `get_` accessor**, and that is in the metadata too — it just needs the signature blob
+decoded. [`scripts/re/interop_members.py`](../../scripts/re/interop_members.py) does it:
+
+```
+$ python3 scripts/re/interop_members.py MyInputManager
+=== <global>.MyInputManager  : MonoBehaviour
+    GetButton()                       -> bool
+    Jump                              string
+    UISubmit                          string
+    stoppedInputAtTime                float
+    resumeInputDelay                  float
+    player                            class Rewired.Player
+```
+
+That settled `MyInputManager.UISubmit` — a **string** action name, which is what
+`Helpers/EncounterInputGrace` needed before it could ask whether the confirm button was already
+held. It took seconds, offline, against the committed stubs.
+
+Two other things fell out of the same run, both worth knowing before writing input code:
+`stoppedInputAtTime` and `resumeInputDelay` are floats — **the game has its own input-grace
+mechanism**, and `player` is a `Rewired.Player`, so actions are Rewired actions and `Jump` and
+`UISubmit` are separate ones bound to the same physical button.
+
+**It still cannot tell you what anything does, or what value a field holds.** Existence, shape and
+type only — a body is a stub, and a string field's *contents* need `dump.cs`. Everything the
+UNVERIFIED tag exists for stays UNVERIFIED.
+
 ---
 
 ## Ghidra walkthrough

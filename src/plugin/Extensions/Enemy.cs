@@ -9,11 +9,16 @@ namespace MegabonkTogether.Extensions
     {
         public static EnemyModel ToModel(this Enemy enemy, uint enemyId)
         {
+            // PERF: one `enemy.transform` instead of two. Component.get_transform is patched by
+            // this mod, so each access is a Harmony detour on top of the native property — and
+            // this runs per enemy, 40 times a second, on the host.
+            var transform = enemy.transform;
+
             return new EnemyModel()
             {
                 Id = enemyId,
-                Position = Quantizer.Quantize(enemy.transform.position),
-                Yaw = Quantizer.QuantizeYaw(enemy.transform.eulerAngles.y),
+                Position = Quantizer.Quantize(transform.position),
+                Yaw = Quantizer.QuantizeYaw(transform.eulerAngles.y),
                 Hp = enemy.hp
             };
         }

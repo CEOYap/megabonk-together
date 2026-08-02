@@ -8,7 +8,42 @@ is the state summary and the open-work queue.
 
 ---
 
-## What this session did
+## Session 2 — branch `claude/megabonk-distance-player-null-1ggr92`, not yet merged
+
+Worked open items 1-5 and the defects they surfaced. Commits `ac57c12` onwards.
+
+| Item | What |
+|---|---|
+| [P2-1](01-critical-fixes.md#p2-1) | The second dangling path: `CameraSwitcher` never invalidated its spectate target |
+| [P1-8](01-critical-fixes.md#p1-8) | A lost disconnect race skipped the entire handler, host retarget included |
+| [P1-9](01-critical-fixes.md#p1-9) | Save/restore pairs on game statics keyed off nullness; the game-over NRE is now contained (its cause is still open) |
+| [P1-10](01-critical-fixes.md#p1-10) | 28 `CAN_SEND_MESSAGES` latches → `using (Plugin.SuppressOutbound())` |
+| [P1-11](01-critical-fixes.md#p1-11) | Stranded netplayer-position requests, purged by frame |
+| [P2-5](01-critical-fixes.md#p2-5) | `RemoveProjectilesByOwnerId` now has an owner to filter on, in both id spaces |
+| 04 items 1C/3/4 | Per-enemy scans and square roots removed; an unguarded `netplayer.Model` deref fixed alongside |
+| tooling | `scripts/checks/csharp_static_checks.py`, and a `dnfile` recipe for reading the interop stubs' metadata |
+
+**None of it is compiled or run.** There is no .NET SDK in that environment and the network policy
+blocks installing one, so `dotnet build` was never executed. **Treat "builds clean" as unknown, not
+assumed** — build before the first playtest.
+
+What *was* verified, by `scripts/checks/csharp_static_checks.py` (added this session — tree-sitter,
+no SDK needed): all 264 `.cs` files parse, and no variable declared inside a `using`/`try` block is
+used after it. That second check is not academic — **it caught a real compile error** the sweep had
+introduced: `SpawnReviver`'s `desertGraveInstance`, scoped into a new `using` block while the rest
+of the method used it. Valid syntax, wrong scope; only a compiler or that check finds it. Neither
+check says anything about types, overloads or nullability.
+
+Signature changes to look for if the build does fail:
+`AddSpawnedProjectile(ProjectileBase, uint)`,
+`RegisterProjectileForInterpolation(uint, GameObject, uint)`,
+`ProjectileInterpolator.RegisterProjectile(uint, GameObject, uint)`,
+`Plugin.SuppressOutbound()` / `Plugin.OutboundSuppression`, and
+`getNetplayerPositionRequestQueue`'s element type.
+
+---
+
+## Session 1 — what it did
 
 Worked the `01-critical-fixes.md` queue, then moved to `04-performance-and-gc.md`, then chased
 bugs surfaced by in-game testing. Commits `1b2f486` through `893d566`, all on `main`.
@@ -30,7 +65,7 @@ bugs surfaced by in-game testing. Commits `1b2f486` through `893d566`, all on `m
 |---|---|---|
 | **P1-4** | Non-allocating `GetAlivePlayerCount` / `GetAllPlayersAliveNonAlloc`; four latent P1-6-class crashes fixed | Unity Profiler GC Alloc capture during a final swarm at 4+ players. **No profiler capture has ever been taken.** |
 | **04 item 1A** | `TargetSwitcherManager` ticks all switchers from one `Update`; guarded the `AddComponent` that stacked switchers on pooled enemies | CPU capture; also confirm enemies still switch targets (silent failure mode) |
-| **P2-1 (partial)** | Host now applies its own retarget at all three `ReTargetEnemies` call sites | second path still open — see below |
+| **P2-1** | Host now applies its own retarget at all three `ReTargetEnemies` call sites; the second, client-side path (a spectator camera holding a destroyed `NetPlayer` transform) is fixed too | 3 players, with the watching client **dead and spectating** when a peer disconnects — see open item 1 |
 
 ### Struck as not-defects
 
@@ -48,50 +83,152 @@ bugs surfaced by in-game testing. Commits `1b2f486` through `893d566`, all on `m
 
 ## Open work, in priority order
 
-### 1. `Plugin.GetDistanceToPlayer` holds a destroyed NetPlayer — the second dangling path
+### 1. ~~`Plugin.GetDistanceToPlayer` holds a destroyed NetPlayer~~ — FIXED, needs verification
 
-**This is the highest-value item and it is fully diagnosed.** See
-[P2-1 → "STILL OPEN"](01-critical-fixes.md#p2-1) for the sampled stacks.
+The owner was `CameraSwitcher.targetTransform`: the spectated peer's `NetPlayer.Model.transform`,
+which nothing invalidated when that peer disconnected. `Plugin.GetDistanceToPlayer` only reads it
+while the local player is dead, which is why the path was client-side and short-lived. Guarded the
+read, made `CameraSwitcher` recover from a destroyed target (the camera used to freeze on the
+departed peer), and reordered `SwitchToTarget` to bail before it disables the player camera. Full
+write-up in [P2-1](01-critical-fixes.md#p2-1).
 
-`Plugin.GetDistanceToPlayer:510` reads `.position` off a disconnected peer's destroyed NetPlayer.
-It sits on two per-frame paths — `DistanceThrottler.ShouldUpdate` (per enemy, per FixedUpdate) and
-`ProjectileBasePatches.Update_Prefix:157` (per projectile, per frame) — at ~700 hits per 5s each,
-client-side, after any disconnect.
+**Verification needs a dead, spectating client at the moment a peer disconnects** — 3 players, and
+the watcher must actually be dead or the path never opens. Expect zero `get_position` fallback
+hits, the camera moving to another player, and a single `Spectated player is gone` warning.
 
-Guard it against a destroyed/missing NetPlayer. Correctness *and* per-frame cost.
+### 2. ~~`OnReceivedPlayerDisconnected` skips work when the player is already gone~~ — FIXED, needs verification
 
-### 2. `OnReceivedPlayerDisconnected` skips the retarget when the player is already gone
+The early return skipped the *whole* handler, not just a retarget: player-card and inventory
+cleanup, projectile cleanup, and — on a host — the retarget itself, which silently reinstates
+P2-1's host-side dangling `Rigidbody`. The host is subscribed to the websocket `ClientDisconnected`
+too, so the host loses this race as readily as a client does.
 
-`SynchronizationService.OnReceivedPlayerDisconnected` early-returns if
-`GetPlayer(disconnected.ConnectionId)` is null. On a client that has already processed the
-websocket `ClientDisconnected` path, the player *is* already removed — so the host's
-`PlayerDisconnected` arrives, hits the early return, and **the client never retargets its enemies
-off the departed peer.** Observed as
-`Disconnected player not found in PlayerManagerService when processing OnReceivedPlayerDisconnected`.
+Now: the record gates only the notification, the host retarget moved into
+`RetargetAfterDisconnect`, and the notification runs last in its own `try` (it used to run first,
+with `AudioManager.Instance` on the path). Write-up: [P1-8](01-critical-fixes.md#p1-8).
 
-Retarget even when the record is gone; the connection id is all the retarget needs.
+**Correction carried into the docs:** the original entry said the client "never retargets its
+enemies off the departed peer". Clients never retarget locally by design — `ReTargetEnemies` picks
+targets with `Random.Range`, so a client doing its own would desync. They apply the host's
+`RetargetedEnemies`, which is why the *host's* copy of this handler must not be skippable.
 
-### 3. `Plugin.RestoreDeath` NREs at game over
+### 3. Shared experience — barrier holes closed, round identity still missing
+
+Full audit: [`07-shared-experience-audit.md`](07-shared-experience-audit.md). The reported symptom
+(one player stuck on "Waiting for other player(s) choices…" while the rest play on, freed when
+someone else opens a chest) is **SE-1**: a release that exits early on a non-empty reward queue
+leaves `forceClose` set, so that peer's *next* round closes instantly without reporting and every
+other peer waits for a report that never comes.
+
+Fixed here: SE-1/2 (barrier state cleared on every release path, on stage change and on teardown),
+SE-3 (no "waiting" UI for a round released re-entrantly), SE-8 (null guards), SE-9 (upstream #93's
+`b_open` NRE), and **SE-4 — a 20s failsafe that force-closes a stuck barrier**, which is upstream
+#88's request. The failsafe logs `Shared-experience failsafe fired after …s`; **that line is the
+thing to collect** — it says whether a hole remains.
+
+**Still open and needing a wire change:** the barrier has no round identity (SE-5, SE-6), and
+shared XP is last-writer-wins on an absolute value, which silently discards concurrent pickups
+(SE-7, upstream #74). The audit proposes appending new union tags rather than adding fields to the
+existing messages.
+
+### 4. `Plugin.RestoreDeath` NREs at game over — CONTAINED, still undiagnosed
 
 `Animator.set_speed` throws inside the saved death `Il2CppSystem.Action` invoked from
-`Plugin.RestoreDeath` (`Plugin.cs:321`), via `OnReceivedGameOver` → `TransitionToState`. Appears
-on host and clients, every session, pre-existing. `MainThreadDispatcher` catches it, so it
-degrades rather than crashes — but it aborts the rest of `RestoreDeath`.
+`Plugin.RestoreDeath`, via `OnReceivedGameOver` → `TransitionToState`. Appears on host and
+clients, every session, pre-existing.
 
-### 4. Remaining `04-performance-and-gc.md` items
+**What was fixed:** the blast radius, not the cause. The invoke is now wrapped, so the throw no
+longer escapes into `TransitionToState` to be caught by `MainThreadDispatcher` far from the fault;
+it is logged with its full stack, naming the death event as the source. The delegate is also
+handed back to the game *before* anything that can throw. The earlier note that it "aborts the
+rest of `RestoreDeath`" was wrong — the invoke was already the last statement; what it aborted was
+the caller.
 
-- **1C** — `PickACloseTarget` is O(enemies × players).
-- **3** — `GameBalanceService.StageIndex` does an `IndexOf` per access; nothing is cached.
-- **4** — `EnemyManagerService.GetEnemyByReference` linear scan with a closure, per call.
+**What is still open:** why the game's own death handler NREs. This needs the IL2CPP dump — the
+stripped interop assemblies have no method bodies, so nothing about what that handler touches can
+be established from this repo. Next session: pull the game-over stack from the log now that it is
+logged deliberately, and decompile `PlayerHealth`'s death path against
+`megabonk-re/build-21750826/dump.cs`.
+
+While containing it, two more defects of the same family turned up and are fixed —
+[P1-9](01-critical-fixes.md#p1-9): both save/restore pairs on game statics used the saved value's
+nullness as the "did we save?" flag, so a null original stranded the mod's handler (or a hard
+`null`) on a game static for the rest of the process, singleplayer included.
+
+### 5. ~~Unguarded global-state pairs~~ — FIXED (three of them), needs verification
+
+Three families of "mod swaps a global, game code runs, mod swaps it back", each with no guard:
+
+- **[P1-10](01-critical-fixes.md#p1-10)** — 28 `CAN_SEND_MESSAGES = false` latches. One throw and
+  the peer stops sending for the rest of the run. All now `using (Plugin.SuppressOutbound())`.
+- **[P1-9](01-critical-fixes.md#p1-9)** — save/restore pairs on game statics keyed off nullness.
+- **[P1-11](01-critical-fixes.md#p1-11)** — netplayer-position requests. **The obvious fix was
+  wrong**: most pairs are a Harmony prefix/postfix around a game method, so there is no block to
+  wrap, and the commoner leak is the postfix re-deriving its own condition (a retarget clearing
+  `targetId`, a weapon steal moving the weapon, teardown flipping `HasNetplaySessionStarted`).
+  Fixed instead by stamping each request with `Time.frameCount` and dropping stale ones in
+  `PeakNetplayerPositionRequest` — one place, covers all ~48 sites, with a throttled counter that
+  names any site still leaking.
+
+**Verification for P1-11:** heavy remote-projectile traffic plus a mid-run disconnect; expect no
+`Dropped N stale netplayer position request(s)` line, and no local player model snapping to a
+remote player's position.
+
+### 6. ~~`RemoveProjectilesByOwnerId` removes nothing~~ — FIXED, with a known remainder
+
+An `id → ownerId` map now backs it, written at `AddSpawnedProjectile` (one caller, which already
+had the owner id in hand). [P2-5](01-critical-fixes.md#p2-5).
+
+The remainder is fixed too: `ProjectileInterpolator` keeps its own `id → ownerId` map (its ids are
+the *sender's*, a different id space, so the two maps stay separate) and the disconnect sweep now
+calls `UnregisterProjectilesByOwner`. Received projectiles used to stay in `activeProjectiles`,
+walked by every `Update`, waiting for snapshots that would never arrive.
+
+### 7. Performance — second pass done, one measurement blocks the rest
+
+Full re-audit: [`09-performance-audit.md`](09-performance-audit.md). Fixed this session: the
+per-enemy `EnemyInterpolator.Update` (the 1A defect, missed on the client side), remote projectiles
+calling `Refresh(true)` and `GetComponentInChildren` every frame, a doubled `enemy.transform` read
+in `ToModel`, a pointless `GetComponent<Rigidbody>()` per enemy per movement tick, and a
+`Time.frameCount` regression this branch had put on the hottest path in the mod.
+
+Open and ranked there: the three **globally patched Unity properties**
+(`Component.get_transform`, `Transform.get_position`, `get_rotation`) — the largest single cost,
+and the null-fallback half of it may now be deletable; `GetNetPlayerByWeapon` per projectile per
+frame; `DynamicData` as per-enemy hot storage; and ~24,000 `EnemyModel` allocations per second on
+the host.
+
+**The measurement is now possible — and it was not before.** The Unity Profiler only attaches to a
+development player, and Megabonk ships retail IL2CPP, so the GC-Alloc capture this queue kept asking
+for could never have been taken. `BepInEx.Debug` does not help either: every tool in it is
+net35/BepInEx 5, and its profiler is Mono-only. Instead, set `LogAllocationRate = true` and play one
+host session through a final swarm: BepInEx 6 runs the plugin on .NET 6, so the CoreCLR GC counts
+the mod's own allocations, which is exactly the population in question. See
+[`09-performance-audit.md`](09-performance-audit.md) for how to read the number.
+
+### 8. `04-performance-and-gc.md` — 1C, 3 and 4 done; 5 still blocked
+
+- **1C** — FIXED. Cached enemy `Transform`, hoisted position, `sqrMagnitude` comparisons. Also
+  fixed an unguarded `netplayer.Model.transform` in both target pickers — an NRE per enemy every
+  2-6s in exactly P1-8's disconnect window.
+- **3** — FIXED, `StageIndex` only. Memoised on the stage's native pointer, not on stage-change
+  events (a missed event serves a wrong difficulty silently; this cannot). `PlayersCount` left
+  alone deliberately — non-allocating since P1-4, and caching it needs invalidation on join,
+  death, disconnect and revive.
+- **4** — FIXED. `ApplyRetargetedEnemies` indexes the players once instead of a `FirstOrDefault`
+  per enemy. `GetEnemyByReference` had already been fixed; that entry was stale.
 - **5** — network payload thresholds. **Blocked on measurement**: nothing counts bytes today.
   Phase 0 of the Steamworks plan already asks for those counters; build them there.
 
-### 5. P1-2 (golden shrine sync) — blocked
+**None of this is measured.** No profiler capture has ever been taken on this project; the claims
+are structural (fewer native calls, no square roots, no per-enemy scans).
+
+### 9. P1-2 (golden shrine sync) — blocked
 
 Changes the wire format, and the version gate that would make that safe is now a Steamworks
 deliverable. Either wait, or ship knowing a version-mismatched pair desyncs silently.
 
-### 6. `RelayEnvelope.ToFilters` — UNVERIFIED, scheduled
+### 10. `RelayEnvelope.ToFilters` — UNVERIFIED, scheduled
 
 `SendToAllClientsExcept`'s relay branch falls back to an empty filter list on lookup miss. Only
 the direct-peer path was traced. Resolve during Steamworks **Phase 1**, which is where the

@@ -28,7 +28,12 @@ an environment with no .NET SDK. Build and playtest each one.
 | [P1-5](#p1-5) | ~~Damage ownership misattributed through shared static `DamageContainer`s~~ **every mechanism eliminated in-game; symptom unattributed** | — | — | — |
 | [P1-6](#p1-6) | `ReTargetEnemies` throws on an empty alive-set, aborting the death handler — **FIXED**, plus 4 more sites via P1-4 | Medium | XS | yes |
 | [P1-7](#p1-7) | One destroyed `NetPlayer` aborts `Reset()`'s destroy loop, orphaning the rest | Medium | XS | yes |
-| [P2-1](#p2-1) | Dangling transform hack is silent | Low | XS | yes |
+| [P1-8](#p1-8) | A lost race in `OnReceivedPlayerDisconnected` skips the whole disconnect handler, host retarget included — **FIXED** | High | XS | yes |
+| [P1-9](#p1-9) | Save/restore pairs on game statics use nullness as the "saved?" flag, stranding the mod's handlers — **FIXED** | Medium | XS | yes |
+| [P1-10](#p1-10) | 28 `CAN_SEND_MESSAGES = false` latches with no `try/finally` — one throw and the peer stops sending — **FIXED** | High | M | yes |
+| [P1-11](#p1-11) | Stranded netplayer-position requests redirect the local player's transforms to a peer — **FIXED** | High | S | yes |
+| [P2-5](#p2-5) | `RemoveProjectilesByOwnerId` matches the projectile id against the connection id, so it removes nothing — **FIXED**, both id spaces | Medium | S | yes |
+| [P2-1](#p2-1) | Dangling transform hack is silent — instrumented, **two root causes found, both FIXED** (second unverified in-game) | Low | XS | yes |
 | [P2-2](#p2-2) | Dead `GetAllPlayers()` calls in charging paths | Low | XS | yes |
 | [P2-3](#p2-3) | Charging logic triplicated across shrine / pylon / lamp — **FIXED** | Low | M | yes |
 | [P2-4](#p2-4) | `CheckForUpdates = false` is ignored, and the un-initialised service then NREs | Low | XS | yes |
@@ -1723,12 +1728,297 @@ the new session.
 
 ---
 
+<a name="p1-8"></a>
+## P1-8 — A lost race in `OnReceivedPlayerDisconnected` skipped the whole disconnect handler
+
+**Status:** CONFIRMED from a 2026-07-31 log — **FIXED, not yet verified in-game.**
+**File:** `src/plugin/Services/SynchronizationService.cs:3835`
+
+The handler opened with:
+
+```csharp
+var disconnectedPeer = playerManagerService.GetPlayer(disconnected.ConnectionId);
+if (disconnectedPeer == null)
+{
+    logger.LogWarning("Disconnected player not found in PlayerManagerService when processing OnReceivedPlayerDisconnected.");
+    return;
+}
+```
+
+**Two independent paths remove a player, and they race on every peer:**
+
+| Path | Where |
+|---|---|
+| The host's `PlayerDisconnected` message | `UdpClientService` → `EventManager.OnPlayerDisconnected` → this handler |
+| The rendezvous server's `ClientDisconnected` over the websocket | `WebsocketClientService.HandleClientDisconnected` → `PlayerManagerService.RemovePlayer` |
+
+The websocket path removes the player record without doing any of the rest. When it won, this
+handler found no record and returned, skipping **everything**:
+
+- `playerManagerService.Disconnect` — so the departed peer's **player card stayed on screen** and
+  their inventory was never released;
+- `projectileManagerService.RemoveProjectilesByOwnerId`;
+- on a host, the entire retarget — **which reinstates [P2-1](#p2-1)'s host-side dangling
+  `Rigidbody`, the exact bug that retarget exists to prevent.** The host is subscribed to the
+  websocket too, so the host can and does lose this race.
+
+The observed log line was on a client, which is why the cost was first read as client-only. It is
+not: the same early return sits in front of the host's retarget.
+
+### Fix
+
+The record is needed for exactly one thing — the notification's player name. Everything else needs
+only the connection id. So:
+
+1. The lookup no longer gates anything. `Disconnect` and the projectile cleanup always run.
+2. The host's encounter-close and retarget moved into `RetargetAfterDisconnect(uint)`, called
+   behind `isHost && GameManager.Instance?.player != null` rather than behind an early return.
+3. The notification — cosmetic — **runs last, in its own `try`**. It used to run *first*, with
+   `AudioManager.Instance.uiAbort` and a localisation lookup on the path, so a throw there took
+   the retarget with it. Same lesson as [P0-6](#p0-6), [P1-6](#p1-6) and [P1-7](#p1-7): order by
+   importance, and never let the least important statement abort the most important one.
+4. The warning is kept but reworded — losing the race is not itself an error, it just means this
+   peer showed no disconnect notification.
+
+**Clients still do not retarget locally, deliberately.** `ReTargetEnemies` picks each new target
+with `Random.Range`; a client running its own would diverge from the host. Clients apply the
+host's `RetargetedEnemies` list, which is precisely why the host's copy of this handler must not
+be skippable.
+
+### Test
+
+3 players, mid-run disconnect, all three logs. **Expected:** the departed player's card
+disappears on every remaining peer; no `Disconnected player ... was already removed` line is fatal
+(it is informational, and may legitimately appear on whichever peer lost the race); no
+`get_transform` fallback burst on the host.
+
+---
+
+<a name="p1-9"></a>
+## P1-9 — Save/restore pairs on game statics can strand the mod's handlers permanently
+
+**Status:** CONFIRMED by inspection — **FIXED, not yet verified in-game.** Found while containing
+[open item 3](06-session-handoff.md) (`RestoreDeath`'s NRE).
+**Files:** `src/plugin/Plugin.cs:277`, `:305`, `:425`, `:433`
+
+The mod swaps three game statics — `PlayerHealth.A_Died`, `WeaponInventory.A_WeaponAdded`,
+`PlayerStatsNew.A_StatUpdate` — and restores them afterwards. Both pairs used **the saved value's
+nullness as the "did we save?" flag**:
+
+```csharp
+public void PreventDeath()
+{
+    if (originalDiedAction != null) { Log.LogWarning("Death already prevented"); return; }
+    originalDiedAction = PlayerHealth.A_Died;      // may legitimately be null
+    PlayerHealth.A_Died = new Action(OnPlayerDied);
+}
+
+public void RestoreDeath(bool invokeDeathEvent)
+{
+    if (originalDiedAction == null) { Log.LogWarning("Death not prevented"); return; }
+    ...
+}
+```
+
+A game event with no subscribers is null. If any of the three is null when the mod saves it, the
+save still swaps the static, and the restore then reads that null as "never prevented" and returns
+**without restoring anything**. The mod's handler — or, for the inventory pair, a hard `null` —
+stays on a game static for the rest of the process, singleplayer included. `RestorePlayerInventoryActions`
+is worse: its two guards return before restoring *either* static, so a null `A_WeaponAdded` also
+strands `A_StatUpdate`.
+
+Whether the game ever leaves these null in practice is **UNVERIFIED** — the stripped interop
+assemblies have no method bodies. The asymmetry is a defect regardless: a restore must not be
+gated on a value the save cannot guarantee.
+
+### Fix
+
+- `hasPreventedDeath` / `hasSavedInventoryActions` flags record the state; the saved delegates are
+  data. A null original now round-trips faithfully.
+- `RestoreDeath` hands the delegate back **before** anything that can throw, and
+  `RestorePlayerInventoryActions` restores both statics together.
+- The two call sites that bracket game code — `NetPlayer.Initialize` (the `PlayerInventory`
+  constructor) and `SynchronizationService.OnReceivedWeaponAdded` (`AddWeapon` +
+  `RefreshConstantAttack`) — now use `try/finally`. A throw between save and restore used to
+  silence both callbacks for the rest of the process. Same shape as [P0-6](#p0-6), where one
+  throw latched two statics and broke 581 consecutive enemy spawns.
+
+`RestoreDeath`'s invocation of the game's death handler is also contained now — see
+[open item 3](06-session-handoff.md); the underlying NRE is unchanged and still undiagnosed.
+
+### Test
+
+Play a session to game over, return to the menu, and start a **singleplayer** run. **Expected:**
+death behaves normally in singleplayer (the game's own death screen, not spectator mode), weapons
+still fire their pickup callbacks, and no `Death not prevented` / `Player inventory actions not
+saved` warnings.
+
+---
+
+<a name="p1-10"></a>
+## P1-10 — `CAN_SEND_MESSAGES = false` latches with no `try/finally`
+
+**Status:** CONFIRMED by inspection — **FIXED, not yet verified in-game.** 28 uncommented sites,
+all in `src/plugin/Services/SynchronizationService.cs`; one was converted with [P1-9](#p1-9) and
+the remaining 27 here.
+
+The pattern is everywhere in the receive handlers:
+
+```csharp
+Plugin.CAN_SEND_MESSAGES = false;
+<game call that applies the received state>
+Plugin.CAN_SEND_MESSAGES = true;
+```
+
+The flag suppresses the mod's own outbound messages while applying someone else's state, so the
+peer does not echo it back. **If the game call throws, the flag stays `false` for the rest of the
+run and this peer stops sending anything** — every subsequent local action is silently invisible to
+the others. That is a total, unrecoverable desync from a single unlucky exception, and
+[P0-6](#p0-6) proved this exact failure happens in practice (a string interpolation threw and
+latched two statics for 581 spawns).
+
+### Fix
+
+`Plugin.SuppressOutbound()` returns a `Plugin.OutboundSuppression` scope; every site is now
+
+```csharp
+using (Plugin.SuppressOutbound())
+{
+    <game call that applies the received state>
+}
+```
+
+- A `readonly struct`, so `using` allocates nothing on paths that run per received message.
+- It restores the **previous** value rather than hard-coding `true`. Identical at every current
+  site (all are entered with the flag set) and the only version that stays correct if two
+  suppressed regions ever nest — the hand-written pairs would have re-enabled sending inside an
+  outer suppressed region.
+- Mechanical, and verified as such: a whitespace-insensitive diff of the whole file against the
+  previous revision shows **only** the 27 paired `false;`/`true;` lines replaced by the scope. No
+  statement moved, and only blank lines at the edges of the new blocks were dropped.
+
+One site (`OnReceivedWeaponAdded`) keeps an explicit `try/finally` from [P1-9](#p1-9), because it
+also restores the inventory actions.
+
+Two more nulled-out game statics were fixed the same way while sweeping — `TomeInventory.A_TomeUpgrade`
+in `OnReceivedTomeAdded`, and `ItemInventory.A_ItemAdded` / `A_ItemRemoved` in
+`NetPlayer.AddItem` / `RemoveItem`. See [P1-11](#p1-11) for the queue half of those two.
+
+### Test
+
+Nothing to observe directly — a clean session proves only that the sweep did not break the happy
+path, which is the main risk in a 27-site mechanical change. Play a full session and confirm
+weapons, tomes, items, pickups, portals and interactables all still replicate.
+
+---
+
+<a name="p1-11"></a>
+## P1-11 — netplayer-position requests can be stranded, redirecting the local player's transforms
+
+**Status:** CONFIRMED by inspection — **FIXED, not yet verified in-game.** Found while sweeping
+[P1-10](#p1-10).
+
+> ⚠️ **The original prescription in this entry — "a `try/finally` sweep, one scoped `IDisposable`
+> like `Plugin.SuppressOutbound`" — is wrong, and is kept below because it is the obvious first
+> idea.** Most of these pairs are a Harmony **prefix/postfix pair around a game method**. The push
+> and the pop are in different methods, with the game's own code in between: there is no block to
+> wrap. See "What the sweep actually found".
+
+`AddGetNetplayerPositionRequest(id)` pushes a connection id; the transform patches
+(`UnityComponentPatches.get_transform_Prefix`, `TransformPatches.get_position_Prefix` /
+`get_rotation_Prefix`) read the front of that queue via `PeakNetplayerPositionRequest()` and
+**redirect the local player's transform reads to that netplayer**. `UnqueueNetplayerPositionRequest()`
+pops it again.
+
+The pattern appears at ~48 call sites across `Patches/Projectiles/`, `Patches/SpecialAttack/`,
+`Scripts/NetPlayer/` and `Services/`, and **exactly one of them** — in `OnReceivedItemApplied` —
+wraps the bracketed work in `try/finally`. Everywhere else, a throw between push and pop leaves the
+id on the queue, and from that moment the local player's `"Player"`, `"Hips"` and `"Renderer"`
+transforms resolve to a remote netplayer for the rest of the session. That is a visible,
+permanent corruption from a single exception, and the one existing `finally` suggests somebody has
+already been bitten by it.
+
+Same family as [P1-9](#p1-9) and [P1-10](#p1-10), and the largest of the three. Do it as its own
+commit; a scoped `IDisposable` (mirroring `Plugin.SuppressOutbound`) is the obvious shape, since
+the pop is unconditional at every site.
+
+### What the sweep actually found
+
+Both of the last two sentences above are wrong.
+
+**The pop is not unconditional, and it is usually not in the same method.** The dominant shape is a
+Harmony prefix that pushes and a postfix that pops, around a game method — `Rocket.MyFixedUpdate`,
+`ProjectileScythe.TryInit`, `WeaponAttack.SpawnProjectile`, `LaserBeamAttack.Update`, the eight
+`EnemySpecialAttack*` classes, and so on. There is no block to wrap in `try/finally`; the code in
+between is the game's.
+
+**And the postfix re-derives its own condition instead of being told what the prefix did**, which
+is a second, more frequent leak than an exception:
+
+| Site | Prefix pushes when | Postfix pops when | Leaks if |
+|---|---|---|---|
+| `EnemySpecialAttackTargetLaser` and 7 siblings | `targetId.HasValue` | re-reads `targetId`, `HasValue` | a retarget clears `targetId` mid-call — i.e. exactly what a disconnect does |
+| `WeaponAttack.SpawnProjectile` | `GetNetPlayerByWeapon` finds one | re-runs `GetNetPlayerByWeapon` | a steal/return moves the weapon (`StealWeaponWui` / `ReturnWeaponWui` exist for precisely that) |
+| `LaserBeamAttack`, `ProjectileDragonBreath` | owner ≠ local | re-reads owner, compares again | `GetPlayer` returns null after that peer disconnects → NRE in the postfix, pop skipped |
+| all of them | session started | re-checks `HasNetplaySessionStarted()` | teardown flips it between prefix and postfix |
+
+A stranded id sits at the front of the queue, and `PeakNetplayerPositionRequest` is what the three
+transform patches consult to decide whose transform to return — so from that moment **the local
+player's `"Player"`, `"Hips"` and `"Renderer"` transforms resolve to a remote netplayer**, until
+`PlayerManagerService.Reset()` clears the queue at the end of the session.
+
+### Fix — purge by frame, in one place
+
+Every push/pop pair in the codebase brackets a **single game call**, so a request that outlives the
+frame it was pushed on is a leak by definition. The queue now carries the frame:
+
+```csharp
+private ConcurrentQueue<(uint ConnectionId, int Frame)> getNetplayerPositionRequestQueue = new();
+```
+
+and `PeakNetplayerPositionRequest()` drops entries from earlier frames before peeking. That fixes
+every site at once — including the ones whose postfix condition is unreliable, and ones not written
+yet — instead of 48 edits that would each have to reason about a different game method.
+
+A throttled counter reports what it drops (`Dropped N stale netplayer position request(s)…`, at
+most one line per 5s, silent when healthy), so a site that leaks on *every* call is distinguishable
+from one unlucky exception. Cleared on reset like the other diagnostics.
+
+**Per-site `try/finally` was deliberately not added on top.** For the same-method pairs it would
+only narrow a leak the purge already closes on the next frame.
+
+> ⚠️ **Correction.** This entry originally said `try/finally` was *impossible* for the
+> prefix/postfix majority. That is wrong: Harmony (HarmonyX, which BepInEx 6 ships) has
+> **`[HarmonyFinalizer]`**, which runs after the original even when it throws. Combined with the
+> balanced prefix/postfix scope stack described in
+> [`08-delirium-comparison.md`](08-delirium-comparison.md#worth-taking) — the prefix pushes a record
+> even when it decides not to act, and the postfix pops unconditionally instead of re-deriving its
+> condition — that is the fix for the *cause* here, not just the blast radius. The frame purge
+> stands until then. The two sites that *did* get a `finally` in [P1-9](#p1-9) —
+`NetPlayer.AddItem` / `RemoveItem` — needed it for the **game static** they also swap, which no
+amount of queue purging can restore.
+
+**Known and left alone:** the queue is FIFO but the usage is stack-shaped — with two requests
+pushed in one frame, the pop removes the *older* one. Nothing nests today as far as this sweep
+found, and changing it is a behaviour change that cannot be tested here.
+
+### Test
+
+Play a session with heavy remote-projectile traffic (scythes, shotguns, hero swords) and a
+mid-run disconnect. **Expected:** no `Dropped N stale netplayer position request(s)` line at all;
+if one appears, it names a real leaking site and the count says whether it is systematic. The
+symptom it prevents — the local player's model jumping to a remote player's position — should be
+absent either way.
+
+---
+
 <a name="p2-1"></a>
 ## P2-1 — Dangling transform hack is silent
 
-**Status:** CONFIRMED — **PARTIALLY FIXED. There are TWO independent dangling paths, not one.**
-The host-side `enemy.target` path is found and fixed. A second, client-side path through
-`Plugin.GetDistanceToPlayer` was named by caller sampling on 2026-07-31 and is **still open**.
+**Status:** CONFIRMED — **TWO independent dangling paths, not one. Both now fixed; the second is
+not yet verified in-game.** The host-side `enemy.target` path was found and fixed first. The
+second, client-side path through `Plugin.GetDistanceToPlayer` was named by caller sampling on
+2026-07-31 and fixed the same day — see the last two subsections of this entry.
 **File:** `src/plugin/Patches/Unity/UnityComponent.cs:27-31`
 
 ```csharp
@@ -1921,14 +2211,68 @@ Disconnected player not found in PlayerManagerService when processing OnReceived
 ```
 
 It had already removed that player via the `ClientDisconnected` websocket path, so the host's
-`PlayerDisconnected` message hit the early return at the top of the handler — **and the client
-therefore never ran its own retarget for that peer.** A plausible contributor to the residual
-`get_transform` hits on the client side.
+`PlayerDisconnected` message hit the early return at the top of the handler.
+
+**Correction to what that early return was originally thought to cost.** It was written up as
+"the client never retargets its enemies off the departed peer". That is wrong in the detail:
+clients never retarget locally *by design* — `ReTargetEnemies` picks each new target with
+`Random.Range`, so a client running its own would pick different targets than the host and desync.
+The client's retarget only ever arrives as the host's `RetargetedEnemies` message. What the early
+return actually cost is below, and the host is the peer that had the most to lose.
 
 **Lesson, and it is the same one three times now.** "Sampled caller says game code" was taken as
 "our code is not involved". It only ever meant "our code is not involved *in the frames that were
 sampled*" — and the sampler captures one stack per 5s window, so a path that only fires in the
 first few windows is easy to miss entirely. Read the counters per-window, not in aggregate.
+
+### FIXED (not yet verified in-game) — the spectator camera never invalidated its target
+
+The owner named by the sampled stack is `CameraSwitcher.targetTransform`.
+
+`Plugin.GetDistanceToPlayer:510` only reads the camera target when the **local player is dead**,
+which is exactly when `CameraSwitcher` is spectating a remote peer, holding that peer's
+`NetPlayer.Model.transform`. When the spectated peer leaves,
+`PlayerManagerService.RemovePlayer` destroys their `NetPlayer` GameObject and **nothing tells
+`CameraSwitcher`**. The field is left dangling, and every subsequent frame reads `.position` off
+it from two per-frame paths.
+
+That also explains the run's shape without any further assumption:
+
+- **Client-side only** — the host was alive; only a dead player spectates.
+- **`get_position`, not `get_transform`** — the read is `Transform.position` on the camera
+  target, not `Component.transform`.
+- **Only the first few windows after the disconnect** — the read is gated on `player.IsDead()`,
+  so it stops the moment that client stops spectating. A revive is the obvious candidate
+  (`RestoreDeath` → `ResetToLocalPlayer` clears `targetTransform`), but the log was not checked
+  for one: **LIKELY**, not confirmed. From the fifth window on, that client saw only the
+  host-side `enemy.target` leak arriving through its own enemies.
+
+Three changes, all in the same commit:
+
+1. **`Plugin.GetDistanceToPlayer` guards the read** (`Plugin.cs`). `Instance?.CameraSwitcher` and
+   the returned transform are both null-checked — Unity's overloaded `==` catches a destroyed
+   object — falling back to the local player's position. That fallback is *exactly* what
+   `TransformPatches.get_position_Prefix` was already substituting, so **no distance result
+   changes**; the deref of the destroyed object does not happen.
+2. **`CameraSwitcher.Update` recovers from a destroyed target** (`Scripts/CameraSwitcher.cs`) —
+   switches to another spawned player, or returns to the local player if none is left. This is
+   the user-visible half: previously `LateUpdate` early-returned on the dangling transform and the
+   spectator camera simply **froze** on the departed peer. Recovery lives in `Update` rather than
+   the disconnect handlers because two independent paths remove a player — the host's
+   `PlayerDisconnected` and the websocket `ClientDisconnected` — and they race (see the open item
+   about `OnReceivedPlayerDisconnected`'s early return). One Unity null check per frame, only
+   while spectating.
+3. **`CameraSwitcher.SwitchToTarget` resolves the target before touching the camera.** It called
+   `SaveOriginalCamera()` and disabled `playerCamera` *first*, then dereferenced a
+   `FirstOrDefault` result — so a peer who disconnected between the id being chosen and the switch
+   both threw and left the camera disabled with nothing driving it. Same ordering lesson as P0-6
+   and P1-7: do the important thing first, and bail before you have mutated anything.
+
+**What verification needs:** a 3-player session where a *dead, spectating* client is watching the
+peer who disconnects. Two players is not enough (the session ends), and the local player must
+actually be dead at the moment of the disconnect or this path never opens. Expect: no
+`get_position` hits in the fallback counters, the spectator camera moving to another player, and
+one `Spectated player is gone` warning rather than a per-frame stream of them.
 
 ---
 
@@ -2129,6 +2473,63 @@ guard now makes it redundant rather than wrong.
 Set `CheckForUpdates = false`, launch, and open the main menu. **Expected:** the "disabled" line,
 no `Checking for updates...`, and no error. Then set it back to `true` and confirm the check runs
 and an available update is still offered.
+
+---
+
+<a name="p2-5"></a>
+## P2-5 — `RemoveProjectilesByOwnerId` filters on the wrong key
+
+**Status:** CONFIRMED by inspection — **FIXED, not yet verified in-game.** Found while fixing
+[P1-8](#p1-8).
+**File:** `src/plugin/Services/ProjectileManagerService.cs:175`
+
+```csharp
+var projectilesToRemove = spawnedProjectile
+    .Where(kv => kv.Value != null && kv.Key == connectionId)
+```
+
+`spawnedProjectile` is keyed by **projectile id** — `AddSpawnedProjectile` allocates
+`currentProjectileId++` — not by owner. So this removes, at most, the one projectile whose id
+happens to equal the departed player's connection id, and normally nothing at all. The method has
+one caller: the disconnect handler. **A departed peer's projectiles are therefore never cleaned
+up**, and they sit on the per-frame `ProjectileBasePatches.Update_Prefix` path.
+
+Nothing in `ProjectileManagerService` records an owner, so the fix is not a one-line predicate: it
+needs an owner recorded at `AddSpawnedProjectile` time (a parallel `id → ownerId` map, cleared in
+`ResetForNextLevel`), and every call site of `AddSpawnedProjectile` has to supply it — the local
+player's id for locally spawned projectiles, the message's `OwnerId` for received ones.
+
+### Fix
+
+A `ConcurrentDictionary<uint, uint> projectileOwners` alongside `spawnedProjectile`, written by
+`AddSpawnedProjectile(projectile, ownerId)` and cleared wherever the projectile is — removal, the
+dead-projectile sweep, `ResetForNextLevel`. The predicted "call-site sweep" turned out to be one
+line: `AddSpawnedProjectile` has a single caller, `SynchronizationService.OnSpawnedProjectile`,
+which already computes the owner id for the message it sends. The destroy loop is also guarded per
+projectile now, so one already-destroyed GameObject cannot abandon the rest ([P1-7](#p1-7)).
+
+Both keys stay in one id space — the ids this peer allocated. That matters: **remote** projectiles
+carry an id allocated by the *sender*, so mixing them into the same map would collide.
+
+### The other half — interpolated remote projectiles — also fixed
+
+`RemoveProjectilesByOwnerId` initially covered only projectiles this peer simulates. Projectiles
+*received* from a peer never enter `spawnedProjectile`: `OnReceivedSpawnedProjectile` instantiates
+a GameObject, stamps `netplayId`/`ownerId` on it with `DynamicData`, and registers it with
+`ProjectileInterpolator` under **the sender's id**. Nothing removed those when their owner left, so
+they stayed in `activeProjectiles` — walked by every `Update` — waiting for snapshots that would
+never arrive.
+
+`ProjectileInterpolator` now keeps its own `id → ownerId` map, populated by
+`RegisterProjectile(id, projectile, ownerId)`, and exposes `UnregisterProjectilesByOwner`, which
+the disconnect sweep calls. **Two maps rather than one, deliberately:** the interpolator's ids are
+allocated by the sender and `spawnedProjectile`'s by this peer, so merging them would collide.
+
+### Test
+
+3 players, one peer disconnects while their weapons are firing. **Expected:** their in-flight
+projectiles vanish on the remaining peers — both the ones those peers were simulating and the ones
+being interpolated from that peer's messages — instead of hanging in the air.
 
 ---
 

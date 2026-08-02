@@ -241,6 +241,23 @@ private bool CanSwitch()
 Also: each `enemy.transform` access is a native property call through interop. Cache the
 `Transform` once in `StartSwitching` rather than re-fetching per comparison.
 
+### FIXED — not measured
+
+All three changes are in: `enemyTransform` cached in `StartSwitching` (the only place `enemy`
+changes; a `Transform` outlives pooling and deactivation, so the pair cannot drift), the enemy's
+position hoisted out of the `PickACloseTarget` loop, and both distance comparisons switched to
+`sqrMagnitude` against a squared threshold.
+
+**A correctness bug was sitting in the same loop.** Both `PickANewTarget` and `PickACloseTarget`
+did `netplayer.Model.transform` on the result of `GetNetPlayerByNetplayId` without a null check. A
+player can be in the alive set with no spawned `NetPlayer` — most obviously in the window where one
+peer has processed a disconnect and another has not, which is [P1-8](01-critical-fixes.md#p1-8)'s
+race. That is an NRE on a path that runs per enemy every 2-6 seconds. Both now skip the candidate
+and keep the existing target rather than clearing it.
+
+No profiler capture. The claim here is "fewer native calls and no square roots", which is
+structural; whether it shows up in a frame-time capture at 600 enemies is unmeasured.
+
 ---
 
 <a name="getallplayersalive"></a>
@@ -325,6 +342,30 @@ private void RecomputeCache()
 }
 ```
 
+### FIXED — `StageIndex` only; `PlayersCount` deliberately left alone
+
+`StageIndex` is now memoised against the current stage's native pointer: one pointer comparison
+replaces an `IndexOf` over an Il2Cpp list (an interop equality call per element) on every access.
+
+**Keyed on the pointer, not the managed wrapper.** Il2CppInterop usually hands back the same proxy
+instance for a given pointer, but `Il2CppObjectBase` does not overload `==`, so a wrapper-identity
+comparison would have silently never hit and left the cost exactly where it was — while looking
+fixed.
+
+**The game may already have this.** `MapController.GetStageIndex()` — static, returns `Int32` —
+is present in `Assembly-CSharp`'s interop metadata. If it indexes the same list, it replaces the
+memo entirely. **UNVERIFIED and therefore not used:** the stripped assemblies carry no method
+body, and if it indexes global progression rather than position within the map's stage list, every
+difficulty multiplier shifts silently. Resolve it against `dump.cs` — this is a cheap, high-value
+check for whoever next has the dump open.
+
+**Not the event-driven cache this doc proposed.** A subscription that misses one stage change
+serves a wrong difficulty silently; memoising on the value's own identity cannot go stale. The same
+argument does not rescue `PlayersCount`, which has no cheap identity to compare — but after
+[P1-4](01-critical-fixes.md#p1-4) it is a non-allocating loop over at most six players, so it was
+left as it is. Caching it would need invalidation on join, death, disconnect and revive, and a
+missed one means enemies spawn with the wrong HP.
+
 This matters most if `BaseSummoner` is ever re-enabled — that patch calls
 `GetCreditsTimerMultiplier()` on every `Tick`, **on every summoner**. `SummonerController` holds
 a `List<BaseSummoner>` with five subclasses (`dump.cs:372136`), so the allocation is per-summoner
@@ -370,6 +411,19 @@ loop over enemies is O(enemies × players). This fires once per player death, so
 rather than sustained cost — but at 600 enemies it is a visible hitch at exactly the wrong
 moment. Materialise once outside the loop, and build a `Dictionary<uint, Rigidbody>` instead
 of scanning `playerId_rigidbody`.
+
+### FIXED — and `GetEnemyByReference` was already done
+
+**`GetEnemyByReference`** already takes the reverse-lookup route this entry asks for: it reads
+`netplayId` off the enemy's `DynamicData` and only falls back to the linear scan if that is missing
+or stale. This entry was out of date; the fallback is kept as a safety net, not a hot path.
+
+**`ApplyRetargetedEnemies`** is fixed: `playerId_rigidbody` is indexed into a
+`Dictionary<uint, Rigidbody>` once, instead of a `FirstOrDefault` with a fresh closure per enemy.
+That was the O(enemies × players) half, on the death and disconnect paths.
+
+**`ReTargetEnemies`'s `.Count()`/`.ElementAt()`** was already fixed by
+[P1-6](01-critical-fixes.md#p1-6), which materialises the candidate list once and indexes it.
 
 ---
 

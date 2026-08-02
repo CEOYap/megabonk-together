@@ -203,6 +203,19 @@ namespace MegabonkTogether.Scripts
         /// </summary>
         public void SwitchToTarget(uint targetId)
         {
+            var allNetPlayers = playerManager.GetAllSpawnedNetPlayers().ToList();
+            var target = allNetPlayers.FirstOrDefault(p => p.ConnectionId == targetId);
+
+            // FIX P2-1: resolve the target before touching the camera, not after. That player can
+            // already be gone — a disconnect between picking the id and switching to it — and the
+            // old order saved and disabled the player camera first, so a missing target threw on
+            // target.ConnectionId *and* left the camera disabled with nothing driving it.
+            if (target == null || target.Model == null) // Unity's overloaded == also catches a destroyed object
+            {
+                Plugin.Log.LogWarning($"Cannot spectate player {targetId}: their NetPlayer is missing or already destroyed.");
+                return;
+            }
+
             SaveOriginalCamera();
 
             var playerCam = GameManager.Instance?.playerCamera;
@@ -211,13 +224,8 @@ namespace MegabonkTogether.Scripts
                 playerCam.enabled = false;
             }
 
-            var allNetPlayers = playerManager.GetAllSpawnedNetPlayers().ToList();
-            var target = allNetPlayers.FirstOrDefault(p => p.ConnectionId == targetId);
-            var index = allNetPlayers.IndexOf(target);
+            targetIndex = allNetPlayers.IndexOf(target);
 
-            targetIndex = index;
-
-            var player = playerManager.GetPlayer(target.ConnectionId);
             var playerModel = playerManager.GetAllPlayersExceptLocal().FirstOrDefault(p => p.ConnectionId == target.ConnectionId);
             if (playerModel != null)
             {
@@ -348,9 +356,54 @@ namespace MegabonkTogether.Scripts
             return closestDistance;
         }
 
+        /// <summary>
+        /// Moves the spectator camera off a destroyed target: to another spawned player if one is
+        /// left, otherwise back to the local player so the camera is not stranded on nothing.
+        /// </summary>
+        private void RecoverFromDestroyedTarget()
+        {
+            var remaining = playerManager.GetAllSpawnedNetPlayers()
+                .Where(p => p != null && p.Model != null)
+                .ToList();
+
+            if (remaining.Count == 0)
+            {
+                Plugin.Log.LogWarning("Spectated player is gone and no other player is left to follow; returning the camera to the local player.");
+                ResetToLocalPlayer();
+                return;
+            }
+
+            Plugin.Log.LogWarning("Spectated player is gone; switching the spectator camera to another player.");
+            SwitchToTarget(remaining[0].ConnectionId);
+
+            // SwitchToTarget bails out if that player turns out to be gone as well. Without this
+            // the next frame lands back here and warns again, every frame.
+            if (targetTransform == null)
+            {
+                ResetToLocalPlayer();
+            }
+        }
+
         public void Update()
         {
             if (!isFollowingTarget) return;
+
+            // FIX P2-1 (second dangling path): the spectated peer can leave while we are watching
+            // them. PlayerManagerService.RemovePlayer destroys their NetPlayer GameObject and
+            // nothing notifies this component, so targetTransform is left dangling: LateUpdate
+            // early-returns and the camera freezes, while Plugin.GetDistanceToPlayer keeps
+            // reading .position off the destroyed object on two per-frame paths.
+            //
+            // Recovering here rather than in the disconnect handlers is deliberate — two
+            // independent paths remove a player (the host's PlayerDisconnected message and the
+            // websocket ClientDisconnected) and they race, so a handler-side fix would have to be
+            // duplicated and could still miss teardown. This costs one Unity null check per
+            // frame, and only while spectating.
+            if (targetTransform == null) // Unity's overloaded == also catches a destroyed object
+            {
+                RecoverFromDestroyedTarget();
+                return;
+            }
 
             bool isLeftClickPressed = BepInEx.Unity.IL2CPP.UnityEngine.Input.GetKeyInt((BepInEx.Unity.IL2CPP.UnityEngine.KeyCode)KeyCode.Mouse0);
             bool isRightClickPressed = BepInEx.Unity.IL2CPP.UnityEngine.Input.GetKeyInt((BepInEx.Unity.IL2CPP.UnityEngine.KeyCode)KeyCode.Mouse1);

@@ -80,6 +80,49 @@ namespace MegabonkTogether
         public bool IS_MANUAL_INVINCIBLE = false;
         public bool IS_NETPLAYER_ADDING_TOME = false;
 
+        /// <summary>
+        /// FIX P1-10: scoped replacement for the bare
+        /// `CAN_SEND_MESSAGES = false; …game call…; CAN_SEND_MESSAGES = true;` pattern that every
+        /// receive handler used.
+        ///
+        /// <para>The flag stops this peer echoing back the state it is applying on someone else's
+        /// behalf. Written by hand, the restore is skipped whenever the game call between the two
+        /// assignments throws — and then <b>this peer never sends anything again for the rest of
+        /// the run</b>: a total, unrecoverable desync from one exception. That is not theoretical;
+        /// P0-6 is the same failure, where one throw latched two statics for 581 enemy spawns.</para>
+        ///
+        /// <para>Restores the <i>previous</i> value rather than hard-coding `true`. Identical at
+        /// every current call site (all are entered with the flag set), and it is the only version
+        /// that stays correct if two suppressed regions ever nest.</para>
+        ///
+        /// <para>A struct, so `using` costs no allocation on paths that run per received message.</para>
+        /// </summary>
+        public readonly struct OutboundSuppression : IDisposable
+        {
+            private readonly bool previous;
+
+            internal OutboundSuppression(bool previous)
+            {
+                this.previous = previous;
+            }
+
+            public void Dispose()
+            {
+                CAN_SEND_MESSAGES = previous;
+            }
+        }
+
+        /// <summary>
+        /// Suppresses this peer's outbound messages until the returned scope is disposed. Use with
+        /// `using`, never bare — the whole point is that the restore survives an exception.
+        /// </summary>
+        public static OutboundSuppression SuppressOutbound()
+        {
+            var scope = new OutboundSuppression(CAN_SEND_MESSAGES);
+            CAN_SEND_MESSAGES = false;
+            return scope;
+        }
+
         public uint? CurrentReviver = null;
         public uint? CurrentReviverOwner = null;
 
@@ -92,6 +135,12 @@ namespace MegabonkTogether
         private Il2CppSystem.Action originalDiedAction = null;
         private Il2CppSystem.Action<WeaponBase> originalWeaponAddedAction = null;
         private Il2CppSystem.Action<EStat> originalStatUpdateAction = null;
+
+        // Whether the mod currently has the game's handler swapped out. Kept separate from the
+        // saved delegates because a legitimately-null original is indistinguishable from "never
+        // saved" otherwise, and that ambiguity used to strand our handlers on the game's statics.
+        private bool hasPreventedDeath = false;
+        private bool hasSavedInventoryActions = false;
 
         private static int distanceTargetFrame = -1;
         private static Vector3 distanceTarget;
@@ -130,6 +179,7 @@ namespace MegabonkTogether
             ClassInjector.RegisterTypeInIl2Cpp<ChangelogModal>();
             ClassInjector.RegisterTypeInIl2Cpp<TargetSwitcher>();
             ClassInjector.RegisterTypeInIl2Cpp<TargetSwitcherManager>();
+            ClassInjector.RegisterTypeInIl2Cpp<EnemyInterpolatorManager>();
             ClassInjector.RegisterTypeInIl2Cpp<InteractableReviver>();
             ClassInjector.RegisterTypeInIl2Cpp<NotificationQueueManager>();
 
@@ -228,6 +278,10 @@ namespace MegabonkTogether
             var goTargetSwitcherManager = new GameObject("TargetSwitcherManager");
             GameObject.DontDestroyOnLoad(goTargetSwitcherManager);
             goTargetSwitcherManager.AddComponent<TargetSwitcherManager>();
+
+            var goEnemyInterpolatorManager = new GameObject("EnemyInterpolatorManager");
+            GameObject.DontDestroyOnLoad(goEnemyInterpolatorManager);
+            goEnemyInterpolatorManager.AddComponent<EnemyInterpolatorManager>();
         }
 
         public void AddPrefab(GameObject prefab)
@@ -276,13 +330,20 @@ namespace MegabonkTogether
 
         public void PreventDeath()
         {
-            if (originalDiedAction != null)
+            if (hasPreventedDeath)
             {
                 Log.LogWarning("Death already prevented");
                 return;
             }
 
+            // FIX: `originalDiedAction != null` used to be the "already prevented" sentinel, which
+            // conflates "not prevented yet" with "prevented, and the game's handler happened to be
+            // null". In that second case RestoreDeath's mirror-image check bailed with "Death not
+            // prevented" and left OnPlayerDied installed on the game's static for the rest of the
+            // process — i.e. leaking into singleplayer, which is the one thing patches here must
+            // never do. The flag is the state; the saved delegate is only data.
             originalDiedAction = PlayerHealth.A_Died;
+            hasPreventedDeath = true;
             PlayerHealth.A_Died = new Action(OnPlayerDied);
         }
 
@@ -304,21 +365,53 @@ namespace MegabonkTogether
 
         public void RestoreDeath(bool invokeDeathEvent)
         {
-            if (originalDiedAction == null)
+            if (!hasPreventedDeath)
             {
                 Log.LogWarning("Death not prevented");
                 return;
             }
 
-            CameraSwitcher.ResetToLocalPlayer();
+            if (CameraSwitcher != null)
+            {
+                CameraSwitcher.ResetToLocalPlayer();
+            }
 
-            PlayerHealth.A_Died = originalDiedAction;
+            // Hand the game its own handler back first and unconditionally. Everything below can
+            // throw, and of all the ways this method can fail, leaving our OnPlayerDied on a game
+            // static is the only one that follows the player out of the session.
+            var restored = originalDiedAction;
+            PlayerHealth.A_Died = restored;
             originalDiedAction = null;
+            hasPreventedDeath = false;
 
-            if (invokeDeathEvent)
+            if (!invokeDeathEvent)
+            {
+                return;
+            }
+
+            if (restored == null)
+            {
+                Log.LogWarning("Cannot invoke the game's death handler: there was none installed when the session started.");
+                return;
+            }
+
+            // The game's own death sequence throws a NullReferenceException at Animator.set_speed
+            // here, on host and clients, every session — pre-existing, and NOT diagnosed: the
+            // stripped interop assemblies have no method bodies, so what that handler touches is
+            // unknown without the IL2CPP dump. See open item 3 in docs/netplay/06-session-handoff.md.
+            //
+            // What is fixed here is the blast radius. The throw used to escape into
+            // TransitionToState(GameEvent.GameOver) and land in MainThreadDispatcher's catch, far
+            // from the fault and with no indication that the death event was the cause. Contained
+            // and logged with its stack, the caller finishes and the next session's log names it.
+            try
             {
                 GameManager.Instance.player.playerRenderer.gameObject.SetActive(true);
-                PlayerHealth.A_Died.Invoke();
+                restored.Invoke();
+            }
+            catch (Exception ex)
+            {
+                Log.LogWarning($"The game's death handler threw while being restored (invokeDeathEvent): {ex}");
             }
         }
 
@@ -422,25 +515,40 @@ namespace MegabonkTogether
             go.AddComponent<UpdateAvailableModal>();
         }
 
+        /// <summary>
+        /// Silences the game's weapon/stat callbacks while the mod builds or mutates a remote
+        /// player's inventory, so that work does not look like the local player's.
+        ///
+        /// <para>Always pair with <see cref="RestorePlayerInventoryActions"/> in a `finally`: these
+        /// null out two game-wide statics, and the calls they bracket are game code that can
+        /// throw. Skipping the restore kills weapon-added and stat-update handling for the rest of
+        /// the process, singleplayer included.</para>
+        /// </summary>
         public void SavePlayerInventoryActions()
         {
+            if (hasSavedInventoryActions)
+            {
+                Log.LogWarning("Player inventory actions already saved; not overwriting them with the silenced values.");
+                return;
+            }
+
             originalWeaponAddedAction = WeaponInventory.A_WeaponAdded;
             originalStatUpdateAction = PlayerStatsNew.A_StatUpdate;
+            hasSavedInventoryActions = true;
             WeaponInventory.A_WeaponAdded = null;
             PlayerStatsNew.A_StatUpdate = null;
         }
 
         public void RestorePlayerInventoryActions()
         {
-            if (originalWeaponAddedAction == null)
+            // FIX: this used to return early — before restoring EITHER static — whenever a saved
+            // action was null, on the assumption that null meant "never saved". Null is also a
+            // perfectly ordinary value for a game event with no subscribers, and in that case the
+            // early return left both callbacks nulled out permanently. One flag now records
+            // whether a save happened, and both statics are restored together.
+            if (!hasSavedInventoryActions)
             {
-                Log.LogWarning("WeaponAdded action not saved");
-                return;
-            }
-
-            if (originalStatUpdateAction == null)
-            {
-                Log.LogWarning("StatUpdate action not saved");
+                Log.LogWarning("Player inventory actions not saved");
                 return;
             }
 
@@ -448,6 +556,7 @@ namespace MegabonkTogether
             PlayerStatsNew.A_StatUpdate = originalStatUpdateAction;
             originalWeaponAddedAction = null;
             originalStatUpdateAction = null;
+            hasSavedInventoryActions = false;
         }
 
         public MapEventsDesert GetMapEventsDesert()
@@ -507,7 +616,26 @@ namespace MegabonkTogether
                 var target = player.transform.position;
                 if (player.IsDead())
                 {
-                    target = Instance.CameraSwitcher.GetCurrentTarget().position;
+                    // FIX P2-1 (second dangling path): while spectating, the camera target is a
+                    // remote peer's NetPlayer transform. Nothing tells CameraSwitcher when that
+                    // peer disconnects, so after PlayerManagerService.RemovePlayer destroys their
+                    // GameObject this read hit a destroyed Transform — landing in the
+                    // get_position fallback ~700 times per 5s on each of the two per-frame paths
+                    // that call this method (DistanceThrottler.ShouldUpdate per enemy per
+                    // FixedUpdate, ProjectileBasePatches.Update_Prefix per projectile per frame).
+                    //
+                    // Falling back to the local player's position is what that patch fallback was
+                    // already substituting, so this changes no distance result — it just stops
+                    // dereferencing a destroyed object to get there.
+                    var cameraSwitcher = Instance?.CameraSwitcher;
+                    if (cameraSwitcher != null) // Unity's overloaded == also catches a destroyed object
+                    {
+                        var spectateTarget = cameraSwitcher.GetCurrentTarget();
+                        if (spectateTarget != null) // ditto: a destroyed NetPlayer transform reads as null
+                        {
+                            target = spectateTarget.position;
+                        }
+                    }
                 }
 
                 distanceTarget = target;

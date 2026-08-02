@@ -33,9 +33,11 @@ namespace MegabonkTogether.Patches.Enemies
 
                 if (localPlayer.ConnectionId == id.Value)
                 {
-                    var playerGameObject = GameManager.Instance.player.gameObject;
-                    var rigidbody = playerGameObject.GetComponent<Rigidbody>();
-                    __result = rigidbody.transform.position;
+                    // PERF: was GetComponent<Rigidbody>() then .transform.position — a native
+                    // component lookup per enemy per movement tick to reach a transform that is
+                    // the same object as the player's own. A Rigidbody's transform IS its
+                    // GameObject's transform.
+                    __result = GameManager.Instance.player.transform.position;
                     return false;
                 }
 

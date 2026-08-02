@@ -14,19 +14,52 @@ namespace MegabonkTogether.Scripts.Snapshot
         protected float interpolationDelayMs = 0.1f;
         protected int maxBufferSize = 200;
 
-        protected void Update()
+        /// <summary>
+        /// Position in <see cref="EnemyInterpolatorManager"/>'s registry, or -1 when unregistered.
+        /// Stored here so removal is O(1) rather than a linear search.
+        /// </summary>
+        internal int RegistryIndex { get; set; } = -1;
+
+        /// <summary>
+        /// PERF: was <c>Update()</c>. Driven by <see cref="EnemyInterpolatorManager"/> instead, so
+        /// the managed↔native crossing happens once per frame for all enemies rather than once per
+        /// enemy — the same change PERF 1A made for target switchers, on the client this time.
+        /// The body is unchanged apart from taking the render time as a parameter.
+        /// </summary>
+        internal void Tick(double now)
         {
             if (!HasEnoughSnapshots())
                 return;
 
-            double renderTime = Time.timeAsDouble - interpolationDelayMs;
+            double renderTime = now - interpolationDelayMs;
             PerformInterpolation(renderTime);
             CleanupOldSnapshots(renderTime);
+        }
+
+        private void OnEnable()
+        {
+            EnemyInterpolatorManager.Register(this);
+        }
+
+        private void OnDisable()
+        {
+            EnemyInterpolatorManager.Unregister(this);
+        }
+
+        private void OnDestroy()
+        {
+            EnemyInterpolatorManager.Unregister(this);
         }
 
         public void Initialize(Enemy enemy)
         {
             this.enemy = enemy;
+
+            // Belt-and-braces, exactly as TargetSwitcher.StartSwitching does: OnEnable is the
+            // intended hook, but if Il2CppInterop does not wire it, nothing would ever register
+            // and every remote enemy would freeze in place — a silent, total failure. Register is
+            // idempotent, so the overlap costs nothing.
+            EnemyInterpolatorManager.Register(this);
         }
 
         public void AddSnapshot(EnemySnapshot snapshot)

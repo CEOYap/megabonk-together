@@ -9,6 +9,20 @@ Those change where made for balances purposes.
 
 There is no pause on netplay. Die
 
+## Controller: the confirm button is also jump
+
+On a controller, confirm and jump are the same physical button (A on Xbox, ✕ on PlayStation). In
+**Shared Experience** a reward window opens because *somebody else* interacted with a chest or a
+shrine, so it can appear while you are mid-jump — and the press you made to jump lands on the window
+as a confirm, picking an item for you.
+
+Reward windows now ignore a choice for a short moment after opening. The default is **0.35 seconds**,
+and it applies to the item pick, take, banish, discard and skip — but not to opening the chest,
+which commits nothing.
+
+Change it with `EncounterInputGraceSeconds` in
+`BepInEx/config/megabonk.together.cfg`; set it to `0` to turn it off.
+
 ## Synchronization
 
 Most of the stuff are synchronized but some are per player while other are fully sychronized
