@@ -109,6 +109,36 @@ namespace MegabonkTogether.Patches
         public static bool Leave_Prefix() => !EncounterInputGrace.IsBlocking();
     }
 
+    /// <summary>
+    /// Closes the gap the class above documents: the level-up item pick, and with it the moai,
+    /// shady guy and balance shrine offers that share the same screen.
+    ///
+    /// <para><b>How, given ChooseOffer cannot be patched.</b> Runtime inspection of
+    /// <c>GameUI/EncounterWindows/LevelupScreen/New/W_Offers/WindowLayers/Content</c> shows one
+    /// <c>UpgradeButton</c> child per offer. <c>UpgradeButton</c> derives from <c>MyButton</c>, and
+    /// its <c>OnClick</c> is a <c>virtual</c> override of <c>MyButton.OnClick</c> — so that is the
+    /// same trap. <c>SelectUpgrade</c> is <b>non-virtual</b>, and it is the commit the button
+    /// performs. Guarding it reaches the choice one layer below <c>ChooseOffer</c>, which is what
+    /// makes this route work where the previous one could not.</para>
+    ///
+    /// <para><b>UNVERIFIED:</b> that <c>SelectUpgrade</c> is on the path of every offer click and
+    /// commits nothing before it returns — the body is a stub, and the name plus the hierarchy are
+    /// the whole basis. Also unverified that moai, shady guy and the balance shrine really do reuse
+    /// <c>UpgradeButton</c>; they share <c>LevelupScreen</c>, but only the level-up screen itself
+    /// has been inspected. If any of that is wrong the guard is narrower than intended, not
+    /// broken.</para>
+    ///
+    /// <para>Blocking here means the click does nothing and the window stays open, which is the
+    /// same outcome as the other guards in this file.</para>
+    /// </summary>
+    [HarmonyPatch(typeof(UpgradeButton))]
+    internal static class UpgradeButtonChoiceGuardPatches
+    {
+        [HarmonyPrefix]
+        [HarmonyPatch(nameof(UpgradeButton.SelectUpgrade))]
+        public static bool SelectUpgrade_Prefix() => !EncounterInputGrace.IsBlocking();
+    }
+
     [HarmonyPatch(typeof(ChestWindowUi))]
     internal static class ChestWindowChoiceGuardPatches
     {
