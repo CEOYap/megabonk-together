@@ -12,6 +12,12 @@ For the standing queue and the older history, read
 
 ---
 
+## Where the work lives
+
+**Pull request: [CEOYap/megabonk-together#2](https://github.com/CEOYap/megabonk-together/pull/2)**,
+from `claude/megabonk-distance-player-null-1ggr92`. Pushing to the branch updates it — do not open
+another.
+
 ## The branch in one paragraph
 
 22 commits on `claude/megabonk-distance-player-null-1ggr92`, off `main` at `b3be3aa`. 24 source
@@ -24,6 +30,16 @@ diagnostics plus a static-analysis script. **None of it is built. None of it is 
 ---
 
 ## Step 0 — build it
+
+**Check the PR's CI first.** Until this branch there was no workflow that built a branch or a pull
+request — every other workflow in the repo is tag-triggered — so `ci.yml` was added: it builds the
+plugin on the PR exactly as the release workflow does (ubuntu, .NET 6, no game install, against the
+committed `stripped-libs`) and uploads the DLL and PDB as an artifact.
+
+That means **the compile question may already be answered before you sit down**, and if it is green
+you can download the built DLL from the PR's Actions run instead of building locally. What it does
+*not* prove: that the stripped libs match your installed game version, or that anything works. For
+that, build locally against the real install:
 
 ```powershell
 $env:MegabonkPath = "<path-to>\steamapps\common\Megabonk"

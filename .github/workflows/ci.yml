@@ -1,0 +1,53 @@
+name: CI
+
+# Every other workflow in this repo is tag-triggered, so until now nothing compiled a branch or a
+# pull request. That mattered: the shared-experience and performance work on
+# claude/megabonk-distance-player-null-1ggr92 was written in an environment with no .NET SDK, and
+# "does it build" could only be answered by someone installing the game and building by hand.
+#
+# This builds the plugin exactly the way build-plugin.yml does at release time — ubuntu, .NET 6, no
+# game install, so it compiles against the committed src/plugin/stripped-libs — and uploads the
+# result. Reviewers get a red check instead of a surprise, and anyone testing a branch can download
+# the DLL rather than build it.
+#
+# It does NOT prove the mod works. The stripped libs can be stale relative to the live game (see the
+# MegabonkPath trap in CLAUDE.md), and nothing here runs the game. It proves the code compiles.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build plugin
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: "6.0.x"
+
+      - name: Restore
+        run: dotnet restore src/plugin/MegabonkTogether.Plugin.csproj
+
+      # Release, matching build-plugin.yml, so a green check here means the release build is green.
+      # The plugin has a ProjectReference on src/common, so this covers the wire format too.
+      - name: Build (Release)
+        run: dotnet build src/plugin/MegabonkTogether.Plugin.csproj --configuration Release --no-restore
+
+      - name: Upload plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: MegabonkTogether-${{ github.sha }}
+          path: |
+            src/plugin/bin/Release/net6.0/MegabonkTogether.dll
+            src/plugin/bin/Release/net6.0/MegabonkTogether.pdb
+          if-no-files-found: error
+          retention-days: 14
