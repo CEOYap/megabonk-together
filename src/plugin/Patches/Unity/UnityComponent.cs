@@ -120,6 +120,52 @@ namespace MegabonkTogether.Patches.Unity
             }
         }
 
+        private static string lastDestroyedTypeSample = "not sampled";
+        private static bool sampledTypeThisWindow;
+
+        /// <summary>
+        /// Names the destroyed component itself, which the caller sample cannot.
+        ///
+        /// <para><b>Why this was added.</b> Run A's repeat showed the enemy-targeting fix moving 14
+        /// enemies off the departed player while the fallback rate stayed at ~710 per 5s — so enemy
+        /// targeting was a holder but not the dominant one, and the stack sampler could only say
+        /// "no MegabonkTogether frames", i.e. game code. Which game object is being read was the
+        /// missing fact, and guessing at candidates (camera, minimap, follow targets) is exactly the
+        /// speculation this project's rules exist to prevent.</para>
+        ///
+        /// <para>Uses managed <c>GetType()</c> on the wrapper rather than the IL2CPP type. That is
+        /// deliberate twice over: <c>GetIl2CppType()</c> does not compile here at all — the csproj
+        /// takes UnityEngine.CoreModule from `unity-libs`, whose Component does not derive from
+        /// Il2CppObjectBase, the same trap that broke <c>StageData.Pointer</c> in 7be19bc — and it
+        /// would be a native call on a destroyed object, which is precisely the hazard being
+        /// measured. The managed wrapper survives destruction untouched.</para>
+        ///
+        /// <para><b>UNVERIFIED:</b> how specific the answer will be. Il2CppInterop usually hands
+        /// back the most-derived proxy it knows, in which case this names the component outright;
+        /// if Harmony instead passes a wrapper typed as the patched parameter, it degrades to
+        /// "Component" and tells us nothing. Worth one run to find out, since the alternative is
+        /// guessing at candidates.</para>
+        /// </summary>
+        internal static void SampleDestroyedInstanceType(Component instance)
+        {
+            if (sampledTypeThisWindow)
+            {
+                return;
+            }
+            sampledTypeThisWindow = true;
+
+            try
+            {
+                lastDestroyedTypeSample = instance is null
+                    ? "managed null (not a destroyed object)"
+                    : instance.GetType().FullName;
+            }
+            catch (System.Exception ex)
+            {
+                lastDestroyedTypeSample = $"type read failed: {ex.GetType().Name}";
+            }
+        }
+
         /// <summary>
         /// Reports at most once per <see cref="REPORT_INTERVAL_SECONDS"/>, then resets the counts.
         /// Time.unscaledTime is a native call, but it only runs on a fallback hit — if that is
@@ -140,6 +186,7 @@ namespace MegabonkTogether.Patches.Unity
                 $"get_position: {danglingPositionHits}, " +
                 $"get_rotation: {danglingRotationHits}, " +
                 $"netplayer-not-found: {missingNetPlayerHits}. " +
+                $"Destroyed instance type: {lastDestroyedTypeSample}. " +
                 $"Sampled caller: {lastCallerSample}. " +
                 "Dangling hits are a destroyed reference the mod still holds (suspected: a " +
                 "disconnected peer's NetPlayer); falling back to the local player.");
@@ -149,6 +196,7 @@ namespace MegabonkTogether.Patches.Unity
             danglingRotationHits = 0;
             missingNetPlayerHits = 0;
             sampledThisWindow = false;
+            sampledTypeThisWindow = false;
             lastCallerSample = "not sampled";
         }
 
@@ -161,6 +209,7 @@ namespace MegabonkTogether.Patches.Unity
             danglingRotationHits = 0;
             missingNetPlayerHits = 0;
             sampledThisWindow = false;
+            sampledTypeThisWindow = false;
             lastCallerSample = "not sampled";
         }
     }
@@ -184,9 +233,10 @@ namespace MegabonkTogether.Patches.Unity
                 return true;
             }
 
-            if (__instance == null) //TODO: i'm pretty sure its a netplayer dangling reference but how do i even debug this...
+            if (__instance == null)
             {
                 TransformFallbackDiagnostics.RecordDanglingTransform();
+                TransformFallbackDiagnostics.SampleDestroyedInstanceType(__instance);
                 __result = GameManager.Instance.player.transform; //Hack ¯\_(ツ)_/¯
                 return false;
             }
