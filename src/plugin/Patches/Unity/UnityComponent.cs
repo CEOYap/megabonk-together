@@ -128,6 +128,9 @@ namespace MegabonkTogether.Patches.Unity
 
         private static string lastDestroyedTypeSample = "not sampled";
         private static bool sampledTypeThisWindow;
+        private static int lastDestroyedIdentity;
+        private static int distinctIdentities;
+        private static bool seenIdentityAgain;
 
         /// <summary>
         /// Names the destroyed component itself, which the caller sample cannot.
@@ -154,17 +157,52 @@ namespace MegabonkTogether.Patches.Unity
         /// </summary>
         internal static void SampleDestroyedInstanceType(Component instance)
         {
-            if (sampledTypeThisWindow)
-            {
-                return;
-            }
-            sampledTypeThisWindow = true;
-
             try
             {
-                lastDestroyedTypeSample = instance is null
-                    ? "managed null (not a destroyed object)"
-                    : instance.GetType().FullName;
+                if (instance is null)
+                {
+                    if (!sampledTypeThisWindow)
+                    {
+                        sampledTypeThisWindow = true;
+                        lastDestroyedTypeSample = "managed null (not a destroyed object)";
+                    }
+                    return;
+                }
+
+                // RuntimeHelpers.GetHashCode is identity on the managed wrapper — no native call,
+                // so it is safe on a destroyed object where GetInstanceID() would not be. It is not
+                // Unity's instance id and means nothing across processes; its only job is to say
+                // whether these ~143 hits per second are one object or many.
+                //
+                // Il2CppInterop can hand back more than one wrapper for the same native object, so
+                // several distinct ids do not prove several objects. One repeated id does prove a
+                // single one, which is the answer that would actually narrow the search.
+                var identity = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(instance);
+
+                if (identity == lastDestroyedIdentity)
+                {
+                    seenIdentityAgain = true;
+                }
+                else if (lastDestroyedIdentity != 0)
+                {
+                    distinctIdentities++;
+                }
+
+                lastDestroyedIdentity = identity;
+
+                // Identity is tracked on every hit — it has to be, or "one object or many" cannot
+                // be answered — but the string is built once per report window. GetHashCode is a
+                // few instructions; string interpolation at 143/s is not.
+                if (sampledTypeThisWindow)
+                {
+                    return;
+                }
+                sampledTypeThisWindow = true;
+
+                lastDestroyedTypeSample =
+                    $"{instance.GetType().FullName} #{identity}" +
+                    (seenIdentityAgain ? " (repeat)" : "") +
+                    $", {distinctIdentities + 1} distinct so far";
             }
             catch (System.Exception ex)
             {
