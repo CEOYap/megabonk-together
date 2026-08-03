@@ -109,6 +109,18 @@ namespace MegabonkTogether.Scripts.Snapshot
 
             transform.position = Vector3.Lerp(older.Position, newer.Position, t);
 
+            // Quaternion.LookRotation on a zero vector logs "Look rotation viewing vector is zero"
+            // and returns identity. Both snapshots are read every frame for every remote
+            // projectile, so a stationary or quantization-collapsed direction snapped the
+            // projectile to identity twice per frame and flooded the log: 208,936 of those
+            // warnings on the client in one Run C, against zero on the host. Keeping the previous
+            // rotation is strictly better than snapping to identity, and Unity's own logging is
+            // expensive enough at that rate to matter on its own.
+            if (older.Rotation == Vector3.zero || newer.Rotation == Vector3.zero)
+            {
+                return;
+            }
+
             var olderRot = Quaternion.LookRotation(older.Rotation, Vector3.up);
             var newerRot = Quaternion.LookRotation(newer.Rotation, Vector3.up);
             transform.rotation = Quaternion.Slerp(olderRot, newerRot, t);
