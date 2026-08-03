@@ -2859,11 +2859,25 @@ namespace MegabonkTogether.Services
         /// property differently.</param>
         /// <param name="label">Noun for the log lines: "shrine", "pylon", "lamp".</param>
         /// <returns>True when the caller should let the vanilla charge start run locally.</returns>
+        /// <param name="replayOnEveryPeer">
+        /// Broadcast the start even when this object is already being charged, so every peer runs
+        /// its own <c>OnTriggerEnter</c>. Presentation state (the charging flag, the mesh renderer,
+        /// the audio) is per-peer and the game only ever sets it from that trigger — a peer that
+        /// never receives the message keeps whatever visual state it had.
+        ///
+        /// <para><b>Only safe where the game's trigger is idempotent.</b> Decompiled
+        /// <c>ChargeShrine$$OnTriggerEnter</c> opens with
+        /// <c>if (rewardGiven || charging) return;</c>, so a redundant replay there is a no-op.
+        /// The pylon and lamp paths pass <c>false</c> because their triggers have not been
+        /// decompiled — <b>UNVERIFIED</b>, and re-triggering a non-idempotent one would be worse
+        /// than the visual bug this fixes.</para>
+        /// </param>
         private bool HandleChargingStart(
             uint netplayId,
             ConcurrentDictionary<uint, ICollection<uint>> chargingPlayers,
             IGameNetworkMessage message,
-            string label)
+            string label,
+            bool replayOnEveryPeer = false)
         {
             var isHost = IsServerMode() ?? false;
 
@@ -2873,14 +2887,29 @@ namespace MegabonkTogether.Services
                 return false;
             }
 
+            var localId = playerManagerService.GetLocalPlayer().ConnectionId;
+
             if (chargingPlayers.TryGetValue(netplayId, out var chargers)
                 && chargers != null && chargers.Count > 0)
             {
                 logger.LogInfo($"Another player is already charging this {label}. Preventing re trigger.");
+
+                // The set used to be discarded here, so a second charger was never recorded and
+                // their later stop hit the "No one is charging this X; ignoring stop" branch.
+                if (!chargers.Contains(localId))
+                {
+                    chargers.Add(localId);
+                }
+
+                if (replayOnEveryPeer)
+                {
+                    udpClientService.SendToAllClients(message, LiteNetLib.DeliveryMethod.ReliableOrdered);
+                }
+
                 return false;
             }
 
-            chargingPlayers[netplayId] = [playerManagerService.GetLocalPlayer().ConnectionId];
+            chargingPlayers[netplayId] = [localId];
 
             udpClientService.SendToAllClients(message, LiteNetLib.DeliveryMethod.ReliableOrdered);
 
@@ -2940,7 +2969,7 @@ namespace MegabonkTogether.Services
                 PlayerChargingId = playerManagerService.GetLocalPlayer().ConnectionId
             };
 
-            return HandleChargingStart(shrineNetplayId, shrineChargingPlayers, message, "shrine");
+            return HandleChargingStart(shrineNetplayId, shrineChargingPlayers, message, "shrine", replayOnEveryPeer: true);
         }
 
         private void OnReceivedStartingToChargingShrine(StartingChargingShrine shrine)
@@ -2952,6 +2981,19 @@ namespace MegabonkTogether.Services
                 if (shrineChargingPlayers.TryGetValue(shrine.ShrineNetplayId, out var chargers)
                     && chargers != null && chargers.Count > 0)
                 {
+                    // Used to return outright. The host is right not to re-run its own trigger,
+                    // but the early return also skipped the SendToAllClients below — so a peer
+                    // that joined a shrine someone else had already started never received the
+                    // message, never ran OnTriggerEnter, and never set its own charging flag or
+                    // re-enabled its mesh renderer. The reporting peer was also never recorded,
+                    // which is what produced the unbalanced "No one is charging this shrine;
+                    // ignoring stop" lines in the host log.
+                    if (!chargers.Contains(shrine.PlayerChargingId))
+                    {
+                        chargers.Add(shrine.PlayerChargingId);
+                    }
+
+                    udpClientService.SendToAllClients(shrine, LiteNetLib.DeliveryMethod.ReliableOrdered);
                     return;
                 }
 
@@ -3002,7 +3044,6 @@ namespace MegabonkTogether.Services
                 {
                     shrineObj.OnTriggerEnter();
                 }
-
             }
         }
 
