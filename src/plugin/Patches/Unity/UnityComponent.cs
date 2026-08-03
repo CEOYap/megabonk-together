@@ -85,7 +85,13 @@ namespace MegabonkTogether.Patches.Unity
                     }
 
                     // The patch itself is always on the stack; it is not the caller we want.
-                    if (declaring == typeof(UnityComponentPatches) || declaring == typeof(TransformFallbackDiagnostics))
+                    // TransformPatches was missing here, and it is the class that patches
+                    // get_position/get_rotation — so a position fallback reported *itself* as the
+                    // caller ("TransformPatches.get_position_Prefix:294" in Run A's third repeat),
+                    // which reads like a finding and is not one.
+                    if (declaring == typeof(UnityComponentPatches)
+                        || declaring == typeof(TransformPatches)
+                        || declaring == typeof(TransformFallbackDiagnostics))
                     {
                         continue;
                     }
@@ -188,8 +194,9 @@ namespace MegabonkTogether.Patches.Unity
                 $"netplayer-not-found: {missingNetPlayerHits}. " +
                 $"Destroyed instance type: {lastDestroyedTypeSample}. " +
                 $"Sampled caller: {lastCallerSample}. " +
-                "Dangling hits are a destroyed reference the mod still holds (suspected: a " +
-                "disconnected peer's NetPlayer); falling back to the local player.");
+                "Dangling hits are a destroyed reference the mod still holds; falling back to the " +
+                "local player. The type above is the destroyed object itself — measured, unlike " +
+                "the NetPlayer this line used to guess at, which the measurement disproved.");
 
             danglingTransformHits = 0;
             danglingPositionHits = 0;
