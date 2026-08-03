@@ -171,16 +171,28 @@ namespace MegabonkTogether.Scripts.Snapshot
             }
         }
 
+        /// <summary>
+        /// <para>The <c>rocket.rocket.ProjectileDone()</c> call that used to stand here was a
+        /// double free. Decompiled <c>Rocket$$ProjectileDone</c> ends with
+        /// <c>gameObject.SetActive(false)</c> followed by <c>ObjectPool&lt;GameObject&gt;.Release</c>
+        /// on the <b>Rocket's own</b> GameObject — which is a child of <paramref name="id"/>'s
+        /// object. The very next line then destroyed the parent, taking the just-pooled child with
+        /// it, so <c>PoolManager</c> kept a destroyed GameObject and handed it out again later.
+        /// That is the pool-starvation shape <c>Helpers/PoolHelper.cs</c> exists to paper over.</para>
+        ///
+        /// <para>Destroying without releasing is what every other projectile type already does on a
+        /// client: <see cref="Patches.Projectiles.ProjectileBasePatches.ProjectileDone_Postfix"/>
+        /// suppresses the pooled despawn for anything carrying a netplayId, and the object is
+        /// destroyed outright.</para>
+        ///
+        /// <para><b>Deliberately not changed:</b> <c>DestroyImmediate</c> stays. <c>Destroy</c> is
+        /// the safer call and <c>ProjectileManagerService.RemoveProjectile</c> uses it, but
+        /// swapping it here is a separate change with its own ordering risk.</para>
+        /// </summary>
         public void UnregisterProjectile(uint id)
         {
             if (activeProjectiles.TryGetValue(id, out var toDel))
             {
-                var rocket = toDel.GetComponent<ProjectileRocket>();
-                if (rocket != null)
-                {
-                    rocket.rocket.ProjectileDone();
-                }
-
                 DestroyImmediate(toDel);
                 activeProjectiles.Remove(id);
             }
