@@ -70,5 +70,32 @@ namespace MegabonkTogether.Patches
             }
             return true;
         }
+
+        /// <summary>
+        /// Diagnostic only — see <see cref="Helpers.ShrineDiagnostics"/>, and delete both together.
+        ///
+        /// <para><c>Complete</c> is what sets <c>rewardGiven</c> and disables the mesh for good, so
+        /// the question this answers is whether a client reaches it earlier than the host does.
+        /// Charge speed is derived per-peer from the local player's Wrench
+        /// (<c>ChargeShrine$$FindChargeTime</c>), which is a real mechanism for the two peers
+        /// disagreeing about when the shrine is finished.</para>
+        ///
+        /// <para><b>Deliberately has no ownership check</b>, which every other patch here does:
+        /// the whole point is to see this fire on <i>every</i> peer and compare. It sends nothing,
+        /// so there is no echo to cause.</para>
+        /// </summary>
+        [HarmonyPostfix]
+        [HarmonyPatch(nameof(ChargeShrine.Complete))]
+        public static void Complete_Postfix(ChargeShrine __instance)
+        {
+            if (!synchronizationService.HasNetplaySessionStarted())
+            {
+                return;
+            }
+
+            var isHost = synchronizationService.IsServerMode() ?? false;
+
+            Plugin.Log.LogInfo($"[shrine] Complete on {(isHost ? "host" : "client")} — {Helpers.ShrineDiagnostics.Describe(__instance)}");
+        }
     }
 }

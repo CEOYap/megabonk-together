@@ -3015,10 +3015,14 @@ namespace MegabonkTogether.Services
                 }
 
 
+                logger.LogInfo($"[shrine] host start {shrine.ShrineNetplayId} by {shrine.PlayerChargingId} — before: {Helpers.ShrineDiagnostics.Describe(shrineObj)}");
+
                 using (Plugin.SuppressOutbound())
                 {
                     shrineObj.OnTriggerEnter();
                 }
+
+                logger.LogInfo($"[shrine] host start {shrine.ShrineNetplayId} — after:  {Helpers.ShrineDiagnostics.Describe(shrineObj)}");
 
                 udpClientService.SendToAllClients(shrine, LiteNetLib.DeliveryMethod.ReliableOrdered);
             }
@@ -3040,10 +3044,14 @@ namespace MegabonkTogether.Services
                     return;
                 }
 
+                logger.LogInfo($"[shrine] client start {shrine.ShrineNetplayId} by {shrine.PlayerChargingId} — before: {Helpers.ShrineDiagnostics.Describe(shrineObj)}");
+
                 using (Plugin.SuppressOutbound())
                 {
                     shrineObj.OnTriggerEnter();
                 }
+
+                logger.LogInfo($"[shrine] client start {shrine.ShrineNetplayId} — after:  {Helpers.ShrineDiagnostics.Describe(shrineObj)}");
             }
         }
 
