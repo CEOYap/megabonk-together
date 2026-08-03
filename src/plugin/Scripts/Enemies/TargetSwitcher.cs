@@ -164,6 +164,48 @@ namespace MegabonkTogether.Scripts.Enemies
         /// </summary>
         internal int RegistryIndex { get; set; } = -1;
 
+        /// <summary>Who this enemy is currently chasing. Read by the disconnect sweep.</summary>
+        internal uint CurrentTargetNetplayId => currentTargetNetplayId;
+
+        /// <summary>
+        /// Moves this enemy off a player who has just disconnected, and reports whether the
+        /// target actually changed.
+        ///
+        /// <para>Bypasses <see cref="CanSwitch"/> deliberately. That check keeps normal switching
+        /// local by refusing targets further than <c>switchMaxDistance</c>, which is right for a
+        /// routine switch and wrong here: the alternative to switching is holding a Rigidbody whose
+        /// GameObject has been destroyed. A distant target beats a dangling one.</para>
+        ///
+        /// <para>If no replacement resolves, <c>enemy.target</c> is cleared rather than left
+        /// pointing at the departed player. <c>PickANewTarget</c> keeps the existing target when it
+        /// cannot resolve a new one — correct normally, fatal here — so the null is written
+        /// explicitly. <b>UNVERIFIED:</b> that the game tolerates a null <c>Enemy.target</c>; the
+        /// body is a stub. It is reached only when a disconnect leaves nobody targetable, and a
+        /// null field is a better bet than a destroyed one.</para>
+        /// </summary>
+        internal bool RetargetAwayFromDepartedPlayer()
+        {
+            if (enemy == null)
+            {
+                return false;
+            }
+
+            var departedId = currentTargetNetplayId;
+
+            PickANewTarget();
+
+            if (currentTarget.transform == null || currentTargetNetplayId == departedId)
+            {
+                currentTarget = (null, null);
+                enemy.target = null;
+                return false;
+            }
+
+            enemyData.Set("targetId", currentTargetNetplayId);
+            enemy.target = currentTarget.rigidBody;
+            return true;
+        }
+
         /// <summary>
         /// 04-performance-and-gc.md item 1A: registration follows Unity's own enable/disable, so a
         /// pooled enemy being deactivated stops ticking exactly as it did when this was a real

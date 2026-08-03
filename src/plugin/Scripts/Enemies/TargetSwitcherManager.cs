@@ -46,6 +46,53 @@ namespace MegabonkTogether.Scripts.Enemies
         }
 
         /// <summary>
+        /// Re-picks a target for every enemy currently chasing <paramref name="connectionId"/>,
+        /// and returns how many were moved.
+        ///
+        /// <para><b>Why this exists (Run A).</b> <see cref="TargetSwitcher.Tick"/> assigns
+        /// <c>enemy.target = currentTarget.rigidBody</c> — the departing player's <c>NetPlayer</c>
+        /// Rigidbody. Nothing cleared it when that player disconnected, so the game's own enemy AI
+        /// went on reading <c>.transform</c> off a destroyed object every frame. Run A measured
+        /// ~700 dangling <c>get_transform</c> hits per 5s window on the host, sustained for the
+        /// rest of the run and starting at the exact moment of the disconnect, with no
+        /// MegabonkTogether frames in the sampled stack — because the reads are the game's, not
+        /// ours. The P2-1 fallback in <c>Patches/Unity/UnityComponent.cs</c> was silently
+        /// absorbing all of them.</para>
+        ///
+        /// <para>Host-only in practice: only the host runs enemy targeting, which is why only the
+        /// host's log showed the fallbacks.</para>
+        ///
+        /// <para>Linear over the registry, but this runs once per disconnect, not per frame.</para>
+        /// </summary>
+        internal static int RetargetAllTargeting(uint connectionId)
+        {
+            var moved = 0;
+
+            // Reverse, because a switcher whose enemy was destroyed unregisters itself during the
+            // loop and Unregister swap-removes.
+            for (var i = switchers.Count - 1; i >= 0; i--)
+            {
+                if (i >= switchers.Count)
+                {
+                    continue;
+                }
+
+                var switcher = switchers[i];
+                if (switcher == null || switcher.CurrentTargetNetplayId != connectionId)
+                {
+                    continue;
+                }
+
+                if (switcher.RetargetAwayFromDepartedPlayer())
+                {
+                    moved++;
+                }
+            }
+
+            return moved;
+        }
+
+        /// <summary>
         /// O(1) swap-remove. A linear <c>List.Remove</c> would be O(n) per despawn, and at a swarm
         /// despawns are frequent enough for that to matter.
         /// </summary>

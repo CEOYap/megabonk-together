@@ -303,6 +303,29 @@ namespace MegabonkTogether.Services
                 return;
             }
 
+            // Before the NetPlayer is destroyed below. Enemies hold this player's Rigidbody in
+            // Enemy.target; once the GameObject is gone the game's own AI reads .transform off a
+            // destroyed object every frame, which is the ~700-per-5s dangling get_transform Run A
+            // measured on the host. Moving them off first means the reference is never dangling
+            // rather than dangling-and-caught-by-the-fallback.
+            //
+            // Ordered before the early return below on purpose: if there is no NetPlayer to
+            // destroy, enemies may still be targeting the player, and skipping the sweep is
+            // exactly how this survived unnoticed.
+            try
+            {
+                var moved = Scripts.Enemies.TargetSwitcherManager.RetargetAllTargeting(connectionId);
+                if (moved > 0)
+                {
+                    logger.LogInfo($"Moved {moved} enem{(moved == 1 ? "y" : "ies")} off departed player {connectionId}.");
+                }
+            }
+            catch (Exception ex)
+            {
+                // Never let retargeting abort the rest of the disconnect cleanup - P1-7's lesson.
+                logger.LogWarning($"Could not retarget enemies away from {connectionId}: {ex.Message}");
+            }
+
             if (GameManager.Instance?.player == null)
             {
                 return;
