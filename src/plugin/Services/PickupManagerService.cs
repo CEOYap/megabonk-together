@@ -1,6 +1,8 @@
 ﻿using Assets.Scripts.Inventory__Items__Pickups.Pickups;
 using MegabonkTogether.Common.Models;
 using MegabonkTogether.Extensions;
+using MonoMod.Utils;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
@@ -19,6 +21,7 @@ namespace MegabonkTogether.Services
         public Pickup GetSpawnedPickupById(uint id);
         public void RemoveSpawnedPickupById(uint id);
         public void ResetForNextLevel();
+        public int StopFollowingDepartedPlayer(uint connectionId);
     }
     internal class PickupManagerService : IPickupManagerService
     {
@@ -103,6 +106,64 @@ namespace MegabonkTogether.Services
                 .ToList()
                 .Where(p => p.Value.ePickup == EPickup.Xp)
                 .Select(p => (p.Key, p.Value));
+        }
+
+        /// <summary>
+        /// Stops any pickup that was flying toward <paramref name="connectionId"/>, and returns how
+        /// many were stopped.
+        ///
+        /// <para><b>Why (Run A, fourth repeat).</b> The game's own <c>Pickup</c> stores the
+        /// <c>Transform</c> handed to <c>StartFollowingPlayer</c> and reads it every frame while it
+        /// homes in. The mod passes a NetPlayer's <c>Model.transform</c> there
+        /// (<c>Patches/PickupManager.cs:106</c>, <c>Patches/Pickup.cs:107</c>), so when that
+        /// NetPlayer is destroyed on disconnect the pickup keeps following a destroyed Transform
+        /// forever — game code, per frame, on a bare UnityEngine.Transform.</para>
+        ///
+        /// <para>That is every property the diagnostic measured: the destroyed instance is a
+        /// <c>UnityEngine.Transform</c> rather than a component; the caller carries no
+        /// MegabonkTogether frames because the read is the game's follow logic; and the rate held at
+        /// ~143/s across two runs where the enemy count moved 17 -> 2, because it never depended on
+        /// enemies at all. A handful of pickups mid-flight is exactly the "small fixed number of
+        /// long-lived holders" the rate implied.</para>
+        ///
+        /// <para><b>UNVERIFIED:</b> that clearing <c>pickedUp</c> and the stored owner is enough to
+        /// make the game drop its Transform reference. The <c>Pickup</c> body is a stub, so whether
+        /// it re-reads the target only while <c>pickedUp</c> is set — or holds the Transform in a
+        /// field this cannot reach — is unknown. If the fallback rate does not drop, that is the
+        /// answer, and the next step is destroying the pickup outright rather than un-following
+        /// it.</para>
+        /// </summary>
+        public int StopFollowingDepartedPlayer(uint connectionId)
+        {
+            var stopped = 0;
+
+            foreach (var kv in spawnedPickups.ToList())
+            {
+                var pickup = kv.Value;
+                if (pickup == null) // Unity's overloaded == also catches a destroyed pickup
+                {
+                    continue;
+                }
+
+                try
+                {
+                    var owner = DynamicData.For(pickup).Get<uint?>("ownerId");
+                    if (owner != connectionId)
+                    {
+                        continue;
+                    }
+
+                    pickup.pickedUp = false;
+                    DynamicData.For(pickup).Set("ownerId", (uint?)null);
+                    stopped++;
+                }
+                catch (Exception ex)
+                {
+                    Plugin.Log.LogWarning($"Could not stop pickup {kv.Key} following departed player {connectionId}: {ex.Message}");
+                }
+            }
+
+            return stopped;
         }
 
         public void ResetForNextLevel()

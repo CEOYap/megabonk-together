@@ -7,6 +7,7 @@ using MegabonkTogether.Common.Messages;
 using MegabonkTogether.Common.Models;
 using MegabonkTogether.Extensions;
 using MegabonkTogether.Helpers;
+using Microsoft.Extensions.DependencyInjection;
 using MegabonkTogether.Scripts.NetPlayer;
 using System;
 using System.Collections.Concurrent;
@@ -324,6 +325,26 @@ namespace MegabonkTogether.Services
             {
                 // Never let retargeting abort the rest of the disconnect cleanup - P1-7's lesson.
                 logger.LogWarning($"Could not retarget enemies away from {connectionId}: {ex.Message}");
+            }
+
+            // The other holder of a departed player's Transform, and per Run A's fourth repeat the
+            // one that actually accounts for the ~143/s fallback rate: the game's Pickup follows the
+            // Transform it was handed, every frame, for as long as it is in flight.
+            try
+            {
+                // Resolved here rather than injected: PickupManagerService already depends on this
+                // service's data indirectly, and a constructor dependency risks a DI cycle for one
+                // call on a path that runs once per disconnect.
+                var pickupManagerService = Plugin.Services.GetRequiredService<IPickupManagerService>();
+                var stopped = pickupManagerService.StopFollowingDepartedPlayer(connectionId);
+                if (stopped > 0)
+                {
+                    logger.LogInfo($"Stopped {stopped} pickup(s) following departed player {connectionId}.");
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning($"Could not stop pickups following {connectionId}: {ex.Message}");
             }
 
             if (GameManager.Instance?.player == null)
