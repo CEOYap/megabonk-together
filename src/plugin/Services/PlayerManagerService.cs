@@ -336,7 +336,12 @@ namespace MegabonkTogether.Services
                 // service's data indirectly, and a constructor dependency risks a DI cycle for one
                 // call on a path that runs once per disconnect.
                 var pickupManagerService = Plugin.Services.GetRequiredService<IPickupManagerService>();
-                var stopped = pickupManagerService.StopFollowingDepartedPlayer(connectionId);
+
+                // Resolved before the NetPlayer is destroyed further down, so the sweep can match
+                // pickups by the transform they actually hold. May be null if the NetPlayer is
+                // already gone; the sweep then falls back to matching destroyed targets.
+                var departingTransform = GetNetPlayerByNetplayId(connectionId)?.Model?.transform;
+                var stopped = pickupManagerService.StopFollowingDepartedPlayer(connectionId, departingTransform);
                 if (stopped > 0)
                 {
                     logger.LogInfo($"Stopped {stopped} pickup(s) following departed player {connectionId}.");
