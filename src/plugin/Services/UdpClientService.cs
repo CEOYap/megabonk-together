@@ -47,7 +47,7 @@ namespace MegabonkTogether.Services
         public bool HasAllPeersConnected();
 
         public void SendToAllClients<T>(T data, DeliveryMethod deliveryMethod) where T : IGameNetworkMessage;
-        public void SendToAllClients(byte[] data, DeliveryMethod deliveryMethod);
+        public void SendToAllClients(byte[] data, DeliveryMethod deliveryMethod, string messageTypeName = null);
 
         public void SendToHost<T>(T data, DeliveryMethod? deliveryMethod = null) where T : IGameNetworkMessage;
         public void SendToClient<T>(NetPeer client, T data, uint netPlayerId) where T : IGameNetworkMessage;
@@ -1409,7 +1409,7 @@ namespace MegabonkTogether.Services
                 deliveryMethod = DeliveryMethod.ReliableOrdered;
             }
 
-            SendToAllClients(serialized, deliveryMethod);
+            SendToAllClients(serialized, deliveryMethod, message.GetType().Name);
         }
 
         private void SendEnemiesUpdate()
@@ -1437,7 +1437,7 @@ namespace MegabonkTogether.Services
                 deliveryMethod = DeliveryMethod.ReliableOrdered;
             }
 
-            SendToAllClients(serialized, deliveryMethod);
+            SendToAllClients(serialized, deliveryMethod, message.GetType().Name);
         }
 
         private void SendProjectilesUpdate()
@@ -1463,7 +1463,7 @@ namespace MegabonkTogether.Services
                 deliveryMethod = DeliveryMethod.ReliableOrdered;
             }
 
-            SendToAllClients(serialized, deliveryMethod);
+            SendToAllClients(serialized, deliveryMethod, message.GetType().Name);
         }
 
         private void SendTumbleWeedsUpdate()
@@ -1489,7 +1489,7 @@ namespace MegabonkTogether.Services
                 deliveryMethod = DeliveryMethod.ReliableOrdered;
             }
 
-            SendToAllClients(serialized, deliveryMethod);
+            SendToAllClients(serialized, deliveryMethod, message.GetType().Name);
         }
 
         public void SendToAllClients<T>(T data, DeliveryMethod deliveryMethod) where T : IGameNetworkMessage
@@ -1529,7 +1529,7 @@ namespace MegabonkTogether.Services
             }
 
             // Counted after the fan-out, not before: a broadcast costs its payload once per peer.
-            BandwidthDiagnostics.Record(typeof(T).Name, msgBytes.Length, gamePeers.Count + (usesRelay.Any() ? 1 : 0));
+            BandwidthDiagnostics.Record(data.GetType().Name, msgBytes.Length, gamePeers.Count + (usesRelay.Any() ? 1 : 0));
         }
 
         public void SendToHost<T>(T data, DeliveryMethod? overrideDeliveryMethod = null) where T : IGameNetworkMessage
@@ -1560,7 +1560,7 @@ namespace MegabonkTogether.Services
                     relayPeer?.Send(relayMsgBytes, DeliveryMethod.ReliableOrdered);
                 }
 
-                BandwidthDiagnostics.Record(typeof(T).Name, msgBytes.Length, 1);
+                BandwidthDiagnostics.Record(data.GetType().Name, msgBytes.Length, 1);
                 return;
             }
 
@@ -1575,7 +1575,7 @@ namespace MegabonkTogether.Services
 
             gamePeers[0].Send(writer, deliveryMethod);
 
-            BandwidthDiagnostics.Record(typeof(T).Name, msgBytes.Length, 1);
+            BandwidthDiagnostics.Record(data.GetType().Name, msgBytes.Length, 1);
         }
 
         public void SendToClient<T>(NetPeer client, T data, uint connectionId) where T : IGameNetworkMessage
@@ -1601,7 +1601,7 @@ namespace MegabonkTogether.Services
                     relayPeer?.Send(relayMsgBytes, DeliveryMethod.ReliableOrdered);
                 }
 
-                BandwidthDiagnostics.Record(typeof(T).Name, msgBytes.Length, 1);
+                BandwidthDiagnostics.Record(data.GetType().Name, msgBytes.Length, 1);
                 return;
             }
 
@@ -1609,7 +1609,7 @@ namespace MegabonkTogether.Services
             writer.Put(msgBytes);
             client.Send(writer, DeliveryMethod.ReliableOrdered);
 
-            BandwidthDiagnostics.Record(typeof(T).Name, msgBytes.Length, 1);
+            BandwidthDiagnostics.Record(data.GetType().Name, msgBytes.Length, 1);
         }
 
         private bool EnsureIsHost()
@@ -1751,10 +1751,18 @@ namespace MegabonkTogether.Services
             // netPlayerId is a LiteNetLib NetPeer.Id and `sender` is a game connection id, and the
             // migration plan calls transposing them an easy and silent mistake. Counting what the
             // loop actually sent cannot inherit that confusion.
-            BandwidthDiagnostics.Record(typeof(T).Name, msgBytes.Length, sent + (usesRelay.Any() ? 1 : 0));
+            BandwidthDiagnostics.Record(data.GetType().Name, msgBytes.Length, sent + (usesRelay.Any() ? 1 : 0));
         }
 
-        public void SendToAllClients(byte[] data, DeliveryMethod deliveryMethod)
+        /// <summary>
+        /// <paramref name="messageTypeName"/> exists only for the bandwidth counters: this overload
+        /// takes bytes, so the message type is gone by the time it arrives, and the first baseline
+        /// reported 95% of all host traffic under a single "(pre-serialized)" bucket — a split that
+        /// could not split the thing that mattered. Every caller is inside this class and already
+        /// holds the typed message, so the name is passed down rather than inferred. Optional so a
+        /// future caller cannot fail to compile, but it should always be supplied.
+        /// </summary>
+        public void SendToAllClients(byte[] data, DeliveryMethod deliveryMethod, string messageTypeName = null)
         {
             if (!EnsureIsHost())
             {
@@ -1784,7 +1792,7 @@ namespace MegabonkTogether.Services
             // is already gone by the time it gets here. Counted anyway — leaving it out would make
             // the reported total quietly lower than the real one, which is worse for a baseline than
             // an unnamed bucket.
-            BandwidthDiagnostics.Record("(pre-serialized)", data.Length, gamePeers.Count + (usesRelay.Any() ? 1 : 0));
+            BandwidthDiagnostics.Record(messageTypeName ?? "(pre-serialized)", data.Length, gamePeers.Count + (usesRelay.Any() ? 1 : 0));
 
             NetDataWriter writer = new NetDataWriter();
             writer.Put(data);
