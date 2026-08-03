@@ -1207,10 +1207,28 @@ namespace MegabonkTogether.Services
         {
             try
             {
-                PlayerInventory owner =
-                    playerManagerService.IsLocalConnectionId(projectile.OwnerId) ?
-                        GameManager.Instance.player.inventory :
-                        playerManagerService.GetNetPlayerByNetplayId(projectile.OwnerId).Inventory;
+                PlayerInventory owner;
+
+                if (playerManagerService.IsLocalConnectionId(projectile.OwnerId))
+                {
+                    owner = GameManager.Instance.player.inventory;
+                }
+                else
+                {
+                    // GetNetPlayerByNetplayId returns null once the owner has left, and this line
+                    // used to dereference it straight into .Inventory. Projectiles from a departing
+                    // peer keep arriving for a moment after their NetPlayer is destroyed — Run A
+                    // produced about ten of these per disconnect, every one an NRE caught by the
+                    // catch below and logged with a full stack. Dropping the projectile is the
+                    // correct outcome anyway: there is no owner left to attribute or model it to.
+                    var netPlayer = playerManagerService.GetNetPlayerByNetplayId(projectile.OwnerId);
+                    if (netPlayer == null)
+                    {
+                        return;
+                    }
+
+                    owner = netPlayer.Inventory;
+                }
 
                 var weapons = owner.weaponInventory.weapons;
                 var eweapon = (EWeapon)projectile.Weapon;
