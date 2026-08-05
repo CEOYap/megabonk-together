@@ -109,9 +109,17 @@ namespace MegabonkTogether.Helpers
                 AppendRenderer(sb, "zoneRenderer", shrine.zoneRenderer);
 
                 var runeStone = shrine.runeStone;
-                sb.Append(runeStone == null
-                    ? " | runeStone=<null>"
-                    : $" | runeStone pos={runeStone.position} scale={runeStone.lossyScale} active={runeStone.gameObject.activeInHierarchy}");
+                if (runeStone == null)
+                {
+                    sb.Append(" | runeStone=<null>");
+                }
+                else
+                {
+                    sb.Append($" | runeStone pos={runeStone.position} scale={runeStone.lossyScale}")
+                      .Append($" active={runeStone.gameObject.activeInHierarchy}")
+                      .Append($" underThisShrine={IsUnder(runeStone, root)}")
+                      .Append($" ancestry={Ancestry(runeStone)}");
+                }
 
                 AppendChildren(sb, root, 0);
 
@@ -121,6 +129,64 @@ namespace MegabonkTogether.Helpers
             {
                 return $"describe renderers failed: {ex.GetType().Name}: {ex.Message}";
             }
+        }
+
+        /// <summary>
+        /// Walks <paramref name="candidate"/>'s parent chain looking for <paramref name="ancestor"/>.
+        ///
+        /// <para>This is the whole question. <c>GameObject.Instantiate</c> remaps references that
+        /// point <i>inside</i> the cloned hierarchy; one pointing outside it survives unremapped and
+        /// is shared by every clone. On the client, three shrines at three different root positions
+        /// all reported their runeStone at exactly (281.15, 16.60, -67.16), while each shrine's own
+        /// zoneRenderer sat correctly on its own root — which is what one shared Transform looks
+        /// like. <c>false</c> here on the client and <c>true</c> on the host confirms it.</para>
+        ///
+        /// <para>Hand-rolled rather than <c>Transform.IsChildOf</c>: <c>childCount</c>,
+        /// <c>GetChild</c> and <c>parent</c> are proven to resolve under Il2CppInterop by the
+        /// previous run's output, and after <c>GetComponentsInChildren&lt;T&gt;(bool)</c> threw
+        /// MissingMethodException there is no reason to spend a playtest finding out whether
+        /// another convenience method binds.</para>
+        ///
+        /// <para>Depth-capped so a cycle or a very deep hierarchy cannot hang the caller.</para>
+        /// </summary>
+        private static bool IsUnder(Transform candidate, Transform ancestor)
+        {
+            var current = candidate;
+
+            for (int depth = 0; depth < 32 && current != null; depth++)
+            {
+                if (current == ancestor)
+                {
+                    return true;
+                }
+
+                current = current.parent;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// The runeStone's parent chain by name, nearest first. If the reference is shared, this
+        /// names the object it actually hangs off — which is where the fix has to look.
+        /// </summary>
+        private static string Ancestry(Transform node)
+        {
+            var sb = new StringBuilder();
+            var current = node == null ? null : node.parent;
+
+            for (int depth = 0; depth < 4 && current != null; depth++)
+            {
+                if (depth > 0)
+                {
+                    sb.Append('/');
+                }
+
+                sb.Append(current.gameObject.name);
+                current = current.parent;
+            }
+
+            return sb.Length == 0 ? "<no parent>" : sb.ToString();
         }
 
         private static void AppendRenderer(StringBuilder sb, string label, Renderer renderer)
