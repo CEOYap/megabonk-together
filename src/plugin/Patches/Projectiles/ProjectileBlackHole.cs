@@ -15,8 +15,10 @@ namespace MegabonkTogether.Patches.Projectiles
         /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileBlackHole.MyUpdate))]
-        public static bool MyUpdate_Prefix(ProjectileBlackHole __instance)
+        public static bool MyUpdate_Prefix(ProjectileBlackHole __instance, out bool __state)
         {
+            __state = false;
+
             if (!synchronizationService.HasNetplaySessionStarted())
             {
                 return true;
@@ -36,29 +38,19 @@ namespace MegabonkTogether.Patches.Projectiles
 
             playerManagerService.AddGetNetplayerPositionRequest(netPlayer.ConnectionId);
 
+            __state = true;
+
             return true;
         }
 
         /// <summary>
         /// Restore original transform after prefix
         /// </summary>
-        [HarmonyPostfix]
+        [HarmonyFinalizer]
         [HarmonyPatch(nameof(ProjectileBlackHole.MyUpdate))]
-        public static void MyUpdate_Postfix(ProjectileBlackHole __instance)
+        public static void MyUpdate_Finalizer(bool __state)
         {
-            if (!synchronizationService.HasNetplaySessionStarted())
-            {
-                return;
-            }
-
-            var isHost = synchronizationService.IsServerMode() ?? false;
-            if (!isHost)
-            {
-                return;
-            }
-
-            var netPlayer = playerManagerService.GetNetPlayerByWeapon(__instance.weaponBase);
-            if (netPlayer == null)
+            if (!__state)
             {
                 return;
             }
@@ -72,8 +64,10 @@ namespace MegabonkTogether.Patches.Projectiles
         /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileBlackHole.MyFixedUpdate))]
-        public static bool MyFixedUpdate_Prefix(ProjectileBlackHole __instance)
+        public static bool MyFixedUpdate_Prefix(ProjectileBlackHole __instance, out bool __state)
         {
+            __state = false;
+
             if (!synchronizationService.HasNetplaySessionStarted())
             {
                 return true;
@@ -93,29 +87,19 @@ namespace MegabonkTogether.Patches.Projectiles
 
             playerManagerService.AddGetNetplayerPositionRequest(netPlayer.ConnectionId);
 
+            __state = true;
+
             return true;
         }
 
         /// <summary>
         /// Restore original transform after prefix
         /// </summary>
-        [HarmonyPostfix]
+        [HarmonyFinalizer]
         [HarmonyPatch(nameof(ProjectileBlackHole.MyFixedUpdate))]
-        public static void MyFixedUpdate_Postfix(ProjectileBlackHole __instance)
+        public static void MyFixedUpdate_Finalizer(bool __state)
         {
-            if (!synchronizationService.HasNetplaySessionStarted())
-            {
-                return;
-            }
-
-            var isHost = synchronizationService.IsServerMode() ?? false;
-            if (!isHost)
-            {
-                return;
-            }
-
-            var netPlayer = playerManagerService.GetNetPlayerByWeapon(__instance.weaponBase);
-            if (netPlayer == null)
+            if (!__state)
             {
                 return;
             }
@@ -128,8 +112,10 @@ namespace MegabonkTogether.Patches.Projectiles
         /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileBlackHole.TryInit))]
-        public static bool TryInit_Prefix(ProjectileBlackHole __instance)
+        public static bool TryInit_Prefix(ProjectileBlackHole __instance, out bool __state)
         {
+            __state = false;
+
             if (!synchronizationService.HasNetplaySessionStarted())
             {
                 return true;
@@ -149,29 +135,19 @@ namespace MegabonkTogether.Patches.Projectiles
 
             playerManagerService.AddGetNetplayerPositionRequest(netPlayer.ConnectionId);
 
+            __state = true;
+
             return true;
         }
 
         /// <summary>
         /// Restore original transform after prefix
         /// </summary>
-        [HarmonyPostfix]
+        [HarmonyFinalizer]
         [HarmonyPatch(nameof(ProjectileBlackHole.TryInit))]
-        public static void TryInit_Postfix(ProjectileBlackHole __instance)
+        public static void TryInit_Finalizer(bool __state)
         {
-            if (!synchronizationService.HasNetplaySessionStarted())
-            {
-                return;
-            }
-
-            var isHost = synchronizationService.IsServerMode() ?? false;
-            if (!isHost)
-            {
-                return;
-            }
-
-            var netPlayer = playerManagerService.GetNetPlayerByWeapon(__instance.weaponBase);
-            if (netPlayer == null)
+            if (!__state)
             {
                 return;
             }

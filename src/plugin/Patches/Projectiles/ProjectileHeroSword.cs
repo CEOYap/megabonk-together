@@ -15,8 +15,10 @@ namespace MegabonkTogether.Patches.Projectiles
         /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileHeroSword.MyUpdate))]
-        public static bool MyUpdate_Prefix(ProjectileHeroSword __instance)
+        public static bool MyUpdate_Prefix(ProjectileHeroSword __instance, out bool __state)
         {
+            __state = false;
+
             if (!synchronizationService.HasNetplaySessionStarted())
             {
                 return true;
@@ -36,29 +38,19 @@ namespace MegabonkTogether.Patches.Projectiles
 
             playerManagerService.AddGetNetplayerPositionRequest(netPlayer.ConnectionId);
 
+            __state = true;
+
             return true;
         }
 
         /// <summary>
         /// Restore original transform after prefix
         /// </summary>
-        [HarmonyPostfix]
+        [HarmonyFinalizer]
         [HarmonyPatch(nameof(ProjectileHeroSword.MyUpdate))]
-        public static void MyUpdate_Postfix(ProjectileHeroSword __instance)
+        public static void MyUpdate_Finalizer(bool __state)
         {
-            if (!synchronizationService.HasNetplaySessionStarted())
-            {
-                return;
-            }
-
-            var isHost = synchronizationService.IsServerMode() ?? false;
-            if (!isHost)
-            {
-                return;
-            }
-
-            var netPlayer = playerManagerService.GetNetPlayerByWeapon(__instance.weaponBase);
-            if (netPlayer == null)
+            if (!__state)
             {
                 return;
             }
@@ -71,8 +63,10 @@ namespace MegabonkTogether.Patches.Projectiles
         /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileHeroSword.MyFixedUpdate))]
-        public static bool MyFixedUpdate_Prefix(ProjectileHeroSword __instance)
+        public static bool MyFixedUpdate_Prefix(ProjectileHeroSword __instance, out bool __state)
         {
+            __state = false;
+
             if (!synchronizationService.HasNetplaySessionStarted())
             {
                 return true;
@@ -92,30 +86,23 @@ namespace MegabonkTogether.Patches.Projectiles
 
             playerManagerService.AddGetNetplayerPositionRequest(netPlayer.ConnectionId);
 
+            __state = true;
+
             return true;
         }
 
         /// <summary>
         /// Restore original transform after prefix
         /// </summary>
-        [HarmonyPostfix]
+        [HarmonyFinalizer]
         [HarmonyPatch(nameof(ProjectileHeroSword.MyFixedUpdate))]
-        public static void MyFixedUpdate_Postfix(ProjectileHeroSword __instance)
+        public static void MyFixedUpdate_Finalizer(bool __state)
         {
-            if (!synchronizationService.HasNetplaySessionStarted())
+            if (!__state)
             {
                 return;
             }
-            var isHost = synchronizationService.IsServerMode() ?? false;
-            if (!isHost)
-            {
-                return;
-            }
-            var netPlayer = playerManagerService.GetNetPlayerByWeapon(__instance.weaponBase);
-            if (netPlayer == null)
-            {
-                return;
-            }
+
             playerManagerService.UnqueueNetplayerPositionRequest();
         }
 
@@ -125,8 +112,10 @@ namespace MegabonkTogether.Patches.Projectiles
         /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileHeroSword.TryInit))]
-        public static bool TryInit_Prefix(ProjectileHeroSword __instance)
+        public static bool TryInit_Prefix(ProjectileHeroSword __instance, out bool __state)
         {
+            __state = false;
+
             if (!synchronizationService.HasNetplaySessionStarted())
             {
                 return true;
@@ -146,29 +135,19 @@ namespace MegabonkTogether.Patches.Projectiles
 
             playerManagerService.AddGetNetplayerPositionRequest(netPlayer.ConnectionId);
 
+            __state = true;
+
             return true;
         }
 
         /// <summary>
         /// Restore original transform after prefix
         /// </summary>
-        [HarmonyPostfix]
+        [HarmonyFinalizer]
         [HarmonyPatch(nameof(ProjectileHeroSword.TryInit))]
-        public static void TryInit_Postfix(ProjectileHeroSword __instance)
+        public static void TryInit_Finalizer(bool __state)
         {
-            if (!synchronizationService.HasNetplaySessionStarted())
-            {
-                return;
-            }
-
-            var isHost = synchronizationService.IsServerMode() ?? false;
-            if (!isHost)
-            {
-                return;
-            }
-
-            var netPlayer = playerManagerService.GetNetPlayerByWeapon(__instance.weaponBase);
-            if (netPlayer == null)
+            if (!__state)
             {
                 return;
             }

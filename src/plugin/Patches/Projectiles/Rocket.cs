@@ -45,8 +45,10 @@ namespace MegabonkTogether.Patches.Projectiles
         /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(Rocket.FixedUpdate))]
-        public static bool MyFixedUpdate_Prefix(Rocket __instance)
+        public static bool MyFixedUpdate_Prefix(Rocket __instance, out bool __state)
         {
+            __state = false;
+
             if (!synchronizationService.HasNetplaySessionStarted())
             {
                 return true;
@@ -71,6 +73,7 @@ namespace MegabonkTogether.Patches.Projectiles
             // Host only, matching the postfix's pop exactly — the pair used to be unbalanced,
             // pushing on every peer and popping only on a host.
             playerManagerService.AddGetNetplayerPositionRequest(netPlayer.ConnectionId);
+            __state = true;
 
             return true;
         }
@@ -108,23 +111,11 @@ namespace MegabonkTogether.Patches.Projectiles
         /// <summary>
         /// Restore original transform after prefix
         /// </summary>
-        [HarmonyPostfix]
+        [HarmonyFinalizer]
         [HarmonyPatch(nameof(Rocket.FixedUpdate))]
-        public static void MyFixedUpdate_Postfix(Rocket __instance)
+        public static void MyFixedUpdate_Finalizer(bool __state)
         {
-            if (!synchronizationService.HasNetplaySessionStarted())
-            {
-                return;
-            }
-
-            var isHost = synchronizationService.IsServerMode() ?? false;
-            if (!isHost)
-            {
-                return;
-            }
-
-            var netPlayer = playerManagerService.GetNetPlayerByWeapon(__instance.weaponBase);
-            if (netPlayer == null)
+            if (!__state)
             {
                 return;
             }
@@ -144,8 +135,10 @@ namespace MegabonkTogether.Patches.Projectiles
         /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileRocket.TryInit))]
-        public static bool TryInit_Prefix(ProjectileRocket __instance)
+        public static bool TryInit_Prefix(ProjectileRocket __instance, out bool __state)
         {
+            __state = false;
+
             if (!synchronizationService.HasNetplaySessionStarted())
             {
                 return true;
@@ -165,29 +158,19 @@ namespace MegabonkTogether.Patches.Projectiles
 
             playerManagerService.AddGetNetplayerPositionRequest(netPlayer.ConnectionId);
 
+            __state = true;
+
             return true;
         }
 
         /// <summary>
         /// Restore original transform after prefix
         /// </summary>
-        [HarmonyPostfix]
+        [HarmonyFinalizer]
         [HarmonyPatch(nameof(ProjectileRocket.TryInit))]
-        public static void TryInit_Postfix(ProjectileRocket __instance)
+        public static void TryInit_Finalizer(bool __state)
         {
-            if (!synchronizationService.HasNetplaySessionStarted())
-            {
-                return;
-            }
-
-            var isHost = synchronizationService.IsServerMode() ?? false;
-            if (!isHost)
-            {
-                return;
-            }
-
-            var netPlayer = playerManagerService.GetNetPlayerByWeapon(__instance.weaponBase);
-            if (netPlayer == null)
+            if (!__state)
             {
                 return;
             }

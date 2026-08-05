@@ -11,14 +11,20 @@ namespace MegabonkTogether.Patches.ConstantAttacks
     {
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
 
+        // Was resolved per call inside the prefix, on LaserBeamAttack.Update — a DI lookup every
+        // frame per beam. Cached to match every other patch class, and needed by the finalizer.
+        private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
+
         /// <summary>
         /// Queue net player position used for the attack spawn position
         /// </summary>
         /// 
         [HarmonyPrefix]
         [HarmonyPatch(nameof(LaserBeamAttack.Update))]
-        public static void FixedUpdate_Prefix(LaserBeamAttack __instance)
+        public static void FixedUpdate_Prefix(LaserBeamAttack __instance, out bool __state)
         {
+            __state = false;
+
             if (!synchronizationService.HasNetplaySessionStarted())
             {
                 return;
@@ -28,38 +34,28 @@ namespace MegabonkTogether.Patches.ConstantAttacks
             {
                 return;
             }
-            var playerManagerService = Plugin.Services.GetService<Services.IPlayerManagerService>();
             var ownerPlayer = playerManagerService.GetPlayer(ownerId.Value);
             var localPlayer = playerManagerService.GetLocalPlayer();
             if (ownerPlayer.ConnectionId != localPlayer.ConnectionId)
             {
                 playerManagerService.AddGetNetplayerPositionRequest(ownerPlayer.ConnectionId);
+                __state = true;
             }
         }
 
         /// <summary>
         /// Unqueue net player position request after use
         /// </summary>
-        [HarmonyPostfix]
+        [HarmonyFinalizer]
         [HarmonyPatch(nameof(LaserBeamAttack.Update))]
-        public static void FixedUpdate_Postfix(LaserBeamAttack __instance)
+        public static void FixedUpdate_Finalizer(bool __state)
         {
-            if (!synchronizationService.HasNetplaySessionStarted())
+            if (!__state)
             {
                 return;
             }
-            var ownerId = DynamicData.For(__instance).Get<uint?>("ownerId");
-            if (!ownerId.HasValue)
-            {
-                return;
-            }
-            var playerManagerService = Plugin.Services.GetService<Services.IPlayerManagerService>();
-            var ownerPlayer = playerManagerService.GetPlayer(ownerId.Value);
-            var localPlayer = playerManagerService.GetLocalPlayer();
-            if (ownerPlayer.ConnectionId != localPlayer.ConnectionId)
-            {
-                playerManagerService.UnqueueNetplayerPositionRequest();
-            }
+
+            playerManagerService.UnqueueNetplayerPositionRequest();
         }
 
         /// <summary>

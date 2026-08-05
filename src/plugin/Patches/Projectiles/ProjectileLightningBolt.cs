@@ -18,8 +18,10 @@ namespace MegabonkTogether.Patches.Projectiles
         /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileLightningBolt.TryInit))]
-        public static bool TryInit_Prefix(ProjectileLightningBolt __instance)
+        public static bool TryInit_Prefix(ProjectileLightningBolt __instance, out bool __state)
         {
+            __state = false;
+
             if (!synchronizationService.HasNetplaySessionStarted())
             {
                 return true;
@@ -39,30 +41,22 @@ namespace MegabonkTogether.Patches.Projectiles
 
             playerManagerService.AddGetNetplayerPositionRequest(netPlayer.ConnectionId);
 
+            __state = true;
+
             return true;
         }
 
         /// <summary>
         /// Restore original transform after prefix
         /// </summary>
-        [HarmonyPostfix]
+        [HarmonyFinalizer]
         [HarmonyPatch(nameof(ProjectileLightningBolt.TryInit))]
-        public static void TryInit_Postfix(Il2CppObjectBase __instance)
+        public static void TryInit_Finalizer(bool __state)
         {
-            if (!synchronizationService.HasNetplaySessionStarted())
+            if (!__state)
             {
                 return;
             }
-
-            var isHost = synchronizationService.IsServerMode() ?? false;
-            if (!isHost)
-            {
-                return;
-            }
-
-            var instance = IL2CPP.PointerToValueGeneric<ProjectileBase>(__instance.Pointer, false, false);
-
-            var netPlayer = playerManagerService.GetNetPlayerByWeapon(instance.weaponBase);
 
             playerManagerService.UnqueueNetplayerPositionRequest();
         }

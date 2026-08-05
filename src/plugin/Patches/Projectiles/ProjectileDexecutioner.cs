@@ -13,8 +13,10 @@ namespace MegabonkTogether.Patches.Projectiles
 
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileDexecutioner.MyUpdate))]
-        public static bool MyUpdate_Prefix(ProjectileDexecutioner __instance)
+        public static bool MyUpdate_Prefix(ProjectileDexecutioner __instance, out bool __state)
         {
+            __state = false;
+
             if (!synchronizationService.HasNetplaySessionStarted())
             {
                 return true;
@@ -34,34 +36,29 @@ namespace MegabonkTogether.Patches.Projectiles
 
             playerManagerService.AddGetNetplayerPositionRequest(netPlayer.ConnectionId);
 
+            __state = true;
+
             return true;
         }
 
-        [HarmonyPostfix]
+        [HarmonyFinalizer]
         [HarmonyPatch(nameof(ProjectileDexecutioner.MyUpdate))]
-        public static void MyUpdate_Postfix(ProjectileDexecutioner __instance)
+        public static void MyUpdate_Finalizer(bool __state)
         {
-            if (!synchronizationService.HasNetplaySessionStarted())
+            if (!__state)
             {
                 return;
             }
-            var isHost = synchronizationService.IsServerMode() ?? false;
-            if (!isHost)
-            {
-                return;
-            }
-            var netPlayer = Plugin.Services.GetService<IPlayerManagerService>().GetNetPlayerByWeapon(__instance.weaponBase);
-            if (netPlayer == null)
-            {
-                return;
-            }
+
             playerManagerService.UnqueueNetplayerPositionRequest();
         }
 
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileDexecutioner.TryInit))]
-        public static bool TryInit_Prefix(ProjectileDexecutioner __instance, int projectileIndex)
+        public static bool TryInit_Prefix(ProjectileDexecutioner __instance, int projectileIndex, out bool __state)
         {
+            __state = false;
+
             if (!synchronizationService.HasNetplaySessionStarted())
             {
                 return true;
@@ -77,34 +74,28 @@ namespace MegabonkTogether.Patches.Projectiles
                 return true;
             }
             playerManagerService.AddGetNetplayerPositionRequest(netPlayer.ConnectionId);
+            __state = true;
             return true;
         }
 
-        [HarmonyPostfix]
+        [HarmonyFinalizer]
         [HarmonyPatch(nameof(ProjectileDexecutioner.TryInit))]
-        public static void TryInit_Postfix(ProjectileDexecutioner __instance, int projectileIndex)
+        public static void TryInit_Finalizer(bool __state)
         {
-            if (!synchronizationService.HasNetplaySessionStarted())
+            if (!__state)
             {
                 return;
             }
-            var isHost = synchronizationService.IsServerMode() ?? false;
-            if (!isHost)
-            {
-                return;
-            }
-            var netPlayer = playerManagerService.GetNetPlayerByWeapon(__instance.weaponBase);
-            if (netPlayer == null)
-            {
-                return;
-            }
+
             playerManagerService.UnqueueNetplayerPositionRequest();
         }
 
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileDexecutioner.CheckZone))]
-        public static bool CheckZone_Prefix(ProjectileDexecutioner __instance)
+        public static bool CheckZone_Prefix(ProjectileDexecutioner __instance, out bool __state)
         {
+            __state = false;
+
             if (!synchronizationService.HasNetplaySessionStarted())
             {
                 return true;
@@ -120,27 +111,19 @@ namespace MegabonkTogether.Patches.Projectiles
                 return true;
             }
             playerManagerService.AddGetNetplayerPositionRequest(netPlayer.ConnectionId);
+            __state = true;
             return true;
         }
 
-        [HarmonyPostfix]
+        [HarmonyFinalizer]
         [HarmonyPatch(nameof(ProjectileDexecutioner.CheckZone))]
-        public static void CheckZone_Postfix(ProjectileDexecutioner __instance)
+        public static void CheckZone_Finalizer(bool __state)
         {
-            if (!synchronizationService.HasNetplaySessionStarted())
+            if (!__state)
             {
                 return;
             }
-            var isHost = synchronizationService.IsServerMode() ?? false;
-            if (!isHost)
-            {
-                return;
-            }
-            var netPlayer = playerManagerService.GetNetPlayerByWeapon(__instance.weaponBase);
-            if (netPlayer == null)
-            {
-                return;
-            }
+
             playerManagerService.UnqueueNetplayerPositionRequest();
         }
     }

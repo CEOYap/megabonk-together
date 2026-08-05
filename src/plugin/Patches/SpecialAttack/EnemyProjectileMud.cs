@@ -17,8 +17,10 @@ namespace MegabonkTogether.Patches.SpecialAttack
         /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(EnemyProjectileMud.Init))]
-        public static void Init_Prefix(EnemyProjectileMud __instance)
+        public static void Init_Prefix(EnemyProjectileMud __instance, out bool __state)
         {
+            __state = false;
+
             if (!synchronizationService.HasNetplaySessionStarted())
             {
                 return;
@@ -28,6 +30,7 @@ namespace MegabonkTogether.Patches.SpecialAttack
             if (targetId.HasValue)
             {
                 playerManagerService.AddGetNetplayerPositionRequest(targetId.Value);
+                __state = true;
             }
 
         }
@@ -35,21 +38,16 @@ namespace MegabonkTogether.Patches.SpecialAttack
         /// <summary>
         /// Remove queued request after attack is over.
         /// </summary>
-        [HarmonyPostfix]
+        [HarmonyFinalizer]
         [HarmonyPatch(nameof(EnemyProjectileMud.Init))]
-        public static void Init_Postfix(EnemyProjectileMud __instance)
+        public static void Init_Finalizer(bool __state)
         {
-            if (!synchronizationService.HasNetplaySessionStarted())
+            if (!__state)
             {
                 return;
             }
 
-            var targetId = DynamicData.For(__instance.enemy).Get<uint?>("targetId");
-            if (targetId.HasValue)
-            {
-                playerManagerService.UnqueueNetplayerPositionRequest();
-            }
-
+            playerManagerService.UnqueueNetplayerPositionRequest();
         }
     }
 }

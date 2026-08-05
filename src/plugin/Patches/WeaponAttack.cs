@@ -39,8 +39,10 @@ namespace MegabonkTogether.Patches
         /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(WeaponAttack.SpawnProjectile))]
-        public static void SpawnProjectile_Prefix(WeaponAttack __instance)
+        public static void SpawnProjectile_Prefix(WeaponAttack __instance, out bool __state)
         {
+            __state = false;
+
             if (!synchronizationService.HasNetplaySessionStarted())
             {
                 return;
@@ -54,22 +56,18 @@ namespace MegabonkTogether.Patches
 
             playerManagerService.AddGetNetplayerPositionRequest(netplayer.ConnectionId);
 
+            __state = true;
+
         }
 
         /// <summary>
         /// Remove the previous request after spawning the projectile
         /// </summary>
-        [HarmonyPostfix]
+        [HarmonyFinalizer]
         [HarmonyPatch(nameof(WeaponAttack.SpawnProjectile))]
-        public static void SpawnProjectile_Postfix(WeaponAttack __instance)
+        public static void SpawnProjectile_Finalizer(bool __state)
         {
-            if (!synchronizationService.HasNetplaySessionStarted())
-            {
-                return;
-            }
-
-            var netplayer = playerManagerService.GetNetPlayerByWeapon(__instance.weaponBase);
-            if (netplayer == null)
+            if (!__state)
             {
                 return;
             }
