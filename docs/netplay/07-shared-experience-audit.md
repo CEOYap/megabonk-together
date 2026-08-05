@@ -330,6 +330,26 @@ run is over" becomes "a 20-second stall, then play continues", with
 - **present often** → the barrier is still being poisoned every few rounds; do not ship shared
   experience on the failsafe alone, and prioritise the round id.
 
+### Measured — Run C, 2 players, level 113
+
+> **Result: present but rare.** Four stage transitions, level 113, shared experience on.
+> **One** `Shared-experience failsafe fired after 20.0s` line, on the client
+> (`re-reporting to the host`). No `[chest #81]`, no `[chest #93]`.
+>
+> So the middle branch above: **a residual attribution hole remains, and SE-5's round identity is
+> the fix.** #74's run-ending freeze is now a single 20-second stall across 113 levels — bounded,
+> not fixed.
+>
+> Two caveats on how much this is worth. It is **2 players**, the minimum, where the barrier is at
+> its least contended; three or more is where SE-6's "counted but cannot report" case opens up. And
+> the run did not deliberately force overlapping chest windows, which is SE-1's specific trigger —
+> so this measures ordinary play at a high level rate, not the adversarial case.
+>
+> A separate earlier run at 2 players over the internet also fired the failsafe exactly once, on
+> the host, which is consistent.
+>
+> See [`12-session-handover.md`](12-session-handover.md).
+
 ### Recommended next step, not taken here
 
 Make `OnReceivedAddXp` apply the **delta** (`Amount`, already on the message) instead of

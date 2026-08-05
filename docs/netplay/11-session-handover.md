@@ -1,5 +1,10 @@
 # Handover — after the first PC session
 
+> **Superseded by [`12-session-handover.md`](12-session-handover.md).** Read that first. Most of
+> this file still holds, with two corrections it makes explicitly: the stage-transition work turned
+> out to be a third-party mod on one peer rather than anything on this branch, and Run B/C have now
+> been played — the shared-experience failsafe fires, rarely, at level 113.
+
 Supersedes [`10-session-handover.md`](10-session-handover.md), which was written *before* anything
 on the branch had been compiled or run. That file's Step 0 and Step 1 are now done; its Run A is
 done five times. Read this one first, then [`06-session-handoff.md`](06-session-handoff.md) for the

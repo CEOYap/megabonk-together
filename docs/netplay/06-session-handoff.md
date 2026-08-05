@@ -6,6 +6,10 @@ committed on `main` or an explicitly-labelled open question.
 **Start here:** read [`01-critical-fixes.md`](01-critical-fixes.md) for per-item detail. This file
 is the state summary and the open-work queue.
 
+> **Read [`12-session-handover.md`](12-session-handover.md) first** — it is the current state of the
+> branch, and it supersedes both `10` and `11`. Several items in the queue below have since been
+> fixed and verified in-game, and Runs B and C have been played.
+
 ---
 
 ## Session 2 — branch `claude/megabonk-distance-player-null-1ggr92`, not yet merged
