@@ -165,8 +165,7 @@ namespace MegabonkTogether.Services
                 $"redundant-set: {redundant}, " +
                 $"cross-thread: {crossThread}. " +
                 "Only UNBALANCED-UNSET and overwrite-while-set misattribute credit. " +
-                "unset-while-clear is expected on clients (ProjectileBase.HitEnemy pairing) and is " +
-                "harmless. See P1-5 in docs/netplay/01-critical-fixes.md.");
+                "See P1-5 in docs/netplay/01-critical-fixes.md.");
         }
 
         /// <summary>Clears counters and the throttle so each session starts from zero.</summary>

@@ -223,7 +223,15 @@ namespace MegabonkTogether.Scripts.NetPlayer
             }
 
             this.Model.transform.position = GameManager.Instance.player.GetFeetPosition() + new Vector3(2, 0, 0);
-            this.Model.transform.rotation = Quaternion.LookRotation(GameManager.Instance.player.spawnDir, Vector3.up);
+
+            // Third LookRotation site, missed when the other two were guarded. Only runs ~twice a
+            // run (once per NetPlayer creation) so it is not the source of the residual warnings,
+            // but a zero spawnDir would log and hand back identity — which is what this returns
+            // anyway, minus the log.
+            var spawnDir = GameManager.Instance.player.spawnDir;
+            this.Model.transform.rotation = spawnDir == Vector3.zero
+                ? Quaternion.identity
+                : Quaternion.LookRotation(spawnDir, Vector3.up);
 
             var playerRenderer = Model.AddComponent<PlayerRenderer>();
             playerRenderer.SetCharacter(characterData, inventory, Vector3.zero);
