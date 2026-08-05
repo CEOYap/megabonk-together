@@ -75,9 +75,21 @@ namespace MegabonkTogether.Helpers
         /// world-space bounds — so it can be diffed against the host's copy of the same shrine.</para>
         ///
         /// <para><b>What to look for:</b> a bounds centre far from the shrine's own position, a
-        /// zero-size bounds, a null or empty mesh, a renderer count that differs between peers, or
-        /// a localScale of zero. Any of those explains an enabled-but-invisible model; none of them
-        /// is a netcode bug.</para>
+        /// zero-size bounds, a null or empty mesh, or a scale of zero. Any of those explains an
+        /// enabled-but-invisible model; none of them is a netcode bug.</para>
+        ///
+        /// <para><b>No <c>GetComponentsInChildren&lt;T&gt;</c>.</b> The first version used it and
+        /// threw <c>MissingMethodException: '!!0[] UnityEngine.Component.GetComponentsInChildren(Boolean)'</c>
+        /// on every call — Il2CppInterop does not resolve that generic overload, which the il2cpp
+        /// skill lists as a known failure mode. Note also that the surrounding try/catch did not
+        /// contain it: MissingMethodException is raised when the method is JIT-compiled, not when
+        /// the missing call runs, so the whole method failed to compile and threw at the caller.
+        /// A catch cannot protect against a body that will not compile.</para>
+        ///
+        /// <para>This walks the hierarchy by hand instead, using only <c>transform.childCount</c>,
+        /// <c>GetChild</c> and the non-generic-friendly <c>GetComponent&lt;T&gt;</c> that the rest
+        /// of the codebase already relies on, plus the two Renderer fields <c>dump.cs</c>
+        /// confirms.</para>
         /// </summary>
         internal static string DescribeRenderers(ChargeShrine shrine)
         {
@@ -91,43 +103,73 @@ namespace MegabonkTogether.Helpers
                 var root = shrine.transform;
                 var sb = new StringBuilder();
 
-                sb.Append($"pos={root.position} scale={root.lossyScale} name={shrine.gameObject.name}");
+                sb.Append($"name={shrine.gameObject.name} pos={root.position} scale={root.lossyScale}");
 
-                var renderers = shrine.GetComponentsInChildren<Renderer>(true);
-                if (renderers == null)
+                AppendRenderer(sb, "meshRenderer", shrine.meshRenderer);
+                AppendRenderer(sb, "zoneRenderer", shrine.zoneRenderer);
+
+                var runeStone = shrine.runeStone;
+                sb.Append(runeStone == null
+                    ? " | runeStone=<null>"
+                    : $" | runeStone pos={runeStone.position} scale={runeStone.lossyScale} active={runeStone.gameObject.activeInHierarchy}");
+
+                AppendChildren(sb, root, 0);
+
+                return sb.ToString();
+            }
+            catch (System.Exception ex)
+            {
+                return $"describe renderers failed: {ex.GetType().Name}: {ex.Message}";
+            }
+        }
+
+        private static void AppendRenderer(StringBuilder sb, string label, Renderer renderer)
+        {
+            if (renderer == null)
+            {
+                sb.Append($" | {label}=<null>");
+                return;
+            }
+
+            var bounds = renderer.bounds;
+
+            sb.Append($" | {label}: enabled={renderer.enabled}")
+              .Append($" active={renderer.gameObject.activeInHierarchy}")
+              .Append($" boundsCentre={bounds.center} boundsSize={bounds.size}");
+        }
+
+        /// <summary>
+        /// Manual two-level walk. Depth is capped because the point is to see what the shrine
+        /// prefab is made of, not to dump an arbitrarily deep hierarchy into the log.
+        /// </summary>
+        private static void AppendChildren(StringBuilder sb, Transform parent, int depth)
+        {
+            if (parent == null || depth > 1)
+            {
+                return;
+            }
+
+            for (int i = 0; i < parent.childCount; i++)
+            {
+                var child = parent.GetChild(i);
+                if (child == null)
                 {
-                    sb.Append(" renderers=<null>");
-                    return sb.ToString();
+                    continue;
                 }
 
-                sb.Append($" renderers={renderers.Length}");
-
-                foreach (var renderer in renderers)
+                var renderer = child.GetComponent<Renderer>();
+                if (renderer != null)
                 {
-                    if (renderer == null)
-                    {
-                        sb.Append(" | <destroyed>");
-                        continue;
-                    }
+                    AppendRenderer(sb, $"child[{depth}]{child.gameObject.name}", renderer);
 
-                    var bounds = renderer.bounds;
-
-                    sb.Append($" | {renderer.gameObject.name}: enabled={renderer.enabled}")
-                      .Append($" activeInHierarchy={renderer.gameObject.activeInHierarchy}")
-                      .Append($" boundsCentre={bounds.center} boundsSize={bounds.size}");
-
-                    var meshFilter = renderer.GetComponent<MeshFilter>();
+                    var meshFilter = child.GetComponent<MeshFilter>();
                     if (meshFilter != null)
                     {
                         sb.Append($" mesh={(meshFilter.sharedMesh == null ? "<null>" : meshFilter.sharedMesh.name)}");
                     }
                 }
 
-                return sb.ToString();
-            }
-            catch (System.Exception ex)
-            {
-                return $"describe renderers failed: {ex.GetType().Name}";
+                AppendChildren(sb, child, depth + 1);
             }
         }
     }

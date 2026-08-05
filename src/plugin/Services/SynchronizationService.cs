@@ -3023,9 +3023,10 @@ namespace MegabonkTogether.Services
                 }
 
                 logger.LogInfo($"[shrine] host start {shrine.ShrineNetplayId} — after:  {Helpers.ShrineDiagnostics.Describe(shrineObj)}");
-                logger.LogInfo($"[shrine-render] host {shrine.ShrineNetplayId} — {Helpers.ShrineDiagnostics.DescribeRenderers(shrineObj)}");
 
                 udpClientService.SendToAllClients(shrine, LiteNetLib.DeliveryMethod.ReliableOrdered);
+
+                LogShrineRenderers("host", shrine.ShrineNetplayId, shrineObj);
             }
             else
             {
@@ -3053,7 +3054,31 @@ namespace MegabonkTogether.Services
                 }
 
                 logger.LogInfo($"[shrine] client start {shrine.ShrineNetplayId} — after:  {Helpers.ShrineDiagnostics.Describe(shrineObj)}");
-                logger.LogInfo($"[shrine-render] client {shrine.ShrineNetplayId} — {Helpers.ShrineDiagnostics.DescribeRenderers(shrineObj)}");
+
+                LogShrineRenderers("client", shrine.ShrineNetplayId, shrineObj);
+            }
+        }
+
+        /// <summary>
+        /// Diagnostic logging, isolated so it cannot take the handler down with it.
+        ///
+        /// <para>The first version called <c>DescribeRenderers</c> inline and *above*
+        /// <c>SendToAllClients</c>. It threw <c>MissingMethodException</c> on every call, which
+        /// aborted the handler and skipped the host's shrine broadcast — the very thing the
+        /// diagnostic existed to observe. That is the standing lesson in
+        /// <c>06-session-handoff.md</c>: order operations by importance, and cosmetic work goes
+        /// last, in its own try. Now it runs after every functional statement, and a throw inside
+        /// it can only cost the log line.</para>
+        /// </summary>
+        private void LogShrineRenderers(string role, uint shrineNetplayId, ChargeShrine shrineObj)
+        {
+            try
+            {
+                logger.LogInfo($"[shrine-render] {role} {shrineNetplayId} — {Helpers.ShrineDiagnostics.DescribeRenderers(shrineObj)}");
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning($"[shrine-render] {role} {shrineNetplayId} failed: {ex.GetType().Name}: {ex.Message}");
             }
         }
 
