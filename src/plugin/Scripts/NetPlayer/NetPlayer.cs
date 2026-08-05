@@ -158,6 +158,16 @@ namespace MegabonkTogether.Scripts.NetPlayer
 
                 var moveDir = (camForward * axisInput.y + camRight * axisInput.x).normalized;
 
+                // axisInput is already guarded above, but moveDir can still come out zero when both
+                // camera vectors flatten to nothing — a camera pointing straight up or down, or a
+                // pair quantized to zero. LookRotation would then log "Look rotation viewing vector
+                // is zero" every tick for that player and return identity anyway, so this returns
+                // the identical value without the log. Behaviour is unchanged; only the noise goes.
+                if (moveDir == Vector3.zero)
+                {
+                    return Quaternion.identity;
+                }
+
                 return Quaternion.LookRotation(moveDir);
             }
 

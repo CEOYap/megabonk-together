@@ -83,9 +83,16 @@ namespace MegabonkTogether.Patches.Projectiles
 
             Vector3 worldDirection = netPlayer.Model.transform.rotation * localDirection;
 
-            Quaternion correctedRotation = Quaternion.LookRotation(worldDirection);
+            // A zero worldDirection means the owner's model rotation collapsed the local direction.
+            // LookRotation logs and hands back identity, which would face the axe due north — worse
+            // than leaving it as it is. Unlike the NetPlayer guard this does change behaviour, and
+            // deliberately: keeping the previous rotation is the better of the two wrong answers.
+            if (worldDirection != Vector3.zero)
+            {
+                Quaternion correctedRotation = Quaternion.LookRotation(worldDirection);
 
-            axe.transform.rotation = correctedRotation;
+                axe.transform.rotation = correctedRotation;
+            }
 
             Vector3 startPos = netPlayer.Model.transform.position;
             float distance = axe.projectileRadius * 1.1f + 3.4f;
