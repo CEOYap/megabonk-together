@@ -270,6 +270,11 @@ binary with a Discord for support. **Deliberately not named here**, and its code
 or reproduced: there is no licence file and no licence field in its manifest, which means all
 rights reserved. Findings below are from assembly metadata and protocol shape only.
 
+> **Audited at 0.4.3** (`AssemblyInformationalVersion 0.4.3+0fc4adb`). **State the version on
+> every finding in this section.** This is a moving target: one claim recorded here was accurate
+> when checked and became false when they shipped a fix, and it had already been acted on by
+> then — see the handshake subsection.
+
 **Why it matters more than the other three: it is the only project that has already shipped the
 architecture [`../steamworks/00-migration-plan.md`](../steamworks/00-migration-plan.md)
 proposes.** Steam P2P sockets, Steam lobbies for discovery, no rendezvous server, no NAT-punch
@@ -311,15 +316,46 @@ Their join sequence is eight messages (`ClientHello` → `ServerHello` → `Host
 `ClientIntroduce` → `ClientPrefabsReady` → `PlayerReadyForSpawn` → `ServerReadyForSpawnSync` →
 `AllPlayersReadyForSpawn`) against our single `ClientInGameReady`.
 
-**It contains no retry, timeout or resend logic at all** — checked directly. So it is *not*
-evidence that adding retries fixes our lobby-ready defects, and I am recording that because it
-is the opposite of what I expected to find.
+> ⚠️ **The claim that used to sit here — "it contains no retry, timeout or resend logic at all"
+> — was true of the build audited then and is false at 0.4.3.** Kept visible rather than
+> silently deleted, because the conclusion drawn from it ("so it is *not* evidence that adding
+> retries fixes our lobby-ready defects") was acted on: it is why the lobby-ready work was
+> deprioritised. **That reasoning no longer holds.** See below.
 
-What it does suggest is structural: readiness there is a **protocol phase** with its own
-messages, whereas ours is a mutable `IsReady` flag living on the replicated `Player` record —
-which is exactly why `ResetForNextLevel` and `OnLobbyUpdate` can clobber it (defects B and C in
-[`12-session-handover.md`](12-session-handover.md)). The lesson is about where readiness lives,
-not about retrying.
+**Re-audited against the 0.4.3 assembly** (`AssemblyInformationalVersion 0.4.3+0fc4adb`), which
+covers their published changelog through its most recent entry. Their 0.4.2 release notes claim
+*"the 'waiting for players' screen no longer locks up — readiness is re-handshaked every second
+with timeout procedures"*, and unlike a changelog line that only names a symptom, this one is
+visible in the assembly:
+
+```
+SpawnSyncManager.BroadcastSyncStart(bool isRetry = false)
+  _pendingAllReadySessionId / _pendingAllReadyRoundId
+  IsCurrentStamp(sessionId, roundId) / IsServerStamp(sessionId, roundId)
+  OnClientReadyForSpawn(clientSteamId, sessionId, roundId)
+  RefreshExpectedPlayers() / HandlePlayerDisconnected(steamId)
+```
+
+So readiness there is **retried**, **stamped with a session id and a round id** so a late or
+duplicated readiness message from a previous round is rejected rather than applied, and the
+expected-player set is **refreshed on lobby membership change** instead of being captured once.
+
+**Two things this changes for us.**
+
+1. **The structural lesson still stands and is now reinforced.** Readiness there is a *protocol
+   phase* with its own messages and its own identity; ours is a mutable `IsReady` flag on the
+   replicated `Player` record, which is exactly why `ResetForNextLevel` and `OnLobbyUpdate` can
+   clobber it (defects B and C in [`12-session-handover.md`](12-session-handover.md)).
+2. **The retry lesson is the opposite of what was recorded.** They shipped retry *and* stamping,
+   which is the direct answer to defect A (`ClientInGameReady` sent exactly once with no retry).
+   And the `(sessionId, roundId)` stamp is our own **SE-5 round identity** item
+   ([`07-shared-experience-audit.md`](07-shared-experience-audit.md)) reached independently —
+   the two are the same idea, and their pairing of it with retry suggests SE-5 and the
+   lobby-ready barrier want fixing together rather than separately.
+
+**Why the original claim was wrong is worth keeping:** it was accurate when checked, and became
+stale because the other project shipped a fix. A finding about a moving target carries the build
+it was checked against, or it silently rots. Record the version next time — this entry now does.
 
 ### Verdict
 
@@ -413,6 +449,7 @@ because someone will propose them again.
 | "`SynchronizationService.cs` alone is **4,373 lines**"; repo "~32,100 lines" | **4,820** and **~34,000**. Directionally the same point — that file is still the centre of gravity — but the numbers were stale |
 | "Decompilation … surfaced a new High-severity defect (**P1-5**) that no fork had identified" | **Overturned in-game.** Every proposed mechanism for P1-5 was eliminated; the `DamageContainer` path was write-only dead code and was deleted. `01-critical-fixes.md` now records the symptom as unattributed and unreproduced. The decompilation work was still worth it — the enemy-cap and `giveCreditsTimer` findings stand — but it did not find this |
 | "**Add a protocol version gate**" ranked #2 in "where the real work is" | **Attempted and disproved in-game.** The LiteNetLib connect-key gate cannot fire: `ConnectionRequestEvent` never runs on the NAT-punch path because both peers `Connect` at each other and LiteNetLib reconciles the cross-connect internally. Reverted; deferred to Steamworks Phase 3. It remains true that a mismatched build silently corrupts a session — the *fix* was wrong, not the problem |
+| Mod S's handshake "contains **no retry, timeout or resend logic at all** — checked directly", therefore retries are not the answer for our lobby-ready defects | **Overtaken by their 0.4.3.** They now retry *and* stamp readiness with `(sessionId, roundId)`, and refresh the expected-player set on membership change. The structural lesson (readiness belongs in a protocol phase, not on a mutable `Player` field) is unchanged and reinforced; the retry conclusion is reversed, and it was the stated reason lobby-ready work was deprioritised. Their stamp is our SE-5 round identity, which suggests fixing SE-5 and the barrier together |
 
 One item that **still stands** and is worth restating: `[HarmonyFinalizer]` is documented in
 `01-critical-fixes.md` as the correction to P1-11's "no `try/finally` available" claim, and it is

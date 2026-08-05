@@ -235,6 +235,12 @@ What it changed in our docs:
   batch explicitly; `01-api-mapping.md` recommends letting Nagle coalesce. Our own `[bw]` counters
   can settle it before Phase 1 commits either way.
 
+> ⚠️ **The retry half of the next paragraph has since been overturned.** It was accurate for the
+> build audited that session and is false at their 0.4.3, which retries *and* stamps readiness
+> with `(sessionId, roundId)`. Corrected in
+> [`00-fork-comparison.md`](00-fork-comparison.md) §5 — read that, not this. Left in place
+> because it is why the lobby-ready defects below were deprioritised. The structural half stands.
+
 **Two findings worth keeping because they contradicted expectations.** Their eight-message join
 handshake contains **no retry, timeout or resend logic at all** — so it is *not* evidence that
 adding retries fixes the lobby-ready defects below. What it suggests instead is structural:
@@ -311,7 +317,10 @@ projectile *events* rather than streaming transforms. This wants a design pass, 
   `ResetForNextLevel` clears `IsReady` for remote players too; `OnLobbyUpdate` overwrites the whole
   `Player` record including `IsReady`; and `NetworkHandler.Update` stops polling while
   `IsLoadingNextLevel`. Any single loss is still a permanent hang. Dropped in priority once
-  BonkTuner was identified as the actual trigger, but **not fixed**.
+  BonkTuner was identified as the actual trigger, but **not fixed**. **Priority argument has
+  since weakened:** the "retries are not the answer" finding that supported deprioritising this
+  was overturned at Mod S 0.4.3 — they ship retry plus `(sessionId, roundId)` stamping, which is
+  defect A's fix and our SE-5 in one. See [`00-fork-comparison.md`](00-fork-comparison.md) §5.
 - **A latent bug in `SendToHost`:** `gamePeers[0]` is a `ConcurrentDictionary<int, NetPeer>` **key**
   lookup, not "the first peer". It throws `KeyNotFoundException` the moment the host peer's
   LiteNetLib id is not 0.
