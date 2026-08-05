@@ -94,8 +94,46 @@ namespace MegabonkTogether.Patches
             }
 
             var isHost = synchronizationService.IsServerMode() ?? false;
+            var role = isHost ? "host" : "client";
 
-            Plugin.Log.LogInfo($"[shrine] Complete on {(isHost ? "host" : "client")} — {Helpers.ShrineDiagnostics.Describe(__instance)}");
+            Plugin.Log.LogInfo($"[shrine] Complete on {role} — {Helpers.ShrineDiagnostics.Describe(__instance)}");
+            Plugin.Log.LogInfo($"[shrine-render] {role} complete — {Helpers.ShrineDiagnostics.DescribeRenderers(__instance)}");
+        }
+
+        /// <summary>
+        /// Diagnostic only — reports the frame the rune stone moves, and nothing on any other frame.
+        ///
+        /// <para>The previous run established that the stone starts at the correct position on a
+        /// client and is displaced later, always to the same world point, but not when or by what.
+        /// Sampling here is what turns that into an answer without spending another playtest per
+        /// guess: the log line names the frame, the delta, the local position afterwards, and the
+        /// shrine's charge state at that moment.</para>
+        ///
+        /// <para><b>No ownership check</b>, deliberately — the whole point is to see it on every
+        /// peer and compare. It sends nothing, so there is no echo to cause.</para>
+        ///
+        /// <para><b>Cost while healthy:</b> one dictionary lookup and one squared-distance compare
+        /// per shrine per frame, and no allocation or logging unless the stone actually moves.
+        /// Delete with the rest of the shrine instrumentation.</para>
+        /// </summary>
+        [HarmonyPostfix]
+        [HarmonyPatch(nameof(ChargeShrine.Update))]
+        public static void Update_Postfix(ChargeShrine __instance)
+        {
+            if (!synchronizationService.HasNetplaySessionStarted())
+            {
+                return;
+            }
+
+            var moved = Helpers.ShrineDiagnostics.SampleForMovement(__instance);
+            if (moved == null)
+            {
+                return;
+            }
+
+            var isHost = synchronizationService.IsServerMode() ?? false;
+
+            Plugin.Log.LogWarning($"[shrine-move] {(isHost ? "host" : "client")} — {moved}");
         }
     }
 }
