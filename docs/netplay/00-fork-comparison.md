@@ -1,7 +1,7 @@
 # Related Implementations — what exists, what to take, what to reject
 
 Every other multiplayer implementation for Megabonk, in one place: the two forks related to ours,
-and the two independent mods that are not. What each is, what it does well, and what — if anything —
+and the three independent mods that are not. What each is, what it does well, and what — if anything —
 belongs here.
 
 Merged from the former `00-fork-comparison.md` and `08-delirium-comparison.md` and re-audited against
@@ -11,23 +11,28 @@ were stale or wrong, including one that pointed at a defect since eliminated.
 Nothing about the other projects has been built or run; claims about their behaviour are read off
 their source. Claims about *this* repo are checked against the working tree.
 
+> **On §5.** One of these is closed-source and binary-only, with no licence granting reuse. It is
+> referred to as **Mod S** and is not named, quoted or reproduced anywhere in this repository —
+> only facts about its protocol and its Steamworks API surface are recorded, which is the same
+> standard applied to every other project here: read for technique, port no code.
+
 ---
 
 ## The landscape
 
-| | this fork | Fcornaire (upstream) | Sea-Bass | Multibonk | DeliriumPulse |
-|---|---|---|---|---|---|
-| Relationship | — | parent | fork of upstream | unrelated | unrelated |
-| Loader | BepInEx IL2CPP | BepInEx IL2CPP | BepInEx IL2CPP | MelonLoader | BepInEx IL2CPP |
-| Transport | LiteNetLib + NAT punch + relay | same | same | `ISteamNetworkingSockets` | `ITransport` → LiteNetLib; Steam **stub** |
-| Discovery | websocket rendezvous | same | same | Steam lobbies | direct IP, config file |
-| C# lines | ~34,000 | ~32,000 | ~32,000 | ~1,250 netcode | ~9,700 |
-| Enemy replication | full | full | full | none | **none** |
-| XP / gold / items | full | full | full | none | **none** |
-| Encounters / rewards | full barrier | full barrier | full barrier | none | **none** |
-| Player replication | yes | yes | yes | yes | yes |
+| | this fork | Fcornaire (upstream) | Sea-Bass | Multibonk | DeliriumPulse | Mod S |
+|---|---|---|---|---|---|---|
+| Relationship | — | parent | fork of upstream | unrelated | unrelated | unrelated, closed-source |
+| Loader | BepInEx IL2CPP | BepInEx IL2CPP | BepInEx IL2CPP | MelonLoader | BepInEx IL2CPP | BepInEx IL2CPP |
+| Transport | LiteNetLib + NAT punch + relay | same | same | `ISteamNetworkingSockets` | `ITransport` → LiteNetLib; Steam **stub** | **`ISteamNetworkingSockets`, shipped** |
+| Discovery | websocket rendezvous | same | same | Steam lobbies | direct IP, config file | Steam lobbies |
+| C# lines | ~34,000 | ~32,000 | ~32,000 | ~1,250 netcode | ~9,700 | ~2,900 methods |
+| Enemy replication | full | full | full | none | **none** | full |
+| XP / gold / items | full | full | full | none | **none** | XP, items |
+| Encounters / rewards | full barrier | full barrier | full barrier | none | **none** | pause sync |
+| Player replication | yes | yes | yes | yes | yes | yes, + mid-run join |
 
-Two of these are complete netplay implementations and two are not. Read the small ones for
+Three of these are complete netplay implementations and two are not. Read the small ones for
 technique, never for scope.
 
 ---
@@ -258,6 +263,73 @@ and worth knowing as the fallback if an update breaks typed patches wholesale.
 
 ---
 
+## 5. Mod S — the shipping Steamworks implementation
+
+A closed-source P2P mod for this game, BepInEx 6 IL2CPP + Steamworks.NET, distributed as a
+binary with a Discord for support. **Deliberately not named here**, and its code is not quoted
+or reproduced: there is no licence file and no licence field in its manifest, which means all
+rights reserved. Findings below are from assembly metadata and protocol shape only.
+
+**Why it matters more than the other three: it is the only project that has already shipped the
+architecture [`../steamworks/00-migration-plan.md`](../steamworks/00-migration-plan.md)
+proposes.** Steam P2P sockets, Steam lobbies for discovery, no rendezvous server, no NAT-punch
+path, no relay of our own. It is proof the target works on this game and this loader, which is
+worth more than any individual technique in it.
+
+459 types, ~2,900 methods, 65 network messages across `Client` / `Server` / `Shared`.
+
+### What is worth knowing
+
+- **Poll groups.** `CreatePollGroup` / `SetConnectionPollGroup` / `ReceiveMessagesOnPollGroup`
+  — the host drains every peer in one call. Folded into the migration plan's gotcha 6.
+- **Relay *and* authentication readiness are both gated.** They poll
+  `GetRelayNetworkStatus` and `GetAuthenticationStatus` before connecting, not just call
+  `InitRelayNetworkAccess`. Folded into gotchas 2 and 6a.
+- **Auth session tickets** (`GetAuthSessionTicket` / `CancelAuthTicket`) — identity proved
+  rather than asserted, which is the structural answer to internet-play fault 4.
+- **Their reliability split independently matches our policy**: 55 of 65 messages reliable, and
+  the 9 unreliable ones are exactly the superseded-continuous-state set. See
+  [`../steamworks/01-api-mapping.md`](../steamworks/01-api-mapping.md) for the table, and for
+  the one place they disagree with our recommendation (`NoNagle` on events plus explicit batch
+  messages, rather than letting Nagle coalesce).
+- **Explicit batching** — `ReliableBatchMessage`, `EnemyStateBatchMessage`,
+  `EnemyRetargetBatchMessage`, `SpawnedObjectBatchMessage`. Our `LobbyUpdates` is one mega-message
+  at 65–90% of host egress; theirs is batched per category. The clearest available lead for the
+  bandwidth work.
+- **Clock synchronisation** — `TimeSyncRequest`/`TimeSyncResponse` + a keep-alive, feeding a
+  network-time system. **We have none.** We sidestep needing one by stamping interpolation
+  snapshots on *receipt*, which is correct but lets arrival jitter into the interpolation
+  timeline. Not a bug; a real improvement if interpolation quality is ever revisited.
+- **A dedicated `BossPortalUnlockedMessage`**, host-broadcast and guarded by an id set on both
+  sides. Independent corroboration of the double-`OnBossDefeated` defect found and fixed in this
+  repo — and confirmation that the fix shape is a guard plus host authority, which is what this
+  repo's own charging code already does.
+
+### What their handshake does and does not tell us
+
+Their join sequence is eight messages (`ClientHello` → `ServerHello` → `HostWelcome` →
+`ClientIntroduce` → `ClientPrefabsReady` → `PlayerReadyForSpawn` → `ServerReadyForSpawnSync` →
+`AllPlayersReadyForSpawn`) against our single `ClientInGameReady`.
+
+**It contains no retry, timeout or resend logic at all** — checked directly. So it is *not*
+evidence that adding retries fixes our lobby-ready defects, and I am recording that because it
+is the opposite of what I expected to find.
+
+What it does suggest is structural: readiness there is a **protocol phase** with its own
+messages, whereas ours is a mutable `IsReady` flag living on the replicated `Player` record —
+which is exactly why `ResetForNextLevel` and `OnLobbyUpdate` can clobber it (defects B and C in
+[`12-session-handover.md`](12-session-handover.md)). The lesson is about where readiness lives,
+not about retrying.
+
+### Verdict
+
+**Reference, and the most relevant one we have — but read for architecture, not for code.**
+Binary-only and all rights reserved: port nothing, quote nothing, and keep it anonymous in this
+repo. Everything it contributed above is a fact about a protocol or an API, not an
+implementation.
+
+---
+
 ## The architectural axis: we send the world, they seed it
 
 This repo and upstream are **replication-first**: the host owns the world and broadcasts what
@@ -297,6 +369,7 @@ unavoidable.
 | `Fcornaire/megabonk-together` | Track. Rebase on it. Upstream general fixes back. |
 | `Sea-Bass-cmd/optimized-netplay` | Hand-port only. Its charging fixes are now redundant — we fixed that area ourselves. Reject the rest. |
 | `Vanlichtinstein1945/Multibonk` | Read for Steamworks API patterns. Port no code. |
+| Mod S (closed-source) | The only shipped example of our target architecture. Read the protocol shape; port nothing, quote nothing, keep it unnamed. |
 | `DeliriumPulse/MegaBonk.Multiplayer` | Read for the scope-stack discipline and the RNG map. Port no code. |
 
 ## What to take, ranked
