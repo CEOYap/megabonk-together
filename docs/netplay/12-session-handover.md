@@ -93,17 +93,44 @@ old timing would regress. Nothing has been observed to.
 
 ## Built but NOT verified
 
-Three projectile commits. All build clean; none has been run on two machines.
+Five commits. All build clean; none has been run on two machines.
 
 | Commit | What |
 |---|---|
 | `91d4673` | Clients no longer simulate or detonate host-owned rockets |
 | `5435487` | Pool double-free: `ProjectileDone` released the rocket to the pool, then `DestroyImmediate` destroyed its parent |
 | `8fa1c2c` | Deferred despawn — a remote projectile finishes its visible flight instead of vanishing 100 ms short |
+| `3e21869` | `try/finally` on the three globals `OnReceivedEnemyDamaged` opens around `enemy.Damage` |
+| `1a19c78` | Per-stage guard so `OnBossDefeated` cannot run twice on the peer that killed the boss |
 
 `8fa1c2c` in particular **cannot** be validated by the setup used for the last two runs: those were
 two instances on one PC (`Bind exception … 10048`, fallback to port 27016, `rtt 0 ms`). The fix is
 about the 100 ms interpolation delay against real event timing. It needs a genuine two-machine run.
+
+### The last two are guards, not fixes for observed symptoms
+
+Both were found by reading code, not from a log line, and both commits say so. State that honestly
+if either is ever cited as having fixed something.
+
+**`3e21869` is the more serious of the two.** `Enemy.Damage_Prefix` blocks every client-side enemy
+damage unless `Plugin.Instance.CAN_DAMAGE_ENEMIES` is set, and `OnReceivedEnemyDamaged` set it,
+called `enemy.Damage`, and cleared it — with no `try/finally`. One throw inside that call latches it
+`true` and the client resolves enemy damage locally for the rest of the run: a permanent, silent
+divergence from a single exception. The same statement leaked a netplayer position request
+([P1-11](01-critical-fixes.md#p1-11)) and a tracker player id ([P1-5](01-critical-fixes.md#p1-5)).
+
+This is [P1-10](01-critical-fixes.md#p1-10)'s defect exactly — 28 `CAN_SEND_MESSAGES` latches became
+`Plugin.SuppressOutbound()` — and [P0-6](01-critical-fixes.md#p0-6)'s, where one unguarded string
+interpolation latched two statics through 581 consecutive enemy spawns. **Both were fixed, and this
+site was missed by both sweeps**, which is P1-6's standing lesson restated: guard the method, then
+grep for the pattern anyway. No sweep for other set/call/unset trios has been done; assume more.
+
+**`1a19c78`** guards a double-invoke that was already known as a symptom. `OnBossDefeated` opens with
+`cam.arrowDict.Clear()` carrying the comment *"Prevent sometimes double add for portal arrow"* —
+someone hit it, treated the duplicated minimap arrow as the bug, and cleared the dictionary while
+everything after that line kept running twice, including `A_BossDefeated.Invoke`, a game event. A
+client that kills the stage boss itself reaches the handler from its own `OnEnemyDied` and again from
+the host's `EnemyDied` broadcast. Both call sites are deliberate, so the guard is in the handler.
 
 ### The rocket sequence is three defects deep
 
@@ -113,6 +140,42 @@ area, suspect the architecture rather than the fix.** If a fourth rocket defect 
 projectile representation wants rethinking, not another patch.
 
 ---
+
+## A fifth implementation exists, and it has already shipped our target architecture
+
+A closed-source Megabonk multiplayer mod runs **BepInEx 6 IL2CPP + Steamworks.NET P2P** — Steam
+lobbies for discovery, no rendezvous server, no NAT-punch path, no relay of its own. That is
+[`../steamworks/00-migration-plan.md`](../steamworks/00-migration-plan.md)'s target, shipped.
+
+Recorded as **Mod S** in [`00-fork-comparison.md`](00-fork-comparison.md) §5 and **deliberately not
+named anywhere in this repository**. It is binary-only with no licence file and no licence field in
+its manifest, so all rights reserved. Only protocol and API-surface facts are recorded; nothing is
+quoted or ported. Decompiled output lives in `megabonk-re/`, which `.gitignore` excludes wholly.
+
+What it changed in our docs:
+
+- **Poll groups** for the host receive path, **relay-status polling** (not just calling
+  `InitRelayNetworkAccess`), and **authentication gating** before connecting — all folded into the
+  migration plan's gotchas, none of which it previously covered.
+- **Its reliability split independently matches ours**: 55 of 65 messages reliable, and the 9
+  unreliable ones are exactly the superseded-continuous-state set. That is
+  [`02-delivery-method-reference.md`](02-delivery-method-reference.md)'s rule reached from a
+  different lineage, and a direct rebuttal of the Sea-Bass blanket downgrade.
+- **One disagreement, left open rather than resolved.** They use `NoNagle` on one-shot events and
+  batch explicitly; `01-api-mapping.md` recommends letting Nagle coalesce. Our own `[bw]` counters
+  can settle it before Phase 1 commits either way.
+
+**Two findings worth keeping because they contradicted expectations.** Their eight-message join
+handshake contains **no retry, timeout or resend logic at all** — so it is *not* evidence that
+adding retries fixes the lobby-ready defects below. What it suggests instead is structural:
+readiness there is a protocol phase with its own messages, while ours is a mutable `IsReady` flag on
+the replicated `Player` record, which is exactly why `ResetForNextLevel` and `OnLobbyUpdate` can
+clobber it. And their dedicated `BossPortalUnlockedMessage`, guarded by an id set on both sides,
+independently corroborated the `OnBossDefeated` double-invoke fixed in `1a19c78`.
+
+**Caveat on all of it:** a changelog says what a bug was called, not what it was. Every item above is
+either read from assembly metadata or checked against our own code — nothing is taken on the
+strength of their release notes.
 
 ## Still open
 

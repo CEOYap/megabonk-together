@@ -1862,6 +1862,21 @@ saved` warnings.
 all in `src/plugin/Services/SynchronizationService.cs`; one was converted with [P1-9](#p1-9) and
 the remaining 27 here.
 
+> ⚠️ **The sweep was not complete, and the pattern is not limited to `CAN_SEND_MESSAGES`.**
+> `OnReceivedEnemyDamaged` opened **three** globals around one `enemy.Damage` call and restored all
+> three only on the success path — `Plugin.Instance.CAN_DAMAGE_ENEMIES`, a netplayer position
+> request ([P1-11](#p1-11)) and a tracker player id ([P1-5](#p1-5)). Missed by this sweep and by
+> [P0-6](#p0-6)'s, and fixed later in `3e21869` with a `try/finally`.
+>
+> `CAN_DAMAGE_ENEMIES` is the same severity as this entry, in the opposite direction: `Enemy.Damage_Prefix`
+> blocks all client-side enemy damage unless it is set, so a throw latches it **true** and the client
+> resolves enemy damage locally for the rest of the run.
+>
+> **No systematic sweep for set/call/unset trios has been done.** Searching for
+> `CAN_SEND_MESSAGES` was not enough; the search is for *any* field or service state opened before a
+> game call and closed after it. This is [P1-6](#p1-6)'s standing lesson — guard the method, then
+> grep for the shape anyway — and it has now been paid for three times.
+
 The pattern is everywhere in the receive handlers:
 
 ```csharp
