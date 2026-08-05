@@ -156,6 +156,12 @@ namespace MegabonkTogether
             ModConfig.Initialize(Config);
             Log.LogInfo($"Player name set to: {ModConfig.PlayerName.Value}");
 
+            // Diagnostic, delete once the client-side exception storm is attributed. Hooked here
+            // rather than at session start so singleplayer is covered too — whether these occur
+            // outside netplay is a discriminator we do not currently have.
+            // Fully qualified: inside Plugin, "Services." binds to the Plugin.Services property.
+            MegabonkTogether.Services.UnityExceptionDiagnostics.Hook();
+
             ClassInjector.RegisterTypeInIl2Cpp<NetPlayer>();
             ClassInjector.RegisterTypeInIl2Cpp<CoroutineRunner>();
             ClassInjector.RegisterTypeInIl2Cpp<MainThreadDispatcher>();

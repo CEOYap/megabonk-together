@@ -195,6 +195,7 @@ namespace MegabonkTogether.Scripts
             // rather than a new session inheriting counts pending from the previous one.
             Patches.Unity.TransformFallbackDiagnostics.Reset();
             Services.TrackerAttributionDiagnostics.Reset();
+            Services.UnityExceptionDiagnostics.Reset();
 
             // PERF 1A: drop switcher registrations from the finished session. Their enemies are
             // gone, so OnDisable may never fire for them.
