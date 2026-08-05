@@ -156,6 +156,9 @@ namespace MegabonkTogether.Services
         private Coroutine pendingEnemySpawnRoutine;
         private const int MAX_ENEMY_SPAWNS_PER_FRAME = 32;
         private readonly ConcurrentDictionary<uint, ICollection<uint>> shrineChargingPlayers = new();
+
+        /// <summary>Guards <see cref="OnBossDefeated"/> against its two call sites both firing.</summary>
+        private bool hasHandledBossDefeatedThisStage = false;
         private readonly ConcurrentDictionary<uint, ICollection<uint>> pylonChargingPlayers = new();
         private readonly ConcurrentDictionary<uint, ICollection<uint>> lampsChargingPlayers = [];
         private readonly List<GameObject> specificDesertGraves = [];
@@ -292,6 +295,10 @@ namespace MegabonkTogether.Services
 
             shrineChargingPlayers.Clear();
             pylonChargingPlayers.Clear();
+
+            // Same reason as the barrier state below: a session that ended after a boss died would
+            // otherwise leave this latched, and the next session's first portal would never open.
+            hasHandledBossDefeatedThisStage = false;
 
             // The barrier used to survive teardown: closedEncounterPerPlayer and forceClose were
             // cleared only by a successful release, so a session that ended mid-encounter poisoned
@@ -773,6 +780,9 @@ namespace MegabonkTogether.Services
             // A stage change ends any round in flight — the encounter windows are torn down with
             // the stage, so a report that arrives after this point belongs to nothing.
             encounterService.ClearClosedEncounters();
+
+            // Each stage has its own boss and portal, so the once-per-stage guard reopens here.
+            hasHandledBossDefeatedThisStage = false;
 
             spawnedObjectManagerService.ResetForNextLevel();
             enemyManagerService.ResetForNextLevel();
@@ -1786,10 +1796,32 @@ namespace MegabonkTogether.Services
         /// Manually invoke boss defeated event client side
         /// </summary>
         /// <summary>
-        /// Manually invoke boss defeated event client side
+        /// Manually invoke boss defeated event client side. Idempotent per stage.
+        ///
+        /// <para>A client that kills the stage boss itself reaches this twice: once from its own
+        /// <c>OnEnemyDied</c> before it forwards to the host, and again when the host's
+        /// <c>EnemyDied</c> broadcast comes back. Both call sites are deliberate — the local one
+        /// keeps the portal responsive without a round trip — so the guard belongs here rather
+        /// than at either of them.</para>
+        ///
+        /// <para>The duplicate was already known, but as a symptom rather than a cause: the
+        /// <c>arrowDict.Clear()</c> below carries the comment "Prevent sometimes double add for
+        /// portal arrow". That cleared the duplicated minimap arrow and left the rest of the
+        /// handler running twice, including <c>A_BossDefeated.Invoke</c>, which is a game event.
+        /// The <c>Clear()</c> stays — it is harmless and something else may rely on it — but it is
+        /// no longer what stops the double-add.</para>
+        ///
+        /// <para>Reset in <see cref="PrepareForNextLevel"/> and <see cref="Reset"/>, since each
+        /// stage has its own boss and portal and per-run state must not cross a session (SE-2).</para>
         /// </summary>
         private void OnBossDefeated()
         {
+            if (hasHandledBossDefeatedThisStage)
+            {
+                return;
+            }
+            hasHandledBossDefeatedThisStage = true;
+
             logger.LogInfo("Boss defeated, activating portal.");
             var cam = GameManager.Instance.player.minimapCamera.GetComponent<MinimapCamera>();
             cam.arrowDict.Clear(); //Prevent sometimes double add for portal arrow
