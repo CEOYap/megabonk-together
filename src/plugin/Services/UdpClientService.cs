@@ -1409,7 +1409,13 @@ namespace MegabonkTogether.Services
                 deliveryMethod = DeliveryMethod.ReliableOrdered;
             }
 
-            SendToAllClients(serialized, deliveryMethod, message.GetType().Name);
+            // Labelled by hand, not by GetType().Name: this send and SendEnemiesUpdate both use the
+            // LobbyUpdates type, so the type name merged the player stream and the enemy stream into
+            // one bucket. That bucket has been reported as 65-90% of host traffic and named as where
+            // bandwidth work belongs — a conclusion the counter could not actually support, because
+            // the two scale with completely different things (player count vs. enemies alive). A
+            // level-159 capture peaked at 199.50 KB/s under the merged name with no way to say which.
+            SendToAllClients(serialized, deliveryMethod, "LobbyUpdates(players)");
         }
 
         private void SendEnemiesUpdate()
@@ -1437,7 +1443,10 @@ namespace MegabonkTogether.Services
                 deliveryMethod = DeliveryMethod.ReliableOrdered;
             }
 
-            SendToAllClients(serialized, deliveryMethod, message.GetType().Name);
+            // The other half of the LobbyUpdates bucket — see the note in SendLobbyUpdate. Enemies
+            // and boss orbs stay together here deliberately: they are one delta stream sharing one
+            // send, so splitting them further would report a size neither of them has on the wire.
+            SendToAllClients(serialized, deliveryMethod, "LobbyUpdates(enemies)");
         }
 
         private void SendProjectilesUpdate()
