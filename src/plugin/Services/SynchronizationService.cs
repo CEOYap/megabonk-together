@@ -401,25 +401,21 @@ namespace MegabonkTogether.Services
             // moved it. Anything caching a transform in Awake therefore cached prefab
             // coordinates, identically for every clone.
             //
-            // That is what the charge shrine's rune stone does: on a client the game wrote every
+            // That is what the charge shrine's rune stone did: on a client the game wrote every
             // shrine's stone to the same constant world position (281.15, 16.60, -67.16) —
             // unchanged across shrines, maps and runs — while on the host, whose shrines are
             // built in place by the tile generator, it wrote each shrine's own correct position.
-            // The stack on those writes carried no mod frames, so the game is the writer and the
-            // wrong input is ours.
+            // The stack on those writes carried no mod frames, so the game was the writer and the
+            // wrong input was ours. The shrine prefab's authored position is
+            // (281.15, 12.36, -67.16), and the stone's local offset is (0, 4.23, 0) — the constant
+            // to the decimal, which is what confirmed this rather than merely fitting it.
+            //
+            // The shrine was the visible symptom; the defect is in this spawn path, so any prefab
+            // with a component that caches a transform in Awake was affected the same way.
             //
             // Creating the clone inactive and activating it after the transform is set means every
             // Awake sees the final position. The prefab's active state is restored in a finally:
             // it is shared mutable state around a call that can throw, which is P0-6's lesson.
-            // Diagnostic, delete with the rest of the shrine instrumentation: confirms or kills the
-            // reason for the change below. If the prefab's authored position is the constant the
-            // client wrote to every rune stone, the Awake-caching account is right.
-            if (toSpawn.PrefabName != null && toSpawn.PrefabName.Contains("ChargeShrine"))
-            {
-                logger.LogInfo($"[shrine-prefab] {toSpawn.PrefabName} authored pos={prefab.transform.position} " +
-                               $"active={prefab.activeSelf} -> spawning at {toSpawn.Position.ToUnityVector3()}");
-            }
-
             var prefabWasActive = prefab.activeSelf;
             GameObject spawned;
 
@@ -3075,18 +3071,12 @@ namespace MegabonkTogether.Services
                 }
 
 
-                logger.LogInfo($"[shrine] host start {shrine.ShrineNetplayId} by {shrine.PlayerChargingId} — before: {Helpers.ShrineDiagnostics.Describe(shrineObj)}");
-
                 using (Plugin.SuppressOutbound())
                 {
                     shrineObj.OnTriggerEnter();
                 }
 
-                logger.LogInfo($"[shrine] host start {shrine.ShrineNetplayId} — after:  {Helpers.ShrineDiagnostics.Describe(shrineObj)}");
-
                 udpClientService.SendToAllClients(shrine, LiteNetLib.DeliveryMethod.ReliableOrdered);
-
-                LogShrineRenderers("host", shrine.ShrineNetplayId, shrineObj);
             }
             else
             {
@@ -3106,39 +3096,11 @@ namespace MegabonkTogether.Services
                     return;
                 }
 
-                logger.LogInfo($"[shrine] client start {shrine.ShrineNetplayId} by {shrine.PlayerChargingId} — before: {Helpers.ShrineDiagnostics.Describe(shrineObj)}");
-
                 using (Plugin.SuppressOutbound())
                 {
                     shrineObj.OnTriggerEnter();
                 }
 
-                logger.LogInfo($"[shrine] client start {shrine.ShrineNetplayId} — after:  {Helpers.ShrineDiagnostics.Describe(shrineObj)}");
-
-                LogShrineRenderers("client", shrine.ShrineNetplayId, shrineObj);
-            }
-        }
-
-        /// <summary>
-        /// Diagnostic logging, isolated so it cannot take the handler down with it.
-        ///
-        /// <para>The first version called <c>DescribeRenderers</c> inline and *above*
-        /// <c>SendToAllClients</c>. It threw <c>MissingMethodException</c> on every call, which
-        /// aborted the handler and skipped the host's shrine broadcast — the very thing the
-        /// diagnostic existed to observe. That is the standing lesson in
-        /// <c>06-session-handoff.md</c>: order operations by importance, and cosmetic work goes
-        /// last, in its own try. Now it runs after every functional statement, and a throw inside
-        /// it can only cost the log line.</para>
-        /// </summary>
-        private void LogShrineRenderers(string role, uint shrineNetplayId, ChargeShrine shrineObj)
-        {
-            try
-            {
-                logger.LogInfo($"[shrine-render] {role} {shrineNetplayId} — {Helpers.ShrineDiagnostics.DescribeRenderers(shrineObj)}");
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning($"[shrine-render] {role} {shrineNetplayId} failed: {ex.GetType().Name}: {ex.Message}");
             }
         }
 
