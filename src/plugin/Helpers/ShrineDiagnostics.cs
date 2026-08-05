@@ -38,10 +38,120 @@ namespace MegabonkTogether.Helpers
         /// </summary>
         private static readonly Dictionary<int, Vector3> lastRuneStonePosition = new Dictionary<int, Vector3>();
 
+        /// <summary>
+        /// Instance ids of every rune stone seen so far. Backs the write-watcher's gate: an int
+        /// lookup, so <c>Transform.set_position</c>'s prefix never marshals a name string the way
+        /// the shipping <c>get_position</c> patch does for <c>"Hips"</c>.
+        /// </summary>
+        private static readonly HashSet<int> watchedRuneStones = new HashSet<int>();
+
+        /// <summary>Rune stones already reported, so one write does not become a per-frame flood.</summary>
+        private static readonly HashSet<int> reportedWrites = new HashSet<int>();
+
+        /// <summary>
+        /// False until a rune stone has actually been registered, so in singleplayer and before the
+        /// first shrine the write-watcher costs one static bool read per transform write.
+        /// </summary>
+        internal static bool WatchingWrites { get; private set; }
+
         /// <summary>Cleared between sessions so a stale entry cannot suppress the first report.</summary>
         internal static void Reset()
         {
             lastRuneStonePosition.Clear();
+            watchedRuneStones.Clear();
+            reportedWrites.Clear();
+            WatchingWrites = false;
+        }
+
+        private static void RegisterRuneStone(Transform runeStone)
+        {
+            if (runeStone == null)
+            {
+                return;
+            }
+
+            if (watchedRuneStones.Add(runeStone.GetInstanceID()))
+            {
+                WatchingWrites = true;
+            }
+        }
+
+        internal static bool IsWatchedRuneStone(Transform candidate)
+        {
+            return candidate != null && watchedRuneStones.Contains(candidate.GetInstanceID());
+        }
+
+        /// <summary>
+        /// Names whoever writes a rune stone's transform, which is the one thing five playtests
+        /// have not established.
+        ///
+        /// <para>Everything else is now measured: the offset enters at the rune stone's own
+        /// localPosition and nowhere else in the chain, on the first frame of charging, to the
+        /// constant <c>(281.15, 16.60, -67.16)</c> — the same value across different maps with
+        /// different shrine positions, so it is not derived from anything in the world. The writer
+        /// sets a *world* position, since localPosition differs per shrine while the world position
+        /// does not.</para>
+        ///
+        /// <para>Under IL2CPP, native game frames do not appear as managed frames. So a stack with
+        /// mod frames names our code outright; a stack with none says the writer is game code, and
+        /// that is a finding too — it would rule out the mod as the direct writer for the first
+        /// time. Reports once per rune stone.</para>
+        /// </summary>
+        internal static void ReportRuneStoneWrite(string setter, Transform runeStone, Vector3 value)
+        {
+            try
+            {
+                var id = runeStone.GetInstanceID();
+                if (!reportedWrites.Add(id))
+                {
+                    return;
+                }
+
+                var sb = new StringBuilder();
+                sb.Append($"[shrine-write] {setter} on RuneStone#{id} := {value}");
+
+                // Skip this method and the patch prefix that called it.
+                var frames = new System.Diagnostics.StackTrace(2, true).GetFrames();
+                if (frames == null || frames.Length == 0)
+                {
+                    sb.Append(" | stack: <empty — writer is native game code>");
+                }
+                else
+                {
+                    sb.Append(" | stack:");
+                    var printed = 0;
+                    foreach (var frame in frames)
+                    {
+                        if (printed >= 8)
+                        {
+                            break;
+                        }
+
+                        var method = frame.GetMethod();
+                        if (method == null)
+                        {
+                            continue;
+                        }
+
+                        var declaring = method.DeclaringType;
+                        sb.Append($" {(declaring == null ? "?" : declaring.Name)}.{method.Name}");
+
+                        var lineNumber = frame.GetFileLineNumber();
+                        if (lineNumber > 0)
+                        {
+                            sb.Append($":{lineNumber}");
+                        }
+
+                        printed++;
+                    }
+                }
+
+                Plugin.Log.LogWarning(sb.ToString());
+            }
+            catch (System.Exception ex)
+            {
+                Plugin.Log.LogWarning($"[shrine-write] report failed: {ex.GetType().Name}");
+            }
         }
 
         /// <summary>
@@ -242,6 +352,8 @@ namespace MegabonkTogether.Helpers
                 {
                     return null;
                 }
+
+                RegisterRuneStone(runeStone);
 
                 var id = shrine.GetInstanceID();
                 var now = runeStone.position;

@@ -411,5 +411,54 @@ namespace MegabonkTogether.Patches.Unity
 
             return true;
         }
+
+        /// <summary>
+        /// Diagnostic only — names whoever moves a charge shrine's rune stone. Delete with the rest
+        /// of the shrine instrumentation.
+        ///
+        /// <para>Five playtests have measured everything about this bug except the writer: on a
+        /// client the stone's own localPosition is overwritten on the first frame of charging, to a
+        /// world position that is constant across maps and shrines, while every other link in the
+        /// chain stays correct. These two setters are the only ways a transform's position can
+        /// change without a parent moving, and the parents are known-good.</para>
+        ///
+        /// <para><b>Cost.</b> Gated on a static bool that is false until a rune stone has been seen,
+        /// so singleplayer and pre-first-shrine play pay one bool read per transform write. After
+        /// that it is a HashSet&lt;int&gt; lookup — deliberately not a name comparison, because the
+        /// shipping <c>get_position</c> patch above already marshals a string per call for
+        /// <c>"Hips"</c> and that is a cost worth not doubling. Reports once per stone.</para>
+        /// </summary>
+        [HarmonyPrefix]
+        [HarmonyPatch("set_position")]
+        public static void set_position_Prefix(Transform __instance, Vector3 value)
+        {
+            if (!Helpers.ShrineDiagnostics.WatchingWrites
+                || !synchronizationService.HasNetplaySessionStarted())
+            {
+                return;
+            }
+
+            if (Helpers.ShrineDiagnostics.IsWatchedRuneStone(__instance))
+            {
+                Helpers.ShrineDiagnostics.ReportRuneStoneWrite("set_position", __instance, value);
+            }
+        }
+
+        /// <summary>Companion to <see cref="set_position_Prefix"/>; see it for the reasoning.</summary>
+        [HarmonyPrefix]
+        [HarmonyPatch("set_localPosition")]
+        public static void set_localPosition_Prefix(Transform __instance, Vector3 value)
+        {
+            if (!Helpers.ShrineDiagnostics.WatchingWrites
+                || !synchronizationService.HasNetplaySessionStarted())
+            {
+                return;
+            }
+
+            if (Helpers.ShrineDiagnostics.IsWatchedRuneStone(__instance))
+            {
+                Helpers.ShrineDiagnostics.ReportRuneStoneWrite("set_localPosition", __instance, value);
+            }
+        }
     }
 }
