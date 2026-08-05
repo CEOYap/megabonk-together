@@ -1,6 +1,7 @@
 ﻿using Assets.Scripts.Inventory__Items__Pickups.Chests;
 using Assets.Scripts.Inventory__Items__Pickups.Interactables;
 using HarmonyLib;
+using MegabonkTogether.Helpers;
 using MegabonkTogether.Services;
 using Microsoft.Extensions.DependencyInjection;
 using UnityEngine;
@@ -86,20 +87,24 @@ namespace MegabonkTogether.Patches
             var microwave = __instance.currentInteractable.GetComponentInChildren<InteractableMicrowave>();
             if (microwave != null)
             {
-                if (microwave.GetPrice() > GameManager.Instance.player.inventory.gold)
-                {
-                    Plugin.Log.LogDebug($"Not enough gold to interact with microwave! Required: {microwave.GetPrice()}, Current: {GameManager.Instance.player.inventory.gold}");
-                    return false;
-                }
-
+                // hasItem first, deliberately. Collecting an already-cooked item charges nothing —
+                // InteractableMicrowave.Interact()'s price and rarity guards are both on the
+                // !hasItem branch only (CONFIRMED by decompiling it, see MicrowaveHelper). The gold
+                // check used to run above this and blocked a broke player from collecting their own
+                // cooked item, so nothing was sent and the other peer never saw the interaction.
                 if (microwave.hasItem)
                 {
                     Plugin.Log.LogDebug($"Microwave already has an item!");
                     return true;
                 }
 
-                var uniqueItemsInRarity = GameManager.Instance.player.inventory.itemInventory.GetUniqueItemsInRarity(microwave.rarity);
-                if (uniqueItemsInRarity < 2)
+                if (!MicrowaveHelper.CanAfford(microwave))
+                {
+                    Plugin.Log.LogDebug($"Not enough gold to interact with microwave! Required: {microwave.GetPrice()}, Current: {GameManager.Instance.player.inventory.gold}");
+                    return false;
+                }
+
+                if (!MicrowaveHelper.HasEnoughItemsInRarity(microwave))
                 {
                     Plugin.Log.LogDebug($"Not enough items of rarity {microwave.rarity} to interact with microwave");
                     return false;

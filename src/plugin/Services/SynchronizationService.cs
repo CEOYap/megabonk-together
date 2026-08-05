@@ -2713,9 +2713,21 @@ namespace MegabonkTogether.Services
                                 break;
                             }
 
-                            var uniqueItemsInRarity = GameManager.Instance.player.inventory.itemInventory.GetUniqueItemsInRarity(microwave.rarity);
-
-                            if (!microwave.hasItem && (GameManager.Instance.player.IsDead() || !microwave.CanInteract() || uniqueItemsInRarity < 2))
+                            // Opt out of the encounter exactly where InteractableMicrowave.Interact()
+                            // would refuse to open it, so this peer still releases the barrier.
+                            //
+                            // The gold half of MicrowaveHelper.CanStartCooking is the fix for the
+                            // observed soft lock: Interact() silently returns false when the player
+                            // cannot pay, no encounter window opened, RewardFinished() was never
+                            // reached, and both players stalled until the 20s failsafe. CanInteract()
+                            // does not check gold — CONFIRMED by decompiling
+                            // InteractableMicrowave$$CanInteract, see MicrowaveHelper.
+                            //
+                            // This is the same opt-out the chest branch below already does with
+                            // InteractableChest.CanAfford(); the microwave has no CanAfford().
+                            if (!microwave.hasItem && (GameManager.Instance.player.IsDead()
+                                                       || !microwave.CanInteract()
+                                                       || !MicrowaveHelper.CanStartCooking(microwave)))
                             {
                                 MyTime.Pause();
                                 RewardFinished();
