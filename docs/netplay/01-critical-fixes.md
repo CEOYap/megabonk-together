@@ -1872,10 +1872,31 @@ the remaining 27 here.
 > blocks all client-side enemy damage unless it is set, so a throw latches it **true** and the client
 > resolves enemy damage locally for the rest of the run.
 >
-> **No systematic sweep for set/call/unset trios has been done.** Searching for
-> `CAN_SEND_MESSAGES` was not enough; the search is for *any* field or service state opened before a
-> game call and closed after it. This is [P1-6](#p1-6)'s standing lesson — guard the method, then
-> grep for the shape anyway — and it has now been paid for three times.
+> **The sweep has now been done** (`d8ab41b`). Every place the mod opens state before a game call
+> and closes it after was enumerated — the `Plugin.CAN_*` gates, netplayer position requests and
+> tracker player ids — and classified:
+>
+> | | count | disposition |
+> |---|---|---|
+> | Same-method, unguarded | **12** | **Fixed** with `try/finally` in `d8ab41b` |
+> | Harmony prefix/postfix pairs | 39 | Structurally unfixable this way — see below |
+> | Already guarded, or false positives | 16 | Field declarations and the `Add`/`Set` definitions |
+>
+> The 12 were `CAN_SPAWN_PICKUPS` (×2), `CAN_SPAWN_CHESTS`, `CAN_ENEMY_EXPLODE`,
+> `CAN_ENEMY_USE_SPECIAL_ATTACK`, `CAN_SPAWN_TORNADOES`, `CAN_START_STOP_STORMS` (×2), and four
+> position-request sites. `NetPlayer.FixedUpdate` was the subtle one: it already had a `try/catch`,
+> but push *and* pop sat inside the try, so the catch logged the exception while the request stayed
+> stranded — the guard made it look handled.
+>
+> **The 39 prefix/postfix pairs are the remaining exposure**, and `try/finally` cannot reach them
+> because the open and close are in different methods. That is [P1-11](#p1-11)'s population; its
+> frame-stamped purge bounds them, and the real fix is `[HarmonyFinalizer]` plus the balanced-stack
+> discipline in [`00-fork-comparison.md`](00-fork-comparison.md) §4.1. **Not hypothetical** — one
+> live instance was found and fixed in `91d4673`, where a rocket prefix pushed on every peer while
+> the postfix popped only on a host.
+>
+> This is [P1-6](#p1-6)'s standing lesson — guard the method, then grep for the shape anyway — and
+> it had been paid for three times before the sweep was run.
 
 The pattern is everywhere in the receive handlers:
 

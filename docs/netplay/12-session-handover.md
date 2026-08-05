@@ -102,6 +102,7 @@ Five commits. All build clean; none has been run on two machines.
 | `8fa1c2c` | Deferred despawn — a remote projectile finishes its visible flight instead of vanishing 100 ms short |
 | `3e21869` | `try/finally` on the three globals `OnReceivedEnemyDamaged` opens around `enemy.Damage` |
 | `1a19c78` | Per-stage guard so `OnBossDefeated` cannot run twice on the peer that killed the boss |
+| `d8ab41b` | The set/call/unset sweep — 12 more same-method sites restored in a `finally` |
 
 `8fa1c2c` in particular **cannot** be validated by the setup used for the last two runs: those were
 two instances on one PC (`Bind exception … 10048`, fallback to port 27016, `rtt 0 ms`). The fix is
@@ -123,7 +124,15 @@ This is [P1-10](01-critical-fixes.md#p1-10)'s defect exactly — 28 `CAN_SEND_ME
 `Plugin.SuppressOutbound()` — and [P0-6](01-critical-fixes.md#p0-6)'s, where one unguarded string
 interpolation latched two statics through 581 consecutive enemy spawns. **Both were fixed, and this
 site was missed by both sweeps**, which is P1-6's standing lesson restated: guard the method, then
-grep for the pattern anyway. No sweep for other set/call/unset trios has been done; assume more.
+grep for the pattern anyway.
+
+**That sweep has since been run** (`d8ab41b`), and it found 12 more of the same shape — every
+remaining `Plugin.CAN_*` gate plus four position-request sites. All are now `try/finally`. The full
+classification is in [P1-10](01-critical-fixes.md#p1-10)'s banner; the short version is that
+**same-method sites are now exhausted**, and the remaining exposure is 39 Harmony prefix/postfix
+pairs where the open and close are in different methods. Those need `[HarmonyFinalizer]` and the
+balanced-stack discipline in [`00-fork-comparison.md`](00-fork-comparison.md) §4.1, which is
+P1-11's scheduled work — and `91d4673` proves that class is live, not theoretical.
 
 **`1a19c78`** guards a double-invoke that was already known as a symptom. `OnBossDefeated` opens with
 `cam.arrowDict.Clear()` carrying the comment *"Prevent sometimes double add for portal arrow"* —
@@ -188,6 +197,11 @@ strength of their release notes.
 - **A latent bug in `SendToHost`:** `gamePeers[0]` is a `ConcurrentDictionary<int, NetPeer>` **key**
   lookup, not "the first peer". It throws `KeyNotFoundException` the moment the host peer's
   LiteNetLib id is not 0.
+- **39 Harmony prefix/postfix state pairs** — the residue of the `d8ab41b` sweep, and now the
+  largest single known exposure of this class. `try/finally` cannot reach them; they need
+  `[HarmonyFinalizer]` plus the balanced-stack discipline
+  ([`00-fork-comparison.md`](00-fork-comparison.md) §4.1). P1-11's frame-stamped purge bounds them
+  meanwhile, and `[HarmonyFinalizer]` is still used **zero** times in this repo.
 - **SE-5 round identity** — Run C says residual, not urgent. Wire change; new union tags only.
 - **`Animator.set_speed` NRE in `RestoreDeath`** — unchanged, still undiagnosed.
 - **A 6-player bandwidth capture** — still the missing Phase 0 data point. New 2-player numbers
