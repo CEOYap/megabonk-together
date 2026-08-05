@@ -395,7 +395,43 @@ namespace MegabonkTogether.Services
                 return false;
             }
 
-            var spawned = HandleSpawn(prefab);
+            // Awake runs synchronously inside Instantiate, and Instantiate clones the source's
+            // active state — so with an active prefab every component's Awake fired while the
+            // clone still sat at the prefab's authored position, before the three lines below
+            // moved it. Anything caching a transform in Awake therefore cached prefab
+            // coordinates, identically for every clone.
+            //
+            // That is what the charge shrine's rune stone does: on a client the game wrote every
+            // shrine's stone to the same constant world position (281.15, 16.60, -67.16) —
+            // unchanged across shrines, maps and runs — while on the host, whose shrines are
+            // built in place by the tile generator, it wrote each shrine's own correct position.
+            // The stack on those writes carried no mod frames, so the game is the writer and the
+            // wrong input is ours.
+            //
+            // Creating the clone inactive and activating it after the transform is set means every
+            // Awake sees the final position. The prefab's active state is restored in a finally:
+            // it is shared mutable state around a call that can throw, which is P0-6's lesson.
+            // Diagnostic, delete with the rest of the shrine instrumentation: confirms or kills the
+            // reason for the change below. If the prefab's authored position is the constant the
+            // client wrote to every rune stone, the Awake-caching account is right.
+            if (toSpawn.PrefabName != null && toSpawn.PrefabName.Contains("ChargeShrine"))
+            {
+                logger.LogInfo($"[shrine-prefab] {toSpawn.PrefabName} authored pos={prefab.transform.position} " +
+                               $"active={prefab.activeSelf} -> spawning at {toSpawn.Position.ToUnityVector3()}");
+            }
+
+            var prefabWasActive = prefab.activeSelf;
+            GameObject spawned;
+
+            try
+            {
+                prefab.SetActive(false);
+                spawned = HandleSpawn(prefab);
+            }
+            finally
+            {
+                prefab.SetActive(prefabWasActive);
+            }
 
             if (spawned == null)
             {
@@ -406,6 +442,18 @@ namespace MegabonkTogether.Services
             spawned.transform.position = toSpawn.Position.ToUnityVector3();
             spawned.transform.rotation = toSpawn.Rotation.ToUnityQuaternion();
             spawned.transform.localScale = toSpawn.Scale.ToUnityVector3();
+
+            // Activated here, before the component lookups below: GetComponentInChildren without
+            // the includeInactive flag does not see components on an inactive hierarchy, so the
+            // shady-guy and microwave rarity assignments would silently stop working otherwise.
+            // Awake still runs after the transform is final, which is the whole point.
+            //
+            // The desert-grave chain is exempt because HandleSpawn deliberately leaves those
+            // inactive to be revealed later by the grave sequence.
+            if (prefabWasActive && !IsDeferredRevealSpawn(toSpawn.PrefabName))
+            {
+                spawned.SetActive(true);
+            }
 
             spawnedObjectManagerService.SetSpawnedObject(toSpawn.Id, spawned);
 
@@ -462,9 +510,21 @@ namespace MegabonkTogether.Services
             return false;
         }
 
+        /// <summary>
+        /// The desert-grave chain: <see cref="HandleSpawn"/> deliberately deactivates these so the
+        /// grave sequence can reveal them later, so <see cref="SpawnObject"/> must not activate
+        /// them. Shared with that method rather than duplicating the name test, so the two cannot
+        /// drift apart.
+        /// </summary>
+        private static bool IsDeferredRevealSpawn(string prefabName)
+        {
+            return prefabName != null
+                && (prefabName.Contains("DesertGrave") || prefabName.Contains("SkeletonKingStatue"));
+        }
+
         private GameObject HandleSpawn(GameObject toSpawn)
         {
-            if (!toSpawn.name.Contains("DesertGrave") && !toSpawn.name.Contains("SkeletonKingStatue"))
+            if (!IsDeferredRevealSpawn(toSpawn.name))
             {
                 return GameObject.Instantiate(toSpawn);
             }
