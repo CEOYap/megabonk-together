@@ -3023,6 +3023,7 @@ namespace MegabonkTogether.Services
                 }
 
                 logger.LogInfo($"[shrine] host start {shrine.ShrineNetplayId} — after:  {Helpers.ShrineDiagnostics.Describe(shrineObj)}");
+                logger.LogInfo($"[shrine-render] host {shrine.ShrineNetplayId} — {Helpers.ShrineDiagnostics.DescribeRenderers(shrineObj)}");
 
                 udpClientService.SendToAllClients(shrine, LiteNetLib.DeliveryMethod.ReliableOrdered);
             }
@@ -3052,6 +3053,7 @@ namespace MegabonkTogether.Services
                 }
 
                 logger.LogInfo($"[shrine] client start {shrine.ShrineNetplayId} — after:  {Helpers.ShrineDiagnostics.Describe(shrineObj)}");
+                logger.LogInfo($"[shrine-render] client {shrine.ShrineNetplayId} — {Helpers.ShrineDiagnostics.DescribeRenderers(shrineObj)}");
             }
         }
 
