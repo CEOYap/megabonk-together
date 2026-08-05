@@ -1668,15 +1668,29 @@ namespace MegabonkTogether.Services
                 damageSource = damaged.DamageSource
             };
 
+            // Three globals are opened around one game call that can throw, and all three were
+            // restored only on the success path. The worst is CAN_DAMAGE_ENEMIES: Enemy.Damage_Prefix
+            // blocks all client-side enemy damage unless it is set, so one throw in enemy.Damage
+            // leaves it latched true and the client resolves enemy damage locally for the rest of
+            // the run — a permanent, silent divergence from a single exception.
+            //
+            // Same shape as P1-10 (28 CAN_SEND_MESSAGES latches, now Plugin.SuppressOutbound) and
+            // P0-6 (one throw latched two statics through 581 enemy spawns). The other two leak
+            // into P1-11's stranded position requests and P1-5's kill-attribution counters.
             Plugin.Instance.CAN_DAMAGE_ENEMIES = true;
             playerManagerService.AddGetNetplayerPositionRequest(damaged.AttackerId);
             trackerService.SetCurrentPlayerId(damaged.AttackerId);
 
-            enemy.Damage(damageContainer);
-
-            trackerService.UnsetCurrentPlayerId();
-            playerManagerService.UnqueueNetplayerPositionRequest();
-            Plugin.Instance.CAN_DAMAGE_ENEMIES = false;
+            try
+            {
+                enemy.Damage(damageContainer);
+            }
+            finally
+            {
+                trackerService.UnsetCurrentPlayerId();
+                playerManagerService.UnqueueNetplayerPositionRequest();
+                Plugin.Instance.CAN_DAMAGE_ENEMIES = false;
+            }
         }
 
 
@@ -1768,6 +1782,9 @@ namespace MegabonkTogether.Services
             }
         }
 
+        /// <summary>
+        /// Manually invoke boss defeated event client side
+        /// </summary>
         /// <summary>
         /// Manually invoke boss defeated event client side
         /// </summary>
