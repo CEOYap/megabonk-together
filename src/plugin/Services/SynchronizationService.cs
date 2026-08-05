@@ -1897,9 +1897,19 @@ namespace MegabonkTogether.Services
 
         private void OnReceivedSpawnedPickup(SpawnedPickup pickup)
         {
+            // FIX: the flag opens a host-only game path so this peer can apply someone else's
+            // state without re-broadcasting it. Restored in a finally because a throw in the game
+            // call would otherwise latch it for the rest of the run. Same defect as P1-10 and P0-6.
             Plugin.CAN_SPAWN_PICKUPS = true;
-            var spawnedPickup = PickupManager.Instance.SpawnPickup((EPickup)pickup.Pickup, pickup.Position.ToUnityVector3(), pickup.Value, false);
-            Plugin.CAN_SPAWN_PICKUPS = false;
+            Pickup spawnedPickup;
+            try
+            {
+                spawnedPickup = PickupManager.Instance.SpawnPickup((EPickup)pickup.Pickup, pickup.Position.ToUnityVector3(), pickup.Value, false);
+            }
+            finally
+            {
+                Plugin.CAN_SPAWN_PICKUPS = false;
+            }
 
             //if (spawnedPickup.ePickup == EPickup.Xp && !IsSharedExperienceEnabled())
             //{
@@ -1927,9 +1937,18 @@ namespace MegabonkTogether.Services
 
         private void OnReceivedSpawnedOrbPickup(SpawnedPickupOrb pickup)
         {
+            // FIX: the flag opens a host-only game path so this peer can apply someone else's
+            // state without re-broadcasting it. Restored in a finally because a throw in the game
+            // call would otherwise latch it for the rest of the run. Same defect as P1-10 and P0-6.
             Plugin.CAN_SPAWN_PICKUPS = true;
-            EffectManager.Instance.SpawnPickupOrb((EPickup)pickup.Pickup, pickup.Position.ToUnityVector3());
-            Plugin.CAN_SPAWN_PICKUPS = false;
+            try
+            {
+                EffectManager.Instance.SpawnPickupOrb((EPickup)pickup.Pickup, pickup.Position.ToUnityVector3());
+            }
+            finally
+            {
+                Plugin.CAN_SPAWN_PICKUPS = false;
+            }
         }
 
         public void OnPickupApplied(Pickup instance)
@@ -2179,9 +2198,18 @@ namespace MegabonkTogether.Services
         private void OnReceivedSpawnedChest(SpawnedChest chest)
         {
             chestManagerService.PushNextChestId(chest.ChestId);
+            // FIX: the flag opens a host-only game path so this peer can apply someone else's
+            // state without re-broadcasting it. Restored in a finally because a throw in the game
+            // call would otherwise latch it for the rest of the run. Same defect as P1-10 and P0-6.
             Plugin.CAN_SPAWN_CHESTS = true;
-            EffectManager.Instance.SpawnChest(EffectManager.Instance.openChestNormal, chest.Position.ToUnityVector3());
-            Plugin.CAN_SPAWN_CHESTS = false;
+            try
+            {
+                EffectManager.Instance.SpawnChest(EffectManager.Instance.openChestNormal, chest.Position.ToUnityVector3());
+            }
+            finally
+            {
+                Plugin.CAN_SPAWN_CHESTS = false;
+            }
         }
 
         public void OnChestOpened(OpenChest instance)
@@ -2838,9 +2866,17 @@ namespace MegabonkTogether.Services
                         var interactablePot = interactableObj.GetComponent<InteractablePot>();
                         if (interactablePot != null)
                         {
+                            // Restored in a finally: a throw in Interact would otherwise strand the
+                            // request and redirect this peer's position reads (P1-11).
                             playerManagerService.AddGetNetplayerPositionRequest(used.OwnerId);
-                            interactablePot.Interact();
-                            playerManagerService.UnqueueNetplayerPositionRequest();
+                            try
+                            {
+                                interactablePot.Interact();
+                            }
+                            finally
+                            {
+                                playerManagerService.UnqueueNetplayerPositionRequest();
+                            }
                             break;
                         }
 
@@ -3266,9 +3302,18 @@ namespace MegabonkTogether.Services
                 return;
             }
 
+            // FIX: the flag opens a host-only game path so this peer can apply someone else's
+            // state without re-broadcasting it. Restored in a finally because a throw in the game
+            // call would otherwise latch it for the rest of the run. Same defect as P1-10 and P0-6.
             Plugin.CAN_ENEMY_EXPLODE = true;
-            EffectManager.Instance.ExploderEnemy(enemy);
-            Plugin.CAN_ENEMY_EXPLODE = false;
+            try
+            {
+                EffectManager.Instance.ExploderEnemy(enemy);
+            }
+            finally
+            {
+                Plugin.CAN_ENEMY_EXPLODE = false;
+            }
             enemyManagerService.RemoveEnemyById(exploder.EnemyId);
         }
 
@@ -3343,9 +3388,18 @@ namespace MegabonkTogether.Services
 
             DynamicData.For(enemy).Set("targetId", attack.TargetId); //Target might have changed
 
+            // FIX: the flag opens a host-only game path so this peer can apply someone else's
+            // state without re-broadcasting it. Restored in a finally because a throw in the game
+            // call would otherwise latch it for the rest of the run. Same defect as P1-10 and P0-6.
             Plugin.CAN_ENEMY_USE_SPECIAL_ATTACK = true;
-            enemy.specialAttackController.UseSpecialAttack(specialAttack);
-            Plugin.CAN_ENEMY_USE_SPECIAL_ATTACK = false;
+            try
+            {
+                enemy.specialAttackController.UseSpecialAttack(specialAttack);
+            }
+            finally
+            {
+                Plugin.CAN_ENEMY_USE_SPECIAL_ATTACK = false;
+            }
         }
 
         public bool IsLoadingNextLevel()
@@ -4234,9 +4288,18 @@ namespace MegabonkTogether.Services
 
         private void OnReceivedTornadoesSpawned(TornadoesSpawned spawned)
         {
+            // FIX: the flag opens a host-only game path so this peer can apply someone else's
+            // state without re-broadcasting it. Restored in a finally because a throw in the game
+            // call would otherwise latch it for the rest of the run. Same defect as P1-10 and P0-6.
             Plugin.Instance.CAN_SPAWN_TORNADOES = true;
-            EffectManager.Instance.SpawnTornadoes(spawned.Amount);
-            Plugin.Instance.CAN_SPAWN_TORNADOES = false;
+            try
+            {
+                EffectManager.Instance.SpawnTornadoes(spawned.Amount);
+            }
+            finally
+            {
+                Plugin.Instance.CAN_SPAWN_TORNADOES = false;
+            }
         }
 
         public void OnStormStarted(DesertStorm desertStorm)
@@ -4251,11 +4314,20 @@ namespace MegabonkTogether.Services
 
         private void OnReceivedStormStarted(StormStarted started)
         {
+            // FIX: the flag opens a host-only game path so this peer can apply someone else's
+            // state without re-broadcasting it. Restored in a finally because a throw in the game
+            // call would otherwise latch it for the rest of the run. Same defect as P1-10 and P0-6.
             Plugin.Instance.CAN_START_STOP_STORMS = true;
-            var desertEvent = Plugin.Instance.GetMapEventsDesert();
-            desertEvent.StartStorm();
-            desertEvent.stormOverAtTime = started.StormOverAtTime;
-            Plugin.Instance.CAN_START_STOP_STORMS = false;
+            try
+            {
+                var desertEvent = Plugin.Instance.GetMapEventsDesert();
+                desertEvent.StartStorm();
+                desertEvent.stormOverAtTime = started.StormOverAtTime;
+            }
+            finally
+            {
+                Plugin.Instance.CAN_START_STOP_STORMS = false;
+            }
         }
 
         public void OnStormStopped()
@@ -4266,9 +4338,18 @@ namespace MegabonkTogether.Services
 
         private void OnReceivedStormStopped(StormStopped stopped)
         {
+            // FIX: the flag opens a host-only game path so this peer can apply someone else's
+            // state without re-broadcasting it. Restored in a finally because a throw in the game
+            // call would otherwise latch it for the rest of the run. Same defect as P1-10 and P0-6.
             Plugin.Instance.CAN_START_STOP_STORMS = true;
-            Plugin.Instance.GetMapEventsDesert().StopStorm();
-            Plugin.Instance.CAN_START_STOP_STORMS = false;
+            try
+            {
+                Plugin.Instance.GetMapEventsDesert().StopStorm();
+            }
+            finally
+            {
+                Plugin.Instance.CAN_START_STOP_STORMS = false;
+            }
         }
 
         public void OnTumbleWeedSpawned(InteractableTumbleWeed tumbleWeed)
