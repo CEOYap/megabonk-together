@@ -86,6 +86,12 @@ namespace MegabonkTogether.Services
         // repeats — the MemoryPack union tag plus the empty-collection headers for the fields that
         // stream does not populate. See SendStreamUpdate.
         private const int CHUNK_ENVELOPE_HEADROOM_BYTES = 100;
+
+        // The full Player record goes out every Nth 60 Hz tick — 5 Hz — plus immediately on any
+        // IsReady change. See SendPlayerStreams for how this number was chosen.
+        private const int FULL_PLAYER_RECORD_EVERY_N_TICKS = 12;
+        private int playerRecordTick;
+        private readonly Dictionary<uint, bool> lastSentReadiness = [];
         private const int STARTING_GAME_UDP_PORT = 27015;
         private int GAME_UDP_PORT = STARTING_GAME_UDP_PORT;
         private NetManager netManager;
@@ -588,6 +594,9 @@ namespace MegabonkTogether.Services
                     case LobbyUpdates lobbyUpdate:
                         OnLobbyUpdate(lobbyUpdate);
                         break;
+                    case PlayersStateUpdate playersStateUpdate:
+                        OnPlayersStateUpdate(playersStateUpdate);
+                        break;
                     case ProjectilesUpdate projectilesUpdate:
                         EventManager.OnProjectilesUpdate(projectilesUpdate.Projectiles);
                         break;
@@ -1031,6 +1040,11 @@ namespace MegabonkTogether.Services
             expectedPeerCount = 0;
             hasAllPeersConnected = false;
             isGameOver = false;
+            // Player-stream pacing is per session: a stale readiness snapshot here would suppress
+            // the forced full record that a genuine change is supposed to trigger, if a reused
+            // connection id happened to carry the same flag.
+            playerRecordTick = 0;
+            lastSentReadiness.Clear();
             gamePeers.Clear();
             netManager?.Stop();
             hasStarted = false;
@@ -1051,6 +1065,59 @@ namespace MegabonkTogether.Services
         public void GameOver()
         {
             isGameOver = true;
+        }
+
+        /// <summary>
+        /// Applies the continuous half of the player stream. Counterpart of
+        /// <see cref="SendPlayersStateUpdate"/>.
+        ///
+        /// <para><b>This deliberately mutates only the continuous fields</b> rather than replacing
+        /// the stored record the way <c>OnLobbyUpdate</c> does. That is the point of the split and
+        /// it is also a fix: <c>UpdatePlayer</c> overwrites the whole <c>Player</c>, so at 60 Hz the
+        /// old single stream was continuously stamping <c>IsReady</c>, <c>Name</c>, <c>Skin</c> and
+        /// <c>Inventory</c> back over whatever local code had just set — defect C of the four
+        /// lobby-ready barrier defects. Those fields now only ever change when a full record
+        /// arrives, so a readiness flag set locally survives until the host actually contradicts
+        /// it.</para>
+        ///
+        /// <para>Mutating in place is safe because <c>GetPlayer</c> hands back the stored instance,
+        /// and it avoids the remove/insert churn <c>UpdatePlayer</c> does on a 60 Hz path.</para>
+        /// </summary>
+        private void OnPlayersStateUpdate(PlayersStateUpdate update)
+        {
+            foreach (var state in update.States)
+            {
+                var player = playerManagerService.GetPlayer(state.ConnectionId);
+                if (player == null)
+                {
+                    // GetPlayer already reports this, throttled. A state update for a player we do
+                    // not know yet is normal for a tick or two around join and disconnect.
+                    continue;
+                }
+
+                player.Position = state.Position;
+                player.AnimatorState = state.AnimatorState;
+                player.MovementState = state.MovementState;
+                player.Hp = state.Hp;
+                player.Shield = state.Shield;
+
+                EventManager.OnPlayerUpdate(new PlayerUpdate
+                {
+                    Position = Quantizer.Dequantize(state.Position).ToNumericsVector3(),
+                    MovementState = state.MovementState,
+                    AnimatorState = state.AnimatorState,
+                    ConnectionId = state.ConnectionId,
+                    Hp = state.Hp,
+                    // Maxima and identity ride the full record; carry the values we already hold so
+                    // a health bar reading MaxHp off this update does not see a zero between full
+                    // records.
+                    MaxHp = player.MaxHp,
+                    Shield = state.Shield,
+                    MaxShield = player.MaxShield,
+                    Name = player.Name,
+                    Inventory = player.Inventory,
+                });
+            }
         }
 
         private void OnLobbyUpdate(LobbyUpdates lobbyUpdate) //TODO: move to synchronizationService
@@ -1306,7 +1373,7 @@ namespace MegabonkTogether.Services
                     return;
                 }
 
-                SendLobbyUpdate();
+                SendPlayerStreams();
             }
             else
             {
@@ -1394,6 +1461,94 @@ namespace MegabonkTogether.Services
             player.Name = localPlayer.Name;
 
             playerManagerService.UpdatePlayer(player);
+        }
+
+        /// <summary>
+        /// Splits the host's 60 Hz player broadcast into the half that changes every frame and the
+        /// half that does not.
+        ///
+        /// <para>Two captures measured the old single stream at a flat ~20 KB/s at two players —
+        /// 65-90% of all host egress — re-sending names, skins, character ids and inventories sixty
+        /// times a second. Measured against the real serializer, splitting it saves 62% at two
+        /// players early and 79% at six players late (95.39 -> 19.70 KB/s). The six-player full
+        /// record is 1628 B, which is over MAX_PACKET_SIZE_BYTES: today that promotes to
+        /// ReliableOrdered every single tick, and after the split only the low-rate record does.</para>
+        ///
+        /// <para><b>Readiness never waits for the heartbeat.</b> Any change to a player's
+        /// <c>IsReady</c> sends a full record immediately. This matters: the lobby-ready barrier has
+        /// four open defects where a single lost or late readiness is a permanent hang, and slowing
+        /// that field down to save bandwidth would be the wrong trade. The check is one bool compare
+        /// per player per tick.</para>
+        ///
+        /// <para><b>Why 5 Hz for the heartbeat.</b> With readiness handled separately, everything
+        /// left in the full record is cosmetic on a sub-second scale: inventory display, health-bar
+        /// maxima, and identity (name, skin, character), which is fixed after join. 5 Hz bounds the
+        /// worst case at 200 ms — under the threshold where a joining player would notice a default
+        /// name — while halving the heartbeat's cost against 10 Hz, which is worth 8 KB/s at six
+        /// players. This is the knob to turn if any of that ever proves to want lower latency.</para>
+        /// </summary>
+        private void SendPlayerStreams()
+        {
+            SendPlayersStateUpdate();
+
+            playerRecordTick++;
+
+            if (playerRecordTick < FULL_PLAYER_RECORD_EVERY_N_TICKS && !HasReadinessChanged())
+            {
+                return;
+            }
+
+            playerRecordTick = 0;
+            SendLobbyUpdate();
+        }
+
+        /// <summary>
+        /// True when any player's <c>IsReady</c> differs from the last full record we sent, which
+        /// forces one out immediately. Deliberately only <c>IsReady</c>: it is the sole field in the
+        /// slow half where arriving 100 ms late has a correctness consequence rather than a cosmetic
+        /// one.
+        /// </summary>
+        private bool HasReadinessChanged()
+        {
+            var changed = false;
+
+            foreach (var player in playerManagerService.GetAllPlayers())
+            {
+                if (!lastSentReadiness.TryGetValue(player.ConnectionId, out var wasReady) || wasReady != player.IsReady)
+                {
+                    lastSentReadiness[player.ConnectionId] = player.IsReady;
+                    changed = true;
+                }
+            }
+
+            return changed;
+        }
+
+        /// <summary>
+        /// The continuous half, every tick. Chunked like the other per-entity streams so a six-player
+        /// lobby cannot push it over the MTU and back onto a reliable channel.
+        /// </summary>
+        private void SendPlayersStateUpdate()
+        {
+            var states = new List<PlayerState>();
+
+            foreach (var player in playerManagerService.GetAllPlayers())
+            {
+                states.Add(new PlayerState
+                {
+                    ConnectionId = player.ConnectionId,
+                    Position = player.Position,
+                    AnimatorState = player.AnimatorState,
+                    MovementState = player.MovementState,
+                    Hp = player.Hp,
+                    Shield = player.Shield,
+                });
+            }
+
+            SendStreamUpdate(
+                states,
+                (chunk, _) => new PlayersStateUpdate { States = chunk },
+                nameof(PlayersStateUpdate));
         }
 
         private void SendLobbyUpdate()
