@@ -1991,7 +1991,7 @@ only narrow a leak the purge already closes on the next frame.
 > prefix/postfix majority. That is wrong: Harmony (HarmonyX, which BepInEx 6 ships) has
 > **`[HarmonyFinalizer]`**, which runs after the original even when it throws. Combined with the
 > balanced prefix/postfix scope stack described in
-> [`08-delirium-comparison.md`](08-delirium-comparison.md#worth-taking) — the prefix pushes a record
+> [`00-fork-comparison.md`](00-fork-comparison.md#41-the-prefixpostfix-scope-stack--and-a-correction-to-p1-11) — the prefix pushes a record
 > even when it decides not to act, and the postfix pops unconditionally instead of re-deriving its
 > condition — that is the fix for the *cause* here, not just the blast radius. The frame purge
 > stands until then. The two sites that *did* get a `finally` in [P1-9](#p1-9) —

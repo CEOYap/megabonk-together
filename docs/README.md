@@ -13,7 +13,7 @@ like next.
 
 | Doc | What it covers |
 |---|---|
-| [`netplay/00-fork-comparison.md`](netplay/00-fork-comparison.md) | The three forks side by side — what each one is, what it contributes, what to ignore |
+| [`netplay/00-fork-comparison.md`](netplay/00-fork-comparison.md) | **Every other Megabonk multiplayer implementation** — the two related forks and the two independent mods, side by side: what each contributes, what to reject, and the replication-vs-determinism trade. Merges the former `08-delirium-comparison.md` |
 | [`netplay/01-critical-fixes.md`](netplay/01-critical-fixes.md) | **Start here.** Ranked, implementable fix list with root cause, patch, and test for each |
 | [`netplay/02-delivery-method-reference.md`](netplay/02-delivery-method-reference.md) | Reliability policy, the full current message→channel map, and how to classify a new message |
 | [`netplay/03-cherry-pick-guide.md`](netplay/03-cherry-pick-guide.md) | Hunk-level guide to `Sea-Bass-cmd/optimized-netplay` — take / adapt / reject |
@@ -21,7 +21,6 @@ like next.
 | [`netplay/05-local-testing.md`](netplay/05-local-testing.md) | Two netplay clients on one PC and one Steam account — and what that setup cannot prove |
 | [`netplay/07-shared-experience-audit.md`](netplay/07-shared-experience-audit.md) | The shared-experience pause/reward barrier: protocol, its holes, and the upstream softlock issues |
 | [`netplay/09-performance-audit.md`](netplay/09-performance-audit.md) | Second pass on per-frame cost: the three globally patched Unity properties, the per-enemy interpolator Update, and what a profiler capture would settle |
-| [`netplay/08-delirium-comparison.md`](netplay/08-delirium-comparison.md) | `DeliriumPulse/MegaBonk.Multiplayer` — an independent mod for the same game: what its determinism-first design gets right, and the four techniques worth taking |
 | [`netplay/12-session-handover.md`](netplay/12-session-handover.md) | **Current branch state.** What is verified in-game, what is built but unplayed, the client spawn-ordering defect, and the lessons that cost time. Supersedes `10` and `11` |
 
 ### Transport
