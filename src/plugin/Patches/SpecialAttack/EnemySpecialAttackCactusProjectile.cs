@@ -16,8 +16,10 @@ namespace MegabonkTogether.Patches.SpecialAttack
         /// <param name="__instance"></param>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(EnemySpecialAttackCactusProjectile.Init))]
-        public static void Init_Prefix(EnemySpecialAttackCactusProjectile __instance)
+        public static void Init_Prefix(EnemySpecialAttackCactusProjectile __instance, out bool __state)
         {
+            __state = false;
+
             if (!synchronizationService.HasNetplaySessionStarted())
             {
                 return;
@@ -26,25 +28,23 @@ namespace MegabonkTogether.Patches.SpecialAttack
             if (targetId.HasValue)
             {
                 playerManagerService.AddGetNetplayerPositionRequest(targetId.Value);
+                __state = true;
             }
         }
 
         /// <summary>
         /// Remove queued request after attack is over.
         /// </summary>
-        [HarmonyPostfix]
+        [HarmonyFinalizer]
         [HarmonyPatch(nameof(EnemySpecialAttackCactusProjectile.Init))]
-        public static void Init_Postfix(EnemySpecialAttackCactusProjectile __instance)
+        public static void Init_Finalizer(bool __state)
         {
-            if (!synchronizationService.HasNetplaySessionStarted())
+            if (!__state)
             {
                 return;
             }
-            var targetId = MonoMod.Utils.DynamicData.For(__instance.enemy).Get<uint?>("targetId");
-            if (targetId.HasValue)
-            {
-                playerManagerService.UnqueueNetplayerPositionRequest();
-            }
+
+            playerManagerService.UnqueueNetplayerPositionRequest();
         }
     }
 }

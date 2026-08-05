@@ -30,10 +30,21 @@ namespace MegabonkTogether.Patches
             {
                 if (netPlayer?.Model != null)
                 {
+                    // Push and pop live in the SAME method here, so try/finally applies and the
+                    // finalizer pattern does not. Misfiled as a prefix/postfix pair by the first
+                    // sweep because the push sits inside a method named *_Postfix. A throw in
+                    // either game call below would strand the request (P1-11) and the loop would
+                    // then push again for the next player.
                     playerManagerService.AddGetNetplayerPositionRequest(netPlayer.ConnectionId);
-                    __instance.QueueRevealFog(netPlayer.Model.transform.position);
-                    __instance.RevealFog();
-                    playerManagerService.UnqueueNetplayerPositionRequest();
+                    try
+                    {
+                        __instance.QueueRevealFog(netPlayer.Model.transform.position);
+                        __instance.RevealFog();
+                    }
+                    finally
+                    {
+                        playerManagerService.UnqueueNetplayerPositionRequest();
+                    }
                 }
             }
         }

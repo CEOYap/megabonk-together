@@ -15,8 +15,10 @@ namespace MegabonkTogether.Patches.Projectiles
         /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileScythe.MyUpdate))]
-        public static void MyUpdate_Prefix(ProjectileScythe __instance)
+        public static void MyUpdate_Prefix(ProjectileScythe __instance, out bool __state)
         {
+            __state = false;
+
             if (!synchronizationService.HasNetplaySessionStarted())
             {
                 return;
@@ -30,22 +32,18 @@ namespace MegabonkTogether.Patches.Projectiles
 
             playerManagerService.AddGetNetplayerPositionRequest(netPlayer.ConnectionId);
 
+            __state = true;
+
         }
 
         /// <summary>
         /// Restore original transform after prefix
         /// </summary>
-        [HarmonyPostfix]
+        [HarmonyFinalizer]
         [HarmonyPatch(nameof(ProjectileScythe.MyUpdate))]
-        public static void MyUpdate_Postfix(ProjectileScythe __instance)
+        public static void MyUpdate_Finalizer(bool __state)
         {
-            if (!synchronizationService.HasNetplaySessionStarted())
-            {
-                return;
-            }
-
-            var netPlayer = Plugin.Services.GetService<IPlayerManagerService>().GetNetPlayerByWeapon(__instance.weaponBase);
-            if (netPlayer == null)
+            if (!__state)
             {
                 return;
             }
@@ -58,8 +56,10 @@ namespace MegabonkTogether.Patches.Projectiles
         /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileScythe.TryInit))]
-        public static void TryInit_Prefix(ProjectileScythe __instance)
+        public static void TryInit_Prefix(ProjectileScythe __instance, out bool __state)
         {
+            __state = false;
+
             if (!synchronizationService.HasNetplaySessionStarted())
             {
                 return;
@@ -73,22 +73,18 @@ namespace MegabonkTogether.Patches.Projectiles
 
             playerManagerService.AddGetNetplayerPositionRequest(netPlayer.ConnectionId);
 
+            __state = true;
+
         }
 
         /// <summary>
         /// Restore original transform after prefix
         /// </summary>
-        [HarmonyPostfix]
+        [HarmonyFinalizer]
         [HarmonyPatch(nameof(ProjectileScythe.TryInit))]
-        public static void TryInit_Postfix(ProjectileScythe __instance)
+        public static void TryInit_Finalizer(bool __state)
         {
-            if (!synchronizationService.HasNetplaySessionStarted())
-            {
-                return;
-            }
-
-            var netPlayer = Plugin.Services.GetService<IPlayerManagerService>().GetNetPlayerByWeapon(__instance.weaponBase);
-            if (netPlayer == null)
+            if (!__state)
             {
                 return;
             }
@@ -101,8 +97,10 @@ namespace MegabonkTogether.Patches.Projectiles
         /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileScythe.CheckZone))]
-        public static void CheckZone_Prefix(ProjectileScythe __instance)
+        public static void CheckZone_Prefix(ProjectileScythe __instance, out bool __state)
         {
+            __state = false;
+
             if (!synchronizationService.HasNetplaySessionStarted())
             {
                 return;
@@ -116,22 +114,18 @@ namespace MegabonkTogether.Patches.Projectiles
 
             playerManagerService.AddGetNetplayerPositionRequest(netPlayer.ConnectionId);
 
+            __state = true;
+
         }
 
         /// <summary>
         /// Restore original transform after prefix
         /// </summary>
-        [HarmonyPostfix]
+        [HarmonyFinalizer]
         [HarmonyPatch(nameof(ProjectileScythe.CheckZone))]
-        public static void CheckZone_Postfix(ProjectileScythe __instance)
+        public static void CheckZone_Finalizer(bool __state)
         {
-            if (!synchronizationService.HasNetplaySessionStarted())
-            {
-                return;
-            }
-
-            var netPlayer = Plugin.Services.GetService<IPlayerManagerService>().GetNetPlayerByWeapon(__instance.weaponBase);
-            if (netPlayer == null)
+            if (!__state)
             {
                 return;
             }

@@ -57,6 +57,30 @@ next tick supersedes it anyway), plain `Reliable` on the event paths (coalescing
 point). Call `FlushMessagesOnConnection` at the end of each network tick if you need a hard
 boundary.
 
+> **A shipping implementation disagrees with the second half of that, and it is worth
+> resolving before Phase 1 rather than after.** Mod S — a closed-source Steamworks P2P mod for
+> this game, see [`../netplay/00-fork-comparison.md`](../netplay/00-fork-comparison.md) — tags
+> every message with an explicit flag, and its split is:
+>
+> | Flag | Count | What |
+> |---|---|---|
+> | `ReliableNoNagle` | 55 of 65 | every one-shot event: spawns, deaths, damage, pickups, interactables, handshake, chat, XP, level-up |
+> | `UnreliableNoDelay` | 9 | continuous state only — player movement, animation, enemy state batch, boss-orb update, tumbleweeds, voice, keep-alive, time sync |
+> | `Reliable` (Nagle on) | 1 | stage load |
+>
+> So they take `NoNagle` on the events too, and get batching from **explicit batch messages**
+> (`ReliableBatchMessage`, `EnemyStateBatchMessage`, `EnemyRetargetBatchMessage`,
+> `SpawnedObjectBatchMessage`) rather than from Nagle coalescing. That is the opposite trade:
+> latency over transparent coalescing, with batching made explicit where it is wanted.
+>
+> Which is right is not settled here, and the honest answer is that it depends on how bursty
+> our event traffic is — a question our own `[bw]` counters can answer before Phase 1 commits
+> either way. **What the comparison does settle is the reliability policy itself:** their
+> unreliable set is exactly the superseded-continuous-state set, which is the rule
+> [`../netplay/02-delivery-method-reference.md`](../netplay/02-delivery-method-reference.md)
+> states, arrived at independently. It is also a direct rebuttal of the Sea-Bass fork's blanket
+> downgrade of 17 event RPCs to `Unreliable`.
+
 > **Do not pass `0` as a blanket flag.** `Multibonk/Networking/SteamNetworking.cs:580` does
 > exactly this — `SendMessageToConnection(conn, ptr, (uint)len, 0, out long _)` — which is
 > `Unreliable`. That is correct for its position-snapshot-only payload. It is wrong for

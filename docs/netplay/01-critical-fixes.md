@@ -1862,6 +1862,42 @@ saved` warnings.
 all in `src/plugin/Services/SynchronizationService.cs`; one was converted with [P1-9](#p1-9) and
 the remaining 27 here.
 
+> ⚠️ **The sweep was not complete, and the pattern is not limited to `CAN_SEND_MESSAGES`.**
+> `OnReceivedEnemyDamaged` opened **three** globals around one `enemy.Damage` call and restored all
+> three only on the success path — `Plugin.Instance.CAN_DAMAGE_ENEMIES`, a netplayer position
+> request ([P1-11](#p1-11)) and a tracker player id ([P1-5](#p1-5)). Missed by this sweep and by
+> [P0-6](#p0-6)'s, and fixed later in `3e21869` with a `try/finally`.
+>
+> `CAN_DAMAGE_ENEMIES` is the same severity as this entry, in the opposite direction: `Enemy.Damage_Prefix`
+> blocks all client-side enemy damage unless it is set, so a throw latches it **true** and the client
+> resolves enemy damage locally for the rest of the run.
+>
+> **The sweep has now been done** (`d8ab41b`). Every place the mod opens state before a game call
+> and closes it after was enumerated — the `Plugin.CAN_*` gates, netplayer position requests and
+> tracker player ids — and classified:
+>
+> | | count | disposition |
+> |---|---|---|
+> | Same-method, unguarded | **12** | **Fixed** with `try/finally` in `d8ab41b` |
+> | Harmony prefix/postfix pairs | 39 | Structurally unfixable this way — see below |
+> | Already guarded, or false positives | 16 | Field declarations and the `Add`/`Set` definitions |
+>
+> The 12 were `CAN_SPAWN_PICKUPS` (×2), `CAN_SPAWN_CHESTS`, `CAN_ENEMY_EXPLODE`,
+> `CAN_ENEMY_USE_SPECIAL_ATTACK`, `CAN_SPAWN_TORNADOES`, `CAN_START_STOP_STORMS` (×2), and four
+> position-request sites. `NetPlayer.FixedUpdate` was the subtle one: it already had a `try/catch`,
+> but push *and* pop sat inside the try, so the catch logged the exception while the request stayed
+> stranded — the guard made it look handled.
+>
+> **The 39 prefix/postfix pairs are the remaining exposure**, and `try/finally` cannot reach them
+> because the open and close are in different methods. That is [P1-11](#p1-11)'s population; its
+> frame-stamped purge bounds them, and the real fix is `[HarmonyFinalizer]` plus the balanced-stack
+> discipline in [`00-fork-comparison.md`](00-fork-comparison.md) §4.1. **Not hypothetical** — one
+> live instance was found and fixed in `91d4673`, where a rocket prefix pushed on every peer while
+> the postfix popped only on a host.
+>
+> This is [P1-6](#p1-6)'s standing lesson — guard the method, then grep for the shape anyway — and
+> it had been paid for three times before the sweep was run.
+
 The pattern is everywhere in the receive handlers:
 
 ```csharp
@@ -1991,7 +2027,7 @@ only narrow a leak the purge already closes on the next frame.
 > prefix/postfix majority. That is wrong: Harmony (HarmonyX, which BepInEx 6 ships) has
 > **`[HarmonyFinalizer]`**, which runs after the original even when it throws. Combined with the
 > balanced prefix/postfix scope stack described in
-> [`08-delirium-comparison.md`](08-delirium-comparison.md#worth-taking) — the prefix pushes a record
+> [`00-fork-comparison.md`](00-fork-comparison.md#41-the-prefixpostfix-scope-stack--and-a-correction-to-p1-11) — the prefix pushes a record
 > even when it decides not to act, and the postfix pops unconditionally instead of re-deriving its
 > condition — that is the fix for the *cause* here, not just the blast radius. The frame purge
 > stands until then. The two sites that *did* get a `finally` in [P1-9](#p1-9) —

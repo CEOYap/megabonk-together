@@ -7,6 +7,7 @@ using MegabonkTogether.Common.Messages;
 using MegabonkTogether.Common.Models;
 using MegabonkTogether.Extensions;
 using MegabonkTogether.Helpers;
+using Microsoft.Extensions.DependencyInjection;
 using MegabonkTogether.Scripts.NetPlayer;
 using System;
 using System.Collections.Concurrent;
@@ -69,6 +70,7 @@ namespace MegabonkTogether.Services
         public bool IsANetPlayerAbility(PassiveAbilityBullseye instance);
         public bool IsRemoteItem(ItemGhost instance);
         public void RemovePlayer(uint clientConnectionId);
+        public void ClearLobbyPlayers();
     }
 
     public class PlayerManagerService : IPlayerManagerService
@@ -266,12 +268,88 @@ namespace MegabonkTogether.Services
             return true;
         }
 
+        /// <summary>
+        /// Drops every player and the local-player identity, for a match attempt that failed before
+        /// a session existed.
+        ///
+        /// <para><b>Why not <see cref="Reset"/>.</b> Reset destroys spawned NetPlayers and cleans
+        /// inventories, which is Unity work. This runs on the WebSocket receive thread — the same
+        /// one <see cref="AddPlayer"/> is already called from — so it must stay purely managed.
+        /// Its footprint is deliberately identical to AddPlayer's: the dictionary plus the two
+        /// local-id fields, nothing else. Nothing has spawned yet at this point, so there is
+        /// nothing for Reset to have destroyed anyway.</para>
+        ///
+        /// <para>Deliberately does not clear the seed or the selected character: those belong to
+        /// the player's menu choices, not to the failed attempt.</para>
+        /// </summary>
+        public void ClearLobbyPlayers()
+        {
+            var cleared = players.Count;
+
+            players.Clear();
+            localConnectionId = 0;
+            isLocalPlayerSet = false;
+
+            if (cleared > 0)
+            {
+                logger.LogInfo($"Cleared {cleared} lobby player(s) left over from a failed match attempt.");
+            }
+        }
+
         public void RemovePlayer(uint connectionId)
         {
             if (!players.Remove(connectionId, out var removed))
             {
                 logger.LogWarning("Attempted to remove a player that does not exist.");
                 return;
+            }
+
+            // Before the NetPlayer is destroyed below. Enemies hold this player's Rigidbody in
+            // Enemy.target; once the GameObject is gone the game's own AI reads .transform off a
+            // destroyed object every frame, which is the ~700-per-5s dangling get_transform Run A
+            // measured on the host. Moving them off first means the reference is never dangling
+            // rather than dangling-and-caught-by-the-fallback.
+            //
+            // Ordered before the early return below on purpose: if there is no NetPlayer to
+            // destroy, enemies may still be targeting the player, and skipping the sweep is
+            // exactly how this survived unnoticed.
+            try
+            {
+                var moved = Scripts.Enemies.TargetSwitcherManager.RetargetAllTargeting(connectionId);
+                if (moved > 0)
+                {
+                    logger.LogInfo($"Moved {moved} enem{(moved == 1 ? "y" : "ies")} off departed player {connectionId}.");
+                }
+            }
+            catch (Exception ex)
+            {
+                // Never let retargeting abort the rest of the disconnect cleanup - P1-7's lesson.
+                logger.LogWarning($"Could not retarget enemies away from {connectionId}: {ex.Message}");
+            }
+
+            // The other holder of a departed player's Transform, and per Run A's fourth repeat the
+            // one that actually accounts for the ~143/s fallback rate: the game's Pickup follows the
+            // Transform it was handed, every frame, for as long as it is in flight.
+            try
+            {
+                // Resolved here rather than injected: PickupManagerService already depends on this
+                // service's data indirectly, and a constructor dependency risks a DI cycle for one
+                // call on a path that runs once per disconnect.
+                var pickupManagerService = Plugin.Services.GetRequiredService<IPickupManagerService>();
+
+                // Resolved before the NetPlayer is destroyed further down, so the sweep can match
+                // pickups by the transform they actually hold. May be null if the NetPlayer is
+                // already gone; the sweep then falls back to matching destroyed targets.
+                var departingTransform = GetNetPlayerByNetplayId(connectionId)?.Model?.transform;
+                var stopped = pickupManagerService.StopFollowingDepartedPlayer(connectionId, departingTransform);
+                if (stopped > 0)
+                {
+                    logger.LogInfo($"Stopped {stopped} pickup(s) following departed player {connectionId}.");
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning($"Could not stop pickups following {connectionId}: {ex.Message}");
             }
 
             if (GameManager.Instance?.player == null)

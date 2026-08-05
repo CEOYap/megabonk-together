@@ -21,17 +21,80 @@ namespace MegabonkTogether.Patches
     /// player did not trigger. Gating it would mean the mod fixes the annoying case and leaves the
     /// same misfire in singleplayer, which is a worse experience for no reason. The config entry is
     /// the off switch.</para>
+    ///
+    /// <para><b>The paragraph above is kept because its conclusion still stands. The paragraph
+    /// below it was my first explanation of the launch crash, and it was wrong; it is kept under
+    /// the same rule.</b></para>
+    ///
+    /// <para><b>WRONG — first diagnosis.</b> "It treated <c>HasNetplaySessionStarted()</c> as purely
+    /// a scope decision. It is also, accidentally, load-order protection: an enum comparison on a
+    /// managed field, so every other patch returns from the patching context without entering the
+    /// IL2CPP runtime. These patches had no such gate, read <c>Time.unscaledTime</c> directly, and
+    /// recursed to a stack overflow." That change was made and the game still would not launch. The
+    /// second trace had our frames <i>absent</i> from the loop entirely, which falsified it:
+    /// <c>Time.unscaledTime</c> was a participant in the first trace, not its cause. The managed
+    /// gate is still in place — it is correct on its own terms and cheap — but it fixed nothing.</para>
+    ///
+    /// <para><b>Actual cause.</b> <c>Open</c> and <c>ChooseOffer</c> are <b>virtual overrides</b>
+    /// (<c>reuseslot virtual</c> on both concrete types, over <c>newslot virtual</c> on
+    /// <c>BaseEncounterWindow</c>). Under Il2CppInterop's Harmony support, invoking the original of
+    /// a patched virtual method re-dispatches through the vtable slot the detour just replaced, so
+    /// the patch calls itself: <c>DMD&lt;ChooseOffer&gt; → il2cpp_runtime_invoke →
+    /// OnInvokeMethod → (il2cpp→managed) ChooseOffer → DMD&lt;ChooseOffer&gt;</c>, unbounded,
+    /// inside <c>PatchAll</c>. Every one of this repo's ~70 working patches is non-virtual;
+    /// these four were the only virtual ones, which is exactly why this was the only class
+    /// affected.</para>
+    ///
+    /// <para><b>What the guard covers now.</b> Arming moved to <c>ShowLevelupScreen</c> and
+    /// <c>OpeningFinished</c>, both non-virtual, so no virtual method is patched anywhere in this
+    /// file. Guarded: the chest's <c>TakeButton</c>, <c>BanishButton</c> and <c>DiscardButton</c> —
+    /// its three irreversible commits — plus <c>Skip</c>, <c>Banish</c> and <c>Leave</c> on the
+    /// level-up screen. <b>Not guarded: <c>ChooseOffer</c> on either type</b>, because it is
+    /// virtual. On the chest that is minor, since the real commits are the buttons. On the level-up
+    /// screen it is the item pick itself, which is the accident this feature was written for — so
+    /// the feature is partial by construction, and that gap closes only if the virtual-patching
+    /// question is solved.</para>
+    ///
+    /// <para><b>CONFIRMED in-game — do not re-add these patches.</b> This was an UNVERIFIED
+    /// correlation until it was tested directly (f378248, reverted by e3eafde). That build patched
+    /// <i>only</i> the two <c>ChooseOffer</c> methods, as prefixes, with no postfix and with arming
+    /// already on the non-virtual hooks — a materially different configuration from the four-patch
+    /// one that first crashed. It crashed identically: stack overflow in <c>Harmony.PatchAll()</c>,
+    /// <c>LogOutput</c> ending at "Already on latest version", 1,524 frames of
+    /// <c>DMD&lt;ChestWindowUi::ChooseOffer&gt;</c> calling itself. So neither the patch count, the
+    /// prefix/postfix split, nor the arming source is the variable — patching these virtual methods
+    /// is. Anyone reaching for this again needs a different mechanism, not a different arrangement
+    /// of Harmony attributes.</para>
+    ///
+    /// <para><b>Where the remaining gap could still be closed.</b> Not by patching
+    /// <c>ChooseOffer</c>. The untried routes are the UI layer beneath it — the offer buttons that
+    /// invoke it, reachable via the <c>MyButtonOffersUtility</c> / <c>b_skip</c> / <c>b_banish</c>
+    /// fields on these types — or the input layer, which the class comment above deliberately
+    /// rejected for good reasons that have not changed. Both are new investigations rather than
+    /// adjustments to this file.</para>
     /// </summary>
     [HarmonyPatch(typeof(LevelupScreen))]
     internal static class LevelupScreenChoiceGuardPatches
     {
+        /// <summary>
+        /// Arms the guard. <c>ShowLevelupScreen</c> is non-virtual, so unlike <c>Open</c> it can be
+        /// patched — see the class comment.
+        ///
+        /// <para><b>UNVERIFIED:</b> that this runs on every level-up window and at the moment the
+        /// window becomes interactive. The name and the non-virtual signature are all the interop
+        /// metadata can tell us; the body is a stub. If it fires late the guard is short, if it
+        /// never fires the guard is inert — both degrade to today's behaviour rather than breaking
+        /// anything, which is why this is worth shipping unverified.</para>
+        /// </summary>
         [HarmonyPostfix]
-        [HarmonyPatch(nameof(LevelupScreen.Open))]
-        public static void Open_Postfix() => EncounterInputGrace.Arm();
+        [HarmonyPatch(nameof(LevelupScreen.ShowLevelupScreen))]
+        public static void ShowLevelupScreen_Postfix() => EncounterInputGrace.Arm();
 
-        [HarmonyPrefix]
-        [HarmonyPatch(nameof(LevelupScreen.ChooseOffer))]
-        public static bool ChooseOffer_Prefix() => !EncounterInputGrace.IsBlocking();
+        // LevelupScreen.ChooseOffer stays unpatched and unguarded: it is virtual, and it is the
+        // level-up item pick — the exact accident e17c6ff was written for. Skip, Banish and Leave
+        // below are non-virtual and are guarded, so what remains unprotected is choosing an item,
+        // not discarding the window. That gap is the cost of not being able to patch a virtual
+        // method here, and it is stated rather than hidden.
 
         [HarmonyPrefix]
         [HarmonyPatch(nameof(LevelupScreen.Banish))]
@@ -46,16 +109,54 @@ namespace MegabonkTogether.Patches
         public static bool Leave_Prefix() => !EncounterInputGrace.IsBlocking();
     }
 
+    /// <summary>
+    /// Closes the gap the class above documents: the level-up item pick, and with it the moai,
+    /// shady guy and balance shrine offers that share the same screen.
+    ///
+    /// <para><b>How, given ChooseOffer cannot be patched.</b> Runtime inspection of
+    /// <c>GameUI/EncounterWindows/LevelupScreen/New/W_Offers/WindowLayers/Content</c> shows one
+    /// <c>UpgradeButton</c> child per offer. <c>UpgradeButton</c> derives from <c>MyButton</c>, and
+    /// its <c>OnClick</c> is a <c>virtual</c> override of <c>MyButton.OnClick</c> — so that is the
+    /// same trap. <c>SelectUpgrade</c> is <b>non-virtual</b>, and it is the commit the button
+    /// performs. Guarding it reaches the choice one layer below <c>ChooseOffer</c>, which is what
+    /// makes this route work where the previous one could not.</para>
+    ///
+    /// <para><b>UNVERIFIED:</b> that <c>SelectUpgrade</c> is on the path of every offer click and
+    /// commits nothing before it returns — the body is a stub, and the name plus the hierarchy are
+    /// the whole basis. Also unverified that moai, shady guy and the balance shrine really do reuse
+    /// <c>UpgradeButton</c>; they share <c>LevelupScreen</c>, but only the level-up screen itself
+    /// has been inspected. If any of that is wrong the guard is narrower than intended, not
+    /// broken.</para>
+    ///
+    /// <para>Blocking here means the click does nothing and the window stays open, which is the
+    /// same outcome as the other guards in this file.</para>
+    /// </summary>
+    [HarmonyPatch(typeof(UpgradeButton))]
+    internal static class UpgradeButtonChoiceGuardPatches
+    {
+        [HarmonyPrefix]
+        [HarmonyPatch(nameof(UpgradeButton.SelectUpgrade))]
+        public static bool SelectUpgrade_Prefix() => !EncounterInputGrace.IsBlocking();
+    }
+
     [HarmonyPatch(typeof(ChestWindowUi))]
     internal static class ChestWindowChoiceGuardPatches
     {
+        /// <summary>
+        /// Arms the guard. <c>OpeningFinished</c> is non-virtual, and is the point the chest's
+        /// opening animation ends and the offer becomes actionable — which is the moment that
+        /// matters here, later and therefore tighter than <c>Open</c> would have been.
+        ///
+        /// <para><b>UNVERIFIED:</b> the same caveat as <c>ShowLevelupScreen_Postfix</c>. Fails
+        /// toward an inert guard, not toward a stranded player.</para>
+        /// </summary>
         [HarmonyPostfix]
-        [HarmonyPatch(nameof(ChestWindowUi.Open))]
-        public static void Open_Postfix() => EncounterInputGrace.Arm();
+        [HarmonyPatch(nameof(ChestWindowUi.OpeningFinished))]
+        public static void OpeningFinished_Postfix() => EncounterInputGrace.Arm();
 
-        [HarmonyPrefix]
-        [HarmonyPatch(nameof(ChestWindowUi.ChooseOffer))]
-        public static bool ChooseOffer_Prefix() => !EncounterInputGrace.IsBlocking();
+        // ChestWindowUi.ChooseOffer stays unpatched for the same reason as LevelupScreen's. It
+        // matters less here: the chest's irreversible commits are TakeButton, BanishButton and
+        // DiscardButton, all non-virtual and all guarded below.
 
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ChestWindowUi.TakeButton))]

@@ -343,6 +343,13 @@ Call it at plugin startup, well before the first `ConnectP2P`. It begins fetchin
 network configuration and authentication ticket. Multibonk does not call it, which costs a
 multi-second stall on the first connection.
 
+**Calling it is not enough — poll the result.** A shipping Steamworks implementation for this
+game (see [`../netplay/00-fork-comparison.md`](../netplay/00-fork-comparison.md), Mod S) also
+reads `SteamNetworkingUtils.GetRelayNetworkStatus` and inspects `SteamRelayNetworkStatus_t`
+(`m_eAvail`, `m_eAvailNetworkConfig`, `m_eAvailAnyRelay`, `m_bPingMeasurementInProgress`)
+before treating the network as usable. `InitRelayNetworkAccess` is asynchronous; connecting
+while it is still measuring is the stall it exists to avoid, just moved.
+
 ### 3. Unreliable messages do not fragment
 
 `k_nSteamNetworkingSend_Reliable` fragments and reassembles up to 512 KB. Unreliable messages
@@ -377,6 +384,28 @@ across sends, or `SendMessages` (the batch variant) for the per-tick enemy delta
 `SteamNetConnectionStatusChangedCallback_t` fires from `RunCallbacks()`; messages arrive via
 `ReceiveMessagesOnConnection`. Both must be pumped every frame. Missing the callback pump
 means connections never establish; missing the receive poll means messages queue silently.
+
+**On the host, use a poll group instead of per-connection receive.**
+`CreatePollGroup` / `SetConnectionPollGroup` / `ReceiveMessagesOnPollGroup` / `DestroyPollGroup`
+drains every peer in one call rather than looping `ReceiveMessagesOnConnection` per connection.
+At 6 players that is one interop call per frame instead of five, on a path that already
+dominates the receive cost. Mod S uses all four; Multibonk does not, which is one reason its
+send/receive path should not be copied. The message identifies its sender via
+`SteamNetworkingMessage_t.m_identityPeer` / `m_conn`, so nothing is lost by not knowing which
+connection you polled.
+
+### 6a. Gate connecting on authentication, not just on relay access
+
+`InitAuthentication` starts it; `GetAuthenticationStatus` and
+`SteamNetAuthenticationStatus_t.m_eAvail` report readiness. Connecting before authentication
+is available fails in a way that looks like a NAT problem. Mod S gates on both this and the
+relay status above.
+
+`GetAuthSessionTicket` / `CancelAuthTicket` are also worth knowing about: they are how a peer
+proves identity rather than asserting it. That is the structural answer to the identity
+problem behind internet-play fault 4 — our `ConnectionId` is reissued per WebSocket session, so
+a peer that reconnects mid-handover changes identity and the relay routes for an id nobody
+uses. A SteamID cannot be reassigned that way, and a session ticket makes it checkable.
 
 ### 7. `k_nSteamNetworkingConnectionEnd_*` reasons
 

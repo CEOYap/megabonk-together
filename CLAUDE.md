@@ -89,8 +89,48 @@ GitHub release.
 | Build, references, CI, Thunderstore/Proton | `build-and-release` | [`THUNDERSTORE_BUILD.md`](THUNDERSTORE_BUILD.md), [`docs/PROTON_SETUP.md`](docs/PROTON_SETUP.md) |
 | Where a file goes, service and DI conventions | `csharp` | — |
 | FPS, stutter, GC | `unity`, `netcode` | [`docs/netplay/04-performance-and-gc.md`](docs/netplay/04-performance-and-gc.md) |
-| "What does the game actually do here?" | `il2cpp` | [`docs/reverse-engineering/00-decompilation-guide.md`](docs/reverse-engineering/00-decompilation-guide.md) |
+| "What does the game actually do here?" | `il2cpp` | **Decompile it — see below** |
 | Game formulas, enums, item/weapon behaviour | — | [`lukeod/megabonk_research`](https://github.com/lukeod/megabonk_research) — see below |
+
+## Answering "what does this method actually do?"
+
+The interop stubs and `dump.cs` both give **signatures and fields, never bodies**. Anything about
+behaviour has to be decompiled. Two tools, and the distinction matters:
+
+| Question | Tool |
+|---|---|
+| Does this member exist? What type is it? Is it virtual? | `scripts/re/interop_members.py Pickup` — offline, seconds |
+| What is this type's **field layout**? | `megabonk-re/build-21750826/dump.cs` — has fields, offsets, RVAs and VAs |
+| What does the body **do**? | decompile it |
+
+```bash
+"$APPDATA/ghidra/ghidra_12.1.2_PUBLIC/venv/Scripts/python.exe" scripts/re/decompile_headless.py 0x1804D7800 DamageContainer
+```
+
+Arguments are hex **VAs** (the `VA:` field in `dump.cs`, not `RVA:`) and/or case-insensitive name
+substrings. Output lands in `megabonk-re/decompiled/<Function>.c`, cached — re-running is free.
+
+**`analyzeHeadless.bat` cannot do this.** It launches Ghidra without the PyGhidra provider, so any
+`.py` post-script dies with "Ghidra was not started with PyGhidra". The script above starts Ghidra
+*from* Python instead, which is why it needs that venv interpreter and not your system one. Ghidra
+must not have the project open — it takes an exclusive lock.
+
+**Two traps that have each cost real time:**
+
+- **Use the VA, not the RVA.** `dump.cs` prints both. An RVA silently resolves to an unrelated
+  function rather than failing — a lookup for `Enemy.set_target` once landed on
+  `TMP_FontAsset$$get_usedGlyphRects`. If the decompiled function's name doesn't match what you
+  asked for, you used the wrong number.
+- **Ghidra's applied struct field names can be off by a slot.** `Pickup$$Update.c` prints `.target`
+  where the `pickedUp` byte is and `.speed` where the `target` pointer is read. `dump.cs`'s offsets
+  are authoritative; treat a field *name* in decompiled output as a hint, and confirm it against the
+  layout.
+
+Worth doing early rather than late: a field layout from `dump.cs` settled in one lookup what four
+playtests could not, and three separate UNVERIFIED markers in `docs/netplay/` existed only because
+nobody had decompiled the twenty lines that answered them.
+
+Full workflow: [`docs/reverse-engineering/00-decompilation-guide.md`](docs/reverse-engineering/00-decompilation-guide.md).
 
 ## External reference: `lukeod/megabonk_research`
 

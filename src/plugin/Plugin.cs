@@ -156,6 +156,29 @@ namespace MegabonkTogether
             ModConfig.Initialize(Config);
             Log.LogInfo($"Player name set to: {ModConfig.PlayerName.Value}");
 
+            // Diagnostic, delete once the client-side exception storm is attributed. Called here
+            // rather than at session start so singleplayer is covered too — whether these occur
+            // outside netplay is a discriminator we do not currently have.
+            //
+            // Wrapped at the CALL SITE, not inside Hook(). The first version of this took the whole
+            // plugin down: it built an Il2Cpp delegate that does not exist at runtime, and
+            // MissingMethodException is raised when a method is JIT-compiled rather than when the
+            // missing call runs — so the try/catch inside Hook() never executed and the throw
+            // surfaced here, in Load(), where nothing caught it. BepInEx then logged
+            // "Error loading [MegabonkTogether]" and the mod did not load at all.
+            //
+            // A catch cannot protect a body that will not compile; only a catch one level up can.
+            // Instrumentation must never be able to stop the plugin loading.
+            // Fully qualified: inside Plugin, "Services." binds to the Plugin.Services property.
+            try
+            {
+                MegabonkTogether.Services.UnityExceptionDiagnostics.Hook();
+            }
+            catch (System.Exception ex)
+            {
+                Log.LogWarning($"[unity-exc] Diagnostic unavailable, continuing without it: {ex.GetType().Name}: {ex.Message}");
+            }
+
             ClassInjector.RegisterTypeInIl2Cpp<NetPlayer>();
             ClassInjector.RegisterTypeInIl2Cpp<CoroutineRunner>();
             ClassInjector.RegisterTypeInIl2Cpp<MainThreadDispatcher>();
@@ -251,6 +274,11 @@ namespace MegabonkTogether
             {
                 Log.LogError($"Harmony patching failed: {ex}");
             }
+
+            // Only now may the encounter-choice guard touch the IL2CPP runtime. Set outside the
+            // catch on purpose: if patching failed, the guard's patches are not installed either,
+            // and leaving it latched off would be a second, silent failure mode.
+            Helpers.EncounterInputGrace.MarkRuntimeReady();
 
             var go = new GameObject("MainThreadDispatcher");
             GameObject.DontDestroyOnLoad(go);

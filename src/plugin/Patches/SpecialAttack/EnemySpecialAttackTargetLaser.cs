@@ -15,8 +15,10 @@ namespace MegabonkTogether.Patches.SpecialAttack
         /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(EnemySpecialAttackTargetLaser.FixedUpdate))]
-        public static void FixedUpdate_Prefix(EnemySpecialAttackTargetLaser __instance)
+        public static void FixedUpdate_Prefix(EnemySpecialAttackTargetLaser __instance, out bool __state)
         {
+            __state = false;
+
             if (!synchronizationService.HasNetplaySessionStarted())
             {
                 return;
@@ -25,25 +27,23 @@ namespace MegabonkTogether.Patches.SpecialAttack
             if (targetId.HasValue)
             {
                 playerManagerService.AddGetNetplayerPositionRequest(targetId.Value);
+                __state = true;
             }
         }
 
         /// <summary>
         /// Remove queued request after attack is over.
         /// </summary>
-        [HarmonyPostfix]
+        [HarmonyFinalizer]
         [HarmonyPatch(nameof(EnemySpecialAttackTargetLaser.FixedUpdate))]
-        public static void FixedUpdate_Postfix(EnemySpecialAttackTargetLaser __instance)
+        public static void FixedUpdate_Finalizer(bool __state)
         {
-            if (!synchronizationService.HasNetplaySessionStarted())
+            if (!__state)
             {
                 return;
             }
-            var targetId = MonoMod.Utils.DynamicData.For(__instance.enemy).Get<uint?>("targetId");
-            if (targetId.HasValue)
-            {
-                playerManagerService.UnqueueNetplayerPositionRequest();
-            }
+
+            playerManagerService.UnqueueNetplayerPositionRequest();
         }
     }
 }

@@ -18,8 +18,10 @@ namespace MegabonkTogether.Patches.Projectiles
         /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileAxe.TryInit))]
-        public static bool TryInit_Prefix(ProjectileAxe __instance, int projectileIndex)
+        public static bool TryInit_Prefix(ProjectileAxe __instance, int projectileIndex, out bool __state)
         {
+            __state = false;
+
             if (!synchronizationService.HasNetplaySessionStarted())
             {
                 return true;
@@ -38,6 +40,8 @@ namespace MegabonkTogether.Patches.Projectiles
             }
 
             playerManagerService.AddGetNetplayerPositionRequest(netPlayer.ConnectionId);
+
+            __state = true;
 
             return true;
         }
@@ -67,6 +71,24 @@ namespace MegabonkTogether.Patches.Projectiles
             }
 
             CorrectProjectileAxeRotation(__instance, netPlayer, projectileIndex);
+        }
+
+        /// <summary>
+        /// Pops the position request the prefix pushed. Split out of the postfix rather than folded
+        /// into it: the postfix does real work (the rotation correction) that must keep its own
+        /// guards, while the pop must happen whether or not those guards still hold and whether or
+        /// not the original threw. The postfix re-derived <c>GetNetPlayerByWeapon</c>, which a
+        /// weapon steal or return can invalidate between prefix and postfix — the exact
+        /// condition-changed-mid-call leak P1-11 describes.
+        /// </summary>
+        [HarmonyFinalizer]
+        [HarmonyPatch(nameof(ProjectileAxe.TryInit))]
+        public static void TryInit_Finalizer(bool __state)
+        {
+            if (!__state)
+            {
+                return;
+            }
 
             playerManagerService.UnqueueNetplayerPositionRequest();
         }
@@ -83,9 +105,16 @@ namespace MegabonkTogether.Patches.Projectiles
 
             Vector3 worldDirection = netPlayer.Model.transform.rotation * localDirection;
 
-            Quaternion correctedRotation = Quaternion.LookRotation(worldDirection);
+            // A zero worldDirection means the owner's model rotation collapsed the local direction.
+            // LookRotation logs and hands back identity, which would face the axe due north — worse
+            // than leaving it as it is. Unlike the NetPlayer guard this does change behaviour, and
+            // deliberately: keeping the previous rotation is the better of the two wrong answers.
+            if (worldDirection != Vector3.zero)
+            {
+                Quaternion correctedRotation = Quaternion.LookRotation(worldDirection);
 
-            axe.transform.rotation = correctedRotation;
+                axe.transform.rotation = correctedRotation;
+            }
 
             Vector3 startPos = netPlayer.Model.transform.position;
             float distance = axe.projectileRadius * 1.1f + 3.4f;

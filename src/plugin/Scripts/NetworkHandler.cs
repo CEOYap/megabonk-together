@@ -86,6 +86,7 @@ namespace MegabonkTogether.Scripts
                 if (GameManager.Instance == null || GameManager.Instance.player == null || GameManager.Instance.player.inventory == null) return;
 
                 Services.AllocationDiagnostics.Sample(ModConfig.LogAllocationRate.Value);
+                Services.BandwidthDiagnostics.Sample(ModConfig.LogBandwidth.Value, udpClientService, playerManagerService);
 
                 lobbyUpdateAccumulator += Time.deltaTime;
 
@@ -194,6 +195,7 @@ namespace MegabonkTogether.Scripts
             // rather than a new session inheriting counts pending from the previous one.
             Patches.Unity.TransformFallbackDiagnostics.Reset();
             Services.TrackerAttributionDiagnostics.Reset();
+            Services.UnityExceptionDiagnostics.Reset();
 
             // PERF 1A: drop switcher registrations from the finished session. Their enemies are
             // gone, so OnDisable may never fire for them.
@@ -209,6 +211,7 @@ namespace MegabonkTogether.Scripts
             Patches.Projectiles.ProjectileBasePatches.ClearOpacityCache();
             Helpers.EncounterInputGrace.Reset();
             Services.AllocationDiagnostics.Reset();
+            Services.BandwidthDiagnostics.Reset();
 
             try
             {

@@ -15,8 +15,10 @@ namespace MegabonkTogether.Patches
         /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ReturnWeaponWui.Update))]
-        public static void Update_Prefix(ReturnWeaponWui __instance)
+        public static void Update_Prefix(ReturnWeaponWui __instance, out bool __state)
         {
+            __state = false;
+
             if (!synchronizationService.HasNetplaySessionStarted())
             {
                 return;
@@ -28,6 +30,7 @@ namespace MegabonkTogether.Patches
                 if (netPlayer.ReturnWeaponWui == __instance)
                 {
                     playerManagerService.AddGetNetplayerPositionRequest(netPlayer.ConnectionId);
+                    __state = true;
 
                     break;
                 }
@@ -38,25 +41,16 @@ namespace MegabonkTogether.Patches
         /// <summary>
         /// Remove the position request after updating
         /// </summary>
-        [HarmonyPostfix]
+        [HarmonyFinalizer]
         [HarmonyPatch(nameof(ReturnWeaponWui.Update))]
-        public static void Update_Postfix(ReturnWeaponWui __instance)
+        public static void Update_Finalizer(bool __state)
         {
-            if (!synchronizationService.HasNetplaySessionStarted())
+            if (!__state)
             {
                 return;
             }
 
-            var netPlayers = playerManagerService.GetAllSpawnedNetPlayers();
-            foreach (var netPlayer in netPlayers)
-            {
-                if (netPlayer.ReturnWeaponWui == __instance)
-                {
-                    playerManagerService.UnqueueNetplayerPositionRequest();
-
-                    break;
-                }
-            }
+            playerManagerService.UnqueueNetplayerPositionRequest();
         }
     }
 }

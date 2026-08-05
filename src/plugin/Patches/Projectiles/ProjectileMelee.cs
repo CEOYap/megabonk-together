@@ -15,8 +15,10 @@ namespace MegabonkTogether.Patches.Projectiles
         /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileMelee.MyUpdate))]
-        public static void MyUpdate_Prefix(ProjectileMelee __instance)
+        public static void MyUpdate_Prefix(ProjectileMelee __instance, out bool __state)
         {
+            __state = false;
+
             if (!synchronizationService.HasNetplaySessionStarted())
             {
                 return;
@@ -30,22 +32,18 @@ namespace MegabonkTogether.Patches.Projectiles
 
             playerManagerService.AddGetNetplayerPositionRequest(netPlayer.ConnectionId);
 
+            __state = true;
+
         }
 
         /// <summary>
         /// Restore original transform after prefix
         /// </summary>
-        [HarmonyPostfix]
+        [HarmonyFinalizer]
         [HarmonyPatch(nameof(ProjectileMelee.MyUpdate))]
-        public static void MyUpdate_Postfix(ProjectileMelee __instance)
+        public static void MyUpdate_Finalizer(bool __state)
         {
-            if (!synchronizationService.HasNetplaySessionStarted())
-            {
-                return;
-            }
-
-            var netPlayer = Plugin.Services.GetService<IPlayerManagerService>().GetNetPlayerByWeapon(__instance.weaponBase);
-            if (netPlayer == null)
+            if (!__state)
             {
                 return;
             }

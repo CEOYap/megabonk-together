@@ -131,15 +131,21 @@ namespace MegabonkTogether.Scripts.NetPlayer
                 return;
             }
 
+            // The pop used to sit inside the try, so the catch below swallowed the exception and
+            // left the request stranded — position reads stayed redirected for the rest of the run
+            // (P1-11). The catch is still wanted; the pop just has to outlive it.
+            playerManagerService.AddGetNetplayerPositionRequest(connectionId);
             try
             {
-                playerManagerService.AddGetNetplayerPositionRequest(connectionId);
                 inventory.PhysicsTick();
-                playerManagerService.UnqueueNetplayerPositionRequest();
             }
             catch (System.Exception ex)
             {
                 Plugin.Log.LogError($"Error in Inventory.PhysicsTick: {ex}");
+            }
+            finally
+            {
+                playerManagerService.UnqueueNetplayerPositionRequest();
             }
         }
 
@@ -157,6 +163,16 @@ namespace MegabonkTogether.Scripts.NetPlayer
                 camRight.Normalize();
 
                 var moveDir = (camForward * axisInput.y + camRight * axisInput.x).normalized;
+
+                // axisInput is already guarded above, but moveDir can still come out zero when both
+                // camera vectors flatten to nothing — a camera pointing straight up or down, or a
+                // pair quantized to zero. LookRotation would then log "Look rotation viewing vector
+                // is zero" every tick for that player and return identity anyway, so this returns
+                // the identical value without the log. Behaviour is unchanged; only the noise goes.
+                if (moveDir == Vector3.zero)
+                {
+                    return Quaternion.identity;
+                }
 
                 return Quaternion.LookRotation(moveDir);
             }
@@ -207,7 +223,15 @@ namespace MegabonkTogether.Scripts.NetPlayer
             }
 
             this.Model.transform.position = GameManager.Instance.player.GetFeetPosition() + new Vector3(2, 0, 0);
-            this.Model.transform.rotation = Quaternion.LookRotation(GameManager.Instance.player.spawnDir, Vector3.up);
+
+            // Third LookRotation site, missed when the other two were guarded. Only runs ~twice a
+            // run (once per NetPlayer creation) so it is not the source of the residual warnings,
+            // but a zero spawnDir would log and hand back identity — which is what this returns
+            // anyway, minus the log.
+            var spawnDir = GameManager.Instance.player.spawnDir;
+            this.Model.transform.rotation = spawnDir == Vector3.zero
+                ? Quaternion.identity
+                : Quaternion.LookRotation(spawnDir, Vector3.up);
 
             var playerRenderer = Model.AddComponent<PlayerRenderer>();
             playerRenderer.SetCharacter(characterData, inventory, Vector3.zero);
@@ -338,81 +362,86 @@ namespace MegabonkTogether.Scripts.NetPlayer
         public void RefreshConstantAttack(Il2CppSystem.Collections.Generic.List<StatModifier> upgradeModifiers)
         {
             playerManagerService.AddGetNetplayerPositionRequest(connectionId);
-
-            foreach (var weaponKey in inventory.weaponInventory.weapons.Keys)
+            try
             {
-                var weapon = inventory.weaponInventory.weapons[weaponKey];
 
-                if (!DoesWeaponNeedConstantAttack(weapon.weaponData))
+                foreach (var weaponKey in inventory.weaponInventory.weapons.Keys)
                 {
-                    continue;
-                }
+                    var weapon = inventory.weaponInventory.weapons[weaponKey];
 
-                if (constantAttacks.ContainsKey(weapon.weaponData.eWeapon))
-                {
-                    foreach (var upgrade in upgradeModifiers)
+                    if (!DoesWeaponNeedConstantAttack(weapon.weaponData))
                     {
-                        constantAttacks[weapon.weaponData.eWeapon].OnStatUpdate(upgrade.stat);
+                        continue;
                     }
-                    continue;
-                }
+
+                    if (constantAttacks.ContainsKey(weapon.weaponData.eWeapon))
+                    {
+                        foreach (var upgrade in upgradeModifiers)
+                        {
+                            constantAttacks[weapon.weaponData.eWeapon].OnStatUpdate(upgrade.stat);
+                        }
+                        continue;
+                    }
 
 
-                var attack = GameObject.Instantiate(weapon.weaponData.attack);
+                    var attack = GameObject.Instantiate(weapon.weaponData.attack);
 
-                switch (weapon.weaponData.eWeapon)
-                {
-                    case EWeapon.Aura:
-                        var constantAttack = attack.GetComponent<CombatAura>();
-                        constantAttack.Set(weapon);
-                        constantAttack.transform.SetParent(this.Model.transform);
-                        constantAttacks.Add(weapon.weaponData.eWeapon, constantAttack);
-                        DynamicData.For(constantAttack).Set("ownerId", connectionId);
-                        break;
-                    case EWeapon.Aegis:
-                        var aegisAttack = attack.GetComponent<AegisAttack>();
-                        aegisAttack.Set(weapon);
-                        aegisAttack.currentAmount = 2;
-                        aegisAttack.transform.SetParent(this.Model.transform);
-                        constantAttacks.Add(weapon.weaponData.eWeapon, aegisAttack);
-                        DynamicData.For(aegisAttack).Set("ownerId", connectionId);
-                        break;
-                    case EWeapon.Chunkers:
-                        var chunkersAttack = attack.GetComponent<ChunkersAttack>();
-                        chunkersAttack.Set(weapon);
-                        chunkersAttack.currentAmount = 2;
-                        chunkersAttack.transform.SetParent(this.Model.transform);
-                        constantAttacks.Add(weapon.weaponData.eWeapon, chunkersAttack);
-                        DynamicData.For(chunkersAttack).Set("ownerId", connectionId);
-                        break;
-                    case EWeapon.DragonsBreath:
-                        var dragonBreathAttack = attack.GetComponent<ProjectileDragonsBreath>();
-                        dragonBreathAttack.Set(weapon);
-                        dragonBreathAttack.transform.SetParent(this.Model.transform);
-                        constantAttacks.Add(weapon.weaponData.eWeapon, dragonBreathAttack);
-                        DynamicData.For(dragonBreathAttack).Set("ownerId", connectionId);
-                        break;
-                    case EWeapon.Frostwalker:
-                        var frostwalkerAttack = attack.GetComponent<IceAura>();
-                        frostwalkerAttack.Set(weapon);
-                        frostwalkerAttack.transform.SetParent(this.Model.transform);
-                        constantAttacks.Add(weapon.weaponData.eWeapon, frostwalkerAttack);
-                        DynamicData.For(frostwalkerAttack).Set("ownerId", connectionId);
-                        break;
-                    case EWeapon.SpaceNoodle:
-                        var laserBeamAttack = attack.GetComponent<LaserBeamAttack>();
-                        laserBeamAttack.Set(weapon);
-                        laserBeamAttack.transform.SetParent(this.Model.transform);
-                        constantAttacks.Add(weapon.weaponData.eWeapon, laserBeamAttack);
-                        DynamicData.For(laserBeamAttack).Set("ownerId", connectionId);
-                        break;
-                    default:
-                        Plugin.Log.LogWarning($"Unhandled constant attack for weapon {weapon.weaponData.eWeapon}");
-                        break;
+                    switch (weapon.weaponData.eWeapon)
+                    {
+                        case EWeapon.Aura:
+                            var constantAttack = attack.GetComponent<CombatAura>();
+                            constantAttack.Set(weapon);
+                            constantAttack.transform.SetParent(this.Model.transform);
+                            constantAttacks.Add(weapon.weaponData.eWeapon, constantAttack);
+                            DynamicData.For(constantAttack).Set("ownerId", connectionId);
+                            break;
+                        case EWeapon.Aegis:
+                            var aegisAttack = attack.GetComponent<AegisAttack>();
+                            aegisAttack.Set(weapon);
+                            aegisAttack.currentAmount = 2;
+                            aegisAttack.transform.SetParent(this.Model.transform);
+                            constantAttacks.Add(weapon.weaponData.eWeapon, aegisAttack);
+                            DynamicData.For(aegisAttack).Set("ownerId", connectionId);
+                            break;
+                        case EWeapon.Chunkers:
+                            var chunkersAttack = attack.GetComponent<ChunkersAttack>();
+                            chunkersAttack.Set(weapon);
+                            chunkersAttack.currentAmount = 2;
+                            chunkersAttack.transform.SetParent(this.Model.transform);
+                            constantAttacks.Add(weapon.weaponData.eWeapon, chunkersAttack);
+                            DynamicData.For(chunkersAttack).Set("ownerId", connectionId);
+                            break;
+                        case EWeapon.DragonsBreath:
+                            var dragonBreathAttack = attack.GetComponent<ProjectileDragonsBreath>();
+                            dragonBreathAttack.Set(weapon);
+                            dragonBreathAttack.transform.SetParent(this.Model.transform);
+                            constantAttacks.Add(weapon.weaponData.eWeapon, dragonBreathAttack);
+                            DynamicData.For(dragonBreathAttack).Set("ownerId", connectionId);
+                            break;
+                        case EWeapon.Frostwalker:
+                            var frostwalkerAttack = attack.GetComponent<IceAura>();
+                            frostwalkerAttack.Set(weapon);
+                            frostwalkerAttack.transform.SetParent(this.Model.transform);
+                            constantAttacks.Add(weapon.weaponData.eWeapon, frostwalkerAttack);
+                            DynamicData.For(frostwalkerAttack).Set("ownerId", connectionId);
+                            break;
+                        case EWeapon.SpaceNoodle:
+                            var laserBeamAttack = attack.GetComponent<LaserBeamAttack>();
+                            laserBeamAttack.Set(weapon);
+                            laserBeamAttack.transform.SetParent(this.Model.transform);
+                            constantAttacks.Add(weapon.weaponData.eWeapon, laserBeamAttack);
+                            DynamicData.For(laserBeamAttack).Set("ownerId", connectionId);
+                            break;
+                        default:
+                            Plugin.Log.LogWarning($"Unhandled constant attack for weapon {weapon.weaponData.eWeapon}");
+                            break;
+                    }
                 }
             }
-
-            playerManagerService.UnqueueNetplayerPositionRequest();
+            finally
+            {
+                playerManagerService.UnqueueNetplayerPositionRequest();
+            }
         }
 
         private void CreateMinimapIcon()
@@ -599,32 +628,37 @@ namespace MegabonkTogether.Scripts.NetPlayer
         public void ToggleWeapon(EWeapon eWeapon, bool enabled)
         {
             playerManagerService.AddGetNetplayerPositionRequest(connectionId);
-
-            var weapon = Inventory.weaponInventory.weapons[eWeapon];
-            Inventory.weaponInventory.ToggleWeapon(eWeapon, enabled);
-
-            if (!enabled)
+            try
             {
-                var boss = MusicController.Instance.finalFightController.boss;
-                var bossTransform = boss.transform;
-                var bossCenter = boss.GetCenterPosition();
-                var bossPosition = boss.transform.position;
-                var direction = bossCenter - bossPosition;
 
-                var steal = GameObject.Instantiate(EffectManager.Instance.stealItemWui, Model.transform);
-                var component = steal.GetComponent<StealWeaponWui>();
-                component.Set(weapon.weaponData, bossTransform, direction, 3.0f, 1.0f, 1.5f);
-                StealWeaponWui = component;
+                var weapon = Inventory.weaponInventory.weapons[eWeapon];
+                Inventory.weaponInventory.ToggleWeapon(eWeapon, enabled);
+
+                if (!enabled)
+                {
+                    var boss = MusicController.Instance.finalFightController.boss;
+                    var bossTransform = boss.transform;
+                    var bossCenter = boss.GetCenterPosition();
+                    var bossPosition = boss.transform.position;
+                    var direction = bossCenter - bossPosition;
+
+                    var steal = GameObject.Instantiate(EffectManager.Instance.stealItemWui, Model.transform);
+                    var component = steal.GetComponent<StealWeaponWui>();
+                    component.Set(weapon.weaponData, bossTransform, direction, 3.0f, 1.0f, 1.5f);
+                    StealWeaponWui = component;
+                }
+                else
+                {
+                    var give = GameObject.Instantiate(EffectManager.Instance.giveItemWui, Model.transform);
+                    var component = give.GetComponent<ReturnWeaponWui>();
+                    component.Set(weapon.weaponData);
+                    ReturnWeaponWui = component;
+                }
             }
-            else
+            finally
             {
-                var give = GameObject.Instantiate(EffectManager.Instance.giveItemWui, Model.transform);
-                var component = give.GetComponent<ReturnWeaponWui>();
-                component.Set(weapon.weaponData);
-                ReturnWeaponWui = component;
+                playerManagerService.UnqueueNetplayerPositionRequest();
             }
-
-            playerManagerService.UnqueueNetplayerPositionRequest();
         }
 
         public void SetHat(HatData hatData)

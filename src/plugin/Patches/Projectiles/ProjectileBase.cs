@@ -59,8 +59,10 @@ namespace MegabonkTogether.Patches.Projectiles
         /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileBase.HitEnemy))]
-        public static bool HitEnemy_Prefix(ProjectileBase __instance)
+        public static bool HitEnemy_Prefix(ProjectileBase __instance, out bool __state)
         {
+            __state = false;
+
             if (!synchronizationService.HasNetplaySessionStarted())
             {
                 return true;
@@ -74,6 +76,7 @@ namespace MegabonkTogether.Patches.Projectiles
                 if (owner != null)
                 {
                     trackerService.SetCurrentPlayerId(owner.ConnectionId);
+                    __state = true;
                 }
             }
 
@@ -82,13 +85,22 @@ namespace MegabonkTogether.Patches.Projectiles
 
 
         /// <summary>
-        /// Remove the tracking
+        /// Remove the tracking.
+        ///
+        /// <para>This pair was unbalanced in <b>both</b> directions. The old postfix unset whenever
+        /// a session was up, including on clients where the prefix returned false without ever
+        /// setting — that is the <c>unset-while-clear</c> count
+        /// <see cref="Services.TrackerAttributionDiagnostics"/> reports every run and describes as
+        /// "expected on clients (ProjectileBase.HitEnemy pairing) and harmless". It is now simply
+        /// absent rather than explained away. In the other direction, a throw inside the game's
+        /// <c>HitEnemy</c> skipped the postfix entirely and stranded a set player id, which is the
+        /// half that actually misattributes kill credit ([P1-5](../../docs/netplay/01-critical-fixes.md)).</para>
         /// </summary>
-        [HarmonyPostfix]
+        [HarmonyFinalizer]
         [HarmonyPatch(nameof(ProjectileBase.HitEnemy))]
-        public static void HitEnemy_Postfix(ProjectileBase __instance)
+        public static void HitEnemy_Finalizer(bool __state)
         {
-            if (!synchronizationService.HasNetplaySessionStarted())
+            if (!__state)
             {
                 return;
             }

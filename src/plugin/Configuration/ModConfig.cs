@@ -18,6 +18,7 @@ namespace MegabonkTogether.Configuration
         public static ConfigEntry<bool> EnabledSharedExperience { get; private set; }
         public static ConfigEntry<float> EncounterInputGraceSeconds { get; private set; }
         public static ConfigEntry<bool> LogAllocationRate { get; private set; }
+        public static ConfigEntry<bool> LogBandwidth { get; private set; }
 
         public static void Initialize(ConfigFile config)
         {
@@ -66,6 +67,14 @@ namespace MegabonkTogether.Configuration
                 "Log the mod's own managed allocation rate every 10 seconds during a session. Off " +
                 "by default. Turn it on when investigating stutter: the Unity Profiler cannot " +
                 "attach to a retail IL2CPP build, so this is how GC pressure gets measured here."
+            );
+            LogBandwidth = config.Bind(
+                "Diagnostics",
+                "LogBandwidth",
+                false,
+                "Log outgoing bandwidth per message type every 10 seconds, plus round-trip time " +
+                "per peer. Off by default. Turn it on to record a baseline before the Steamworks " +
+                "migration, or to find which stream is responsible for a bandwidth problem."
             );
             EncounterInputGraceSeconds = config.Bind(
                 "Gameplay",

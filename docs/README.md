@@ -13,7 +13,7 @@ like next.
 
 | Doc | What it covers |
 |---|---|
-| [`netplay/00-fork-comparison.md`](netplay/00-fork-comparison.md) | The three forks side by side — what each one is, what it contributes, what to ignore |
+| [`netplay/00-fork-comparison.md`](netplay/00-fork-comparison.md) | **Every other Megabonk multiplayer implementation** — the two related forks and the two independent mods, side by side: what each contributes, what to reject, and the replication-vs-determinism trade. Merges the former `08-delirium-comparison.md` |
 | [`netplay/01-critical-fixes.md`](netplay/01-critical-fixes.md) | **Start here.** Ranked, implementable fix list with root cause, patch, and test for each |
 | [`netplay/02-delivery-method-reference.md`](netplay/02-delivery-method-reference.md) | Reliability policy, the full current message→channel map, and how to classify a new message |
 | [`netplay/03-cherry-pick-guide.md`](netplay/03-cherry-pick-guide.md) | Hunk-level guide to `Sea-Bass-cmd/optimized-netplay` — take / adapt / reject |
@@ -21,7 +21,7 @@ like next.
 | [`netplay/05-local-testing.md`](netplay/05-local-testing.md) | Two netplay clients on one PC and one Steam account — and what that setup cannot prove |
 | [`netplay/07-shared-experience-audit.md`](netplay/07-shared-experience-audit.md) | The shared-experience pause/reward barrier: protocol, its holes, and the upstream softlock issues |
 | [`netplay/09-performance-audit.md`](netplay/09-performance-audit.md) | Second pass on per-frame cost: the three globally patched Unity properties, the per-enemy interpolator Update, and what a profiler capture would settle |
-| [`netplay/08-delirium-comparison.md`](netplay/08-delirium-comparison.md) | `DeliriumPulse/MegaBonk.Multiplayer` — an independent mod for the same game: what its determinism-first design gets right, and the four techniques worth taking |
+| [`netplay/12-session-handover.md`](netplay/12-session-handover.md) | **Current branch state.** What is verified in-game, what is built but unplayed, the client spawn-ordering defect, and the lessons that cost time. Supersedes `10` and `11` |
 
 ### Transport
 
@@ -58,9 +58,12 @@ Used throughout these documents:
 
 ## Ground rules for this fork
 
-1. **Nothing in these docs has been compiled or run.** They were produced by source analysis
-   in an environment with no .NET SDK and no game install. Every code block is a proposal,
-   not a tested patch. Build and playtest before trusting any of it.
+1. **Most of these docs were written before anything was compiled or run**, by source analysis in
+   an environment with no .NET SDK and no game install. Treat every code block as a proposal
+   unless the surrounding text says it was played. **The exception is
+   [`netplay/12-session-handover.md`](netplay/12-session-handover.md)**, which separates what is
+   verified in-game from what merely builds — and that distinction is the point of the file.
+   Where an older doc and `12` disagree, `12` was measured.
 2. **Reliability is a correctness property, not a performance knob.** See
    [`02-delivery-method-reference.md`](netplay/02-delivery-method-reference.md) before
    changing any `DeliveryMethod`.

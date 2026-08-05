@@ -10,13 +10,19 @@ namespace MegabonkTogether.Patches.ConstantAttacks
     {
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
 
+        // Was resolved per call in both patches, on ProjectileDragonsBreath.Update — a DI lookup
+        // every frame per beam. Cached to match every other patch class, and needed by the finalizer.
+        private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
+
         /// <summary>
         /// Queue net player position used for the attack spawn position
         /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileDragonsBreath.Update))]
-        public static void Prefix_Update(ProjectileDragonsBreath __instance)
+        public static void Prefix_Update(ProjectileDragonsBreath __instance, out bool __state)
         {
+            __state = false;
+
             if (!synchronizationService.HasNetplaySessionStarted())
             {
                 return;
@@ -26,39 +32,32 @@ namespace MegabonkTogether.Patches.ConstantAttacks
             {
                 return;
             }
-            var playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
             var ownerPlayer = playerManagerService.GetPlayer(ownerId.Value);
             var localPlayer = playerManagerService.GetLocalPlayer();
 
             if (ownerPlayer.ConnectionId != localPlayer.ConnectionId)
             {
                 playerManagerService.AddGetNetplayerPositionRequest(ownerPlayer.ConnectionId);
+                __state = true;
             }
         }
 
         /// <summary>
-        /// Unqueue net player position request after use
+        /// Unqueue net player position request after use. See the other converted pairs: the pop
+        /// carries no condition of its own, because every condition the old postfix re-derived —
+        /// the session flag, the ownerId, and the owner/local comparison — can change between
+        /// prefix and postfix and strand the request (P1-11).
         /// </summary>
-        [HarmonyPostfix]
+        [HarmonyFinalizer]
         [HarmonyPatch(nameof(ProjectileDragonsBreath.Update))]
-        public static void Postfix_Update(ProjectileDragonsBreath __instance)
+        public static void Finalizer_Update(bool __state)
         {
-            if (!synchronizationService.HasNetplaySessionStarted())
+            if (!__state)
             {
                 return;
             }
-            var ownerId = DynamicData.For(__instance).Get<uint?>("ownerId");
-            if (!ownerId.HasValue)
-            {
-                return;
-            }
-            var playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
-            var ownerPlayer = playerManagerService.GetPlayer(ownerId.Value);
-            var localPlayer = playerManagerService.GetLocalPlayer();
-            if (ownerPlayer.ConnectionId != localPlayer.ConnectionId)
-            {
-                playerManagerService.UnqueueNetplayerPositionRequest();
-            }
+
+            playerManagerService.UnqueueNetplayerPositionRequest();
         }
     }
 }

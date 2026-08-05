@@ -48,9 +48,79 @@ namespace MegabonkTogether.Helpers
         private static bool wasHeldOnOpen;
         private static bool holdCheckAvailable = true;
         private static bool loggedBinding;
+        private static volatile bool runtimeReady;
+
+        /// <summary>
+        /// Set once <c>Harmony.PatchAll()</c> has returned. Until then every member here must stay
+        /// out of the IL2CPP runtime.
+        ///
+        /// <para><b>Why this exists.</b> These patches can be entered <i>while Harmony is still
+        /// installing them</i>: resolving a method patcher runs a game class constructor, that
+        /// class init goes through <c>il2cpp_runtime_invoke</c>, and BepInEx's chainloader hook on
+        /// that function re-entered the <c>ChooseOffer</c> detour it had just installed. The prefix
+        /// then read <c>Time.unscaledTime</c> — itself a runtime invoke — and the same hook
+        /// re-entered the detour again, which is an unbounded loop. It overflowed the stack inside
+        /// <c>Plugin.Load()</c>, so the game did not reach the main menu at all.
+        ///
+        /// <para>Every other patch in this repo is immune by accident: they open with
+        /// <c>HasNetplaySessionStarted()</c>, which is an enum comparison on a managed field and
+        /// never crosses the interop boundary. This class is the only one that deliberately has no
+        /// such gate, which is why it is the only one that could reach the runtime from the
+        /// patching context. A managed bool read is the same shape of protection.</para>
+        /// </summary>
+        internal static void MarkRuntimeReady() => runtimeReady = true;
+
+        /// <summary>
+        /// Guards against this class being re-entered through its own IL2CPP calls.
+        ///
+        /// <para>The overflow that <see cref="MarkRuntimeReady"/> describes was unbounded because
+        /// nothing stopped the second entry. That latch keeps the recursion from starting during
+        /// patching, which is the only place it has been seen — but BepInEx's invoke hook is
+        /// installed for the whole process, so "it cannot happen after patching" is reasoning, not
+        /// evidence. This makes the difference between that reasoning being wrong and the game
+        /// dying: re-entry returns "not blocking", which drops the guard for one press rather than
+        /// recursing. Erring toward not blocking is the same direction the rest of this class errs
+        /// in — the worst case is the misfire the guard exists to prevent, never a stranded
+        /// player.</para>
+        ///
+        /// <para>Thread-static because a latch stuck on by a call from an unexpected thread would
+        /// disable the guard for the rest of the process.</para>
+        /// </summary>
+        [System.ThreadStatic]
+        private static bool reentered;
 
         /// <summary>Called when a reward window opens.</summary>
         internal static void Arm()
+        {
+            if (!runtimeReady || reentered)
+            {
+                return;
+            }
+
+            // Re-arming while a window is still live is what made the controller unusable: the
+            // arming hooks fire more than once per window, every call reset armedAt, so elapsed
+            // never reached the grace and the guard never expired — it swallowed every confirm for
+            // as long as the window was open, not for 0.35s. Arming is now idempotent per window:
+            // the first call starts the timer and later ones are ignored until the whole window,
+            // including the hold cap, has run out. Anything longer than HoldCapSeconds is a new
+            // window by definition, because that is the longest this guard can ever block for.
+            if (Time.unscaledTime - armedAt < HoldCapSeconds)
+            {
+                return;
+            }
+
+            reentered = true;
+            try
+            {
+                ArmCore();
+            }
+            finally
+            {
+                reentered = false;
+            }
+        }
+
+        private static void ArmCore()
         {
             armedAt = Time.unscaledTime;
             wasHeldOnOpen = IsSubmitHeld();
@@ -71,6 +141,25 @@ namespace MegabonkTogether.Helpers
 
         /// <summary>True while a choice should be ignored as an accidental carry-over press.</summary>
         internal static bool IsBlocking()
+        {
+            // First, and before anything that could touch IL2CPP. See MarkRuntimeReady.
+            if (!runtimeReady || reentered)
+            {
+                return false;
+            }
+
+            reentered = true;
+            try
+            {
+                return IsBlockingCore();
+            }
+            finally
+            {
+                reentered = false;
+            }
+        }
+
+        private static bool IsBlockingCore()
         {
             var grace = ModConfig.EncounterInputGraceSeconds?.Value ?? 0f;
             if (grace <= 0f)

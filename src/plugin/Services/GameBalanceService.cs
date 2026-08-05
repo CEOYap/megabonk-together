@@ -34,10 +34,18 @@ namespace MegabonkTogether.Services
         private int PlayersCount => playerManagerService.GetAlivePlayerCount();
         private const float baseBossLampInitialChargeTimeSeconds = 3.0f;
 
-        // Keyed on the native pointer. StageData is a ScriptableObject, so `==` would work here —
-        // but Unity's overload is a native call per comparison, while Pointer is a managed field
-        // read, and it does not depend on Il2CppInterop handing back the same wrapper each time.
-        private static IntPtr cachedStagePointer = IntPtr.Zero;
+        // Keyed on the instance id. StageData is a ScriptableObject, so `==` would work here — but
+        // Unity's overload is a native call per comparison *and* it does not depend on
+        // Il2CppInterop handing back the same wrapper each time, which the id does not either.
+        //
+        // This was written as a `Pointer` read, which does not compile: the csproj references
+        // UnityEngine.CoreModule from `unity-libs`, where UnityEngine.Object extends System.Object.
+        // Only the `interop` copy extends Il2CppSystem.Object -> Il2CppObjectBase, which is where
+        // `Pointer` is declared. So no Unity-derived type has `Pointer` at compile time in this
+        // project, however it may look at runtime — every other `.Pointer` in the repo is on a
+        // variable already typed as Il2CppObjectBase. GetInstanceID() is one native call, against
+        // the IndexOf-over-the-stage-list it replaces; the memoisation is still the win.
+        private static int cachedStageInstanceId;
         private static int cachedStageIndex;
 
         /// <summary>
@@ -51,9 +59,12 @@ namespace MegabonkTogether.Services
         /// stage-change events, which needs a subscription and would silently serve a wrong
         /// difficulty if one were ever missed — this cannot.</para>
         ///
-        /// <para>The one theoretical hole is a freed stage object whose pointer is reused by a
-        /// different one. Stages are asset references that live for the run, so that does not
-        /// happen here; it is worth knowing before copying this pattern onto runtime objects.</para>
+        /// <para>The one theoretical hole is a destroyed stage object: <c>GetInstanceID()</c> on a
+        /// destroyed <c>UnityEngine.Object</c> is not the safe read a pointer field would have
+        /// been. Stages are asset references that live for the run, so that does not happen here;
+        /// it is worth knowing before copying this pattern onto runtime objects. <b>UNVERIFIED:</b>
+        /// that stage assets outlive every caller has not been observed in-game, only reasoned
+        /// from their being map assets.</para>
         ///
         /// <para><b>UNVERIFIED alternative:</b> the game has its own
         /// <c>MapController.GetStageIndex()</c> (static, returns Int32 — confirmed present in the
@@ -67,14 +78,14 @@ namespace MegabonkTogether.Services
             get
             {
                 var currentStage = MapController.currentStage;
-                var stagePointer = currentStage?.Pointer ?? IntPtr.Zero;
+                var stageInstanceId = currentStage?.GetInstanceID() ?? 0;
 
-                if (stagePointer == cachedStagePointer)
+                if (stageInstanceId == cachedStageInstanceId)
                 {
                     return cachedStageIndex;
                 }
 
-                cachedStagePointer = stagePointer;
+                cachedStageInstanceId = stageInstanceId;
                 cachedStageIndex = MapController.runConfig?.mapData.stages.IndexOf(currentStage) ?? 0;
 
                 return cachedStageIndex;

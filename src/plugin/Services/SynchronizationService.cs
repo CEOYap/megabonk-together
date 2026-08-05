@@ -156,6 +156,9 @@ namespace MegabonkTogether.Services
         private Coroutine pendingEnemySpawnRoutine;
         private const int MAX_ENEMY_SPAWNS_PER_FRAME = 32;
         private readonly ConcurrentDictionary<uint, ICollection<uint>> shrineChargingPlayers = new();
+
+        /// <summary>Guards <see cref="OnBossDefeated"/> against its two call sites both firing.</summary>
+        private bool hasHandledBossDefeatedThisStage = false;
         private readonly ConcurrentDictionary<uint, ICollection<uint>> pylonChargingPlayers = new();
         private readonly ConcurrentDictionary<uint, ICollection<uint>> lampsChargingPlayers = [];
         private readonly List<GameObject> specificDesertGraves = [];
@@ -293,6 +296,10 @@ namespace MegabonkTogether.Services
             shrineChargingPlayers.Clear();
             pylonChargingPlayers.Clear();
 
+            // Same reason as the barrier state below: a session that ended after a boss died would
+            // otherwise leave this latched, and the next session's first portal would never open.
+            hasHandledBossDefeatedThisStage = false;
+
             // The barrier used to survive teardown: closedEncounterPerPlayer and forceClose were
             // cleared only by a successful release, so a session that ended mid-encounter poisoned
             // the next one — the next round would either release instantly without anyone
@@ -395,7 +402,39 @@ namespace MegabonkTogether.Services
                 return false;
             }
 
-            var spawned = HandleSpawn(prefab);
+            // Awake runs synchronously inside Instantiate, and Instantiate clones the source's
+            // active state — so with an active prefab every component's Awake fired while the
+            // clone still sat at the prefab's authored position, before the three lines below
+            // moved it. Anything caching a transform in Awake therefore cached prefab
+            // coordinates, identically for every clone.
+            //
+            // That is what the charge shrine's rune stone did: on a client the game wrote every
+            // shrine's stone to the same constant world position (281.15, 16.60, -67.16) —
+            // unchanged across shrines, maps and runs — while on the host, whose shrines are
+            // built in place by the tile generator, it wrote each shrine's own correct position.
+            // The stack on those writes carried no mod frames, so the game was the writer and the
+            // wrong input was ours. The shrine prefab's authored position is
+            // (281.15, 12.36, -67.16), and the stone's local offset is (0, 4.23, 0) — the constant
+            // to the decimal, which is what confirmed this rather than merely fitting it.
+            //
+            // The shrine was the visible symptom; the defect is in this spawn path, so any prefab
+            // with a component that caches a transform in Awake was affected the same way.
+            //
+            // Creating the clone inactive and activating it after the transform is set means every
+            // Awake sees the final position. The prefab's active state is restored in a finally:
+            // it is shared mutable state around a call that can throw, which is P0-6's lesson.
+            var prefabWasActive = prefab.activeSelf;
+            GameObject spawned;
+
+            try
+            {
+                prefab.SetActive(false);
+                spawned = HandleSpawn(prefab);
+            }
+            finally
+            {
+                prefab.SetActive(prefabWasActive);
+            }
 
             if (spawned == null)
             {
@@ -406,6 +445,18 @@ namespace MegabonkTogether.Services
             spawned.transform.position = toSpawn.Position.ToUnityVector3();
             spawned.transform.rotation = toSpawn.Rotation.ToUnityQuaternion();
             spawned.transform.localScale = toSpawn.Scale.ToUnityVector3();
+
+            // Activated here, before the component lookups below: GetComponentInChildren without
+            // the includeInactive flag does not see components on an inactive hierarchy, so the
+            // shady-guy and microwave rarity assignments would silently stop working otherwise.
+            // Awake still runs after the transform is final, which is the whole point.
+            //
+            // The desert-grave chain is exempt because HandleSpawn deliberately leaves those
+            // inactive to be revealed later by the grave sequence.
+            if (prefabWasActive && !IsDeferredRevealSpawn(toSpawn.PrefabName))
+            {
+                spawned.SetActive(true);
+            }
 
             spawnedObjectManagerService.SetSpawnedObject(toSpawn.Id, spawned);
 
@@ -462,9 +513,21 @@ namespace MegabonkTogether.Services
             return false;
         }
 
+        /// <summary>
+        /// The desert-grave chain: <see cref="HandleSpawn"/> deliberately deactivates these so the
+        /// grave sequence can reveal them later, so <see cref="SpawnObject"/> must not activate
+        /// them. Shared with that method rather than duplicating the name test, so the two cannot
+        /// drift apart.
+        /// </summary>
+        private static bool IsDeferredRevealSpawn(string prefabName)
+        {
+            return prefabName != null
+                && (prefabName.Contains("DesertGrave") || prefabName.Contains("SkeletonKingStatue"));
+        }
+
         private GameObject HandleSpawn(GameObject toSpawn)
         {
-            if (!toSpawn.name.Contains("DesertGrave") && !toSpawn.name.Contains("SkeletonKingStatue"))
+            if (!IsDeferredRevealSpawn(toSpawn.name))
             {
                 return GameObject.Instantiate(toSpawn);
             }
@@ -717,6 +780,9 @@ namespace MegabonkTogether.Services
             // A stage change ends any round in flight — the encounter windows are torn down with
             // the stage, so a report that arrives after this point belongs to nothing.
             encounterService.ClearClosedEncounters();
+
+            // Each stage has its own boss and portal, so the once-per-stage guard reopens here.
+            hasHandledBossDefeatedThisStage = false;
 
             spawnedObjectManagerService.ResetForNextLevel();
             enemyManagerService.ResetForNextLevel();
@@ -1207,10 +1273,28 @@ namespace MegabonkTogether.Services
         {
             try
             {
-                PlayerInventory owner =
-                    playerManagerService.IsLocalConnectionId(projectile.OwnerId) ?
-                        GameManager.Instance.player.inventory :
-                        playerManagerService.GetNetPlayerByNetplayId(projectile.OwnerId).Inventory;
+                PlayerInventory owner;
+
+                if (playerManagerService.IsLocalConnectionId(projectile.OwnerId))
+                {
+                    owner = GameManager.Instance.player.inventory;
+                }
+                else
+                {
+                    // GetNetPlayerByNetplayId returns null once the owner has left, and this line
+                    // used to dereference it straight into .Inventory. Projectiles from a departing
+                    // peer keep arriving for a moment after their NetPlayer is destroyed — Run A
+                    // produced about ten of these per disconnect, every one an NRE caught by the
+                    // catch below and logged with a full stack. Dropping the projectile is the
+                    // correct outcome anyway: there is no owner left to attribute or model it to.
+                    var netPlayer = playerManagerService.GetNetPlayerByNetplayId(projectile.OwnerId);
+                    if (netPlayer == null)
+                    {
+                        return;
+                    }
+
+                    owner = netPlayer.Inventory;
+                }
 
                 var weapons = owner.weaponInventory.weapons;
                 var eweapon = (EWeapon)projectile.Weapon;
@@ -1594,15 +1678,29 @@ namespace MegabonkTogether.Services
                 damageSource = damaged.DamageSource
             };
 
+            // Three globals are opened around one game call that can throw, and all three were
+            // restored only on the success path. The worst is CAN_DAMAGE_ENEMIES: Enemy.Damage_Prefix
+            // blocks all client-side enemy damage unless it is set, so one throw in enemy.Damage
+            // leaves it latched true and the client resolves enemy damage locally for the rest of
+            // the run — a permanent, silent divergence from a single exception.
+            //
+            // Same shape as P1-10 (28 CAN_SEND_MESSAGES latches, now Plugin.SuppressOutbound) and
+            // P0-6 (one throw latched two statics through 581 enemy spawns). The other two leak
+            // into P1-11's stranded position requests and P1-5's kill-attribution counters.
             Plugin.Instance.CAN_DAMAGE_ENEMIES = true;
             playerManagerService.AddGetNetplayerPositionRequest(damaged.AttackerId);
             trackerService.SetCurrentPlayerId(damaged.AttackerId);
 
-            enemy.Damage(damageContainer);
-
-            trackerService.UnsetCurrentPlayerId();
-            playerManagerService.UnqueueNetplayerPositionRequest();
-            Plugin.Instance.CAN_DAMAGE_ENEMIES = false;
+            try
+            {
+                enemy.Damage(damageContainer);
+            }
+            finally
+            {
+                trackerService.UnsetCurrentPlayerId();
+                playerManagerService.UnqueueNetplayerPositionRequest();
+                Plugin.Instance.CAN_DAMAGE_ENEMIES = false;
+            }
         }
 
 
@@ -1697,8 +1795,33 @@ namespace MegabonkTogether.Services
         /// <summary>
         /// Manually invoke boss defeated event client side
         /// </summary>
+        /// <summary>
+        /// Manually invoke boss defeated event client side. Idempotent per stage.
+        ///
+        /// <para>A client that kills the stage boss itself reaches this twice: once from its own
+        /// <c>OnEnemyDied</c> before it forwards to the host, and again when the host's
+        /// <c>EnemyDied</c> broadcast comes back. Both call sites are deliberate — the local one
+        /// keeps the portal responsive without a round trip — so the guard belongs here rather
+        /// than at either of them.</para>
+        ///
+        /// <para>The duplicate was already known, but as a symptom rather than a cause: the
+        /// <c>arrowDict.Clear()</c> below carries the comment "Prevent sometimes double add for
+        /// portal arrow". That cleared the duplicated minimap arrow and left the rest of the
+        /// handler running twice, including <c>A_BossDefeated.Invoke</c>, which is a game event.
+        /// The <c>Clear()</c> stays — it is harmless and something else may rely on it — but it is
+        /// no longer what stops the double-add.</para>
+        ///
+        /// <para>Reset in <see cref="PrepareForNextLevel"/> and <see cref="Reset"/>, since each
+        /// stage has its own boss and portal and per-run state must not cross a session (SE-2).</para>
+        /// </summary>
         private void OnBossDefeated()
         {
+            if (hasHandledBossDefeatedThisStage)
+            {
+                return;
+            }
+            hasHandledBossDefeatedThisStage = true;
+
             logger.LogInfo("Boss defeated, activating portal.");
             var cam = GameManager.Instance.player.minimapCamera.GetComponent<MinimapCamera>();
             cam.arrowDict.Clear(); //Prevent sometimes double add for portal arrow
@@ -1774,9 +1897,19 @@ namespace MegabonkTogether.Services
 
         private void OnReceivedSpawnedPickup(SpawnedPickup pickup)
         {
+            // FIX: the flag opens a host-only game path so this peer can apply someone else's
+            // state without re-broadcasting it. Restored in a finally because a throw in the game
+            // call would otherwise latch it for the rest of the run. Same defect as P1-10 and P0-6.
             Plugin.CAN_SPAWN_PICKUPS = true;
-            var spawnedPickup = PickupManager.Instance.SpawnPickup((EPickup)pickup.Pickup, pickup.Position.ToUnityVector3(), pickup.Value, false);
-            Plugin.CAN_SPAWN_PICKUPS = false;
+            Pickup spawnedPickup;
+            try
+            {
+                spawnedPickup = PickupManager.Instance.SpawnPickup((EPickup)pickup.Pickup, pickup.Position.ToUnityVector3(), pickup.Value, false);
+            }
+            finally
+            {
+                Plugin.CAN_SPAWN_PICKUPS = false;
+            }
 
             //if (spawnedPickup.ePickup == EPickup.Xp && !IsSharedExperienceEnabled())
             //{
@@ -1804,9 +1937,18 @@ namespace MegabonkTogether.Services
 
         private void OnReceivedSpawnedOrbPickup(SpawnedPickupOrb pickup)
         {
+            // FIX: the flag opens a host-only game path so this peer can apply someone else's
+            // state without re-broadcasting it. Restored in a finally because a throw in the game
+            // call would otherwise latch it for the rest of the run. Same defect as P1-10 and P0-6.
             Plugin.CAN_SPAWN_PICKUPS = true;
-            EffectManager.Instance.SpawnPickupOrb((EPickup)pickup.Pickup, pickup.Position.ToUnityVector3());
-            Plugin.CAN_SPAWN_PICKUPS = false;
+            try
+            {
+                EffectManager.Instance.SpawnPickupOrb((EPickup)pickup.Pickup, pickup.Position.ToUnityVector3());
+            }
+            finally
+            {
+                Plugin.CAN_SPAWN_PICKUPS = false;
+            }
         }
 
         public void OnPickupApplied(Pickup instance)
@@ -2056,9 +2198,18 @@ namespace MegabonkTogether.Services
         private void OnReceivedSpawnedChest(SpawnedChest chest)
         {
             chestManagerService.PushNextChestId(chest.ChestId);
+            // FIX: the flag opens a host-only game path so this peer can apply someone else's
+            // state without re-broadcasting it. Restored in a finally because a throw in the game
+            // call would otherwise latch it for the rest of the run. Same defect as P1-10 and P0-6.
             Plugin.CAN_SPAWN_CHESTS = true;
-            EffectManager.Instance.SpawnChest(EffectManager.Instance.openChestNormal, chest.Position.ToUnityVector3());
-            Plugin.CAN_SPAWN_CHESTS = false;
+            try
+            {
+                EffectManager.Instance.SpawnChest(EffectManager.Instance.openChestNormal, chest.Position.ToUnityVector3());
+            }
+            finally
+            {
+                Plugin.CAN_SPAWN_CHESTS = false;
+            }
         }
 
         public void OnChestOpened(OpenChest instance)
@@ -2715,9 +2866,17 @@ namespace MegabonkTogether.Services
                         var interactablePot = interactableObj.GetComponent<InteractablePot>();
                         if (interactablePot != null)
                         {
+                            // Restored in a finally: a throw in Interact would otherwise strand the
+                            // request and redirect this peer's position reads (P1-11).
                             playerManagerService.AddGetNetplayerPositionRequest(used.OwnerId);
-                            interactablePot.Interact();
-                            playerManagerService.UnqueueNetplayerPositionRequest();
+                            try
+                            {
+                                interactablePot.Interact();
+                            }
+                            finally
+                            {
+                                playerManagerService.UnqueueNetplayerPositionRequest();
+                            }
                             break;
                         }
 
@@ -2841,11 +3000,25 @@ namespace MegabonkTogether.Services
         /// property differently.</param>
         /// <param name="label">Noun for the log lines: "shrine", "pylon", "lamp".</param>
         /// <returns>True when the caller should let the vanilla charge start run locally.</returns>
+        /// <param name="replayOnEveryPeer">
+        /// Broadcast the start even when this object is already being charged, so every peer runs
+        /// its own <c>OnTriggerEnter</c>. Presentation state (the charging flag, the mesh renderer,
+        /// the audio) is per-peer and the game only ever sets it from that trigger — a peer that
+        /// never receives the message keeps whatever visual state it had.
+        ///
+        /// <para><b>Only safe where the game's trigger is idempotent.</b> Decompiled
+        /// <c>ChargeShrine$$OnTriggerEnter</c> opens with
+        /// <c>if (rewardGiven || charging) return;</c>, so a redundant replay there is a no-op.
+        /// The pylon and lamp paths pass <c>false</c> because their triggers have not been
+        /// decompiled — <b>UNVERIFIED</b>, and re-triggering a non-idempotent one would be worse
+        /// than the visual bug this fixes.</para>
+        /// </param>
         private bool HandleChargingStart(
             uint netplayId,
             ConcurrentDictionary<uint, ICollection<uint>> chargingPlayers,
             IGameNetworkMessage message,
-            string label)
+            string label,
+            bool replayOnEveryPeer = false)
         {
             var isHost = IsServerMode() ?? false;
 
@@ -2855,14 +3028,29 @@ namespace MegabonkTogether.Services
                 return false;
             }
 
+            var localId = playerManagerService.GetLocalPlayer().ConnectionId;
+
             if (chargingPlayers.TryGetValue(netplayId, out var chargers)
                 && chargers != null && chargers.Count > 0)
             {
                 logger.LogInfo($"Another player is already charging this {label}. Preventing re trigger.");
+
+                // The set used to be discarded here, so a second charger was never recorded and
+                // their later stop hit the "No one is charging this X; ignoring stop" branch.
+                if (!chargers.Contains(localId))
+                {
+                    chargers.Add(localId);
+                }
+
+                if (replayOnEveryPeer)
+                {
+                    udpClientService.SendToAllClients(message, LiteNetLib.DeliveryMethod.ReliableOrdered);
+                }
+
                 return false;
             }
 
-            chargingPlayers[netplayId] = [playerManagerService.GetLocalPlayer().ConnectionId];
+            chargingPlayers[netplayId] = [localId];
 
             udpClientService.SendToAllClients(message, LiteNetLib.DeliveryMethod.ReliableOrdered);
 
@@ -2922,7 +3110,7 @@ namespace MegabonkTogether.Services
                 PlayerChargingId = playerManagerService.GetLocalPlayer().ConnectionId
             };
 
-            return HandleChargingStart(shrineNetplayId, shrineChargingPlayers, message, "shrine");
+            return HandleChargingStart(shrineNetplayId, shrineChargingPlayers, message, "shrine", replayOnEveryPeer: true);
         }
 
         private void OnReceivedStartingToChargingShrine(StartingChargingShrine shrine)
@@ -2934,6 +3122,19 @@ namespace MegabonkTogether.Services
                 if (shrineChargingPlayers.TryGetValue(shrine.ShrineNetplayId, out var chargers)
                     && chargers != null && chargers.Count > 0)
                 {
+                    // Used to return outright. The host is right not to re-run its own trigger,
+                    // but the early return also skipped the SendToAllClients below — so a peer
+                    // that joined a shrine someone else had already started never received the
+                    // message, never ran OnTriggerEnter, and never set its own charging flag or
+                    // re-enabled its mesh renderer. The reporting peer was also never recorded,
+                    // which is what produced the unbalanced "No one is charging this shrine;
+                    // ignoring stop" lines in the host log.
+                    if (!chargers.Contains(shrine.PlayerChargingId))
+                    {
+                        chargers.Add(shrine.PlayerChargingId);
+                    }
+
+                    udpClientService.SendToAllClients(shrine, LiteNetLib.DeliveryMethod.ReliableOrdered);
                     return;
                 }
 
@@ -3101,9 +3302,18 @@ namespace MegabonkTogether.Services
                 return;
             }
 
+            // FIX: the flag opens a host-only game path so this peer can apply someone else's
+            // state without re-broadcasting it. Restored in a finally because a throw in the game
+            // call would otherwise latch it for the rest of the run. Same defect as P1-10 and P0-6.
             Plugin.CAN_ENEMY_EXPLODE = true;
-            EffectManager.Instance.ExploderEnemy(enemy);
-            Plugin.CAN_ENEMY_EXPLODE = false;
+            try
+            {
+                EffectManager.Instance.ExploderEnemy(enemy);
+            }
+            finally
+            {
+                Plugin.CAN_ENEMY_EXPLODE = false;
+            }
             enemyManagerService.RemoveEnemyById(exploder.EnemyId);
         }
 
@@ -3178,9 +3388,18 @@ namespace MegabonkTogether.Services
 
             DynamicData.For(enemy).Set("targetId", attack.TargetId); //Target might have changed
 
+            // FIX: the flag opens a host-only game path so this peer can apply someone else's
+            // state without re-broadcasting it. Restored in a finally because a throw in the game
+            // call would otherwise latch it for the rest of the run. Same defect as P1-10 and P0-6.
             Plugin.CAN_ENEMY_USE_SPECIAL_ATTACK = true;
-            enemy.specialAttackController.UseSpecialAttack(specialAttack);
-            Plugin.CAN_ENEMY_USE_SPECIAL_ATTACK = false;
+            try
+            {
+                enemy.specialAttackController.UseSpecialAttack(specialAttack);
+            }
+            finally
+            {
+                Plugin.CAN_ENEMY_USE_SPECIAL_ATTACK = false;
+            }
         }
 
         public bool IsLoadingNextLevel()
@@ -4069,9 +4288,18 @@ namespace MegabonkTogether.Services
 
         private void OnReceivedTornadoesSpawned(TornadoesSpawned spawned)
         {
+            // FIX: the flag opens a host-only game path so this peer can apply someone else's
+            // state without re-broadcasting it. Restored in a finally because a throw in the game
+            // call would otherwise latch it for the rest of the run. Same defect as P1-10 and P0-6.
             Plugin.Instance.CAN_SPAWN_TORNADOES = true;
-            EffectManager.Instance.SpawnTornadoes(spawned.Amount);
-            Plugin.Instance.CAN_SPAWN_TORNADOES = false;
+            try
+            {
+                EffectManager.Instance.SpawnTornadoes(spawned.Amount);
+            }
+            finally
+            {
+                Plugin.Instance.CAN_SPAWN_TORNADOES = false;
+            }
         }
 
         public void OnStormStarted(DesertStorm desertStorm)
@@ -4086,11 +4314,20 @@ namespace MegabonkTogether.Services
 
         private void OnReceivedStormStarted(StormStarted started)
         {
+            // FIX: the flag opens a host-only game path so this peer can apply someone else's
+            // state without re-broadcasting it. Restored in a finally because a throw in the game
+            // call would otherwise latch it for the rest of the run. Same defect as P1-10 and P0-6.
             Plugin.Instance.CAN_START_STOP_STORMS = true;
-            var desertEvent = Plugin.Instance.GetMapEventsDesert();
-            desertEvent.StartStorm();
-            desertEvent.stormOverAtTime = started.StormOverAtTime;
-            Plugin.Instance.CAN_START_STOP_STORMS = false;
+            try
+            {
+                var desertEvent = Plugin.Instance.GetMapEventsDesert();
+                desertEvent.StartStorm();
+                desertEvent.stormOverAtTime = started.StormOverAtTime;
+            }
+            finally
+            {
+                Plugin.Instance.CAN_START_STOP_STORMS = false;
+            }
         }
 
         public void OnStormStopped()
@@ -4101,9 +4338,18 @@ namespace MegabonkTogether.Services
 
         private void OnReceivedStormStopped(StormStopped stopped)
         {
+            // FIX: the flag opens a host-only game path so this peer can apply someone else's
+            // state without re-broadcasting it. Restored in a finally because a throw in the game
+            // call would otherwise latch it for the rest of the run. Same defect as P1-10 and P0-6.
             Plugin.Instance.CAN_START_STOP_STORMS = true;
-            Plugin.Instance.GetMapEventsDesert().StopStorm();
-            Plugin.Instance.CAN_START_STOP_STORMS = false;
+            try
+            {
+                Plugin.Instance.GetMapEventsDesert().StopStorm();
+            }
+            finally
+            {
+                Plugin.Instance.CAN_START_STOP_STORMS = false;
+            }
         }
 
         public void OnTumbleWeedSpawned(InteractableTumbleWeed tumbleWeed)
