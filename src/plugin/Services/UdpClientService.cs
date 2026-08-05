@@ -81,6 +81,11 @@ namespace MegabonkTogether.Services
             ManualLogSource logger) : IUdpClientService
     {
         private const int MAX_PACKET_SIZE_BYTES = 1000;
+
+        // Slack left in each chunk of a split stream tick for the message envelope that every chunk
+        // repeats — the MemoryPack union tag plus the empty-collection headers for the fields that
+        // stream does not populate. See SendStreamUpdate.
+        private const int CHUNK_ENVELOPE_HEADROOM_BYTES = 100;
         private const int STARTING_GAME_UDP_PORT = 27015;
         private int GAME_UDP_PORT = STARTING_GAME_UDP_PORT;
         private NetManager netManager;
@@ -1393,112 +1398,166 @@ namespace MegabonkTogether.Services
 
         private void SendLobbyUpdate()
         {
-            var players = playerManagerService.GetAllPlayers();
-
-            var message = new LobbyUpdates
-            {
-                Players = players,
-            };
-
-            byte[] serialized = MemoryPackSerializer.Serialize<IGameNetworkMessage>(message);
-
-            var deliveryMethod = DeliveryMethod.Unreliable;
-
-            if (serialized.Length >= MAX_PACKET_SIZE_BYTES)
-            {
-                deliveryMethod = DeliveryMethod.ReliableOrdered;
-            }
-
             // Labelled by hand, not by GetType().Name: this send and SendEnemiesUpdate both use the
             // LobbyUpdates type, so the type name merged the player stream and the enemy stream into
             // one bucket. That bucket has been reported as 65-90% of host traffic and named as where
             // bandwidth work belongs — a conclusion the counter could not actually support, because
             // the two scale with completely different things (player count vs. enemies alive). A
             // level-159 capture peaked at 199.50 KB/s under the merged name with no way to say which.
-            SendToAllClients(serialized, deliveryMethod, "LobbyUpdates(players)");
+            //
+            // Chunked despite being the smallest of the four streams: a Player carries a name string
+            // and a full inventory snapshot, so at six players late in a run this can cross the cap
+            // even though it rarely does at two.
+            SendStreamUpdate(
+                [.. playerManagerService.GetAllPlayers()],
+                (chunk, _) => new LobbyUpdates { Players = chunk },
+                "LobbyUpdates(players)");
         }
 
         private void SendEnemiesUpdate()
         {
-            var enemies = enemyManagerService.GetAllEnemiesDeltaAndUpdate();
-            var bossFinalOrb = finalBossOrbManagerService.GetAllOrbs();
+            List<EnemyModel> enemies = [.. enemyManagerService.GetAllEnemiesDeltaAndUpdate()];
+            List<BossOrbModel> bossFinalOrb = [.. finalBossOrbManagerService.GetAllOrbs()];
 
-            if (!enemies.Any() && !bossFinalOrb.Any())
+            if (enemies.Count == 0 && bossFinalOrb.Count == 0)
             {
                 return;
-            }
-
-            var message = new LobbyUpdates
-            {
-                Enemies = enemies,
-                BossOrbs = bossFinalOrb,
-            };
-
-            byte[] serialized = MemoryPackSerializer.Serialize<IGameNetworkMessage>(message);
-
-            var deliveryMethod = DeliveryMethod.Unreliable;
-
-            if (serialized.Length >= MAX_PACKET_SIZE_BYTES)
-            {
-                deliveryMethod = DeliveryMethod.ReliableOrdered;
             }
 
             // The other half of the LobbyUpdates bucket — see the note in SendLobbyUpdate. Enemies
             // and boss orbs stay together here deliberately: they are one delta stream sharing one
             // send, so splitting them further would report a size neither of them has on the wire.
-            SendToAllClients(serialized, deliveryMethod, "LobbyUpdates(enemies)");
+            //
+            // This is the stream the chunking is really aimed at. It is a delta, so a big tick means
+            // "many enemies moved" — and a moving enemy is re-sent next tick regardless, which is
+            // exactly the state that does not need a reliable channel. The old size promotion paid
+            // acks and retransmits to redeliver positions that were already stale on arrival.
+            //
+            // The orbs ride on chunk 0 only: there are a handful of them, they are not what makes a
+            // tick oversized, and repeating them per chunk would be duplicated payload. Chunk 0
+            // exists whether or not the tick splits, so the single-message path is unchanged.
+            if (enemies.Count == 0)
+            {
+                SendStreamUpdate(
+                    bossFinalOrb,
+                    (chunk, _) => new LobbyUpdates { BossOrbs = chunk },
+                    "LobbyUpdates(enemies)");
+                return;
+            }
+
+            SendStreamUpdate(
+                enemies,
+                (chunk, chunkIndex) => new LobbyUpdates
+                {
+                    Enemies = chunk,
+                    BossOrbs = chunkIndex == 0 ? bossFinalOrb : [],
+                },
+                "LobbyUpdates(enemies)");
         }
 
         private void SendProjectilesUpdate()
         {
-            var projectiles = projectileManagerService.GetAllProjectilesDeltaAndUpdate();
-
-            if (!projectiles.Any())
-            {
-                return;
-            }
-
-            var message = new ProjectilesUpdate
-            {
-                Projectiles = [.. projectiles],
-            };
-
-            byte[] serialized = MemoryPackSerializer.Serialize<IGameNetworkMessage>(message);
-
-            var deliveryMethod = DeliveryMethod.Unreliable;
-
-            if (serialized.Length >= MAX_PACKET_SIZE_BYTES)
-            {
-                deliveryMethod = DeliveryMethod.ReliableOrdered;
-            }
-
-            SendToAllClients(serialized, deliveryMethod, message.GetType().Name);
+            // The worst offender by size in the level-159 capture: 4761 B/send at 20 Hz, i.e. four
+            // fragments of a reliable-ordered message per tick during a swarm.
+            SendStreamUpdate(
+                [.. projectileManagerService.GetAllProjectilesDeltaAndUpdate()],
+                (chunk, _) => new ProjectilesUpdate { Projectiles = chunk },
+                nameof(ProjectilesUpdate));
         }
 
         private void SendTumbleWeedsUpdate()
         {
-            var tumbleWeeds = spawnedObjectManagerService.GetAllTumbleWeedsDeltaAndUpdate();
+            SendStreamUpdate(
+                [.. spawnedObjectManagerService.GetAllTumbleWeedsDeltaAndUpdate()],
+                // TumbleWeeds is an array on the wire, so the chunk is copied. Leaving the field a
+                // List would be a wire change; this stream is Desert-only at 20 Hz and rarely
+                // splits, so the copy is the cheaper of the two.
+                (chunk, _) => new TumbleWeedsUpdate { TumbleWeeds = [.. chunk] },
+                nameof(TumbleWeedsUpdate));
+        }
 
-            if (!tumbleWeeds.Any())
+        /// <summary>
+        /// Sends one tick of a per-entity stream, splitting an oversized tick into several sub-MTU
+        /// <see cref="DeliveryMethod.Unreliable"/> datagrams instead of promoting the whole tick to
+        /// <see cref="DeliveryMethod.ReliableOrdered"/>.
+        ///
+        /// <para><b>What this replaces.</b> Each of these senders used to do
+        /// <c>if (serialized.Length >= MAX_PACKET_SIZE_BYTES) deliveryMethod = ReliableOrdered</c>.
+        /// That is not wrong — LiteNetLib fragments reliable channels only, so an oversized
+        /// unreliable send silently fails and promoting is the only way to get it there in one
+        /// message. It is just the expensive answer to the wrong question. The tick does not need to
+        /// arrive in one message; it needs to arrive.</para>
+        ///
+        /// <para><b>Why it matters at scale.</b> A level-159 capture put the merged enemy/player
+        /// bucket at 2100 B/send at 97.3/s and <c>ProjectilesUpdate</c> at 4761 B/send at 20 Hz —
+        /// so the hot streams were spending most of their time on a multi-fragment reliable channel,
+        /// paying acks and retransmits, and head-of-line blocking every later entity update behind
+        /// any one stalled fragment. Splitting by a byte budget keeps every datagram on the
+        /// unreliable path, where a loss costs one entity one tick and the next tick corrects it.</para>
+        ///
+        /// <para><b>No wire change.</b> <c>OnLobbyUpdate</c> and the other receive handlers iterate
+        /// per item and nothing depends on a list being complete, so N messages deserialize exactly
+        /// as one did. Same types, same union tags, same handlers — a peer on the old build cannot
+        /// tell the difference.</para>
+        ///
+        /// <para><b>The fallback still promotes.</b> The chunk count is derived from the whole
+        /// tick's average bytes-per-item, so an unusually large single item (a player with a big
+        /// inventory) can still overflow its chunk. That chunk promotes exactly as before, which
+        /// makes the worst case no worse than today rather than a silent dropped send.</para>
+        ///
+        /// <para>Chunk 0 is passed to <paramref name="buildChunk"/> as index 0 whether or not the
+        /// tick was split, so a caller can attach ride-along state (the enemy stream's boss orbs) to
+        /// the first message only and have it behave identically in both paths.</para>
+        ///
+        /// <para><b>Reading the counters after this lands:</b> a split tick records once per chunk,
+        /// so sends/s rises and B/send falls while KB/s stays put. That is the change working, not a
+        /// regression.</para>
+        /// </summary>
+        private void SendStreamUpdate<TItem>(
+            List<TItem> items,
+            Func<List<TItem>, int, IGameNetworkMessage> buildChunk,
+            string label)
+        {
+            if (items.Count == 0)
             {
                 return;
             }
 
-            var message = new TumbleWeedsUpdate
+            // Serialized through IGameNetworkMessage explicitly, never the concrete type: the union
+            // tag comes from the interface, and serializing as the concrete message would omit it
+            // and put an undecodable payload on the wire.
+            byte[] serialized = MemoryPackSerializer.Serialize<IGameNetworkMessage>(buildChunk(items, 0));
+
+            // The common case, and the one that must stay cheap: the whole tick fits, so it goes out
+            // exactly as it did before — one serialize, one send, no extra allocation.
+            if (serialized.Length < MAX_PACKET_SIZE_BYTES)
             {
-                TumbleWeeds = [.. tumbleWeeds],
-            };
-
-            byte[] serialized = MemoryPackSerializer.Serialize<IGameNetworkMessage>(message);
-
-            var deliveryMethod = DeliveryMethod.Unreliable;
-
-            if (serialized.Length >= MAX_PACKET_SIZE_BYTES)
-            {
-                deliveryMethod = DeliveryMethod.ReliableOrdered;
+                SendToAllClients(serialized, DeliveryMethod.Unreliable, label);
+                return;
             }
 
-            SendToAllClients(serialized, deliveryMethod, message.GetType().Name);
+            // Budget below the cap rather than at it: every chunk repeats the message envelope (the
+            // union tag and the empty-collection headers for the fields this stream does not set),
+            // so sizing purely on the whole tick's bytes-per-item would land the last chunk just
+            // over. Undershooting costs one extra datagram; overshooting costs a promotion.
+            var bytesPerItem = Math.Max(1, serialized.Length / items.Count);
+            var itemsPerChunk = Math.Max(1, (MAX_PACKET_SIZE_BYTES - CHUNK_ENVELOPE_HEADROOM_BYTES) / bytesPerItem);
+
+            for (int start = 0, chunkIndex = 0; start < items.Count; start += itemsPerChunk, chunkIndex++)
+            {
+                var count = Math.Min(itemsPerChunk, items.Count - start);
+                var chunk = items.GetRange(start, count);
+
+                byte[] chunkBytes = MemoryPackSerializer.Serialize<IGameNetworkMessage>(buildChunk(chunk, chunkIndex));
+
+                // Only reachable when the average underestimated this chunk, or when one item is
+                // bigger than the whole budget. Reliable is the sole way such a message arrives.
+                var deliveryMethod = chunkBytes.Length >= MAX_PACKET_SIZE_BYTES
+                    ? DeliveryMethod.ReliableOrdered
+                    : DeliveryMethod.Unreliable;
+
+                SendToAllClients(chunkBytes, deliveryMethod, label);
+            }
         }
 
         public void SendToAllClients<T>(T data, DeliveryMethod deliveryMethod) where T : IGameNetworkMessage
