@@ -13,6 +13,17 @@ namespace MegabonkTogether.Scripts.Snapshot
         // stayed registered and kept being interpolated against snapshots that would never arrive.
         private readonly Dictionary<uint, uint> projectileOwners = new Dictionary<uint, uint>();
 
+        /// <summary>
+        /// id -> the time at which it may actually be destroyed. See <see cref="UnregisterProjectile"/>.
+        /// </summary>
+        private readonly Dictionary<uint, double> pendingRemoval = new Dictionary<uint, double>();
+
+        /// <summary>Reused across frames so the removal sweep does not allocate per Update.</summary>
+        private readonly List<uint> expiredScratch = new List<uint>();
+
+        // Seconds, despite the name — it is subtracted from Time.timeAsDouble directly. Remote
+        // projectiles are therefore drawn 100 ms behind the host, which is what UnregisterProjectile
+        // has to wait out.
         protected float interpolationDelayMs = 0.1f;
         protected int maxBufferSize = 30;
 
@@ -30,6 +41,35 @@ namespace MegabonkTogether.Scripts.Snapshot
 
                 PerformInterpolation(projectileId, buffer, renderTime);
                 CleanupOldSnapshots(buffer, renderTime);
+            }
+
+            if (pendingRemoval.Count > 0)
+            {
+                SweepPendingRemovals();
+            }
+        }
+
+        /// <summary>
+        /// Destroys projectiles whose deferred removal has come due. Collected first and destroyed
+        /// after, because destroying inside the enumeration would invalidate it.
+        /// </summary>
+        private void SweepPendingRemovals()
+        {
+            var now = Time.timeAsDouble;
+
+            expiredScratch.Clear();
+
+            foreach (var kv in pendingRemoval)
+            {
+                if (kv.Value <= now)
+                {
+                    expiredScratch.Add(kv.Key);
+                }
+            }
+
+            foreach (var id in expiredScratch)
+            {
+                RemoveProjectileNow(id);
             }
         }
 
@@ -146,6 +186,10 @@ namespace MegabonkTogether.Scripts.Snapshot
             activeProjectiles[id] = projectile;
             projectileOwners[id] = ownerId;
 
+            // Ids are recycled, so a new projectile can land on one still waiting out its deferred
+            // removal. Without this it would be destroyed mid-flight a fraction of a second later.
+            pendingRemoval.Remove(id);
+
             if (!snapshotsBuffers.ContainsKey(id))
             {
                 snapshotsBuffers[id] = new List<ProjectileSnapshot>();
@@ -179,7 +223,9 @@ namespace MegabonkTogether.Scripts.Snapshot
 
             foreach (var id in toRemove)
             {
-                UnregisterProjectile(id);
+                // Immediate: that peer is gone, so no further snapshot will arrive and there is
+                // nothing for the deferred path to wait for.
+                RemoveProjectileNow(id);
             }
         }
 
@@ -203,6 +249,34 @@ namespace MegabonkTogether.Scripts.Snapshot
         /// </summary>
         public void UnregisterProjectile(uint id)
         {
+            if (!activeProjectiles.ContainsKey(id))
+            {
+                // Never registered, or already swept. Drop any residue and stop.
+                snapshotsBuffers.Remove(id);
+                projectileOwners.Remove(id);
+                pendingRemoval.Remove(id);
+                return;
+            }
+
+            // Deferred, not immediate. Update draws every remote projectile interpolationDelayMs
+            // behind the host, but ProjectileDone is a discrete event applied the moment it
+            // arrives — so destroying here killed the projectile while its rendered copy was still
+            // 100 ms of travel short of the target. Reported as rockets vanishing and ending their
+            // animation mid-flight on the way to an enemy, after the mid-flight *explosion* had
+            // already been fixed separately.
+            //
+            // Waiting one interpolation delay lets the buffered snapshots play out to the position
+            // the host ended at. It keeps interpolating in the meantime; only the destroy waits.
+            pendingRemoval[id] = Time.timeAsDouble + interpolationDelayMs;
+        }
+
+        /// <summary>
+        /// Destroys immediately, skipping the interpolation-delay wait in
+        /// <see cref="UnregisterProjectile"/>. For cases where no further snapshot is coming and
+        /// waiting would just hold a dead object: a departed peer, or teardown.
+        /// </summary>
+        public void RemoveProjectileNow(uint id)
+        {
             if (activeProjectiles.TryGetValue(id, out var toDel))
             {
                 DestroyImmediate(toDel);
@@ -211,6 +285,7 @@ namespace MegabonkTogether.Scripts.Snapshot
 
             snapshotsBuffers.Remove(id);
             projectileOwners.Remove(id);
+            pendingRemoval.Remove(id);
         }
 
         private Transform GetProjectileTransform(GameObject projectile)
