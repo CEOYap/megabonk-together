@@ -392,7 +392,7 @@ rides, so a Phase 1 translation can be checked tag by tag.
 | Tag | Type | Origin | Channel |
 |---|---|---|---|
 | 0 | `LobbyUpdates` | host periodic (two streams) | `Unreliable`, chunked |
-| 1 | `ClientInGameReady` | client | `ReliableOrdered` |
+| 1 | `ClientInGameReady` | client | `ReliableOrdered` — **superseded by 72; received only** |
 | 2 | `SpawnedObject` | host | `ReliableUnordered` |
 | 3 | `PlayerUpdate` | client periodic | `Unreliable` direct / `ReliableOrdered` relay |
 | 4 | `SpawnedEnemy` | host | `ReliableUnordered` |
@@ -445,6 +445,8 @@ rides, so a Phase 1 translation can be checked tag by tag.
 | **68** | **`PlayersStateUpdate`** | **host periodic** | **`Unreliable`, chunked** |
 | **69** | **`EncounterClosedStamped`** | **client** | **`ReliableOrdered`** |
 | **70** | **`CloseEncounterStamped`** | **host** | **`ReliableOrdered`** |
+| **71** | **`ReadinessRoundStarted`** | **host** | **`ReliableOrdered`** |
+| **72** | **`ClientReadyStamped`** | **client** | **`ReliableOrdered`** |
 
 "both" means the host broadcasts it and the client requests it; the two halves may differ, and
 where they do the cell says so.
@@ -533,7 +535,7 @@ the merged `LobbyUpdates` bucket sent three sessions after the wrong stream.
 
 1. Define it under `src/common/Messages/GameNetworkMessages/`. Quantized/primitive types only —
    no `UnityEngine` types; `src/common/` compiles into the server.
-2. Add a `[MemoryPackUnion(N, ...)]` line with the **next free N** (71 at this stamp). Never
+2. Add a `[MemoryPackUnion(N, ...)]` line with the **next free N** (73 at this stamp). Never
    reuse, renumber, or remove a tag: MemoryPack is positional and peers on different mod versions
    still handshake, so a changed tag corrupts sessions silently rather than failing loudly.
    Adding a field to an existing message is the same hazard.

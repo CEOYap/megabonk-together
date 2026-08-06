@@ -232,36 +232,52 @@ are structural (fewer native calls, no square roots, no per-enemy scans).
 Changes the wire format, and the version gate that would make that safe is now a Steamworks
 deliverable. Either wait, or ship knowing a version-mismatched pair desyncs silently.
 
-### 9b. Lobby-ready barrier defects A–D — A fixed, B/C/D mitigated by it, D still open
+### 9b. Lobby-ready barrier defects A–D — all four addressed, none verified in play
 
-**A — `ClientInGameReady` sent once, no retry. FIXED (UNVERIFIED in play).**
-`ClientInGameReadyRoutine` re-reports every 2 s, up to 15 attempts (~30 s), stopping as soon as the
-host's own broadcast roster shows this peer `IsReady`. No new message and no ack type: the host
-already replicates `IsReady`, so acknowledgement is observable in state the client already has, and
-the host's handler is `IsReady = true`, so N copies equal one. Driven by a coroutine rather than
-`NetworkHandler.Update`, deliberately — see D.
+Reworked against a shipping third-party implementation's spawn-readiness barrier, which is a
+hardened version of exactly this mechanism. **It has no shared-experience encounter barrier at
+all** — its reward-window path simply unpauses and moves on — so it is a reference for A–D and
+*not* for SE-5/SE-6.
 
-**B — `ResetForNextLevel` clears `IsReady` for remote players too. NOT fixed; no longer fatal.**
-The hazard is a race: a client that reports before the host processes `PortalOpened` has its flag
-recorded and then wiped, and with a single send it never reports again — a permanent hang. Clearing
-remote readiness is otherwise *correct* for a per-level barrier, and suppressing it risks the
-opposite bug (stale readiness starting the run early). The retry is the right repair, and turns
-this from a hang into a ≤2 s delay.
+Readiness now lives in `Services/ReadinessService.cs`: a host-assigned `(SessionId, RoundId)`
+stamp, an explicitly captured participant set, and a reported set. Two new union tags, 71
+`ReadinessRoundStarted` (host→clients) and 72 `ClientReadyStamped` (client→host). Tag 1
+`ClientInGameReady` is still received and warns that the sender is on an older build.
 
-**C — `OnLobbyUpdate` overwrites the whole `Player`, `IsReady` included. NOT fixed; narrowed twice.**
-`a79ea0c` is recorded as having fixed C. It did not — it removed the **60 Hz** clobber by splitting
-the stream, but the 5 Hz full record still calls `UpdatePlayer(player)` with the host's whole
-record. The window went from ~16 ms to ~200 ms. The retry now repairs the residual.
+**A — sent once, no retry. FIXED.** `ClientReadyRoutine` reports every 2 s for up to 15 attempts,
+generation-guarded so a new round cannot leave an older routine reporting against a stale stamp.
+It stops when the host's own replicated roster shows this peer ready. The stamp is what makes the
+retry correct rather than merely repetitive — retry alone would re-send an unaddressed report, and
+an early report is indistinguishable from a current one.
 
-**D — `NetworkHandler.Update` returns before `Poll()` while `IsLoadingNextLevel`. STILL OPEN.**
-Not touched. Moving `Poll()` ahead of that early return would dispatch handlers into a
-mid-load scene, which is plausibly why the guard is there, and that is not a change to make
-untested. The readiness path no longer depends on it — the retry runs on a coroutine — but every
-*other* message is still queued rather than processed for the duration of a level load.
+**B — `ResetForNextLevel` clears remote `IsReady`. FIXED, structurally.** The authoritative set is
+no longer the replicated `Player.IsReady` field, so clearing that field costs a re-report rather
+than the round. The race it caused — client reports, host records, host then clears — is now
+rejected on arrival instead of banked, because an early report names the previous round.
 
-**The pattern to keep:** A is what makes B, C and D non-fatal, which is the same shape the
-reference implementation ships (retry paired with stamping). Fixing B, C or D individually without the retry would
-not have been enough, and with it, none of them is a hang.
+**C — `OnLobbyUpdate` overwrites the whole `Player`. FIXED, structurally, same mechanism.**
+Note `a79ea0c` is recorded as having fixed C and did not: it removed the 60 Hz clobber, and the
+5 Hz full record still overwrites. `Player.IsReady` is now a *derived mirror* of the barrier, kept
+on the wire so the UI and the client's acknowledgement check work unchanged.
+
+**D — `NetworkHandler.Update` returns before `Poll()` while `IsLoadingNextLevel`. STILL OPEN as a
+transport defect; no longer affects readiness.** Not touched — moving `Poll()` ahead of that
+early return would dispatch handlers into a mid-load scene, which is plausibly why the guard
+exists. The readiness path no longer cares when the round start arrives, because a stamp is
+*stored* rather than acted on: it is picked up whenever the local transition finishes. Every other
+message is still queued rather than processed for the duration of a level load.
+
+**Also taken from the reference:** a departed peer is removed from the participant set
+(`RemoveParticipant` on the disconnect funnel), so the round cannot wait on a report that can never
+arrive — the SE-6 shape, closed here for readiness but still open for the encounter barrier.
+
+**Five deliberate departures from the reference**, each documented on `ReadinessService`: one stamp
+instead of two, an empty participant set treated as satisfied rather than as a permanent wait,
+retry targeted at the peers that owe a report with a timeout that names them, no
+all-players-ready message (the existing 5 Hz roster force-send already acknowledges), and 1-based
+rounds so zero unambiguously means "no round".
+
+**None of this has been run in-game.**
 
 ### 10. `RelayEnvelope.ToFilters` — TRACED, correct, CLOSED
 

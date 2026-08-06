@@ -243,6 +243,7 @@ namespace MegabonkTogether
                 services.AddSingleton<IAutoUpdaterService, AutoUpdaterService>();
                 services.AddSingleton<IChangelogService, ChangelogService>();
                 services.AddSingleton<IEncounterService, EncounterService>();
+                services.AddSingleton<IReadinessService, ReadinessService>();
                 services.AddSingleton<ITrackerService, TrackerService>();
             });
 
