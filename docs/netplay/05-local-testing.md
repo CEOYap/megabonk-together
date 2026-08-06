@@ -115,6 +115,37 @@ Get-Content "C:\Program Files (x86)\Steam\steamapps\common\Megabonk\BepInEx\LogO
 Get-Content "D:\MegabonkTest2\BepInEx\LogOutput.log" -Wait -Tail 20
 ```
 
+### Turn on Unity log capture — on **both** copies
+
+`LogOutput.log` does **not** contain Unity-sourced lines by default. BepInEx 6 has two
+independent gates with opposite defaults, and the one that matters is not the one whose name
+suggests it:
+
+| Key | Section | Default | What it does |
+|---|---|---|---|
+| `UnityLogListening` | `[Logging]` | **true** | admits Unity messages into BepInEx as a source named `Unity` |
+| `WriteUnityLog` | `[Logging.Disk]` | **false** | writes those messages to `LogOutput.log` |
+
+Set `WriteUnityLog = true` in `BepInEx/config/BepInEx.cfg` on every copy you intend to compare,
+then relaunch. Without it you get no `NullReferenceException` lines, no `Look rotation viewing
+vector is zero`, and no Unity stack traces — from *that* copy only.
+
+**This cost three sessions.** A host logged zero Unity-sourced lines while its client logged
+thousands; because `UnityLogListening` read `true` on both, the difference was blamed on the
+peers running different BepInEx builds (be.755 vs be.785) and every "the host does not have
+this" claim in `docs/netplay/` was built on it. The builds were irrelevant — the host was simply
+at the stock `WriteUnityLog = false`.
+
+The plugin now reports this at startup so it cannot recur silently. Check for the line before
+trusting any comparison between two logs:
+
+```
+[Info   :MegabonkTogether] [log-capture] BepInEx 6.0.0-be.785; [Logging.Disk] WriteUnityLog = true. Unity-sourced lines WILL appear in LogOutput.log.
+```
+
+A `[log-capture]` **warning** instead means that copy is not capturing Unity lines, and an
+absence of Unity errors in its log is not evidence of anything.
+
 ---
 
 ## What this setup cannot tell you
