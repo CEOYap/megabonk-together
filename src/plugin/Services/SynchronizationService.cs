@@ -1638,7 +1638,7 @@ namespace MegabonkTogether.Services
                 Damage = damageContainer.damage,
                 DamageEffect = (int)damageContainer.damageEffect,
                 DamageBlockedByArmor = damageContainer.damageBlockedByArmor,
-                DamageSource = damageContainer.damageSource,
+                DamageSource = DamageSourceHelper.Normalize(damageContainer.damageSource),
                 DamageIsCrit = damageContainer.crit,
                 DamageProcCoefficient = damageContainer.procCoefficient,
                 DamageElement = (int)damageContainer.element,
@@ -1666,7 +1666,12 @@ namespace MegabonkTogether.Services
                 return; //Might already be dead
             }
 
-            var damageContainer = new DamageContainer(damaged.DamageProcCoefficient, damaged.DamageSource)
+            // Normalized because a null source makes RunStats.OnEnemyDamaged throw inside
+            // enemy.Damage below, which aborts this handler and silently drops the damage on this
+            // peer. See DamageSourceHelper.
+            var damageSource = DamageSourceHelper.Normalize(damaged.DamageSource);
+
+            var damageContainer = new DamageContainer(damaged.DamageProcCoefficient, damageSource)
             {
                 damage = damaged.Damage,
                 damageEffect = (EDamageEffect)damaged.DamageEffect,
@@ -1675,7 +1680,7 @@ namespace MegabonkTogether.Services
                 element = (EElement)damaged.DamageElement,
                 flags = (DcFlags)damaged.DamageFlags,
                 knockback = damaged.DamageKnockback,
-                damageSource = damaged.DamageSource
+                damageSource = damageSource
             };
 
             // Three globals are opened around one game call that can throw, and all three were
@@ -1722,7 +1727,7 @@ namespace MegabonkTogether.Services
                 EnemyId = enemySpawned.Key,
                 DiedByOwnerId = diedByOwnerId ?? playerManagerService.GetLocalPlayer().ConnectionId,
                 DamageProcCoefficient = procCoefficient,
-                DamageSource = dc != null ? dc.damageSource : string.Empty
+                DamageSource = dc != null ? DamageSourceHelper.Normalize(dc.damageSource) : string.Empty
             };
 
             var isHost = IsServerMode() ?? false;
@@ -1751,7 +1756,7 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            var damageContainer = new DamageContainer(0.0f, died.DamageSource)
+            var damageContainer = new DamageContainer(0.0f, DamageSourceHelper.Normalize(died.DamageSource))
             {
                 damage = enemy.hp + 1,
                 enemy = enemy
@@ -4242,7 +4247,7 @@ namespace MegabonkTogether.Services
                 Damage = dc.damage,
                 DamageEffect = (int)dc.damageEffect,
                 DamageBlockedByArmor = dc.damageBlockedByArmor,
-                DamageSource = dc.damageSource,
+                DamageSource = DamageSourceHelper.Normalize(dc.damageSource),
                 DamageIsCrit = dc.crit,
                 DamageProcCoefficient = dc.procCoefficient,
                 DamageElement = (int)dc.element,
@@ -4265,7 +4270,7 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            var damageContainer = new DamageContainer(lightningStrike.DamageProcCoefficient, lightningStrike.DamageSource);
+            var damageContainer = new DamageContainer(lightningStrike.DamageProcCoefficient, DamageSourceHelper.Normalize(lightningStrike.DamageSource));
             damageContainer.damage = lightningStrike.Damage;
             damageContainer.damageEffect = (EDamageEffect)lightningStrike.DamageEffect;
             damageContainer.damageBlockedByArmor = lightningStrike.DamageBlockedByArmor;
@@ -4273,7 +4278,7 @@ namespace MegabonkTogether.Services
             damageContainer.element = (EElement)lightningStrike.DamageElement;
             damageContainer.flags = (DcFlags)lightningStrike.DamageFlags;
             damageContainer.knockback = lightningStrike.DamageKnockback;
-            damageContainer.damageSource = lightningStrike.DamageSource;
+            damageContainer.damageSource = DamageSourceHelper.Normalize(lightningStrike.DamageSource);
             damageContainer.procCoefficient = lightningStrike.DamageProcCoefficient;
 
             using (Plugin.SuppressOutbound())
