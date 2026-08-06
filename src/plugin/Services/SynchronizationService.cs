@@ -881,18 +881,33 @@ namespace MegabonkTogether.Services
         }
         /// <summary>
         /// Host. Announces the open readiness round so clients learn the stamp they must report
-        /// against, and re-asks the peers that still owe a report.
+        /// against.
         ///
-        /// <para>Re-asking only the missing participants, rather than re-broadcasting to everyone,
-        /// is the one place this diverges from the reference implementation's retry: theirs sends
-        /// the round start to every client once a second for up to sixty seconds, which is sixty
-        /// redundant broadcasts to peers that answered on the first one.</para>
+        /// <para>Sent once when the round opens, and again whenever a report arrives naming the
+        /// wrong round — which almost always means that peer has not been told about this one yet.
+        /// Re-announcing is cheaper than letting the peer burn its retry budget against a stamp it
+        /// cannot have.</para>
+        ///
+        /// <para>The re-announce is a broadcast, as it is in the reference implementation. Targeting
+        /// only the peers that owe a report would need a connection-id-to-<c>NetPeer</c> lookup
+        /// plumbed through the send path, and that is precisely the mapping Phase 1 of the
+        /// Steamworks migration rewrites — not worth building twice. What it does do that the
+        /// reference does not is <b>name the outstanding peers in the log</b>, so a lobby that will
+        /// not start says who it is waiting for instead of just that it is waiting.</para>
         /// </summary>
         private void BroadcastReadinessRound()
         {
             if (!(IsServerMode() ?? false) || !readinessService.HasStamp)
             {
                 return;
+            }
+
+            var missing = readinessService.MissingParticipants();
+            if (missing.Count > 0)
+            {
+                logger.LogInfo(
+                    $"[readiness] Announcing round {readinessService.RoundId}; still waiting on " +
+                    $"{missing.Count} peer(s): {string.Join(", ", missing)}.");
             }
 
             IGameNetworkMessage message = new ReadinessRoundStarted

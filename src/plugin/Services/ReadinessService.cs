@@ -30,9 +30,6 @@ namespace MegabonkTogether.Services
         /// <summary>Host. Participants that have not reported yet.</summary>
         IReadOnlyCollection<uint> MissingParticipants();
 
-        /// <summary>Host. True when this connection has reported for the open round.</summary>
-        bool IsReady(uint connectionId);
-
         /// <summary>Host. Drops a departed peer from the round and re-checks completion.</summary>
         void RemoveParticipant(uint connectionId);
 
@@ -60,7 +57,7 @@ namespace MegabonkTogether.Services
     /// <para><b>Derived from a shipping third-party implementation's spawn-readiness barrier,
     /// deliberately not a port of it.</b> That design is the right shape — host-assigned <c>(sessionId, roundId)</c>, an
     /// explicitly captured participant set, retry on both sides — and the parts of it that answer
-    /// our defects are taken. Five things are done differently, each because the original has a
+    /// our defects are taken. Six things are done differently, each because the original has a
     /// sharp edge:</para>
     ///
     /// <list type="number">
@@ -74,11 +71,13 @@ namespace MegabonkTogether.Services
     /// nobody can never complete — a hang shape. Here it completes and logs, because "nobody to
     /// wait for" is trivially satisfied and the interesting event is that it happened at all.</item>
     ///
-    /// <item><b>Retry is targeted, and the timeout names names.</b> The reference re-broadcasts the
-    /// round start to every client once a second for up to sixty seconds and, on timeout, logs a
-    /// bare boolean. <see cref="MissingParticipants"/> lets the host re-ask only the peers
-    /// that owe a report, and lets the giving-up log say which connection ids never answered —
-    /// the difference between an actionable line and a boolean.</item>
+    /// <item><b>The re-ask names who is missing.</b> The reference re-broadcasts the round start
+    /// to every client once a second for up to sixty seconds and, on timeout, logs a bare boolean.
+    /// The re-ask here is also a broadcast — targeting it per peer would mean plumbing a
+    /// connection-id-to-<c>NetPeer</c> lookup through the send path, which Phase 1 of the Steamworks
+    /// migration is already going to rewrite — but <see cref="MissingParticipants"/> puts the
+    /// outstanding connection ids in the log line, which is the difference between something you can
+    /// act on and a boolean.</item>
     ///
     /// <item><b>No all-players-ready message.</b> The reference needs one, plus a targeted re-send
     /// of it to answer a retrying client. Ours does not: the host already replicates readiness at 5 Hz
@@ -86,6 +85,12 @@ namespace MegabonkTogether.Services
     /// (<c>UdpClientService.HasReadinessChanged</c>), so accepting a report <i>is</i> the
     /// acknowledgement and the client's retry stops when it observes itself ready. One fewer
     /// message type and one fewer piece of state that can disagree.</item>
+    ///
+    /// <item><b>A peer that reports late is admitted, not ignored.</b> The reference warns and drops
+    /// a report from outside the captured set. Capturing once means a peer registered a moment after
+    /// the round opened is never waited for and the run starts without it — the old hang traded for
+    /// a silent early start, which is worse because nothing reports it. Admitting can only make the
+    /// barrier wait for more peers, never fewer.</item>
     ///
     /// <item><b>Rounds are 1-based.</b> The reference agrees, and it matters: zero has to mean "no round"
     /// unambiguously. The encounter barrier next door uses zero as both a sentinel and a legal
@@ -160,14 +165,21 @@ namespace MegabonkTogether.Services
                 return false;
             }
 
-            // Not in the captured set: either a peer that joined after the round opened, or a
-            // report from one that has since left. Neither can be counted toward a round it was
-            // never part of, but the round is not harmed by it either.
-            if (!participants.Contains(connectionId))
+            // A reporting peer that was not in the captured set joined after the round opened.
+            //
+            // The reference warns and drops it. Admitting
+            // it is the safer direction and is the sixth departure from that design: capturing the
+            // set once means a peer registered a moment after the round opened would never be
+            // waited for, and the run would start without it — trading the old hang for a silent
+            // early start, which is worse because nothing reports it. Admitting can only ever make
+            // the barrier wait for more peers, never fewer.
+            //
+            // Safe because the caller has already resolved this connection id against the player
+            // roster; an id that is not a real peer never reaches here.
+            if (participants.Add(connectionId))
             {
-                Plugin.Log.LogWarning(
-                    $"[readiness] Report from {connectionId}, which is not a participant of round {RoundId}. Ignored.");
-                return false;
+                Plugin.Log.LogInfo(
+                    $"[readiness] {connectionId} joined round {RoundId} after it opened; admitted as a participant.");
             }
 
             if (reported.Add(connectionId))
@@ -200,11 +212,6 @@ namespace MegabonkTogether.Services
         public IReadOnlyCollection<uint> MissingParticipants()
         {
             return participants.Where(p => !reported.Contains(p)).ToList();
-        }
-
-        public bool IsReady(uint connectionId)
-        {
-            return reported.Contains(connectionId);
         }
 
         public void RemoveParticipant(uint connectionId)
