@@ -741,6 +741,9 @@ namespace MegabonkTogether.Services
                     case AddXp addXp:
                         EventManager.OnAddXp(addXp);
                         break;
+                    case CloseEncounterStamped closeEncounterStamped:
+                        EventManager.OnCloseEncounterStamped(closeEncounterStamped);
+                        break;
                     case CloseEncounter closeEncounter:
                         EventManager.OnCloseEncounter(closeEncounter);
                         break;
@@ -1007,17 +1010,41 @@ namespace MegabonkTogether.Services
                         EventManager.OnAddXp(addXp);
                         SendToAllClientsExcept(netPeerId, addXp.OwnerId, addXp);
                         break;
+                    case EncounterClosedStamped encounterClosedStamped:
+                        // SE-5, report half. A report that does not name the round this host has
+                        // open is a leftover from a round already released — counting it toward the
+                        // current round is what releases someone else's window before they have
+                        // chosen. Dropped rather than applied; the reporting peer's own failsafe is
+                        // what recovers it if it really is stuck.
+                        if (!encounterService.IsCurrentStamp(encounterClosedStamped.SessionId, encounterClosedStamped.RoundId))
+                        {
+                            logger.LogInfo(
+                                $"Dropping a stale barrier report from {encounterClosedStamped.OwnerId} " +
+                                $"(session {encounterClosedStamped.SessionId}, round {encounterClosedStamped.RoundId}); " +
+                                $"host is on session {encounterService.SessionId}, round {encounterService.RoundId}.");
+                            break;
+                        }
+
+                        encounterService.AddClosedEncounterForPlayer(encounterClosedStamped.OwnerId);
+
+                        if (encounterService.IsClosable())
+                        {
+                            EventManager.OnReleaseBarrier();
+                        }
+
+                        break;
                     case EncounterClosed encounterClosed:
+                        // Older build on the other end: no round identity, so this report cannot be
+                        // attributed and is accepted as-is, exactly as it was before SE-5.
+                        Plugin.Log.LogWarning(
+                            $"Received an unstamped EncounterClosed from {encounterClosed.OwnerId}. That peer is " +
+                            "on an older build; this report cannot be round-attributed (SE-5).");
+
                         encounterService.AddClosedEncounterForPlayer(encounterClosed.OwnerId);
 
                         if (encounterService.IsClosable())
                         {
-                            IGameNetworkMessage closeMessage = new CloseEncounter
-                            {
-                            };
-
-                            SendToAllClients(closeMessage, DeliveryMethod.ReliableOrdered);
-                            EventManager.OnCloseEncounter(closeMessage as CloseEncounter);
+                            EventManager.OnReleaseBarrier();
                         }
 
                         break;

@@ -440,9 +440,11 @@ rides, so a Phase 1 translation can be checked tag by tag.
 | 62 | `SpawnedReviver` | host | `ReliableOrdered` |
 | 63 | `PlayerRespawned` | host | `ReliableOrdered` |
 | 64 | `AddXp` | both | `ReliableOrdered` |
-| 65, 66 | `EncounterClosed` / `CloseEncounter` | both | `ReliableOrdered` |
+| 65, 66 | `EncounterClosed` / `CloseEncounter` | both | `ReliableOrdered` — **superseded by 69/70; received only** |
 | 67 | `GoldChanged` | both | `ReliableOrdered` |
 | **68** | **`PlayersStateUpdate`** | **host periodic** | **`Unreliable`, chunked** |
+| **69** | **`EncounterClosedStamped`** | **client** | **`ReliableOrdered`** |
+| **70** | **`CloseEncounterStamped`** | **host** | **`ReliableOrdered`** |
 
 "both" means the host broadcasts it and the client requests it; the two halves may differ, and
 where they do the cell says so.
@@ -531,7 +533,7 @@ the merged `LobbyUpdates` bucket sent three sessions after the wrong stream.
 
 1. Define it under `src/common/Messages/GameNetworkMessages/`. Quantized/primitive types only —
    no `UnityEngine` types; `src/common/` compiles into the server.
-2. Add a `[MemoryPackUnion(N, ...)]` line with the **next free N** (69 at this stamp). Never
+2. Add a `[MemoryPackUnion(N, ...)]` line with the **next free N** (71 at this stamp). Never
    reuse, renumber, or remove a tag: MemoryPack is positional and peers on different mod versions
    still handshake, so a changed tag corrupts sessions silently rather than failing loudly.
    Adding a field to an existing message is the same hazard.

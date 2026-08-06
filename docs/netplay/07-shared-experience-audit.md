@@ -121,7 +121,29 @@ leaves `activeEncounterWindow` inactive and the particle renderers disabled.
 Nothing bounded the wait. Every hole above, and any not yet found, becomes an unrecoverable run.
 
 <a name="se-5"></a>
-### SE-5 — a release can be generated for a round nobody is in — CONFIRMED
+### SE-5 — a release can be generated for a round nobody is in — CONFIRMED, **FIXED (UNVERIFIED in play)**
+
+**Fixed by round identity.** Two new union tags, `EncounterClosedStamped` (69) and
+`CloseEncounterStamped` (70), carry `(SessionId, RoundId)`. New types rather than fields on 65/66,
+because MemoryPack is positional and adding a field to a shipped tag is the silent-corruption
+hazard `CLAUDE.md` forbids; 65 and 66 are still received and now log a warning naming the peer's
+build.
+
+- The **host** owns the round counter, mints a non-zero `SessionId` per run, and stamps every
+  release with the round it is releasing. All three release sites (`RewardFinished`,
+  `ForceCloseEncounter`, and the disconnect path in `RetargetAfterDisconnect`) go through one
+  `ReleaseBarrier()` — a stamp assembled in three places is a stamp that does not identify a round.
+- A **release is idempotent per round**: `TryApplyRelease` drops a stamp already applied, so the
+  second broadcast described below can no longer close a window opened since. That is OB-4.
+- A **report** names the round it is for, and the host drops one that does not match the round it
+  has open, instead of counting it toward the current round.
+- Peers agree on the number without a handshake: both start at round 0, and round *N* is open until
+  a release for *N* is applied. A peer that misses a release stops matching and has its reports
+  rejected rather than misattributed — recovery is the existing failsafe.
+
+**Not run in-game.** Reasoned from the code paths only. The original text follows.
+
+---
 
 `IsClosable()` stays true from the moment the count is met until something clears it, and both the
 host's `RewardFinished()` and the `EncounterClosed` handler broadcast `CloseEncounter` whenever

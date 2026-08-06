@@ -119,14 +119,26 @@ The host/client asymmetry corroborates it: **the host was the one waiting** (5 f
 the client never reported. The failsafe converts SE-6's permanent hang into a 20-second repeating
 cycle — bounded, which is what it was for, but not resolved.
 
-**Fix:** SE-5's round identity, which
-[`00-fork-comparison.md`](00-fork-comparison.md) §5 now recommends doing together with the
-lobby-ready retry work, since a shipped implementation pairs exactly those two.
+**Fix: PARTIAL, UNVERIFIED in play.** SE-5's round identity has landed (union tags 69/70 — see
+[SE-5](07-shared-experience-audit.md#se-5)), which stops a stale report releasing the wrong round.
+
+**It does not fix the cause of OB-3.** The re-arm loop here is [SE-6](07-shared-experience-audit.md#se-6):
+`IsClosable()` counts every player, including a peer that returned early from `PopReward_Prefix`
+without reporting because `!CanInput()`. Round identity means that peer's report, when it finally
+comes, is now *rejected* as stale rather than misapplied — which is more correct but does not make
+the round complete. The 20-second failsafe cycle should therefore still be expected until SE-6 is
+addressed, and the next capture should be read with that in mind rather than as a regression.
 
 ---
 
 <a name="ob-4"></a>
-## OB-4 — The failsafe closes an encounter window that is mid-use — CONFIRMED
+## OB-4 — The failsafe closes an encounter window that is mid-use — CONFIRMED, **FIXED (UNVERIFIED in play)**
+
+**Fixed by round identity.** The failsafe's release is now stamped like every other one, and
+`EncounterService.TryApplyRelease` drops a stamp for a round the peer has already applied. The
+second release for a finished round is therefore ignored instead of closing whatever window is open
+— see [SE-5](07-shared-experience-audit.md#se-5). Not run in-game. The chain below is the original
+diagnosis and still describes what the stamp interrupts.
 
 **Reported:** the failsafe fired while the chest-opening window was up and the window closed
 instantly, losing the interaction.

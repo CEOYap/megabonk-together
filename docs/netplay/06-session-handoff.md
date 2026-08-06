@@ -232,6 +232,37 @@ are structural (fewer native calls, no square roots, no per-enemy scans).
 Changes the wire format, and the version gate that would make that safe is now a Steamworks
 deliverable. Either wait, or ship knowing a version-mismatched pair desyncs silently.
 
+### 9b. Lobby-ready barrier defects A–D — A fixed, B/C/D mitigated by it, D still open
+
+**A — `ClientInGameReady` sent once, no retry. FIXED (UNVERIFIED in play).**
+`ClientInGameReadyRoutine` re-reports every 2 s, up to 15 attempts (~30 s), stopping as soon as the
+host's own broadcast roster shows this peer `IsReady`. No new message and no ack type: the host
+already replicates `IsReady`, so acknowledgement is observable in state the client already has, and
+the host's handler is `IsReady = true`, so N copies equal one. Driven by a coroutine rather than
+`NetworkHandler.Update`, deliberately — see D.
+
+**B — `ResetForNextLevel` clears `IsReady` for remote players too. NOT fixed; no longer fatal.**
+The hazard is a race: a client that reports before the host processes `PortalOpened` has its flag
+recorded and then wiped, and with a single send it never reports again — a permanent hang. Clearing
+remote readiness is otherwise *correct* for a per-level barrier, and suppressing it risks the
+opposite bug (stale readiness starting the run early). The retry is the right repair, and turns
+this from a hang into a ≤2 s delay.
+
+**C — `OnLobbyUpdate` overwrites the whole `Player`, `IsReady` included. NOT fixed; narrowed twice.**
+`a79ea0c` is recorded as having fixed C. It did not — it removed the **60 Hz** clobber by splitting
+the stream, but the 5 Hz full record still calls `UpdatePlayer(player)` with the host's whole
+record. The window went from ~16 ms to ~200 ms. The retry now repairs the residual.
+
+**D — `NetworkHandler.Update` returns before `Poll()` while `IsLoadingNextLevel`. STILL OPEN.**
+Not touched. Moving `Poll()` ahead of that early return would dispatch handlers into a
+mid-load scene, which is plausibly why the guard is there, and that is not a change to make
+untested. The readiness path no longer depends on it — the retry runs on a coroutine — but every
+*other* message is still queued rather than processed for the duration of a level load.
+
+**The pattern to keep:** A is what makes B, C and D non-fatal, which is the same shape the
+reference implementation ships (retry paired with stamping). Fixing B, C or D individually without the retry would
+not have been enough, and with it, none of them is a hang.
+
 ### 10. `RelayEnvelope.ToFilters` — TRACED, correct, CLOSED
 
 Traced end to end (plugin both branches, and the server's forwarding) at `main @ 29ac265`. The

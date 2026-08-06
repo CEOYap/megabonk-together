@@ -66,6 +66,8 @@ namespace MegabonkTogether.Services
         private static event Action<PlayerRespawned> PlayerRespawnedEvents;
         private static event Action<AddXp> AddXpEvents;
         private static event Action<CloseEncounter> CloseEncounterEvents;
+        private static event Action<CloseEncounterStamped> CloseEncounterStampedEvents;
+        private static event Action ReleaseBarrierEvents;
         private static event Action<GoldChanged> GoldChangedEvents;
 
         public static void OnSpawnedObject(SpawnedObject spawnedObject)
@@ -797,6 +799,38 @@ namespace MegabonkTogether.Services
             MainThreadDispatcher.Enqueue(() =>
             {
                 CloseEncounterEvents?.Invoke(closeEncounter);
+            });
+        }
+
+        public static void SubscribeCloseEncounterStampedEvents(Action<CloseEncounterStamped> action)
+        {
+            CloseEncounterStampedEvents += action;
+        }
+
+        public static void OnCloseEncounterStamped(CloseEncounterStamped closeEncounter)
+        {
+            MainThreadDispatcher.Enqueue(() =>
+            {
+                CloseEncounterStampedEvents?.Invoke(closeEncounter);
+            });
+        }
+
+        /// <summary>
+        /// Host-side "the barrier is satisfied, release it". Carries no payload because the stamp is
+        /// assembled by the single owner of the round counter (<c>SynchronizationService
+        /// .ReleaseBarrier</c>) rather than by whichever receive path noticed the barrier was full —
+        /// a stamp built in two places is a stamp that does not identify a round.
+        /// </summary>
+        public static void SubscribeReleaseBarrierEvents(Action action)
+        {
+            ReleaseBarrierEvents += action;
+        }
+
+        public static void OnReleaseBarrier()
+        {
+            MainThreadDispatcher.Enqueue(() =>
+            {
+                ReleaseBarrierEvents?.Invoke();
             });
         }
 
