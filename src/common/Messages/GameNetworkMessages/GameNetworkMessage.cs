@@ -72,6 +72,7 @@ namespace MegabonkTogether.Common.Messages
     [MemoryPackUnion(65, typeof(EncounterClosed))]
     [MemoryPackUnion(66, typeof(CloseEncounter))]
     [MemoryPackUnion(67, typeof(GoldChanged))]
+    [MemoryPackUnion(68, typeof(PlayersStateUpdate))]
     public partial interface IGameNetworkMessage
     {
 

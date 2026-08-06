@@ -1,4 +1,4 @@
-# Megabonk Together — Fork Maintenance Documentation
+﻿# Megabonk Together — Fork Maintenance Documentation
 
 Working documentation for `CEOYap/megabonk-together`, a fork of
 [`Fcornaire/megabonk-together`](https://github.com/Fcornaire/megabonk-together).
@@ -20,8 +20,10 @@ like next.
 | [`netplay/04-performance-and-gc.md`](netplay/04-performance-and-gc.md) | Measured allocation sites, hot paths, and the ordered list of what to fix for 400–600 enemy density |
 | [`netplay/05-local-testing.md`](netplay/05-local-testing.md) | Two netplay clients on one PC and one Steam account — and what that setup cannot prove |
 | [`netplay/07-shared-experience-audit.md`](netplay/07-shared-experience-audit.md) | The shared-experience pause/reward barrier: protocol, its holes, and the upstream softlock issues |
+| [`netplay/08-observed-bugs.md`](netplay/08-observed-bugs.md) | Backlog of bugs seen in play and not yet fixed: Aegis orbit count, Ghost item summons, and the two encounter-barrier symptoms from the 2026-08-06 session |
 | [`netplay/09-performance-audit.md`](netplay/09-performance-audit.md) | Second pass on per-frame cost: the three globally patched Unity properties, the per-enemy interpolator Update, and what a profiler capture would settle |
-| [`netplay/12-session-handover.md`](netplay/12-session-handover.md) | **Current branch state.** What is verified in-game, what is built but unplayed, the client spawn-ordering defect, and the lessons that cost time. Supersedes `10` and `11` |
+| [`netplay/13-session-handover.md`](netplay/13-session-handover.md) | **Current branch state.** The bandwidth session: what is measured vs unplayed, the pre-Steamworks task list for the next branch, and the counter that misattributed traffic for three sessions. Supersedes `12` |
+| [`netplay/12-session-handover.md`](netplay/12-session-handover.md) | Superseded by `13`. What is verified in-game, what is built but unplayed, the client spawn-ordering defect, and the lessons that cost time. Supersedes `10` and `11` |
 
 ### Transport
 
@@ -61,9 +63,9 @@ Used throughout these documents:
 1. **Most of these docs were written before anything was compiled or run**, by source analysis in
    an environment with no .NET SDK and no game install. Treat every code block as a proposal
    unless the surrounding text says it was played. **The exception is
-   [`netplay/12-session-handover.md`](netplay/12-session-handover.md)**, which separates what is
+   [`netplay/13-session-handover.md`](netplay/13-session-handover.md)**, which separates what is
    verified in-game from what merely builds — and that distinction is the point of the file.
-   Where an older doc and `12` disagree, `12` was measured.
+   Where an older doc and `13` disagree, `13` was measured.
 2. **Reliability is a correctness property, not a performance knob.** See
    [`02-delivery-method-reference.md`](netplay/02-delivery-method-reference.md) before
    changing any `DeliveryMethod`.

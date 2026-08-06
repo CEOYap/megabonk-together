@@ -35,7 +35,6 @@ namespace MegabonkTogether.Services
     internal class EnemyManagerService : IEnemyManagerService
     {
         private readonly ConcurrentDictionary<uint, Enemy> spawnedEnemies = [];
-        private Dictionary<uint, EnemyModel> previousSpawnedEnemiesDelta = [];
         private readonly ConcurrentDictionary<Enemy, string> reviverEnemies_NetplayNames = [];
         private readonly ConcurrentDictionary<uint, int> reviverSpawnCountPerOwner = [];
         // FIX P0-3: int rather than uint so Interlocked.Increment can allocate ids atomically.
@@ -46,6 +45,88 @@ namespace MegabonkTogether.Services
         private const float POSITION_TRESHOLD = 0.1f;
         private const float YAW_TRESHOLD = 5.0f;
         private const ushort HP_TRESHOLD = 1;
+
+        #region Budgeted priority enemy stream
+
+        /// <remarks>
+        /// <para><b>The defect this replaces.</b> The delta was taken against the last <i>sampled</i>
+        /// state and the baseline was overwritten unconditionally, so once an enemy stopped changing
+        /// it was never sent again. If the packet carrying its final state was lost, the client
+        /// stayed wrong about that enemy indefinitely — a permanent divergence from a single dropped
+        /// datagram.</para>
+        ///
+        /// <para><b>Why the obvious fix does not work.</b> Tracking the last <i>sent</i> state
+        /// instead is still not the last <i>acknowledged</i> state: these sends are fire-and-forget
+        /// on an unreliable channel. No delta scheme is correct without acks, and acks would mean a
+        /// per-client baseline and a per-client serialize every tick instead of one broadcast.
+        /// Marking an enemy's final packet reliable does not work either — you only learn a packet
+        /// was an enemy's last on the <i>following</i> tick, when it produces no delta.</para>
+        ///
+        /// <para><b>What this does instead: bound staleness rather than guarantee delivery.</b>
+        /// Changed enemies are sent stalest-first up to a per-tick budget, and any spare budget
+        /// refreshes enemies that have not been sent for a while. Nothing can then stay wrong
+        /// indefinitely — worst case it is wrong for one refresh period and is then corrected. The
+        /// hole closes by construction, with no acks, no reliable channel on the hot path, and no
+        /// receive-side change: <c>OnReceivedEnemiesUpdate</c> feeds an interpolator and skips
+        /// unknown ids, so a repeated unchanged state is a no-op.</para>
+        ///
+        /// <para><b>It also caps the big ticks.</b> A 600-enemy swarm previously produced one ~8.7 KB
+        /// tick at 40 Hz. Excess changed enemies now defer one tick and come back first, being the
+        /// stalest — so the per-enemy rate degrades gracefully instead of egress spiking (a
+        /// level-159 capture peaked at 321.1 KB/s at two players).</para>
+        ///
+        /// <para><b>The refresh cost is counter-cyclical, which is what makes it affordable.</b> Only
+        /// enemies staler than the refresh period are eligible, and only a period's worth per tick,
+        /// so a busy field spends nothing on refresh and a quiet one spends a few hundred bytes.</para>
+        ///
+        /// <para><b>Deliberately not done: relevance ordering.</b> Under the cap it would be better
+        /// to degrade enemies far from every player rather than whichever sort ordering lands last.
+        /// <c>DistanceThrottler</c> already computes that, but only on the receiving peer's
+        /// <c>Enemy.MyUpdate</c> — it has never gated the host's send. Adding it here is a strict
+        /// refinement of the ordering below and can land on its own; it is left out so this change
+        /// stays one variable in a playtest.</para>
+        /// </remarks>
+        private const int ENEMY_MODEL_WIRE_BYTES = 15;
+
+        /// <summary>Roughly four sub-MTU datagrams — see UdpClientService.SendStreamUpdate.</summary>
+        private const int MAX_ENEMY_TICK_BYTES = 3600;
+
+        private const int MAX_ENEMIES_PER_TICK = MAX_ENEMY_TICK_BYTES / ENEMY_MODEL_WIRE_BYTES;
+
+        /// <summary>
+        /// How stale an unchanged enemy must be before the refresh sweep will re-send it, and the
+        /// number of ticks the sweep spreads a full pass over. 40 ticks is ~1 s at the 40 Hz enemy
+        /// tick rate, so a quiet enemy costs one re-send per second and no state survives being
+        /// wrong for longer than that plus contention for the budget.
+        /// </summary>
+        private const int ENEMY_REFRESH_PERIOD_TICKS = 40;
+
+        /// <summary>What was last put on the wire, not what was last sampled. See the remarks above.</summary>
+        private Dictionary<uint, EnemyModel> lastSentEnemies = [];
+        private Dictionary<uint, long> lastSentTick = [];
+        private long enemyStreamTick;
+
+        // Reused across ticks rather than reallocated: this runs at 40 Hz over hundreds of enemies,
+        // and per-tick collections in a hot path are exactly what docs/netplay/04-performance-and-gc.md
+        // is about. Safe to hand `selected` back to the caller because SendEnemiesUpdate materialises
+        // it into its own list before the next tick can run.
+        private readonly Dictionary<uint, EnemyModel> sampled = [];
+        private readonly List<Candidate> changed = [];
+        private readonly List<Candidate> unchanged = [];
+        private readonly List<EnemyModel> selected = [];
+        private readonly List<uint> despawned = [];
+
+        private readonly struct Candidate(long staleness, EnemyModel model)
+        {
+            public readonly long Staleness = staleness;
+            public readonly EnemyModel Model = model;
+        }
+
+        /// <summary>Staleness precomputed into the struct so the comparison does no dictionary lookups.</summary>
+        private static readonly System.Comparison<Candidate> StalestFirst =
+            (a, b) => b.Staleness.CompareTo(a.Staleness);
+
+        #endregion
 
         /// <summary>
         /// Server side, retarget enemies when a player dies (or other use case ? )
@@ -137,31 +218,93 @@ namespace MegabonkTogether.Services
         /// <returns></returns>
         public IEnumerable<EnemyModel> GetAllEnemiesDeltaAndUpdate()
         {
-            var currentEnemies = new Dictionary<uint, EnemyModel>(spawnedEnemies.Count);
+            enemyStreamTick++;
+
+            sampled.Clear();
             foreach (var (id, enemy) in spawnedEnemies)
             {
-                currentEnemies[id] = enemy.ToModel(id);
+                sampled[id] = enemy.ToModel(id);
             }
 
-            if (previousSpawnedEnemiesDelta.Count == 0)
-            {
-                previousSpawnedEnemiesDelta = currentEnemies;
-                return currentEnemies.Values;
-            }
+            PruneDespawned();
 
-            var deltas = new List<EnemyModel>();
+            changed.Clear();
+            unchanged.Clear();
 
-            foreach (var current in currentEnemies.Values)
+            foreach (var current in sampled.Values)
             {
-                if (!previousSpawnedEnemiesDelta.TryGetValue(current.Id, out var previous) || HasDelta(previous, current))
+                // An enemy we have never sent is maximally stale, so it sorts ahead of everything
+                // and cannot be starved by a field that is busy the moment it spawns.
+                var staleness = lastSentTick.TryGetValue(current.Id, out var sentAt)
+                    ? enemyStreamTick - sentAt
+                    : long.MaxValue;
+
+                if (!lastSentEnemies.TryGetValue(current.Id, out var previous) || HasDelta(previous, current))
                 {
-                    deltas.Add(current);
+                    changed.Add(new Candidate(staleness, current));
+                }
+                else if (staleness >= ENEMY_REFRESH_PERIOD_TICKS)
+                {
+                    // Only stale-enough enemies are refresh candidates. Without this a field below
+                    // the budget would re-send every enemy every tick, which costs more than the
+                    // delta stream it replaced rather than less.
+                    unchanged.Add(new Candidate(staleness, current));
                 }
             }
 
-            previousSpawnedEnemiesDelta = currentEnemies;
+            selected.Clear();
 
-            return deltas;
+            // Changed first: a real state change is always worth more than a refresh of state the
+            // client most likely already has. Anything that does not fit defers one tick, and comes
+            // back at the front next tick because deferring is what made it the stalest.
+            changed.Sort(StalestFirst);
+            TakeUpTo(changed, MAX_ENEMIES_PER_TICK);
+
+            // Spend what is left on the refresh sweep, capped to one period's share so a full pass
+            // is spread over ENEMY_REFRESH_PERIOD_TICKS rather than landing in one tick.
+            var refreshQuota = (sampled.Count + ENEMY_REFRESH_PERIOD_TICKS - 1) / ENEMY_REFRESH_PERIOD_TICKS;
+            unchanged.Sort(StalestFirst);
+            TakeUpTo(unchanged, System.Math.Min(MAX_ENEMIES_PER_TICK, selected.Count + refreshQuota));
+
+            foreach (var model in selected)
+            {
+                lastSentEnemies[model.Id] = model;
+                lastSentTick[model.Id] = enemyStreamTick;
+            }
+
+            return selected;
+        }
+
+        private void TakeUpTo(List<Candidate> candidates, int cap)
+        {
+            for (var i = 0; i < candidates.Count && selected.Count < cap; i++)
+            {
+                selected.Add(candidates[i].Model);
+            }
+        }
+
+        /// <summary>
+        /// Drops per-enemy stream bookkeeping for enemies that no longer exist. Without this both
+        /// dictionaries grow for the lifetime of a stage — ids are never reused within one — and the
+        /// refresh sweep would keep scoring entries that can never be sent again.
+        /// </summary>
+        private void PruneDespawned()
+        {
+            despawned.Clear();
+
+            foreach (var id in lastSentTick.Keys)
+            {
+                if (!sampled.ContainsKey(id))
+                {
+                    despawned.Add(id);
+                }
+            }
+
+            foreach (var id in despawned)
+            {
+                lastSentTick.Remove(id);
+                lastSentEnemies.Remove(id);
+            }
         }
 
         private bool HasDelta(EnemyModel previous, EnemyModel current)
@@ -251,7 +394,9 @@ namespace MegabonkTogether.Services
         {
             //spawnedEnemies.Select(Enemy => Enemy.Value).ToList().ForEach(enemy => GameObject.Destroy(enemy.gameObject));
             spawnedEnemies.Clear();
-            previousSpawnedEnemiesDelta = [];
+            lastSentEnemies = [];
+            lastSentTick = [];
+            enemyStreamTick = 0;
         }
 
         //TODO: the applied values should be stored in GameBalanceService

@@ -235,6 +235,12 @@ What it changed in our docs:
   batch explicitly; `01-api-mapping.md` recommends letting Nagle coalesce. Our own `[bw]` counters
   can settle it before Phase 1 commits either way.
 
+> ⚠️ **The retry half of the next paragraph has since been overturned.** It was accurate for the
+> build audited that session and is false at their 0.4.3, which retries *and* stamps readiness
+> with `(sessionId, roundId)`. Corrected in
+> [`00-fork-comparison.md`](00-fork-comparison.md) §5 — read that, not this. Left in place
+> because it is why the lobby-ready defects below were deprioritised. The structural half stands.
+
 **Two findings worth keeping because they contradicted expectations.** Their eight-message join
 handshake contains **no retry, timeout or resend logic at all** — so it is *not* evidence that
 adding retries fixes the lobby-ready defects below. What it suggests instead is structural:
@@ -311,7 +317,10 @@ projectile *events* rather than streaming transforms. This wants a design pass, 
   `ResetForNextLevel` clears `IsReady` for remote players too; `OnLobbyUpdate` overwrites the whole
   `Player` record including `IsReady`; and `NetworkHandler.Update` stops polling while
   `IsLoadingNextLevel`. Any single loss is still a permanent hang. Dropped in priority once
-  BonkTuner was identified as the actual trigger, but **not fixed**.
+  BonkTuner was identified as the actual trigger, but **not fixed**. **Priority argument has
+  since weakened:** the "retries are not the answer" finding that supported deprioritising this
+  was overturned at Mod S 0.4.3 — they ship retry plus `(sessionId, roundId)` stamping, which is
+  defect A's fix and our SE-5 in one. See [`00-fork-comparison.md`](00-fork-comparison.md) §5.
 - **A latent bug in `SendToHost`:** `gamePeers[0]` is a `ConcurrentDictionary<int, NetPeer>` **key**
   lookup, not "the first peer". It throws `KeyNotFoundException` the moment the host peer's
   LiteNetLib id is not 0.
@@ -321,8 +330,12 @@ projectile *events* rather than streaming transforms. This wants a design pass, 
   outside a finalizer or a `finally`, and no push without `__state`, checked mechanically.
 - **SE-5 round identity** — Run C says residual, not urgent. Wire change; new union tags only.
 - **`Animator.set_speed` NRE in `RestoreDeath`** — unchanged, still undiagnosed.
-- **A 6-player bandwidth capture** — still the missing Phase 0 data point. New 2-player numbers
-  below.
+- ~~**A 6-player bandwidth capture** — still the missing Phase 0 data point.~~ **Struck: not
+  achievable.** Only two players are available to this project, so this was an open blocker
+  nobody could ever close. Phase 0's exit criteria now measure 2 players in-game and *derive*
+  4 and 6 from serialized payload sizes, with 6-player *behaviour* recorded as accepted risk.
+  See [`../steamworks/00-migration-plan.md`](../steamworks/00-migration-plan.md) Phase 0. New
+  2-player numbers below.
 
 ---
 

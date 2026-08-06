@@ -78,6 +78,28 @@ namespace MegabonkTogether.Patches.Enemies
             }
         }
 
+        /// <summary>
+        /// Host owns boss spawning; clients receive SpawnedEnemy instead.
+        ///
+        /// <para><b>Expect the game to log an error on the client because of this, and do not chase
+        /// it.</b> Suppressing the original makes <c>SpawnBoss</c> return null, and callers that
+        /// null-check the result log their own complaint. The known one is Graveyard's coffin:
+        /// <c>InteractableCoffin.Interact</c> (VA <c>0x1804C7360</c>) spawns its minibosses in a loop
+        /// and calls <c>Debug.LogError("Failed to spawn miniboss from coffin")</c> for each null —
+        /// so a Graveyard session logs roughly <c>numCoffins</c> (4) x 2-3 of them, client only.</para>
+        ///
+        /// <para><b>It is cosmetic and the mechanic still works.</b> The coffin gates its crypt key
+        /// on its private <c>minibossEnemies</c> set draining to empty, and
+        /// <c>SynchronizationService.OnReceivedSpawnedEnemy</c> adds each replicated GhostGrave1-4 to
+        /// that set precisely because this prefix stopped the game from doing it. Both peers then
+        /// reach <c>keyPickup.SetActive(true)</c> on their own with no message involved — confirmed
+        /// in a two-player Graveyard run where both players received the key.</para>
+        ///
+        /// <para><b>The absence of crypt-key network traffic proves nothing either way</b>, which
+        /// cost a session's analysis: the key's *appearance* is local to each peer, and
+        /// <c>InteractableUsed.IsCryptKey</c> only replicates the *pickup*, on a path with no log
+        /// statement at all.</para>
+        /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(EnemyManager.SpawnBoss))]
         public static bool SpawnBoss_Prefix()
