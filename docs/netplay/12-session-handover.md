@@ -330,8 +330,12 @@ projectile *events* rather than streaming transforms. This wants a design pass, 
   outside a finalizer or a `finally`, and no push without `__state`, checked mechanically.
 - **SE-5 round identity** — Run C says residual, not urgent. Wire change; new union tags only.
 - **`Animator.set_speed` NRE in `RestoreDeath`** — unchanged, still undiagnosed.
-- **A 6-player bandwidth capture** — still the missing Phase 0 data point. New 2-player numbers
-  below.
+- ~~**A 6-player bandwidth capture** — still the missing Phase 0 data point.~~ **Struck: not
+  achievable.** Only two players are available to this project, so this was an open blocker
+  nobody could ever close. Phase 0's exit criteria now measure 2 players in-game and *derive*
+  4 and 6 from serialized payload sizes, with 6-player *behaviour* recorded as accepted risk.
+  See [`../steamworks/00-migration-plan.md`](../steamworks/00-migration-plan.md) Phase 0. New
+  2-player numbers below.
 
 ---
 

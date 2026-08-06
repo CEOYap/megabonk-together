@@ -188,10 +188,38 @@ Each phase is independently shippable and independently revertable.
   at each other and LiteNetLib reconciles the cross-connect internally. See P1-3 in
   [`../netplay/01-critical-fixes.md`](../netplay/01-critical-fixes.md) for the evidence. The
   gate lands in Phase 3 as lobby metadata instead, where it also covers relayed sessions.
-- Add per-message-type byte counters and a latency/loss readout so the migration can be
-  measured rather than asserted.
-- **Exit criteria:** charging bugs fixed; a baseline bandwidth profile recorded at 2 / 4 / 6
-  players.
+- ~~Add per-message-type byte counters~~ — **done.** `BandwidthDiagnostics` reports KB/s, sends/s
+  and B/send per message type. The two `LobbyUpdates` senders are labelled by hand
+  (`LobbyUpdates(players)` / `LobbyUpdates(enemies)`) because they share a type and the merged
+  bucket could not attribute the traffic it was being blamed for.
+- **Latency: partial.** `rtt` is reported per peer and works on the direct path (65 ms measured on
+  an internet session). There is no packet-loss readout — LiteNetLib does not expose one, and
+  `GetConnectionRealTimeStatus` supplies it for free after Phase 4. Do not build one now.
+
+#### Exit criteria — revised, because 4 and 6 players cannot be played
+
+The original criterion was *"a baseline bandwidth profile recorded at 2 / 4 / 6 players"*. **The
+project has two players available and no route to more.** Left as written, this blocks the
+migration permanently on something nobody can do, so it is split into the part that can be
+measured and the part that has to be accepted.
+
+1. **Charging bugs fixed** — done, verified in-game.
+2. **2-player profile recorded in-game** — done. Host egress median 20.8 KB/s, p90 37.5, max 98.6
+   (down from 32.1 / 97.3 / 321.1 before the stream work), with per-stream attribution.
+3. **4 and 6 players: derive, do not play.** Bandwidth is payload x rate x peers, and the payloads
+   are measurable directly by serializing representative records against the real MemoryPack
+   serializer — no session required. That method is trustworthy here rather than merely convenient:
+   it predicted `PlayersStateUpdate` at 98 B/send and the shipped build measured **exactly 98**.
+   Current derived figures are in the `PlayersStateUpdate` summary; the 6-player full `Player`
+   record is **1628 B**, over `MAX_PACKET_SIZE_BYTES`, which is why the player stream was split.
+4. **What derivation cannot cover, recorded as accepted risk rather than as a task.** Six-player
+   *behaviour* — CPU across six interpolators, enemy-cap scaling, encounter-barrier contention
+   with six reporters, and the budgeted enemy stream's per-tick cap actually binding — has never
+   been exercised and will not be before the migration. Phase 4 should therefore not claim
+   6-player parity, only 2-player parity plus derived bandwidth.
+
+> **Do not quietly re-add "capture at 6 players" to a later phase.** It was carried as an open
+> blocker across three handovers before anyone wrote down that it is not achievable.
 
 > **Knock-on:** P1-2 (golden shrine sync) changes the wire format and was blocked behind P1-3.
 > It is therefore blocked behind this migration too — or it ships accepting that a
