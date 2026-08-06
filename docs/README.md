@@ -20,6 +20,7 @@ like next.
 | [`netplay/04-performance-and-gc.md`](netplay/04-performance-and-gc.md) | Measured allocation sites, hot paths, and the ordered list of what to fix for 400–600 enemy density |
 | [`netplay/05-local-testing.md`](netplay/05-local-testing.md) | Two netplay clients on one PC and one Steam account — and what that setup cannot prove |
 | [`netplay/07-shared-experience-audit.md`](netplay/07-shared-experience-audit.md) | The shared-experience pause/reward barrier: protocol, its holes, and the upstream softlock issues |
+| [`netplay/08-observed-bugs.md`](netplay/08-observed-bugs.md) | Backlog of bugs seen in play and not yet fixed: Aegis orbit count, Ghost item summons, and the two encounter-barrier symptoms from the 2026-08-06 session |
 | [`netplay/09-performance-audit.md`](netplay/09-performance-audit.md) | Second pass on per-frame cost: the three globally patched Unity properties, the per-enemy interpolator Update, and what a profiler capture would settle |
 | [`netplay/12-session-handover.md`](netplay/12-session-handover.md) | **Current branch state.** What is verified in-game, what is built but unplayed, the client spawn-ordering defect, and the lessons that cost time. Supersedes `10` and `11` |
 
