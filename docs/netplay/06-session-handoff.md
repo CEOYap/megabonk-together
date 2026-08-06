@@ -232,12 +232,21 @@ are structural (fewer native calls, no square roots, no per-enemy scans).
 Changes the wire format, and the version gate that would make that safe is now a Steamworks
 deliverable. Either wait, or ship knowing a version-mismatched pair desyncs silently.
 
-### 10. `RelayEnvelope.ToFilters` — UNVERIFIED, scheduled
+### 10. `RelayEnvelope.ToFilters` — TRACED, correct, CLOSED
 
-`SendToAllClientsExcept`'s relay branch falls back to an empty filter list on lookup miss. Only
-the direct-peer path was traced. Resolve during Steamworks **Phase 1**, which is where the
-two-id-space `SendToAllClientsExcept` signature collapses into one connection id — see
-[`../steamworks/00-migration-plan.md`](../steamworks/00-migration-plan.md).
+Traced end to end (plugin both branches, and the server's forwarding) at `main @ 29ac265`. The
+two id spaces are **not** transposed, and the empty-filter fallback is safe: a `sender` that
+misses the lookup is by definition a direct peer, and direct peers are not in the relay session's
+client set, so they cannot receive their own echo.
+
+Two harmless defects were found and deliberately left: the `toExcept` lookup is an identity
+function with a dead fallback, and `0` doubles as the not-found sentinel while being a legal
+connection id. Full trace and both defects:
+[`01-critical-fixes.md`](01-critical-fixes.md#p1-1) under *Sender exclusion in relay mode*.
+
+**Not run in-game** — read from source on both ends. A two-player relay run could not test it
+regardless, because with one recipient the filter cannot be distinguished from having nobody
+else to send to.
 
 ---
 

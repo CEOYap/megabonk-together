@@ -361,8 +361,11 @@ Two things to handle when doing it:
 
 - **Ignore an `AddXp` whose `OwnerId` is the local player.** Under absolute semantics a copy
   echoed back to the sender is a harmless no-op; under delta semantics it double-counts
-  permanently. The relay's sender-exclusion filter is UNVERIFIED (`RelayEnvelope.ToFilters`, open
-  item 9 in [`06-session-handoff.md`](06-session-handoff.md)), so this is not hypothetical.
+  permanently. The relay's sender-exclusion filter has since been traced and is correct in both
+  branches (`RelayEnvelope.ToFilters` — see
+  [`01-critical-fixes.md`](01-critical-fixes.md#p1-1) under *Sender exclusion in relay mode*), so
+  the echo this guards against should not occur. Keep the guard anyway: it costs one comparison,
+  and the trace is read from source rather than observed on the wire.
 - **Deltas cannot self-heal.** The absolute value silently repairs any divergence on the next
   pickup; a delta stream does not. That is the trade, and it is the right one only because the
   channel is reliable and ordered and there is no mid-run join.

@@ -376,11 +376,11 @@ Whether that is worth changing is a judgement call this document does not make �
 path and its loss characteristics have never been measured. It is recorded here so the Phase 1
 translation does not carry it across silently as though it were a decision.
 
-**The exclusion filter itself is separately UNVERIFIED.** `SendToAllClientsExcept` computes
-`ToFilters` from `gamePeersIntroducedByRelay` while its `netPlayerId` parameter is a LiteNetLib
-`NetPeer.Id` and its `sender` parameter is a game connection id. Those are different id spaces.
-That trace is its own task and is not resolved here; see
-[`../steamworks/00-migration-plan.md`](../steamworks/00-migration-plan.md) Phase 1.
+**The exclusion filter itself has been traced and is correct.** `SendToAllClientsExcept` takes
+`netPlayerId` (a LiteNetLib `NetPeer.Id`) and `sender` (a game connection id) — two different id
+spaces — but each is used only against the map that speaks it, and the server filters on the same
+connection-id space the relay branch writes. Full trace, plus two harmless defects found along the
+way: [`01-critical-fixes.md`](01-critical-fixes.md#p1-1) under *Sender exclusion in relay mode*.
 
 ---
 
