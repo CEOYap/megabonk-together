@@ -121,7 +121,34 @@ leaves `activeEncounterWindow` inactive and the particle renderers disabled.
 Nothing bounded the wait. Every hole above, and any not yet found, becomes an unrecoverable run.
 
 <a name="se-5"></a>
-### SE-5 — a release can be generated for a round nobody is in — CONFIRMED
+### SE-5 — a release can be generated for a round nobody is in — CONFIRMED, **FIXED and VERIFIED in play**
+
+**Fixed by round identity.** Two new union tags, `EncounterClosedStamped` (69) and
+`CloseEncounterStamped` (70), carry `(SessionId, RoundId)`. New types rather than fields on 65/66,
+because MemoryPack is positional and adding a field to a shipped tag is the silent-corruption
+hazard `CLAUDE.md` forbids; 65 and 66 are still received and now log a warning naming the peer's
+build.
+
+- The **host** owns the round counter, mints a non-zero `SessionId` per run, and stamps every
+  release with the round it is releasing. All three release sites (`RewardFinished`,
+  `ForceCloseEncounter`, and the disconnect path in `RetargetAfterDisconnect`) go through one
+  `ReleaseBarrier()` — a stamp assembled in three places is a stamp that does not identify a round.
+- A **release is idempotent per round**: `TryApplyRelease` drops a stamp already applied, so the
+  second broadcast described below can no longer close a window opened since. That is OB-4.
+- A **report** names the round it is for, and the host drops one that does not match the round it
+  has open, instead of counting it toward the current round.
+- Peers agree on the number without a handshake: both start at round 0, and round *N* is open until
+  a release for *N* is applied. A peer that misses a release stops matching and has its reports
+  rejected rather than misattributed — recovery is the existing failsafe.
+
+**Verified in play, 2026-08-07.** Host logged **242** `[barrier] Released round N` and 241 accepted
+reports; the client logged **242** `[barrier] Applied release for round N` — an exact match — with
+**zero** stale rejections on either peer (`Ignoring a stale release`, `Dropped a stale barrier
+report`). Readiness rounds incremented 1→4 with no repeats. The round-identity mechanism does what
+it was built to do; note that no stale message actually arrived, so the *rejection* path remains
+unexercised. The original text follows.
+
+---
 
 `IsClosable()` stays true from the moment the count is met until something clears it, and both the
 host's `RewardFinished()` and the `EncounterClosed` handler broadcast `CloseEncounter` whenever
@@ -361,8 +388,11 @@ Two things to handle when doing it:
 
 - **Ignore an `AddXp` whose `OwnerId` is the local player.** Under absolute semantics a copy
   echoed back to the sender is a harmless no-op; under delta semantics it double-counts
-  permanently. The relay's sender-exclusion filter is UNVERIFIED (`RelayEnvelope.ToFilters`, open
-  item 9 in [`06-session-handoff.md`](06-session-handoff.md)), so this is not hypothetical.
+  permanently. The relay's sender-exclusion filter has since been traced and is correct in both
+  branches (`RelayEnvelope.ToFilters` — see
+  [`01-critical-fixes.md`](01-critical-fixes.md#p1-1) under *Sender exclusion in relay mode*), so
+  the echo this guards against should not occur. Keep the guard anyway: it costs one comparison,
+  and the trace is read from source rather than observed on the wire.
 - **Deltas cannot self-heal.** The absolute value silently repairs any divergence on the next
   pickup; a delta stream does not. That is the trade, and it is the right one only because the
   channel is reliable and ordered and there is no mid-run join.

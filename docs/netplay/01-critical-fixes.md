@@ -827,21 +827,85 @@ The shipped code already uses `SendToAllClientsExcept` for exactly this reason. 
 delta-carrying message relayed from the host must do the same** — absolute-value messages are
 forgiving, deltas are not.
 
-### Unverified: sender exclusion in relay mode
+### Sender exclusion in relay mode — TRACED, correct (was UNVERIFIED)
 
-Only the direct-peer path was traced. `SendToAllClientsExcept`'s relay branch
-(`UdpClientService.cs:1687-1714`) builds `RelayEnvelope.ToFilters` by looking `sender` up in
-`gamePeersIntroducedByRelay`, and falls back to an **empty filter list** when the lookup misses.
-An empty filter presumably means "send to all relayed peers" — harmless when the sender is a
-direct peer, but a double-count if it can ever be reached with the sender among the relayed
-set. Not traced through the server's forwarding logic and not tested. **UNVERIFIED** — worth a
-look before adding any new delta message, not urgent otherwise.
+Traced end to end against `main @ 29ac265`. **The exclusion is correct in both branches; the two
+id spaces are not transposed.** Recorded here in full because the migration plan requires this
+settled before the Phase 1 seam, after which the call sites no longer show the split.
+
+`SendToAllClientsExcept(int netPlayerId, uint sender, T data)` takes one parameter from each id
+space, which is what made it suspect:
+
+| | Value | Space |
+|---|---|---|
+| `netPlayerId` | `peer.Id`, from `HandleMessage(deserializedMsg, peer.Id)` (`UdpClientService.cs:293`) | LiteNetLib `NetPeer.Id` |
+| `sender` | a field off the message body (`OwnerId`, `SenderId`, `PlayerChargingId`, …) | game connection id |
+
+Each is used only against the map that speaks it:
+
+- **Direct branch** filters `gamePeers.Where(p => p.Value.Id != netPlayerId)`. `gamePeers` is
+  keyed and populated by `peer.Id` (`:229`), and `p.Value.Id` is the same `NetPeer.Id`. Same
+  space. ✔
+- **Relay branch** looks `sender` up in `gamePeersIntroducedByRelay`, which is added as
+  `TryAdd(introduced.ConnectionId, new PeerIntroduction(…, introduced.ConnectionId, …))` at both
+  population sites (`:532`, `:762`) — so the key **is** a game connection id. Same space. ✔
+- **The server** filters `envelope.ToFilters.Contains(client.ConnectionId)`
+  (`RendezVousServer.cs:296`), also a game connection id, and forwards on the delivery method the
+  hop arrived on. Same space. ✔
+
+**The empty-filter fallback is correct, for a reason the original note did not have.** An empty
+`ToFilters` means "forward to every client in the session", and the session's clients are only
+those that bound to the relay. A `sender` that misses the lookup is by definition a *direct*
+peer, which is not in `session.Clients` and therefore cannot receive its own echo. The
+double-count the note worried about is unreachable: reaching the fallback with the sender among
+the relayed set would require the sender to be absent from a dictionary it is inserted into on
+introduction.
+
+### Two defects found while tracing — neither is a live bug
+
+**1. The `toExcept` lookup is an identity function, and its fallback is dead.**
+
+```csharp
+if (gamePeersIntroducedByRelay.ContainsKey(sender))
+    toExcept = gamePeersIntroducedByRelay[sender].ConnectionId;   // == sender, by construction
+
+if (toExcept == 0)
+{
+    var normalPeer = gamePeersIntroducedByRelay
+        .FirstOrDefault(p => p.Value.ConnectionId == sender).Value;   // key == Value.ConnectionId
+    ...
+}
+```
+
+`PeerIntroduction.ConnectionId` is set from the same `introduced.ConnectionId` used as the key,
+so `dict[sender].ConnectionId == sender` always, and the fallback scans the same dictionary on
+the field that equals the key. It can only succeed where the first lookup already did. The whole
+block reduces to `found = dict.ContainsKey(sender); toExcept = sender;` — and the fallback is a
+LINQ linear scan over the peer set on a path taken by 24 message types.
+
+**2. `0` is used as the "not found" sentinel, and `0` is a legitimate connection id.**
+`ConnectionIdPool.NewId()` (`src/server/Pools/ConnectionIdPool.cs`) draws a cryptographically
+random `uint` and excludes only ids already in use — never `0`. A relay peer with connection id
+`0` therefore sets `toExcept = 0`, which reads as "not found" and re-enters the fallback. It
+happens to recover, because the fallback finds the same entry and sets `found = true` again. The
+correct value is produced by accident, not by design.
+
+Both are left alone deliberately: fixing them changes a path that cannot be exercised here (relay
+mode needs a failed hole-punch between two machines) for no behavioural gain. They are recorded
+so the Phase 1 translation does not preserve them as though they were intentional. **The cheap
+fix, if the code is being touched anyway, is `found`/`toExcept` from one `TryGetValue` and no
+sentinel.**
 
 ### Test
 
 No change to test. If confirming the existing behaviour anyway: three players, **client B**
 (not host) picks up gold; B's total must increase by exactly the pickup amount and client C's
-total must increase too. Force relay mode to exercise the unverified path above.
+total must increase too. Force relay mode to exercise the relay branch.
+
+**Not run.** The trace above is read from source on both ends, not observed on the wire, and
+three players are not available to this project — two is the maximum. With two players the relay
+branch has exactly one recipient and the exclusion cannot distinguish "filtered correctly" from
+"nobody else to send to", so a two-player run would not test the thing in question.
 
 ---
 

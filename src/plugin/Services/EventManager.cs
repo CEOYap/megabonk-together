@@ -66,6 +66,10 @@ namespace MegabonkTogether.Services
         private static event Action<PlayerRespawned> PlayerRespawnedEvents;
         private static event Action<AddXp> AddXpEvents;
         private static event Action<CloseEncounter> CloseEncounterEvents;
+        private static event Action<CloseEncounterStamped> CloseEncounterStampedEvents;
+        private static event Action ReleaseBarrierEvents;
+        private static event Action<ReadinessRoundStarted> ReadinessRoundStartedEvents;
+        private static event Action ReadinessRoundReAskEvents;
         private static event Action<GoldChanged> GoldChangedEvents;
 
         public static void OnSpawnedObject(SpawnedObject spawnedObject)
@@ -797,6 +801,69 @@ namespace MegabonkTogether.Services
             MainThreadDispatcher.Enqueue(() =>
             {
                 CloseEncounterEvents?.Invoke(closeEncounter);
+            });
+        }
+
+        public static void SubscribeCloseEncounterStampedEvents(Action<CloseEncounterStamped> action)
+        {
+            CloseEncounterStampedEvents += action;
+        }
+
+        public static void OnCloseEncounterStamped(CloseEncounterStamped closeEncounter)
+        {
+            MainThreadDispatcher.Enqueue(() =>
+            {
+                CloseEncounterStampedEvents?.Invoke(closeEncounter);
+            });
+        }
+
+        /// <summary>
+        /// Host-side "the barrier is satisfied, release it". Carries no payload because the stamp is
+        /// assembled by the single owner of the round counter (<c>SynchronizationService
+        /// .ReleaseBarrier</c>) rather than by whichever receive path noticed the barrier was full —
+        /// a stamp built in two places is a stamp that does not identify a round.
+        /// </summary>
+        public static void SubscribeReleaseBarrierEvents(Action action)
+        {
+            ReleaseBarrierEvents += action;
+        }
+
+        public static void OnReleaseBarrier()
+        {
+            MainThreadDispatcher.Enqueue(() =>
+            {
+                ReleaseBarrierEvents?.Invoke();
+            });
+        }
+
+        public static void SubscribeReadinessRoundStartedEvents(Action<ReadinessRoundStarted> action)
+        {
+            ReadinessRoundStartedEvents += action;
+        }
+
+        public static void OnReadinessRoundStarted(ReadinessRoundStarted started)
+        {
+            MainThreadDispatcher.Enqueue(() =>
+            {
+                ReadinessRoundStartedEvents?.Invoke(started);
+            });
+        }
+
+        /// <summary>
+        /// Host-side "re-announce the open readiness round". Payload-free for the same reason
+        /// <see cref="OnReleaseBarrier"/> is: the stamp is owned by one place, and a receive path
+        /// that assembled its own would be able to name a round that does not exist.
+        /// </summary>
+        public static void SubscribeReadinessRoundReAskEvents(Action action)
+        {
+            ReadinessRoundReAskEvents += action;
+        }
+
+        public static void OnReadinessRoundReAsk()
+        {
+            MainThreadDispatcher.Enqueue(() =>
+            {
+                ReadinessRoundReAskEvents?.Invoke();
             });
         }
 

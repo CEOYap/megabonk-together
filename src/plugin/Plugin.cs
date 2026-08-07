@@ -179,6 +179,19 @@ namespace MegabonkTogether
                 Log.LogWarning($"[unity-exc] Diagnostic unavailable, continuing without it: {ex.GetType().Name}: {ex.Message}");
             }
 
+            // Runs before anything else can log, and reports whether Unity-sourced lines will reach
+            // LogOutput.log at all on this install. Placed first because it changes how the rest of
+            // the log should be read: without it, a host log missing every Unity line looks like a
+            // host that had no Unity errors. Same call-site guard as above.
+            try
+            {
+                MegabonkTogether.Services.LogCaptureDiagnostics.Report();
+            }
+            catch (System.Exception ex)
+            {
+                Log.LogWarning($"[log-capture] Diagnostic unavailable, continuing without it: {ex.GetType().Name}: {ex.Message}");
+            }
+
             ClassInjector.RegisterTypeInIl2Cpp<NetPlayer>();
             ClassInjector.RegisterTypeInIl2Cpp<CoroutineRunner>();
             ClassInjector.RegisterTypeInIl2Cpp<MainThreadDispatcher>();
@@ -230,6 +243,7 @@ namespace MegabonkTogether
                 services.AddSingleton<IAutoUpdaterService, AutoUpdaterService>();
                 services.AddSingleton<IChangelogService, ChangelogService>();
                 services.AddSingleton<IEncounterService, EncounterService>();
+                services.AddSingleton<IReadinessService, ReadinessService>();
                 services.AddSingleton<ITrackerService, TrackerService>();
             });
 

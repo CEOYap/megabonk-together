@@ -9,8 +9,9 @@ Status tags per [`../README.md`](../README.md): **CONFIRMED** — verified by re
 cited line. **LIKELY** — strong inference from structure, failing path not observed. **UNVERIFIED**
 — depends on game internals not yet decompiled.
 
-Two of these were reported from play and two were found in the logs of the same session
-(2026-08-06, two players, direct P2P).
+OB-1..OB-4 come from the 2026-08-06 session (two players, direct P2P). OB-5..OB-9 come from the
+**2026-08-07** sessions — two players over the internet at ~61 ms rtt, running the round-identity
+build with `WriteUnityLog = true` on both peers.
 
 ---
 
@@ -119,14 +120,26 @@ The host/client asymmetry corroborates it: **the host was the one waiting** (5 f
 the client never reported. The failsafe converts SE-6's permanent hang into a 20-second repeating
 cycle — bounded, which is what it was for, but not resolved.
 
-**Fix:** SE-5's round identity, which
-[`00-fork-comparison.md`](00-fork-comparison.md) §5 now recommends doing together with the
-lobby-ready retry work, since a shipped implementation pairs exactly those two.
+**Fix: PARTIAL, UNVERIFIED in play.** SE-5's round identity has landed (union tags 69/70 — see
+[SE-5](07-shared-experience-audit.md#se-5)), which stops a stale report releasing the wrong round.
+
+**It does not fix the cause of OB-3.** The re-arm loop here is [SE-6](07-shared-experience-audit.md#se-6):
+`IsClosable()` counts every player, including a peer that returned early from `PopReward_Prefix`
+without reporting because `!CanInput()`. Round identity means that peer's report, when it finally
+comes, is now *rejected* as stale rather than misapplied — which is more correct but does not make
+the round complete. The 20-second failsafe cycle should therefore still be expected until SE-6 is
+addressed, and the next capture should be read with that in mind rather than as a regression.
 
 ---
 
 <a name="ob-4"></a>
-## OB-4 — The failsafe closes an encounter window that is mid-use — CONFIRMED
+## OB-4 — The failsafe closes an encounter window that is mid-use — CONFIRMED, **FIXED and VERIFIED in play**
+
+**Fixed by round identity.** The failsafe's release is now stamped like every other one, and
+`EncounterService.TryApplyRelease` drops a stamp for a round the peer has already applied. The
+second release for a finished round is therefore ignored instead of closing whatever window is open
+— see [SE-5](07-shared-experience-audit.md#se-5). Not run in-game. The chain below is the original
+diagnosis and still describes what the stamp interrupts.
 
 **Reported:** the failsafe fired while the chest-opening window was up and the window closed
 instantly, losing the interaction.
@@ -157,10 +170,320 @@ exact rather than heuristic.
 
 ---
 
+<a name="ob-5"></a>
+## OB-5 — A client's magnet pull often does nothing — CONFIRMED, cause narrowed
+
+**Reported:** power-up magnets picked up by clients sometimes do not work at all.
+
+**Evidence, 2026-08-07 session.** Both peers drop follow instructions for pickups they cannot
+resolve:
+
+| Log | Handler | Count |
+|---|---|---|
+| Client | `OnReceivedPickupFollowingPlayer` — *"Pickup N not found in PickupManagerService"* | **184** |
+| Client | `OnReceivedPickupApplied` | 14 |
+| Host | `OnReceivedPickupApplied` (all for the client's id `1296713703`) | 14 |
+| Host | `HandleWantToStartFollowingPickup` | 1 |
+
+A dropped `PickupFollowingPlayer` is exactly the reported symptom: the instruction that makes an orb
+fly to a player names a pickup id the receiving peer has never registered, so nothing moves. 184 of
+them in one session is not an edge case.
+
+**Four things the numbers settle.**
+
+1. **It is not packet loss.** `PickupFollowingPlayer` (tag 12), `PickupApplied` (11), `SpawnedPickup`
+   (10) and `SpawnedPickupOrb` (9) are all `ReliableOrdered`, and the host sends them on one channel,
+   so they cannot be lost and cannot overtake each other. The id is genuinely absent from the
+   receiver's registry.
+2. **It is not one peer's fault.** The client's 184 failures split almost evenly by owner — 93 for
+   its own id, 91 for the host's. Both players' pulls fail on the client.
+3. **The same pickup fails repeatedly, for both owners.** Id `3037` fails at client lines 3867 and
+   3873; id `3852` fails at 3868 attributed to the host and at 3874 attributed to the client. So two
+   peers are contending for one orb and the instruction is re-sent.
+4. **It is bursty and worsens over a run.** Distribution by line: 2 / 8 / 1 in the early thousands,
+   then **66** and **107** in the last two blocks. 173 of 184 are late-run.
+
+**The rate is the thing to look at.** `[bw]` on the host shows `PickupFollowingPlayer` reaching
+**229–233 sends/s** at 10 B each, and `PickupApplied` up to **51/s**. A per-frame re-send of "this
+orb is following you" for every in-flight orb is a lot of traffic to spend on an instruction that is
+being dropped 184 times.
+
+**Most likely mechanism, UNVERIFIED.** The pickup was already consumed and removed from
+`PickupManagerService` — by the other player, or by the receiver itself — before the follow
+instruction for it was handled. Two players magnetising the same field is exactly when that races,
+which fits the "both owners", "same id twice" and "late-run burst" observations. The competing
+explanation, that the spawn was never registered on that peer, is not ruled out: **the success path
+of `OnReceivedSpawnedPickup` logs nothing, so the log cannot distinguish "never registered" from
+"registered then removed".**
+
+**Next step, cheap and decisive.** Log the registry size and whether the id was ever known, at the
+point of failure — a `HashSet<uint>` of every id ever registered this session, checked in the
+warning branch. "Never seen" and "seen then removed" want different fixes: the first is a spawn
+replication gap, the second is a lifetime/ordering problem where the fix is to ignore the pull
+silently rather than warn.
+
+**Do not fix by making the message unreliable or by suppressing the warning.** The warning is the
+only visibility this path has.
+
+---
+
+<a name="ob-6"></a>
+## OB-6 — Shrine charge counters differ between players — CONFIRMED, cause exact
+
+**Reported:** shrine counters are not in sync between all players.
+
+**Cause, exactly: the charge value is never transmitted.** The two messages that exist carry
+identity only —
+
+```csharp
+// src/common/Messages/GameNetworkMessages/StartingChargingShrine.cs
+public uint ShrineNetplayId;
+public uint PlayerChargingId;
+
+// StoppingChargingShrine.cs — the same two fields
+```
+
+— and a repo-wide search for a charge amount, progress or percentage on the wire returns **nothing**.
+So the protocol replicates *who is charging*, and every peer then accumulates the shrine's charge
+**locally** from its own belief about that set. The counter is not synchronised at all; it only
+happens to agree when every peer's charger set and frame timing agree.
+
+**Which they demonstrably do not.** The host logged
+`Another player is still charging this shrine. Preventing stop trigger.` — the host's charger set
+held two entries when a stop arrived. The client logged no shrine lines at all, because its
+equivalent paths only log on failure. Two peers, two independently-accumulated counters, and at
+least one point where their charger sets differed.
+
+**Why this is worse than a cosmetic mismatch.** Whoever reaches full charge first fires the
+completion locally. If the accumulation rate scales with the number of chargers — which is the
+natural reading of a "counter" that changes when a second player joins — then a peer that thinks one
+player is charging and a peer that thinks two are will complete at different times, and the shrine's
+reward fires on a schedule the other peer has not reached.
+
+**The one lookup that settles the rate question.** `ChargeShrine`'s per-frame accumulation in
+`dump.cs` (buildid 21750826) — specifically whether it multiplies by a charger count or is a flat
+rate. Flat means the divergence is only start/stop timing and a modest correction suffices; scaled
+means the counters diverge by a factor and the value has to be replicated.
+
+**Fix shape, not yet chosen.** Either make the host authoritative for shrine charge and replicate the
+value at a low rate (a new append-only union tag; the value changes continuously but is small and
+tolerates `Unreliable` because a later packet supersedes it), or keep it local and replicate only the
+completion event so that at least the *outcome* agrees while the bar may briefly disagree. The second
+is much cheaper and is probably enough if what players notice is the reward, not the bar.
+
+**Related:** the pylon and lamp barriers share `HandleChargingStart` / `HandleChargingStop` with the
+shrine, so if their progress is displayed anywhere they have the same defect by construction. Only
+the shrine was reported.
+
+---
+
+<a name="ob-7"></a>
+## OB-7 — Desert final-boss pylons do not exist for clients — CONFIRMED, cause exact
+
+**Reported:** on the Desert final boss the pylons do not appear or work for non-host clients. **The
+Forest final boss is fine.** That contrast is the whole diagnosis.
+
+**Evidence.** Client log, 18 × `Pylon object not found in SpawnedObjectManagerService when
+processing OnReceivedStartingToChargingPylon` and 16 × the `…StoppingChargingPylon` equivalent, all
+inside the final fight. The host meanwhile charges pylons normally (`Player <id> stopping charging
+pylon 5 / 7 / 10 / 16 / 18 / 21 / 32 / 35`). The host has pylons; the client cannot resolve their
+ids.
+
+**Cause: pylon ids are assigned by local determinism, not replicated — and the counter they draw
+from is not deterministic across peers.**
+
+[`Patches/FinalFightController.cs:38-51`](../../src/plugin/Patches/FinalFightController.cs) runs on
+**every** peer with no host gate:
+
+```csharp
+//Since we are using a fixed seed, the pylons will always spawn in the same order
+foreach (var pylon in __instance.pylons)
+{
+    var netplayId = spawnedObjectManagerService.AddSpawnedObject(pylon.gameObject);
+    DynamicData.For(pylon.gameObject).Set("netplayId", netplayId);
+}
+```
+
+`AddSpawnedObject` is documented **"Server side"** and allocates from one shared counter:
+
+```csharp
+// SpawnedObjectManagerService.cs
+private int currentObjectId = 0;
+public uint AddSpawnedObject(GameObject obj)        // "Server side"
+    => (uint)Interlocked.Increment(ref currentObjectId);
+public void SetSpawnedObject(uint id, GameObject o) // "Client side" — does NOT advance the counter
+```
+
+The seed makes both peers iterate the *same pylons in the same order*. It does nothing about **where
+the counter already is**, and every other spawned object shares it:
+
+| Object | Host | Client | When |
+|---|---|---|---|
+| Tumbleweed (`SynchronizationService.cs:4621`, host-gated in `InteractableTumbleWeed.OnEnable_Postfix`) | `AddSpawnedObject` — counter **+1** | `SetSpawnedObject(hostId, …)` — counter **unchanged** | **Desert only**, continuously |
+| Revive coffin (`SpawnReviver`, `:4265`) | `if (isHost) AddSpawnedObject` — counter **+1** | uses the replicated `ReviverId` — counter **unchanged** | **any map**, once per player death |
+| Pylons (`FinalFightController.cs:48`) | `AddSpawnedObject` | `AddSpawnedObject` — **both advance, from different starting points** | final fight |
+
+So every host-side spawn moves the host's counter and leaves the client's where it was. By the final
+fight the two are far apart, both peers allocate pylon ids from their own counter, and the client's
+lookup of a host-assigned pylon id finds nothing.
+
+> **The revive coffin is not a Desert feature**, despite the code calling it `desertGraveInstance`
+> and typing it `InteractableDesertGrave`. `SpawnReviver` is the coffin that appears when *any*
+> player dies on *any* map; it simply reuses the game's `EffectManager.Instance.desertGraves[0]`
+> prefab as its visual. An earlier revision of this entry claimed it was Desert-only and built the
+> Forest/Desert contrast partly on that. It was wrong, and the corrected conclusion below is
+> sharper.
+
+**Why Desert reliably breaks, and why Forest is not actually safe.** Tumbleweeds are Desert-only —
+`NetworkHandler.Update` gates their tick on `MapController.runConfig.mapData.eMap == EMap.Desert` —
+and they spawn continuously throughout a run, so on Desert the counters are guaranteed to be far
+apart long before the final fight. On Forest the only divergence source is the revive coffin, which
+costs one id **per death**. If nobody died before the final boss the counters were still in step and
+the pylon ids happened to agree.
+
+**So Forest working is a coincidence of that run, not a property of the map.** The same failure
+should be reproducible on Forest by having a player die once before reaching the final fight — which
+is the cheapest way to confirm this diagnosis, and worth doing before the fix, because it would rule
+out any remaining Desert-specific explanation.
+
+**Fix shape.** Replicate pylon ids instead of deriving them. The host should allocate and broadcast
+(the `SpawnedObject` path already exists), and the client should `SetSpawnedObject` with the host's
+id like every other replicated object. The seed can stay — it keeps *positions* consistent — but it
+must not be load-bearing for identity.
+
+**A shared mutable counter used as an implicit protocol is the general defect here**, and pylons are
+just where it surfaced. Any future object registered with `AddSpawnedObject` on both peers has the
+same latent bug.
+
+---
+
+<a name="ob-8"></a>
+## OB-8 — The Desert final boss does not move for clients — LIKELY, one decompile settles it
+
+**Reported:** alongside OB-7, the Desert final boss was completely static on the non-host peer.
+Forest's final boss behaved correctly.
+
+**What is established.** Bosses are deliberately exempted from distance throttling —
+[`Patches/Enemies/Enemy.cs:372,395`](../../src/plugin/Patches/Enemies/Enemy.cs) returns `true` early
+for `IsBoss() || IsStageBoss() || IsFinalBoss()`, so `MyUpdate` and `MyFixedUpdate` are never
+suppressed for a boss on either peer. Throttling is therefore **not** the cause. `EnemyManagerService`
+also has a dedicated `EEnemyFlag.FinalBoss` case, so the final boss is expected to be a normal
+replicated enemy. Enemy replication was healthy during the fight: `SpawnedEnemy` at 13–22 sends/s
+and `LobbyUpdates(enemies)` at 35–40/s.
+
+**The suspicious asymmetry.** `FinalFightControllerPatches.SpawnBoss_Prefix` returns **false** for
+clients, so a client never runs `FinalFightController.SpawnBoss` at all. Its boss can therefore only
+come from the host's replication. If the host's `SpawnBoss` instantiates the boss directly rather
+than going through `EnemyManager.SpawnEnemy` — the method our `SpawnEnemy_Prefix` patches to assign a
+netplay id and broadcast `SpawnedEnemy` — then the boss is never registered in
+`EnemyManagerService`, never appears in `GetAllEnemiesDeltaAndUpdate`, and never receives a position
+update on the client. A boss that is present but frozen is exactly what that produces.
+
+**The one lookup that decides it.** Decompile `FinalFightController.SpawnBoss` and check whether it
+calls `EnemyManager.SpawnEnemy` or instantiates a prefab directly:
+
+```bash
+"$APPDATA/ghidra/ghidra_12.1.2_PUBLIC/venv/Scripts/python.exe" scripts/re/decompile_headless.py FinalFightController
+```
+
+Resolve the VA from `megabonk-re/build-21750826/dump.cs` — **use the `VA:` field, not `RVA:`**.
+
+**Do not fix before that lookup.** If the boss does route through `SpawnEnemy`, the cause is
+something else entirely and the obvious "replicate the boss" patch would be a second, redundant
+spawn path.
+
+**Possibly the same root as OB-7.** Both were reported on Desert and both were absent on Forest, and
+OB-7's counter divergence is *not* Desert-specific in principle — it is merely guaranteed there. If
+the boss is resolved through a spawned-object id rather than an enemy id, then OB-7 and OB-8 are one
+bug with two symptoms and one fix. **Check this before treating them separately**, and note that the
+Forest-with-a-death reproduction suggested in OB-7 would test both at once.
+
+---
+
+<a name="ob-9"></a>
+## OB-9 — Enemy max health is never replicated — CONFIRMED, cause exact
+
+**Reported:** for summoned bosses (bush, bandit) the **current** health agrees between players but
+the **maximum** does not.
+
+**Cause: max health is not on the wire anywhere.** Both enemy-carrying messages transmit current HP
+and nothing else:
+
+```csharp
+// SpawnedEnemy — the spawn message
+public float Hp { get; set; }          // current only
+public int Wave { get; set; }
+public bool CanBeElite { get; set; }
+public float ExtraSizeMultiplier { get; set; }
+
+// EnemyModel — the 40 Hz delta stream
+public float Hp { get; set; }          // current only
+```
+
+A repo-wide search for `MaxHp` / `MaxHealth` under `src/common/` returns **players only**
+(`Player.MaxHp`, `PlayerUpdate.MaxHp`). There is no enemy equivalent.
+
+So current HP converges — it is re-sent at 40 Hz and the refresh sweep bounds its staleness — while
+max HP is **derived locally on each peer** from whatever the game computes at spawn. Any input to
+that computation which differs between peers produces a permanently different maximum, and the
+health bar reads as a different fraction on each screen even though the absolute values agree.
+
+**Why summoned bosses specifically.** `SpawnedEnemy` does replicate *some* scaling inputs — `Wave`,
+`CanBeElite`, `ExtraSizeMultiplier`. A regular wave enemy therefore tends to agree by construction.
+A boss summoned through `ChallengeSummoner` is scaled by state that is **not** in that message, so
+its locally-derived maximum diverges. That matches the report exactly: ordinary enemies look fine,
+summoned bosses do not.
+
+**Fix shape, cheapest first.** Add a max-health field to `SpawnedEnemy` — **as a new append-only
+union tag, never as a field on tag 4**, because MemoryPack is positional and widening a shipped
+message silently corrupts sessions between builds. Max health changes rarely, so it belongs on the
+spawn message and not in the 40 Hz delta; putting it in `EnemyModel` would cost bandwidth on every
+enemy every tick to fix a value that almost never changes.
+
+**Not established:** whether the divergence is purely cosmetic (a health bar reading wrong) or
+whether anything gameplay-relevant reads max health — execute thresholds, percentage damage, or
+phase transitions would all make this a correctness bug rather than a display one. Worth checking
+before choosing how much to spend on it.
+
+---
+
+<a name="ob-10"></a>
+## OB-10 — Clients emit ~1,800 "Only host can perform this action" warnings per run — CONFIRMED
+
+Not player-visible, found in the logs. The client emitted **1,841** of these in one session, first
+at line 4149 and continuing to the end of the run.
+
+The warning comes from `UdpClientService.EnsureIsHost()`, so a client is repeatedly entering a
+host-only send path — `SendToAllClients`, `SendToAllClientsExcept`, `SendToClient` or
+`SendStreamUpdate`. The guard does its job and the send is dropped, which is why nothing breaks. But
+each rejected call did the work leading up to it, and at ~1,800 per run something is being attempted
+several times a second on a peer that can never perform it.
+
+**Why it matters beyond noise.** The standing rule in `CLAUDE.md` is that every patch opens with a
+session check *and an ownership check*; a client reaching a host-only send means some path is
+missing the second. `EnsureIsHost` is catching the consequence rather than the cause, and it cannot
+say which caller it caught — the warning has no context at all.
+
+**Next step.** Include the caller in the warning (`[CallerMemberName]` on `EnsureIsHost`, which costs
+nothing at runtime) and re-run. That converts 1,841 anonymous lines into a ranked list of ungated
+paths, which is a far better starting point than reading every call site.
+
+**Do not silence it.** A guard firing 1,841 times is information; the fix is upstream of the guard.
+
+
+---
+
 ## Not in this file
 
-- Client `NullReferenceException` storm (~2,000–30,000 per session, no managed stack) — live lead in
-  [`12-session-handover.md`](12-session-handover.md).
+- Client `NullReferenceException` storm — live lead in
+  [`12-session-handover.md`](12-session-handover.md). **2026-08-07 narrowed it decisively:** with
+  `WriteUnityLog = true` on *both* peers for the first time, the host recorded **0** NREs during the
+  whole run against the client's **8,422**, while the host's Unity channel was demonstrably live
+  (29 `Can not play a disabled audio source` warnings spread across the session). The asymmetry is
+  now measured rather than assumed. `[unity-exc]` confirms `SetStackTraceLogType(..., ScriptOnly)`
+  was applied on both peers and **still no managed frame appears**, which resolves the open
+  either/or: the thrower is native game code, not managed mod code.
 - Remote projectile / rocket representation — same file, needs a design pass rather than a patch.
-- Host BepInEx logging no Unity-sourced lines, which is why several "the host does not have this"
-  statements in this repo are unprovable. Fix before the next capture.
+- ~~Host BepInEx logging no Unity-sourced lines~~ — **fixed and confirmed.** It was
+  `[Logging.Disk] WriteUnityLog`, which defaults to `false` and is a separate gate from
+  `[Logging] UnityLogListening`. See [`05-local-testing.md`](05-local-testing.md).

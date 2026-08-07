@@ -232,12 +232,68 @@ are structural (fewer native calls, no square roots, no per-enemy scans).
 Changes the wire format, and the version gate that would make that safe is now a Steamworks
 deliverable. Either wait, or ship knowing a version-mismatched pair desyncs silently.
 
-### 10. `RelayEnvelope.ToFilters` — UNVERIFIED, scheduled
+### 9b. Lobby-ready barrier defects A–D — all four addressed, none verified in play
 
-`SendToAllClientsExcept`'s relay branch falls back to an empty filter list on lookup miss. Only
-the direct-peer path was traced. Resolve during Steamworks **Phase 1**, which is where the
-two-id-space `SendToAllClientsExcept` signature collapses into one connection id — see
-[`../steamworks/00-migration-plan.md`](../steamworks/00-migration-plan.md).
+Reworked against a shipping third-party implementation's spawn-readiness barrier, which is a
+hardened version of exactly this mechanism. **It has no shared-experience encounter barrier at
+all** — its reward-window path simply unpauses and moves on — so it is a reference for A–D and
+*not* for SE-5/SE-6.
+
+Readiness now lives in `Services/ReadinessService.cs`: a host-assigned `(SessionId, RoundId)`
+stamp, an explicitly captured participant set, and a reported set. Two new union tags, 71
+`ReadinessRoundStarted` (host→clients) and 72 `ClientReadyStamped` (client→host). Tag 1
+`ClientInGameReady` is still received and warns that the sender is on an older build.
+
+**A — sent once, no retry. FIXED.** `ClientReadyRoutine` reports every 2 s for up to 15 attempts,
+generation-guarded so a new round cannot leave an older routine reporting against a stale stamp.
+It stops when the host's own replicated roster shows this peer ready. The stamp is what makes the
+retry correct rather than merely repetitive — retry alone would re-send an unaddressed report, and
+an early report is indistinguishable from a current one.
+
+**B — `ResetForNextLevel` clears remote `IsReady`. FIXED, structurally.** The authoritative set is
+no longer the replicated `Player.IsReady` field, so clearing that field costs a re-report rather
+than the round. The race it caused — client reports, host records, host then clears — is now
+rejected on arrival instead of banked, because an early report names the previous round.
+
+**C — `OnLobbyUpdate` overwrites the whole `Player`. FIXED, structurally, same mechanism.**
+Note `a79ea0c` is recorded as having fixed C and did not: it removed the 60 Hz clobber, and the
+5 Hz full record still overwrites. `Player.IsReady` is now a *derived mirror* of the barrier, kept
+on the wire so the UI and the client's acknowledgement check work unchanged.
+
+**D — `NetworkHandler.Update` returns before `Poll()` while `IsLoadingNextLevel`. STILL OPEN as a
+transport defect; no longer affects readiness.** Not touched — moving `Poll()` ahead of that
+early return would dispatch handlers into a mid-load scene, which is plausibly why the guard
+exists. The readiness path no longer cares when the round start arrives, because a stamp is
+*stored* rather than acted on: it is picked up whenever the local transition finishes. Every other
+message is still queued rather than processed for the duration of a level load.
+
+**Also taken from the reference:** a departed peer is removed from the participant set
+(`RemoveParticipant` on the disconnect funnel), so the round cannot wait on a report that can never
+arrive — the SE-6 shape, closed here for readiness but still open for the encounter barrier.
+
+**Five deliberate departures from the reference**, each documented on `ReadinessService`: one stamp
+instead of two, an empty participant set treated as satisfied rather than as a permanent wait,
+retry targeted at the peers that owe a report with a timeout that names them, no
+all-players-ready message (the existing 5 Hz roster force-send already acknowledges), and 1-based
+rounds so zero unambiguously means "no round".
+
+**None of this has been run in-game.**
+
+### 10. `RelayEnvelope.ToFilters` — TRACED, correct, CLOSED
+
+Traced end to end (plugin both branches, and the server's forwarding) at `main @ 29ac265`. The
+two id spaces are **not** transposed, and the empty-filter fallback is safe: a `sender` that
+misses the lookup is by definition a direct peer, and direct peers are not in the relay session's
+client set, so they cannot receive their own echo.
+
+Two harmless defects were found and deliberately left: the `toExcept` lookup is an identity
+function with a dead fallback, and `0` doubles as the not-found sentinel while being a legal
+connection id. Full trace and both defects:
+[`01-critical-fixes.md`](01-critical-fixes.md#p1-1) under *Sender exclusion in relay mode*.
+
+**Not run in-game** — read from source on both ends. A two-player relay run could not test it
+regardless, because with one recipient the filter cannot be distinguished from having nobody
+else to send to.
 
 ---
 

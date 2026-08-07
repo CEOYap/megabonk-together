@@ -256,16 +256,28 @@ which makes that mistake unrepresentable. Good — but the mapping does not vani
 inside `LiteNetTransport`, which must still resolve a connection id to a `NetPeer.Id` for the
 direct path and to a `ToFilters` entry for the relay path.
 
-While doing that, resolve this **UNVERIFIED** item: `SendToAllClientsExcept`'s relay branch
-(`UdpClientService.cs:1687-1714`) falls back to an **empty** `ToFilters` when the sender is not
-found in `gamePeersIntroducedByRelay`. An empty filter appears to mean "send to all relayed
-peers", which is harmless when the sender is a direct peer but would double-count if it can
-ever be reached with the sender among the relayed set. Only the direct-peer path has been
-traced; the server's forwarding logic has not.
+**`ToFilters` is no longer an open question.** It was traced end to end in Phase 0 — both plugin
+branches and the server's forwarding — and is **correct**: each id is used only against the map
+that speaks it, and the empty-filter fallback is safe because a `sender` that misses the lookup
+is by definition a direct peer, and direct peers are not in the relay session's client set. Full
+trace: [`../netplay/01-critical-fixes.md`](../netplay/01-critical-fixes.md#p1-1) under *Sender
+exclusion in relay mode*.
 
-Two acceptable outcomes, either is fine:
+Two defects were found and left in place, because they change nothing today and this phase is
+where they get rewritten anyway. **Do not port either forward:**
 
-1. Trace it, and either fix or document it as safe.
+1. The `toExcept` lookup is an identity function (`dict[sender].ConnectionId == sender` by
+   construction) with a fallback that scans the same dictionary on the field that equals its key
+   — a LINQ linear scan that can never produce a different answer.
+2. `0` is the "not found" sentinel and is also a legal connection id, since
+   `ConnectionIdPool.NewId()` draws a random `uint` and excludes only ids in use. It currently
+   recovers by accident.
+
+Both collapse to one `TryGetValue` and no sentinel in the new signature.
+
+Two acceptable outcomes for the branch itself, either is fine:
+
+1. Port it, with the two defects above collapsed rather than carried.
 2. Delete the relay branch as part of this phase rather than porting a mechanism Phase 5
    removes anyway — provided relay fallback is still needed until SDR lands in Phase 4, which
    it is, so this really means "port it deliberately, not by copy-paste".
@@ -276,6 +288,16 @@ call sites no longer show the id-space split that makes the hazard visible.
 ### Phase 2 — Steam plumbing (no transport change yet)
 - Reference `Steamworks.NET`. See [Gotcha 1](#gotcha-1) for which copy.
 - Verify Steam is already initialised by the game; **do not** call `SteamAPI.Init()`.
+  **Confirmed 2026-08-07, with a caveat that nearly cost a phase.** The assumption holds *only when
+  the game is launched through Steam* — `[Message:     Unity] Steam initialized`. Launched by
+  running `Megabonk.exe` directly, the same build logs
+  `[Error  :     Unity] [Steamworks.NET] SteamAPI_Init() failed` and runs with Steam down, while
+  netplay continues to work perfectly because nothing in the mod touches Steam today. So the failure
+  is invisible until the first Steam call, which is this phase. **Check for the `Steam initialized`
+  line before drawing any conclusion from a Steam-related test**, and note that
+  [`../netplay/05-local-testing.md`](../netplay/05-local-testing.md)'s two-instance harness runs its
+  second copy direct-from-exe by necessity — that instance has no Steam and cannot validate this
+  phase.
 - Call `SteamNetworkingUtils.InitRelayNetworkAccess()` at plugin startup.
 - Add a debug command that prints `SteamUser.GetSteamID()` and SDR relay status.
 - **Exit criteria:** the mod loads, Steam calls succeed, achievements/leaderboards still

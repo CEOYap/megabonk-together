@@ -145,6 +145,7 @@ namespace MegabonkTogether.Services
         private readonly IFinalBossOrbManagerService finalBossOrbManagerService;
         private readonly IGameBalanceService gameBalanceService;
         private readonly IEncounterService encounterService;
+        private readonly IReadinessService readinessService;
         private readonly ITrackerService trackerService;
         private readonly ManualLogSource logger;
         private readonly ConcurrentBag<SpawnedObject> toSpawns = [];
@@ -154,6 +155,16 @@ namespace MegabonkTogether.Services
         private readonly Dictionary<EEnemy, Material> clonedExtraEnemyMaterials = [];
         private Coroutine newObjectToSpawnRoutine;
         private Coroutine pendingEnemySpawnRoutine;
+        private Coroutine readyRetryRoutine;
+
+        /// <summary>Invalidates a retry routine left over from a previous round. See <see cref="ClientReadyRoutine"/>.</summary>
+        private int readyGeneration;
+
+        /// <summary>Lobby-ready defect A. See <see cref="ClientReadyRoutine"/>.</summary>
+        private const float ReadyRetrySeconds = 2f;
+
+        /// <summary>~30 s of re-reporting, then it gives up and says who.</summary>
+        private const int ReadyRetryAttempts = 15;
         private const int MAX_ENEMY_SPAWNS_PER_FRAME = 32;
         private readonly ConcurrentDictionary<uint, ICollection<uint>> shrineChargingPlayers = new();
 
@@ -181,6 +192,7 @@ namespace MegabonkTogether.Services
             IFinalBossOrbManagerService finalBossOrbManagerService,
             IGameBalanceService gameBalanceService,
             IEncounterService encounterService,
+            IReadinessService readinessService,
             ITrackerService trackerService
             )
         {
@@ -193,6 +205,7 @@ namespace MegabonkTogether.Services
             this.finalBossOrbManagerService = finalBossOrbManagerService;
             this.gameBalanceService = gameBalanceService;
             this.encounterService = encounterService;
+            this.readinessService = readinessService;
             this.trackerService = trackerService;
             this.logger = logger;
 
@@ -251,6 +264,10 @@ namespace MegabonkTogether.Services
             EventManager.SubscribePlayerRespawnedEvents(OnReceivedPlayerRespawned);
             EventManager.SubscribeAddXpEvents(OnReceivedAddXp);
             EventManager.SubscribeCloseEncounterEvents(OnReceivedCloseEncounter);
+            EventManager.SubscribeCloseEncounterStampedEvents(OnReceivedCloseEncounterStamped);
+            EventManager.SubscribeReadinessRoundStartedEvents(OnReceivedReadinessRoundStarted);
+            EventManager.SubscribeReadinessRoundReAskEvents(BroadcastReadinessRound);
+            EventManager.SubscribeReleaseBarrierEvents(ReleaseBarrier);
             EventManager.SubscribeGoldChangedEvents(OnReceivedChangeGold);
 
             cancellationToken = cancellationTokenSource.Token;
@@ -279,6 +296,16 @@ namespace MegabonkTogether.Services
                 return false;
             }
 
+            // The host reads the barrier, not the replicated flag. GetAllPlayers().All(p => p.IsReady)
+            // asks a field that ResetForNextLevel clears and the full player record overwrites —
+            // defects B and C — so it could answer "not ready" about a peer whose report the host is
+            // actually holding, or the reverse. The barrier's set is the only copy nothing
+            // replicates over.
+            if (IsServerMode() ?? false)
+            {
+                return readinessService.AreAllParticipantsReady() && udpClientService.HasAllPeersConnected();
+            }
+
             return playerManagerService.GetAllPlayers().All(p => p.IsReady) && udpClientService.HasAllPeersConnected();
         }
 
@@ -304,7 +331,23 @@ namespace MegabonkTogether.Services
             // cleared only by a successful release, so a session that ended mid-encounter poisoned
             // the next one — the next round would either release instantly without anyone
             // reporting, or never release at all. Matches "requires a game restart to recover".
+            // Defect A's retry is per lobby. Left running across a teardown it would keep reporting
+            // readiness for a connection id the next session may reuse. The generation bump is what
+            // actually stops it: Stop() and the field clear are two statements and the routine
+            // yields, so the guard inside it is the reliable half.
+            readyGeneration++;
+            CoroutineRunner.Instance.Stop(readyRetryRoutine);
+            readyRetryRoutine = null;
+            readinessService.ResetSession();
+
             encounterService.ClearClosedEncounters();
+
+            // SE-5: round state is per run, not per round, so ClearClosedEncounters deliberately
+            // leaves it alone and teardown is the only place it is dropped. Without this the next
+            // run would start at round 0 again and accept a message left in flight across the
+            // boundary as though it named the new run's first round.
+            encounterService.ResetSession();
+
             cancellationTokenSource.Cancel();
             cancellationTokenSource = new CancellationTokenSource();
             cancellationToken = cancellationTokenSource.Token;
@@ -716,7 +759,21 @@ namespace MegabonkTogether.Services
                     player.IsReady = true;
                     playerManagerService.UpdatePlayer(player);
 
-                    if (!isServer)
+                    if (isServer)
+                    {
+                        // The host opens the round and names it. Participants are captured here,
+                        // once, rather than counted live on every check — a live count moves under
+                        // the barrier, which is the same defect shape as SE-6 next door.
+                        var participants = playerManagerService.GetAllPlayers().Select(p => p.ConnectionId).ToList();
+                        var stamp = readinessService.OpenRound(participants);
+
+                        // The host is a participant and reports by calling in directly; there is no
+                        // message for it to send to itself.
+                        readinessService.TryMarkReady(player.ConnectionId, stamp.SessionId, stamp.RoundId);
+
+                        BroadcastReadinessRound();
+                    }
+                    else
                     {
                         HandleGameEvent(gameEvent);
                     }
@@ -751,6 +808,13 @@ namespace MegabonkTogether.Services
                     break;
                 case GameEvent.PortalOpened:
                     currentState = State.LoadingNextLevel;
+
+                    // Close the round before ResetForNextLevel clears the mirrored flags, so the
+                    // barrier cannot report the *previous* level's round as satisfied while the
+                    // transition is in flight. The next round is opened, and stamped, when this peer
+                    // reaches Ready on the new level.
+                    readinessService.CloseRound();
+
                     playerManagerService.ResetForNextLevel();
                     PrepareForNextLevel();
                     Plugin.Instance.ClearPrefabs();
@@ -805,11 +869,8 @@ namespace MegabonkTogether.Services
             switch (gameEvent)
             {
                 case GameEvent.Ready:
-                    IGameNetworkMessage message = new ClientInGameReady
-                    {
-                        ConnectionId = playerManagerService.GetLocalPlayer().ConnectionId
-                    };
-                    udpClientService.SendToHost(message, LiteNetLib.DeliveryMethod.ReliableOrdered);
+                    CoroutineRunner.Instance.Stop(readyRetryRoutine);
+                    readyRetryRoutine = CoroutineRunner.Instance.Run(ClientReadyRoutine(++readyGeneration));
                     break;
                 case GameEvent.Start:
                     break;
@@ -818,6 +879,187 @@ namespace MegabonkTogether.Services
                     break;
             }
         }
+        /// <summary>
+        /// Host. Announces the open readiness round so clients learn the stamp they must report
+        /// against.
+        ///
+        /// <para>Sent once when the round opens, and again whenever a report arrives naming the
+        /// wrong round — which almost always means that peer has not been told about this one yet.
+        /// Re-announcing is cheaper than letting the peer burn its retry budget against a stamp it
+        /// cannot have.</para>
+        ///
+        /// <para>The re-announce is a broadcast, as it is in the reference implementation. Targeting
+        /// only the peers that owe a report would need a connection-id-to-<c>NetPeer</c> lookup
+        /// plumbed through the send path, and that is precisely the mapping Phase 1 of the
+        /// Steamworks migration rewrites — not worth building twice. What it does do that the
+        /// reference does not is <b>name the outstanding peers in the log</b>, so a lobby that will
+        /// not start says who it is waiting for instead of just that it is waiting.</para>
+        /// </summary>
+        private void BroadcastReadinessRound()
+        {
+            if (!(IsServerMode() ?? false) || !readinessService.HasStamp)
+            {
+                return;
+            }
+
+            var missing = readinessService.MissingParticipants();
+            if (missing.Count > 0)
+            {
+                logger.LogInfo(
+                    $"[readiness] Announcing round {readinessService.RoundId}; still waiting on " +
+                    $"{missing.Count} peer(s): {string.Join(", ", missing)}.");
+            }
+
+            IGameNetworkMessage message = new ReadinessRoundStarted
+            {
+                SessionId = readinessService.SessionId,
+                RoundId = readinessService.RoundId,
+            };
+
+            udpClientService.SendToAllClients(message, LiteNetLib.DeliveryMethod.ReliableOrdered);
+        }
+
+        /// <summary>
+        /// Client. Adopts the host's stamp for a new readiness round.
+        ///
+        /// <para>Arriving here <i>before</i> this peer has reached its own Ready state is normal and
+        /// is the point: the stamp is held, and <see cref="ClientReadyRoutine"/> picks it up when it
+        /// starts. That ordering is lobby-ready defect D's consequence for readiness —
+        /// <c>NetworkHandler.Update</c> returns before <c>Poll()</c> while
+        /// <c>IsLoadingNextLevel</c>, so the round start is read off the socket late, in a burst,
+        /// often after the local transition has finished. A stamp that is stored rather than acted
+        /// on immediately does not care when it arrives.</para>
+        /// </summary>
+        private void OnReceivedReadinessRoundStarted(ReadinessRoundStarted started)
+        {
+            if (readinessService.AdoptStamp(started.SessionId, started.RoundId))
+            {
+                logger.LogInfo($"[readiness] Adopted round {started.RoundId} (session {started.SessionId}).");
+            }
+        }
+
+        /// <summary>
+        /// Lobby-ready defect A. <c>ClientInGameReady</c> was sent exactly once, with no retry: if
+        /// the host did not end up holding that single report, the client sat on "waiting for other
+        /// player(s)" forever and the run could not start.
+        ///
+        /// <para><b>The channel being reliable is not the same as the report being held.</b>
+        /// <c>ReliableOrdered</c> guarantees LiteNetLib delivers the bytes; it says nothing about
+        /// whether the host still believes it afterwards. Two ways it does not, both of them races
+        /// this peer cannot observe: the host clears readiness in <c>ResetForNextLevel</c> after
+        /// recording an early report (defect B), and the host's replicated record overwrites the
+        /// flag (defect C). Retry repairs both, which is why the fix is retry rather than a stronger
+        /// channel.</para>
+        ///
+        /// <para><b>What changed with the round stamp.</b> Retry alone would have re-sent the same
+        /// unaddressed report, and an early one is indistinguishable from a current one — so the
+        /// host could still settle on a report for the transition it was about to discard. Reporting
+        /// against a host-assigned <c>(SessionId, RoundId)</c> means an early report is rejected
+        /// rather than banked, and the retry is what then delivers the correct one. Neither half
+        /// works without the other; that pairing is the substance of the reference implementation
+        /// and it is why these were done as one change.</para>
+        ///
+        /// <para><b>The acknowledgement is the host's own roster.</b> No ack message: the host
+        /// already replicates <c>IsReady</c> and force-sends a full record the instant it changes
+        /// (<c>UdpClientService.HasReadinessChanged</c>), so "the host is holding my report" is
+        /// observable in state this peer already has. The reference needs an
+        /// <c>AllPlayersReadyForSpawn</c> message plus a targeted re-send of it to answer a retrying
+        /// client; we get the same convergence from machinery that already exists.</para>
+        ///
+        /// <para><b>Idempotent by construction.</b> The host's handler is a set insert keyed on
+        /// connection id, so N copies and one copy are the same.</para>
+        ///
+        /// <para><b>Generation-guarded.</b> A transition that starts a new round while an older
+        /// routine is mid-wait would otherwise have two coroutines reporting against two stamps.
+        /// <c>CoroutineRunner.Stop</c> alone is not enough — the stop and the restart are two
+        /// statements, and this routine yields between them.</para>
+        ///
+        /// <para><b>Bounded, and it says who.</b> Gives up after <see cref="ReadyRetryAttempts"/>
+        /// attempts and logs it. The reference logs a bare boolean on its equivalent timeout;
+        /// naming the peer is the difference between a line you can act on and one you cannot.</para>
+        ///
+        /// <para><b>UNVERIFIED.</b> Not run in-game.</para>
+        /// </summary>
+        private IEnumerator ClientReadyRoutine(int generation)
+        {
+            var localPlayer = playerManagerService.GetLocalPlayer();
+            if (localPlayer == null)
+            {
+                logger.LogWarning("[readiness] Cannot report: no local player.");
+                yield break;
+            }
+
+            var connectionId = localPlayer.ConnectionId;
+
+            for (var attempt = 1; attempt <= ReadyRetryAttempts; attempt++)
+            {
+                if (generation != readyGeneration || currentState != State.Ready)
+                {
+                    yield break;
+                }
+
+                // Nothing to report against yet. The host's round start may still be queued behind
+                // a level load — see OnReceivedReadinessRoundStarted — so this waits rather than
+                // sending an unaddressable report the host would only reject.
+                if (readinessService.HasStamp)
+                {
+                    IGameNetworkMessage message = new ClientReadyStamped
+                    {
+                        ConnectionId = connectionId,
+                        SessionId = readinessService.SessionId,
+                        RoundId = readinessService.RoundId,
+                    };
+
+                    udpClientService.SendToHost(message, LiteNetLib.DeliveryMethod.ReliableOrdered);
+
+                    if (attempt > 1)
+                    {
+                        logger.LogInfo(
+                            $"[readiness] Re-reporting for round {readinessService.RoundId} " +
+                            $"(attempt {attempt}/{ReadyRetryAttempts}).");
+                    }
+                }
+                else if (attempt > 1)
+                {
+                    logger.LogInfo($"[readiness] Still waiting for the host to name a round (attempt {attempt}/{ReadyRetryAttempts}).");
+                }
+
+                // Hand-accumulated against unscaledDeltaTime rather than WaitForSecondsRealtime.
+                // WaitForSeconds would not advance at timeScale 0, which the lobby-ready screen can
+                // be, silently turning the retry into a no-op — and WaitForSecondsRealtime is used
+                // nowhere else in this plugin, so whether BepInEx's IL2CPP coroutine driver handles
+                // it is unverified. `yield return null` is the form this codebase already relies on
+                // in twelve places.
+                var waited = 0f;
+                while (waited < ReadyRetrySeconds)
+                {
+                    yield return null;
+                    waited += Time.unscaledDeltaTime;
+
+                    if (generation != readyGeneration || currentState != State.Ready)
+                    {
+                        yield break;
+                    }
+
+                    // Read fresh each time: the record is replaced wholesale by the host's full
+                    // player broadcast, so a reference captured earlier can be stale. Checked inside
+                    // the wait, not only after it — acknowledgement usually arrives well within the
+                    // interval, and stopping promptly keeps a redundant re-report off the wire.
+                    var acknowledged = playerManagerService.GetPlayer(connectionId);
+                    if (acknowledged != null && acknowledged.IsReady && readinessService.HasStamp)
+                    {
+                        yield break;
+                    }
+                }
+            }
+
+            logger.LogWarning(
+                $"[readiness] Peer {connectionId} gave up after {ReadyRetryAttempts} attempts over " +
+                $"~{ReadyRetryAttempts * ReadyRetrySeconds:F0}s. Stamp held: {readinessService.HasStamp} " +
+                $"(session {readinessService.SessionId}, round {readinessService.RoundId}). The host " +
+                "has not acknowledged this peer as ready and the run will not start without it.");
+        }
+
         private IEnumerator NewObjectToSpawnRoutine() //TODO: add a auto cancel after X seconds
         {
             var token = cancellationToken;
@@ -4150,6 +4392,13 @@ namespace MegabonkTogether.Services
             playerManagerService.Disconnect(disconnected.ConnectionId);
             projectileManagerService.RemoveProjectilesByOwnerId(disconnected.ConnectionId);
 
+            // A departed peer must stop being a participant, or the readiness round waits on a
+            // report that can never arrive — the same shape as SE-6 on the encounter barrier, where
+            // a live participant count includes peers that cannot report. The reference
+            // handles this with a transport-level member-removed event; we already have a single
+            // disconnect funnel, so it hangs off that instead.
+            readinessService.RemoveParticipant(disconnected.ConnectionId);
+
             var isHost = IsServerMode() ?? false;
             var canRetarget = isHost && GameManager.Instance != null && GameManager.Instance.player != null;
 
@@ -4193,12 +4442,10 @@ namespace MegabonkTogether.Services
         {
             if (IsSharedExperienceEnabled() && encounterService.IsClosable()) //Making sure to unblock people if somemone leave and we can close
             {
-                IGameNetworkMessage closeMessage = new CloseEncounter
-                {
-                };
-
-                udpClientService.SendToAllClients(closeMessage, LiteNetLib.DeliveryMethod.ReliableOrdered);
-                OnCloseEncounter();
+                // The third of the three release sites, and the reason ReleaseBarrier exists: a
+                // departure can satisfy the barrier, and this release has to name the same round as
+                // the other two or the peers will drop it as stale.
+                ReleaseBarrier();
             }
 
             var allPlayersAliveIdWithout = playerManagerService.GetAllPlayersAlive().Where(p => p.ConnectionId != disconnectedConnectionId).Select(p => p.ConnectionId).ToList();
@@ -4808,34 +5055,110 @@ namespace MegabonkTogether.Services
             // encounter window at all.
             encounterService.BeginWaiting();
 
-            IGameNetworkMessage message = new EncounterClosed
-            {
-                OwnerId = playerManagerService.GetLocalPlayer().ConnectionId,
-            };
-
             var isHost = IsServerMode() ?? false;
             if (isHost)
             {
+                // SE-5: the host owns the barrier session, and this is the earliest point at which
+                // any barrier message can exist, so minting here is unconditionally early enough.
+                encounterService.EnsureSession();
+
                 encounterService.AddClosedEncounterForPlayer(playerManagerService.GetLocalPlayer().ConnectionId);
 
                 if (encounterService.IsClosable())
                 {
-                    IGameNetworkMessage closeMessage = new CloseEncounter
-                    {
-                    };
-
-                    udpClientService.SendToAllClients(closeMessage, LiteNetLib.DeliveryMethod.ReliableOrdered);
-                    OnCloseEncounter();
+                    ReleaseBarrier();
                 }
             }
             else
             {
+                IGameNetworkMessage message = new EncounterClosedStamped
+                {
+                    OwnerId = playerManagerService.GetLocalPlayer().ConnectionId,
+                    SessionId = encounterService.SessionId,
+                    RoundId = encounterService.RoundId,
+                };
+
                 udpClientService.SendToHost(message, LiteNetLib.DeliveryMethod.ReliableOrdered);
             }
         }
 
+        /// <summary>
+        /// Host only. Broadcasts the release for the round that is currently open and applies it
+        /// locally. Extracted because there were three copies of this — <see cref="RewardFinished"/>,
+        /// <see cref="ForceCloseEncounter"/> and the <c>EncounterClosed</c> handler in
+        /// <c>UdpClientService</c> — and a stamp that is assembled differently in any of them is a
+        /// stamp that does not identify a round.
+        /// </summary>
+        private void ReleaseBarrier()
+        {
+            encounterService.EnsureSession();
+
+            var sessionId = encounterService.SessionId;
+            var roundId = encounterService.RoundId;
+
+            IGameNetworkMessage closeMessage = new CloseEncounterStamped
+            {
+                SessionId = sessionId,
+                RoundId = roundId,
+            };
+
+            udpClientService.SendToAllClients(closeMessage, LiteNetLib.DeliveryMethod.ReliableOrdered);
+
+            // Logged on the SUCCESS path, not only on rejection.
+            //
+            // The first session on this build could not confirm the barrier worked at all: the only
+            // barrier line in either log was one failsafe fire, because every healthy path here was
+            // silent and the stamped messages are too low-rate to escape the [bw] report's
+            // "(N more types)" bucket. A round-identity mechanism whose correct operation leaves no
+            // trace cannot be verified in play, only suspected — and "absence of a log line is not
+            // absence of the event" is a lesson this project has already paid for twice.
+            //
+            // One line per barrier round, which is a handful per stage. Nowhere near a hot path.
+            logger.LogInfo($"[barrier] Released round {roundId} (session {sessionId}) to all clients.");
+
+            // Applied through the same gate the clients use, so the host advances its own round
+            // counter by exactly the rule it just broadcast rather than by a second code path.
+            if (encounterService.TryApplyRelease(sessionId, roundId))
+            {
+                OnCloseEncounter();
+            }
+        }
+
+        /// <summary>
+        /// SE-5 / OB-4. A release now names the round it releases, and a repeat for a round already
+        /// applied is dropped here rather than closing whatever encounter window happens to be open
+        /// — which is precisely the reported failure: the failsafe fired, a second release was
+        /// generated for a finished round, and it shut a fresh chest window instantly.
+        /// </summary>
+        private void OnReceivedCloseEncounterStamped(CloseEncounterStamped close)
+        {
+            if (!encounterService.TryApplyRelease(close.SessionId, close.RoundId))
+            {
+                logger.LogInfo(
+                    $"[barrier] Ignoring a stale release (session {close.SessionId}, round {close.RoundId}); " +
+                    $"this peer is on session {encounterService.SessionId}, round {encounterService.RoundId}.");
+                return;
+            }
+
+            // Paired with the rejection line above so the two are greppable together: a healthy
+            // session shows one applied line per round and no stale ones, and that distinction is
+            // the whole point of the stamp.
+            logger.LogInfo($"[barrier] Applied release for round {close.RoundId} (session {close.SessionId}).");
+
+            encounterService.Close();
+            OnCloseEncounter();
+        }
+
+        /// <summary>
+        /// Retained for peers on a build without union tag 70. Unstamped, so it cannot be attributed
+        /// to a round and carries every SE-5 hazard; nothing in this build sends it.
+        /// </summary>
         private void OnReceivedCloseEncounter(CloseEncounter close)
         {
+            logger.LogWarning(
+                "Received an unstamped CloseEncounter. The sending peer is on an older build; the " +
+                "barrier cannot be round-attributed for this release (SE-5).");
+
             encounterService.Close();
             OnCloseEncounter();
         }
@@ -4881,24 +5204,24 @@ namespace MegabonkTogether.Services
             {
                 if (isHost)
                 {
-                    IGameNetworkMessage closeMessage = new CloseEncounter
+                    // Stamped like any other release, so the peers that already applied this round
+                    // drop it instead of closing a window they have since opened — OB-4, which was
+                    // this failsafe firing and taking a live chest window with it.
+                    ReleaseBarrier();
+                    return;
+                }
+
+                var localPlayer = playerManagerService.GetLocalPlayer();
+                if (localPlayer != null)
+                {
+                    IGameNetworkMessage message = new EncounterClosedStamped
                     {
+                        OwnerId = localPlayer.ConnectionId,
+                        SessionId = encounterService.SessionId,
+                        RoundId = encounterService.RoundId,
                     };
 
-                    udpClientService.SendToAllClients(closeMessage, LiteNetLib.DeliveryMethod.ReliableOrdered);
-                }
-                else
-                {
-                    var localPlayer = playerManagerService.GetLocalPlayer();
-                    if (localPlayer != null)
-                    {
-                        IGameNetworkMessage message = new EncounterClosed
-                        {
-                            OwnerId = localPlayer.ConnectionId,
-                        };
-
-                        udpClientService.SendToHost(message, LiteNetLib.DeliveryMethod.ReliableOrdered);
-                    }
+                    udpClientService.SendToHost(message, LiteNetLib.DeliveryMethod.ReliableOrdered);
                 }
             }
             catch (Exception ex)

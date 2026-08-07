@@ -78,6 +78,7 @@ namespace MegabonkTogether.Services
             IFinalBossOrbManagerService finalBossOrbManagerService,
             ISpawnedObjectManagerService spawnedObjectManagerService,
             IEncounterService encounterService,
+            IReadinessService readinessService,
             ManualLogSource logger) : IUdpClientService
     {
         private const int MAX_PACKET_SIZE_BYTES = 1000;
@@ -741,6 +742,12 @@ namespace MegabonkTogether.Services
                     case AddXp addXp:
                         EventManager.OnAddXp(addXp);
                         break;
+                    case CloseEncounterStamped closeEncounterStamped:
+                        EventManager.OnCloseEncounterStamped(closeEncounterStamped);
+                        break;
+                    case ReadinessRoundStarted readinessRoundStarted:
+                        EventManager.OnReadinessRoundStarted(readinessRoundStarted);
+                        break;
                     case CloseEncounter closeEncounter:
                         EventManager.OnCloseEncounter(closeEncounter);
                         break;
@@ -806,7 +813,46 @@ namespace MegabonkTogether.Services
                         }
 
                         break;
+                    case ClientReadyStamped clientReadyStamped:
+                        var stampedReadyId = clientReadyStamped.ConnectionId;
+                        var stampedPlayer = playerManagerService.GetPlayer(stampedReadyId);
+                        if (stampedPlayer == null)
+                        {
+                            Plugin.Log.LogWarning($"[readiness] Report from unknown connection {stampedReadyId}.");
+                            return;
+                        }
+
+                        // Lobby-ready defect B. A report that does not name the round this host has
+                        // open is one that raced ahead of the host's own level transition. Recording
+                        // it is what used to hang the lobby: ResetForNextLevel then cleared it, and a
+                        // client that sent exactly once never reported again. Rejecting it is only
+                        // safe because the client retries — the two halves are one fix.
+                        if (!readinessService.TryMarkReady(stampedReadyId, clientReadyStamped.SessionId, clientReadyStamped.RoundId))
+                        {
+                            logger.LogInfo(
+                                $"[readiness] Dropped a report from {stampedReadyId} for session " +
+                                $"{clientReadyStamped.SessionId} round {clientReadyStamped.RoundId}; host has " +
+                                $"session {readinessService.SessionId} round {readinessService.RoundId} open.");
+
+                            // Re-announce rather than stay silent. A mismatch usually means this peer
+                            // is reporting against a round it has not been told about yet, and the
+                            // one thing that resolves it is the stamp — which is cheaper to re-send
+                            // than to let the peer burn its retry budget.
+                            EventManager.OnReadinessRoundReAsk();
+                            break;
+                        }
+
+                        // Mirrored onto the replicated record so the existing UI, the 5 Hz full
+                        // player broadcast, and the client's own acknowledgement check all keep
+                        // working unchanged. This is now a derived value: the barrier holds the
+                        // truth, and a clobber of this field costs a re-report, not the round.
+                        stampedPlayer.IsReady = true;
+                        playerManagerService.UpdatePlayer(stampedPlayer);
+
+                        break;
                     case ClientInGameReady clientInGameReady:
+                        // Older build on the other end: no round stamp, so the report cannot be
+                        // attributed and is accepted exactly as it was before, defect B included.
                         var clientReadyId = clientInGameReady.ConnectionId;
                         var player = playerManagerService.GetPlayer(clientReadyId);
                         if (player == null)
@@ -814,6 +860,13 @@ namespace MegabonkTogether.Services
                             Plugin.Log.LogWarning($"Received ClientReady from unknown player with connection ID {clientReadyId}.");
                             return;
                         }
+
+                        Plugin.Log.LogWarning(
+                            $"[readiness] Unstamped report from {clientReadyId}. That peer is on an older " +
+                            "build; this report cannot be round-attributed (lobby-ready defect B).");
+
+                        readinessService.TryMarkReady(clientReadyId, readinessService.SessionId, readinessService.RoundId);
+
                         player.IsReady = true;
                         playerManagerService.UpdatePlayer(player);
 
@@ -1007,17 +1060,48 @@ namespace MegabonkTogether.Services
                         EventManager.OnAddXp(addXp);
                         SendToAllClientsExcept(netPeerId, addXp.OwnerId, addXp);
                         break;
+                    case EncounterClosedStamped encounterClosedStamped:
+                        // SE-5, report half. A report that does not name the round this host has
+                        // open is a leftover from a round already released — counting it toward the
+                        // current round is what releases someone else's window before they have
+                        // chosen. Dropped rather than applied; the reporting peer's own failsafe is
+                        // what recovers it if it really is stuck.
+                        if (!encounterService.IsCurrentStamp(encounterClosedStamped.SessionId, encounterClosedStamped.RoundId))
+                        {
+                            logger.LogInfo(
+                                $"Dropping a stale barrier report from {encounterClosedStamped.OwnerId} " +
+                                $"(session {encounterClosedStamped.SessionId}, round {encounterClosedStamped.RoundId}); " +
+                                $"host is on session {encounterService.SessionId}, round {encounterService.RoundId}.");
+                            break;
+                        }
+
+                        encounterService.AddClosedEncounterForPlayer(encounterClosedStamped.OwnerId);
+
+                        // The accepted counterpart of the "Dropped a stale barrier report" line
+                        // above. Without it a healthy round is invisible and only failures speak,
+                        // which is what made the first run of this build unverifiable.
+                        logger.LogInfo(
+                            $"[barrier] Report from {encounterClosedStamped.OwnerId} accepted for round " +
+                            $"{encounterClosedStamped.RoundId}; barrier closable: {encounterService.IsClosable()}.");
+
+                        if (encounterService.IsClosable())
+                        {
+                            EventManager.OnReleaseBarrier();
+                        }
+
+                        break;
                     case EncounterClosed encounterClosed:
+                        // Older build on the other end: no round identity, so this report cannot be
+                        // attributed and is accepted as-is, exactly as it was before SE-5.
+                        Plugin.Log.LogWarning(
+                            $"Received an unstamped EncounterClosed from {encounterClosed.OwnerId}. That peer is " +
+                            "on an older build; this report cannot be round-attributed (SE-5).");
+
                         encounterService.AddClosedEncounterForPlayer(encounterClosed.OwnerId);
 
                         if (encounterService.IsClosable())
                         {
-                            IGameNetworkMessage closeMessage = new CloseEncounter
-                            {
-                            };
-
-                            SendToAllClients(closeMessage, DeliveryMethod.ReliableOrdered);
-                            EventManager.OnCloseEncounter(closeMessage as CloseEncounter);
+                            EventManager.OnReleaseBarrier();
                         }
 
                         break;
