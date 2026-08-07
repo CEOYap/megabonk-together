@@ -317,21 +317,34 @@ public void SetSpawnedObject(uint id, GameObject o) // "Client side" — does NO
 The seed makes both peers iterate the *same pylons in the same order*. It does nothing about **where
 the counter already is**, and every other spawned object shares it:
 
-| Object | Host | Client |
-|---|---|---|
-| Tumbleweed (`SynchronizationService.cs:4621` / `:4639`) | `AddSpawnedObject` — counter **+1** | `SetSpawnedObject(hostId, …)` — counter **unchanged** |
-| Desert grave / reviver (`:4265`) | `if (isHost) AddSpawnedObject` — counter **+1** | uses replicated `reviverId` — counter **unchanged** |
-| Pylons (`FinalFightController.cs:48`) | `AddSpawnedObject` | `AddSpawnedObject` — **both advance, from different starting points** |
+| Object | Host | Client | When |
+|---|---|---|---|
+| Tumbleweed (`SynchronizationService.cs:4621`, host-gated in `InteractableTumbleWeed.OnEnable_Postfix`) | `AddSpawnedObject` — counter **+1** | `SetSpawnedObject(hostId, …)` — counter **unchanged** | **Desert only**, continuously |
+| Revive coffin (`SpawnReviver`, `:4265`) | `if (isHost) AddSpawnedObject` — counter **+1** | uses the replicated `ReviverId` — counter **unchanged** | **any map**, once per player death |
+| Pylons (`FinalFightController.cs:48`) | `AddSpawnedObject` | `AddSpawnedObject` — **both advance, from different starting points** | final fight |
 
-So by the time the final fight begins the host's counter has been advanced once per tumbleweed and
-once per desert grave, and the client's has not. Both peers then allocate pylon ids from counters
-that are far apart, and the client's lookup of a host-assigned pylon id finds nothing.
+So every host-side spawn moves the host's counter and leaves the client's where it was. By the final
+fight the two are far apart, both peers allocate pylon ids from their own counter, and the client's
+lookup of a host-assigned pylon id finds nothing.
 
-**Why Forest works and Desert does not.** Tumbleweeds are Desert-only — `NetworkHandler.Update`
-gates the tumbleweed tick on `MapController.runConfig.mapData.eMap == EMap.Desert`, and desert graves
-are likewise Desert-only. On Forest neither exists, the counters stay in step, and the accidental
-id agreement holds. **The Forest case is not evidence that the design works; it is evidence that it
-only works when nothing else has allocated an id.**
+> **The revive coffin is not a Desert feature**, despite the code calling it `desertGraveInstance`
+> and typing it `InteractableDesertGrave`. `SpawnReviver` is the coffin that appears when *any*
+> player dies on *any* map; it simply reuses the game's `EffectManager.Instance.desertGraves[0]`
+> prefab as its visual. An earlier revision of this entry claimed it was Desert-only and built the
+> Forest/Desert contrast partly on that. It was wrong, and the corrected conclusion below is
+> sharper.
+
+**Why Desert reliably breaks, and why Forest is not actually safe.** Tumbleweeds are Desert-only —
+`NetworkHandler.Update` gates their tick on `MapController.runConfig.mapData.eMap == EMap.Desert` —
+and they spawn continuously throughout a run, so on Desert the counters are guaranteed to be far
+apart long before the final fight. On Forest the only divergence source is the revive coffin, which
+costs one id **per death**. If nobody died before the final boss the counters were still in step and
+the pylon ids happened to agree.
+
+**So Forest working is a coincidence of that run, not a property of the map.** The same failure
+should be reproducible on Forest by having a player die once before reaching the final fight — which
+is the cheapest way to confirm this diagnosis, and worth doing before the fix, because it would rule
+out any remaining Desert-specific explanation.
 
 **Fix shape.** Replicate pylon ids instead of deriving them. The host should allocate and broadcast
 (the `SpawnedObject` path already exists), and the client should `SetSpawnedObject` with the host's
@@ -379,10 +392,11 @@ Resolve the VA from `megabonk-re/build-21750826/dump.cs` — **use the `VA:` fie
 something else entirely and the obvious "replicate the boss" patch would be a second, redundant
 spawn path.
 
-**Also unexplained, and possibly the same root:** Forest works. If OB-7's counter divergence is
-Desert-specific, and the boss turns out to be resolved through a spawned-object id rather than an
-enemy id, then OB-7 and OB-8 are one bug with two symptoms. Worth checking before treating them
-separately.
+**Possibly the same root as OB-7.** Both were reported on Desert and both were absent on Forest, and
+OB-7's counter divergence is *not* Desert-specific in principle — it is merely guaranteed there. If
+the boss is resolved through a spawned-object id rather than an enemy id, then OB-7 and OB-8 are one
+bug with two symptoms and one fix. **Check this before treating them separately**, and note that the
+Forest-with-a-death reproduction suggested in OB-7 would test both at once.
 
 ---
 
