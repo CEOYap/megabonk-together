@@ -121,7 +121,7 @@ leaves `activeEncounterWindow` inactive and the particle renderers disabled.
 Nothing bounded the wait. Every hole above, and any not yet found, becomes an unrecoverable run.
 
 <a name="se-5"></a>
-### SE-5 — a release can be generated for a round nobody is in — CONFIRMED, **FIXED (UNVERIFIED in play)**
+### SE-5 — a release can be generated for a round nobody is in — CONFIRMED, **FIXED and VERIFIED in play**
 
 **Fixed by round identity.** Two new union tags, `EncounterClosedStamped` (69) and
 `CloseEncounterStamped` (70), carry `(SessionId, RoundId)`. New types rather than fields on 65/66,
@@ -141,7 +141,12 @@ build.
   a release for *N* is applied. A peer that misses a release stops matching and has its reports
   rejected rather than misattributed — recovery is the existing failsafe.
 
-**Not run in-game.** Reasoned from the code paths only. The original text follows.
+**Verified in play, 2026-08-07.** Host logged **242** `[barrier] Released round N` and 241 accepted
+reports; the client logged **242** `[barrier] Applied release for round N` — an exact match — with
+**zero** stale rejections on either peer (`Ignoring a stale release`, `Dropped a stale barrier
+report`). Readiness rounds incremented 1→4 with no repeats. The round-identity mechanism does what
+it was built to do; note that no stale message actually arrived, so the *rejection* path remains
+unexercised. The original text follows.
 
 ---
 
