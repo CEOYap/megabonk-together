@@ -756,11 +756,26 @@ namespace MegabonkTogether.Services
                         break;
                     }
 
-                    player.IsReady = true;
-                    playerManagerService.UpdatePlayer(player);
-
                     if (isServer)
                     {
+                        // Host only. Readiness is host-authoritative — that is the whole premise of
+                        // ReadinessService — and the client must NOT write its own flag here.
+                        //
+                        // It used to, and that silently broke the retry: ClientReadyRoutine decides
+                        // "the host has acknowledged me" by reading this same record, so a client
+                        // that set the flag itself moments earlier could not tell the host's answer
+                        // from its own write. The routine then exited on its first wait iteration
+                        // having sent nothing at all, and the lobby hung forever with no failsafe on
+                        // this path.
+                        //
+                        // It only surfaced when the host's round-start arrived *after* the routine
+                        // started — a race the internet sessions happened to always win and two
+                        // instances on one PC lost. The client's flag now becomes true only when the
+                        // host's replicated record says so, which is also what makes
+                        // IsLobbyReady()'s All(p => p.IsReady) mean something on a client.
+                        player.IsReady = true;
+                        playerManagerService.UpdatePlayer(player);
+
                         // The host opens the round and names it. Participants are captured here,
                         // once, rather than counted live on every check — a live count moves under
                         // the barrier, which is the same defect shape as SE-6 next door.
