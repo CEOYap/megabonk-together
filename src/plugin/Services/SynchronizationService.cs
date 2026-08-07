@@ -5104,6 +5104,18 @@ namespace MegabonkTogether.Services
 
             udpClientService.SendToAllClients(closeMessage, LiteNetLib.DeliveryMethod.ReliableOrdered);
 
+            // Logged on the SUCCESS path, not only on rejection.
+            //
+            // The first session on this build could not confirm the barrier worked at all: the only
+            // barrier line in either log was one failsafe fire, because every healthy path here was
+            // silent and the stamped messages are too low-rate to escape the [bw] report's
+            // "(N more types)" bucket. A round-identity mechanism whose correct operation leaves no
+            // trace cannot be verified in play, only suspected — and "absence of a log line is not
+            // absence of the event" is a lesson this project has already paid for twice.
+            //
+            // One line per barrier round, which is a handful per stage. Nowhere near a hot path.
+            logger.LogInfo($"[barrier] Released round {roundId} (session {sessionId}) to all clients.");
+
             // Applied through the same gate the clients use, so the host advances its own round
             // counter by exactly the rule it just broadcast rather than by a second code path.
             if (encounterService.TryApplyRelease(sessionId, roundId))
@@ -5123,10 +5135,15 @@ namespace MegabonkTogether.Services
             if (!encounterService.TryApplyRelease(close.SessionId, close.RoundId))
             {
                 logger.LogInfo(
-                    $"Ignoring a stale barrier release (session {close.SessionId}, round {close.RoundId}); " +
+                    $"[barrier] Ignoring a stale release (session {close.SessionId}, round {close.RoundId}); " +
                     $"this peer is on session {encounterService.SessionId}, round {encounterService.RoundId}.");
                 return;
             }
+
+            // Paired with the rejection line above so the two are greppable together: a healthy
+            // session shows one applied line per round and no stale ones, and that distinction is
+            // the whole point of the stamp.
+            logger.LogInfo($"[barrier] Applied release for round {close.RoundId} (session {close.SessionId}).");
 
             encounterService.Close();
             OnCloseEncounter();

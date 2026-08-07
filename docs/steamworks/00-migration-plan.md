@@ -288,6 +288,16 @@ call sites no longer show the id-space split that makes the hazard visible.
 ### Phase 2 — Steam plumbing (no transport change yet)
 - Reference `Steamworks.NET`. See [Gotcha 1](#gotcha-1) for which copy.
 - Verify Steam is already initialised by the game; **do not** call `SteamAPI.Init()`.
+  **Confirmed 2026-08-07, with a caveat that nearly cost a phase.** The assumption holds *only when
+  the game is launched through Steam* — `[Message:     Unity] Steam initialized`. Launched by
+  running `Megabonk.exe` directly, the same build logs
+  `[Error  :     Unity] [Steamworks.NET] SteamAPI_Init() failed` and runs with Steam down, while
+  netplay continues to work perfectly because nothing in the mod touches Steam today. So the failure
+  is invisible until the first Steam call, which is this phase. **Check for the `Steam initialized`
+  line before drawing any conclusion from a Steam-related test**, and note that
+  [`../netplay/05-local-testing.md`](../netplay/05-local-testing.md)'s two-instance harness runs its
+  second copy direct-from-exe by necessity — that instance has no Steam and cannot validate this
+  phase.
 - Call `SteamNetworkingUtils.InitRelayNetworkAccess()` at plugin startup.
 - Add a debug command that prints `SteamUser.GetSteamID()` and SDR relay status.
 - **Exit criteria:** the mod loads, Steam calls succeed, achievements/leaderboards still

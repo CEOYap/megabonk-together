@@ -89,16 +89,28 @@ have the same DLL timestamp first.**
 
 ### Launch
 
-Steam must be **running** (the game initialises Steamworks), but launch both instances by running
-the executable directly rather than through the Steam UI:
+Steam must be **running**. Launch the **primary copy through the Steam UI** and the second copy by
+running its executable directly — Steam refuses to launch the same appid twice, which is the whole
+reason the second copy exists.
 
 ```powershell
-& "C:\Program Files (x86)\Steam\steamapps\common\Megabonk\Megabonk.exe"
+# second copy only; launch the first from Steam
 & "D:\MegabonkTest2\Megabonk.exe"
 ```
 
 `winhttp.dll` / Doorstop sits in each folder and loads with the process, so BepInEx injects
 regardless of how the game was started.
+
+**The two instances are not equivalent, and the log says which is which.** A direct-exe launch logs
+`[Steamworks.NET] SteamAPI_Init() failed` and runs with Steam uninitialised; a Steam launch logs
+`[Message:     Unity] Steam initialized`. It makes no difference today — nothing in the mod touches
+Steam, which is exactly why it is easy to miss — but it is not a harmless difference from the
+Steamworks migration onward, where Phase 2's rule is "verify Steam is already initialised by the
+game; **do not** call `SteamAPI.Init()`". That assumption is false in a direct-exe launch.
+
+**So this two-instance setup cannot test anything Steam-dependent**, and after Phase 2 it stops
+being a valid harness at all — the second instance has no Steam, and both would share one identity
+anyway. Noted again under *What this setup cannot tell you*.
 
 ### Connect
 
@@ -145,6 +157,23 @@ trusting any comparison between two logs:
 
 A `[log-capture]` **warning** instead means that copy is not capturing Unity lines, and an
 absence of Unity errors in its log is not evidence of anything.
+
+### What a healthy barrier looks like
+
+Both barriers log their success paths, not only their failures, so a run can be shown to have worked
+rather than merely not complained:
+
+```
+[readiness] Round 1 open over 2 participant(s): <id>, <id>
+[readiness] <id> ready (2/2) for round 1.
+[barrier]   Report from <id> accepted for round 1; barrier closable: True.
+[barrier]   Released round 1 (session <n>) to all clients.
+[barrier]   Applied release for round 1 (session <n>).
+```
+
+Round numbers should increment and never repeat. `[barrier] Ignoring a stale release` and
+`[readiness] Dropped a report` are the round-identity mechanism *working* when they appear once
+after a hiccup, and a problem when they repeat.
 
 ---
 

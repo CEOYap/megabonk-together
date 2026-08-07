@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Linq;
+using System.Reflection;
 using System.Text.RegularExpressions;
 
 namespace MegabonkTogether.Services
@@ -77,10 +79,18 @@ namespace MegabonkTogether.Services
             // Report() never runs. The fix has to be to not reference the API at all. AssemblyName
             // has been on every BepInEx build this project has ever seen.
             //
-            // This is also why the full BepInEx banner is not reproduced here — every log already
-            // opens with it. What this line is for is pairing the build with the WriteUnityLog
-            // answer on one line, so two logs can be shown comparable without cross-referencing.
-            var bepinexVersion = typeof(BepInEx.Paths).Assembly.GetName().Version?.ToString() ?? "unknown";
+            // Informational version, not AssemblyName.Version. The latter reads "6.0.0.0" on both
+            // be.755 and be.785, so it cannot distinguish the two builds — which is the only reason
+            // this field is on the line at all. The informational attribute carries the full
+            // "6.0.0-be.785". Both are plain reflection and exist on every build.
+            var bepinexAssembly = typeof(BepInEx.Paths).Assembly;
+            var bepinexVersion =
+                bepinexAssembly
+                    .GetCustomAttributes(typeof(AssemblyInformationalVersionAttribute), false)
+                    .OfType<AssemblyInformationalVersionAttribute>()
+                    .FirstOrDefault()?.InformationalVersion
+                ?? bepinexAssembly.GetName().Version?.ToString()
+                ?? "unknown";
 
             // The BepInEx build is logged alongside the answer deliberately: two peers' logs are
             // only comparable if both were captured under the same rules, and the build was the

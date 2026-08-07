@@ -1077,6 +1077,13 @@ namespace MegabonkTogether.Services
 
                         encounterService.AddClosedEncounterForPlayer(encounterClosedStamped.OwnerId);
 
+                        // The accepted counterpart of the "Dropped a stale barrier report" line
+                        // above. Without it a healthy round is invisible and only failures speak,
+                        // which is what made the first run of this build unverifiable.
+                        logger.LogInfo(
+                            $"[barrier] Report from {encounterClosedStamped.OwnerId} accepted for round " +
+                            $"{encounterClosedStamped.RoundId}; barrier closable: {encounterService.IsClosable()}.");
+
                         if (encounterService.IsClosable())
                         {
                             EventManager.OnReleaseBarrier();
