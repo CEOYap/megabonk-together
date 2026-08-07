@@ -225,7 +225,7 @@ measured and the part that has to be accepted.
 > It is therefore blocked behind this migration too — or it ships accepting that a
 > version-mismatched pair desyncs silently instead of refusing to connect.
 
-### Phase 1 — Introduce the seam (no behaviour change) — **DONE, not yet playtested**
+### Phase 1 — Introduce the seam (no behaviour change) — **DONE and playtested**
 - ~~Add `INetTransport` and `NetDelivery`.~~ `src/plugin/Services/INetTransport.cs`,
   `NetDelivery.cs`.
 - ~~Make `UdpClientService` implement it; map `NetDelivery` → `LiteNetLib.DeliveryMethod`.~~
@@ -235,6 +235,13 @@ measured and the part that has to be accepted.
 - ~~Decide the `RelayEnvelope.ToFilters` question.~~ Ported deliberately, both defects collapsed.
 - **Exit criteria met:** no `LiteNetLib` *type* appears outside `UdpClientService` — the only
   remaining mention anywhere else is a string literal in a bandwidth log line. Builds clean.
+- **Playtested 2026-08-08**, two instances on one PC. A full run start-to-finish: both barriers
+  worked (`[readiness]` round 1 completed, `[barrier]` report/release/apply on both peers),
+  `EncounterClosedStamped` and `ClientReadyStamped` both observed on the wire, and per-stream
+  bandwidth shape unchanged. **This validates function, not bandwidth:** `rtt 0 ms` on one machine
+  is not a network test, and the session was too short to compare against Phase 0's
+  median 24.1 / p90 64.9 / max 201.3 KB/s internet baseline. A regression check against that
+  baseline still wants an internet session.
 
 **Deviation from the plan as written, and why.** The plan named the implementation
 `LiteNetTransport`. It stayed `UdpClientService`: that class is more than a transport — it also owns
