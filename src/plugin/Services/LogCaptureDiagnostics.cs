@@ -64,7 +64,23 @@ namespace MegabonkTogether.Services
             reported = true;
 
             var configPath = BepInEx.Paths.BepInExConfigPath;
-            var bepinexVersion = BepInEx.Paths.DisplayBepInExVersion?.ToString() ?? "unknown";
+            // Read off the assembly rather than BepInEx.Paths.DisplayBepInExVersion.
+            //
+            // That property does not exist on be.755, and the first version of this used it: the
+            // client peer — running the older BepInEx, and the peer whose logs matter most — threw
+            // MissingMethodException and reported nothing at all, in the very session this
+            // diagnostic was written to make comparable. It failed safe only because the call site
+            // in Plugin.Load is wrapped; the diagnostic itself was simply absent.
+            //
+            // Note a try/catch here would NOT have helped: MissingMethodException is raised when
+            // this method is JIT-compiled, not when the missing call executes, so a catch inside
+            // Report() never runs. The fix has to be to not reference the API at all. AssemblyName
+            // has been on every BepInEx build this project has ever seen.
+            //
+            // This is also why the full BepInEx banner is not reproduced here — every log already
+            // opens with it. What this line is for is pairing the build with the WriteUnityLog
+            // answer on one line, so two logs can be shown comparable without cross-referencing.
+            var bepinexVersion = typeof(BepInEx.Paths).Assembly.GetName().Version?.ToString() ?? "unknown";
 
             // The BepInEx build is logged alongside the answer deliberately: two peers' logs are
             // only comparable if both were captured under the same rules, and the build was the

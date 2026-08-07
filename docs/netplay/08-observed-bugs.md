@@ -9,8 +9,9 @@ Status tags per [`../README.md`](../README.md): **CONFIRMED** — verified by re
 cited line. **LIKELY** — strong inference from structure, failing path not observed. **UNVERIFIED**
 — depends on game internals not yet decompiled.
 
-Two of these were reported from play and two were found in the logs of the same session
-(2026-08-06, two players, direct P2P).
+OB-1..OB-4 come from the 2026-08-06 session (two players, direct P2P). OB-5 and OB-6 were reported
+from the **2026-08-07** session — the first run of the round-identity build, two players over the
+internet at ~61 ms rtt, with `WriteUnityLog = true` on the host for the first time.
 
 ---
 
@@ -169,10 +170,124 @@ exact rather than heuristic.
 
 ---
 
+<a name="ob-5"></a>
+## OB-5 — A client's magnet pull often does nothing — CONFIRMED, cause narrowed
+
+**Reported:** power-up magnets picked up by clients sometimes do not work at all.
+
+**Evidence, 2026-08-07 session.** Both peers drop follow instructions for pickups they cannot
+resolve:
+
+| Log | Handler | Count |
+|---|---|---|
+| Client | `OnReceivedPickupFollowingPlayer` — *"Pickup N not found in PickupManagerService"* | **184** |
+| Client | `OnReceivedPickupApplied` | 14 |
+| Host | `OnReceivedPickupApplied` (all for the client's id `1296713703`) | 14 |
+| Host | `HandleWantToStartFollowingPickup` | 1 |
+
+A dropped `PickupFollowingPlayer` is exactly the reported symptom: the instruction that makes an orb
+fly to a player names a pickup id the receiving peer has never registered, so nothing moves. 184 of
+them in one session is not an edge case.
+
+**Four things the numbers settle.**
+
+1. **It is not packet loss.** `PickupFollowingPlayer` (tag 12), `PickupApplied` (11), `SpawnedPickup`
+   (10) and `SpawnedPickupOrb` (9) are all `ReliableOrdered`, and the host sends them on one channel,
+   so they cannot be lost and cannot overtake each other. The id is genuinely absent from the
+   receiver's registry.
+2. **It is not one peer's fault.** The client's 184 failures split almost evenly by owner — 93 for
+   its own id, 91 for the host's. Both players' pulls fail on the client.
+3. **The same pickup fails repeatedly, for both owners.** Id `3037` fails at client lines 3867 and
+   3873; id `3852` fails at 3868 attributed to the host and at 3874 attributed to the client. So two
+   peers are contending for one orb and the instruction is re-sent.
+4. **It is bursty and worsens over a run.** Distribution by line: 2 / 8 / 1 in the early thousands,
+   then **66** and **107** in the last two blocks. 173 of 184 are late-run.
+
+**The rate is the thing to look at.** `[bw]` on the host shows `PickupFollowingPlayer` reaching
+**229–233 sends/s** at 10 B each, and `PickupApplied` up to **51/s**. A per-frame re-send of "this
+orb is following you" for every in-flight orb is a lot of traffic to spend on an instruction that is
+being dropped 184 times.
+
+**Most likely mechanism, UNVERIFIED.** The pickup was already consumed and removed from
+`PickupManagerService` — by the other player, or by the receiver itself — before the follow
+instruction for it was handled. Two players magnetising the same field is exactly when that races,
+which fits the "both owners", "same id twice" and "late-run burst" observations. The competing
+explanation, that the spawn was never registered on that peer, is not ruled out: **the success path
+of `OnReceivedSpawnedPickup` logs nothing, so the log cannot distinguish "never registered" from
+"registered then removed".**
+
+**Next step, cheap and decisive.** Log the registry size and whether the id was ever known, at the
+point of failure — a `HashSet<uint>` of every id ever registered this session, checked in the
+warning branch. "Never seen" and "seen then removed" want different fixes: the first is a spawn
+replication gap, the second is a lifetime/ordering problem where the fix is to ignore the pull
+silently rather than warn.
+
+**Do not fix by making the message unreliable or by suppressing the warning.** The warning is the
+only visibility this path has.
+
+---
+
+<a name="ob-6"></a>
+## OB-6 — Shrine charge counters differ between players — CONFIRMED, cause exact
+
+**Reported:** shrine counters are not in sync between all players.
+
+**Cause, exactly: the charge value is never transmitted.** The two messages that exist carry
+identity only —
+
+```csharp
+// src/common/Messages/GameNetworkMessages/StartingChargingShrine.cs
+public uint ShrineNetplayId;
+public uint PlayerChargingId;
+
+// StoppingChargingShrine.cs — the same two fields
+```
+
+— and a repo-wide search for a charge amount, progress or percentage on the wire returns **nothing**.
+So the protocol replicates *who is charging*, and every peer then accumulates the shrine's charge
+**locally** from its own belief about that set. The counter is not synchronised at all; it only
+happens to agree when every peer's charger set and frame timing agree.
+
+**Which they demonstrably do not.** The host logged
+`Another player is still charging this shrine. Preventing stop trigger.` — the host's charger set
+held two entries when a stop arrived. The client logged no shrine lines at all, because its
+equivalent paths only log on failure. Two peers, two independently-accumulated counters, and at
+least one point where their charger sets differed.
+
+**Why this is worse than a cosmetic mismatch.** Whoever reaches full charge first fires the
+completion locally. If the accumulation rate scales with the number of chargers — which is the
+natural reading of a "counter" that changes when a second player joins — then a peer that thinks one
+player is charging and a peer that thinks two are will complete at different times, and the shrine's
+reward fires on a schedule the other peer has not reached.
+
+**The one lookup that settles the rate question.** `ChargeShrine`'s per-frame accumulation in
+`dump.cs` (buildid 21750826) — specifically whether it multiplies by a charger count or is a flat
+rate. Flat means the divergence is only start/stop timing and a modest correction suffices; scaled
+means the counters diverge by a factor and the value has to be replicated.
+
+**Fix shape, not yet chosen.** Either make the host authoritative for shrine charge and replicate the
+value at a low rate (a new append-only union tag; the value changes continuously but is small and
+tolerates `Unreliable` because a later packet supersedes it), or keep it local and replicate only the
+completion event so that at least the *outcome* agrees while the bar may briefly disagree. The second
+is much cheaper and is probably enough if what players notice is the reward, not the bar.
+
+**Related:** the pylon and lamp barriers share `HandleChargingStart` / `HandleChargingStop` with the
+shrine, so if their progress is displayed anywhere they have the same defect by construction. Only
+the shrine was reported.
+
+---
+
 ## Not in this file
 
-- Client `NullReferenceException` storm (~2,000–30,000 per session, no managed stack) — live lead in
-  [`12-session-handover.md`](12-session-handover.md).
+- Client `NullReferenceException` storm — live lead in
+  [`12-session-handover.md`](12-session-handover.md). **2026-08-07 narrowed it decisively:** with
+  `WriteUnityLog = true` on *both* peers for the first time, the host recorded **0** NREs during the
+  whole run against the client's **8,422**, while the host's Unity channel was demonstrably live
+  (29 `Can not play a disabled audio source` warnings spread across the session). The asymmetry is
+  now measured rather than assumed. `[unity-exc]` confirms `SetStackTraceLogType(..., ScriptOnly)`
+  was applied on both peers and **still no managed frame appears**, which resolves the open
+  either/or: the thrower is native game code, not managed mod code.
 - Remote projectile / rocket representation — same file, needs a design pass rather than a patch.
-- Host BepInEx logging no Unity-sourced lines, which is why several "the host does not have this"
-  statements in this repo are unprovable. Fix before the next capture.
+- ~~Host BepInEx logging no Unity-sourced lines~~ — **fixed and confirmed.** It was
+  `[Logging.Disk] WriteUnityLog`, which defaults to `false` and is a separate gate from
+  `[Logging] UnityLogListening`. See [`05-local-testing.md`](05-local-testing.md).
