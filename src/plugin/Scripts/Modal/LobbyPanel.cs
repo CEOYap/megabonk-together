@@ -91,12 +91,6 @@ namespace MegabonkTogether.Scripts.Modal
         /// </summary>
         private readonly List<CanvasGroup> hiddenMenuGroups = [];
 
-        /// <summary>
-        /// The game's own Window component, added to the panel so Megabonk treats the lobby as a
-        /// real menu screen. See <see cref="RegisterWindowButtons"/> for why this is not optional.
-        /// </summary>
-        private Window lobbyWindow;
-
         private TextMeshProUGUI titleText;
         private TextMeshProUGUI codeText;
         private GameObject memberListRoot;
@@ -163,9 +157,6 @@ namespace MegabonkTogether.Scripts.Modal
             // starts with neither showing.
             HideLoader();
 
-            // Before the buttons exist, so the window is already active as they are built.
-            BecomeGameWindow();
-
             CreateTitle();
             CreateCodeLine();
             CreateMemberList();
@@ -228,47 +219,6 @@ namespace MegabonkTogether.Scripts.Modal
             }
 
             hiddenMenuGroups.Clear();
-        }
-
-        /// <summary>
-        /// Adds Megabonk's own <c>Window</c> component to the panel.
-        ///
-        /// <para>Megabonk does not drive menu buttons from Unity's EventSystem alone. Each screen
-        /// is a <c>Window</c> holding an <c>allButtons</c> registry, and <c>WindowManager</c> keeps
-        /// one of them focused; a click activates the focused window's button. A panel with no
-        /// Window leaves the main menu focused, so every click on our panel ran our handler *and*
-        /// the menu's focused button — which is why pressing READY both logged a readiness attempt
-        /// and opened character selection.</para>
-        ///
-        /// <para>Adding the component makes <c>WindowManager</c> treat the lobby as the active
-        /// screen and unfocus the menu behind it. Removing it is automatic: destroying the panel
-        /// fires <c>Window.OnDisable</c>, which hands focus back.</para>
-        /// </summary>
-        private void BecomeGameWindow()
-        {
-            if (panel == null || lobbyWindow != null)
-            {
-                return;
-            }
-
-            lobbyWindow = panel.AddComponent<Window>();
-        }
-
-        /// <summary>
-        /// Publishes the panel's buttons to the window's registry.
-        ///
-        /// <para>Called after every change to which buttons are showing, not just once at build:
-        /// the registry is a snapshot, and <see cref="Refresh"/> shows and hides buttons as lobby
-        /// state changes. A stale registry leaves the game able to focus a hidden button.</para>
-        /// </summary>
-        private void RegisterWindowButtons()
-        {
-            if (lobbyWindow == null)
-            {
-                return;
-            }
-
-            lobbyWindow.FindAllButtonsInWindow();
         }
 
         private void CreateTitle()
@@ -374,9 +324,6 @@ namespace MegabonkTogether.Scripts.Modal
             {
                 memberRows.Add(CreateMemberRow(members[i], i));
             }
-
-            // Last, after every show/hide above has settled.
-            RegisterWindowButtons();
         }
 
         private GameObject CreateMemberRow(LobbyMemberView member, int index)
