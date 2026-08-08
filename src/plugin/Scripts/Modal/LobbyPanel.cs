@@ -32,8 +32,19 @@ namespace MegabonkTogether.Scripts.Modal
     /// </summary>
     internal class LobbyPanel : ModalBase
     {
-        private static readonly ILobbyViewService lobbyViewService =
-            Plugin.Services.GetService<ILobbyViewService>();
+        /// <summary>
+        /// Resolved in <see cref="Awake"/>, never in a static initialiser.
+        ///
+        /// <para>This was a <c>static readonly</c> field assigned from <c>Plugin.Services</c>, and
+        /// it stopped the entire plugin loading. <c>ClassInjector.RegisterTypeInIl2Cpp&lt;T&gt;</c>
+        /// runs the type's static constructor, and registration happens in <c>Plugin.Load</c> ~50
+        /// lines before the DI host is built — so the cctor dereferenced a null <c>Host</c>, and
+        /// because it threw during type initialisation the failure surfaced as
+        /// <c>TypeInitializationException</c> out of <c>RegisterTypeInIl2Cpp</c> rather than
+        /// anywhere near this file. Every other injected MonoBehaviour in this project resolves in
+        /// <c>Awake</c>; that is the reason, not a style preference.</para>
+        /// </summary>
+        private ILobbyViewService lobbyViewService;
 
         /// <summary>Tall and narrow: this is a list, and a list reads better than it spreads.</summary>
         protected override Vector2 PanelSize => new(560, 620);
@@ -85,6 +96,15 @@ namespace MegabonkTogether.Scripts.Modal
         internal void Initialize(MainMenu menu)
         {
             mainMenu = menu;
+        }
+
+        /// <summary>
+        /// Runs before <c>ModalBase.Start</c>, so the service is available by the time
+        /// <see cref="OnUICreated"/> draws the first frame of the panel.
+        /// </summary>
+        public void Awake()
+        {
+            lobbyViewService = Plugin.Services.GetService<ILobbyViewService>();
         }
 
         protected override void OnUICreated()

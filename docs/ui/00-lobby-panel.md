@@ -161,3 +161,12 @@ look without shipping art.
 
 The panel is a `ModalBase` subclass — it already builds a centred blocker plus panel on the
 `Canvas` and exposes `OnUICreated()`.
+
+**Resolve services in `Awake`, never in a static initialiser.** A `static readonly` field assigned
+from `Plugin.Services` stopped the whole plugin loading:
+`ClassInjector.RegisterTypeInIl2Cpp<T>` runs the type's static constructor, and registration
+happens in `Plugin.Load` before the DI host is built, so the cctor dereferenced a null `Host`.
+Because it threw during *type initialisation*, the failure surfaced as a
+`TypeInitializationException` out of `RegisterTypeInIl2Cpp` — nowhere near the file that caused
+it. Every other injected MonoBehaviour here resolves in `Awake`; that convention is load-bearing,
+not stylistic.

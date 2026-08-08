@@ -196,7 +196,6 @@ namespace MegabonkTogether
             ClassInjector.RegisterTypeInIl2Cpp<CoroutineRunner>();
             ClassInjector.RegisterTypeInIl2Cpp<MainThreadDispatcher>();
             ClassInjector.RegisterTypeInIl2Cpp<NetworkHandler>();
-            ClassInjector.RegisterTypeInIl2Cpp<Scripts.Modal.LobbyPanel>();
             ClassInjector.RegisterTypeInIl2Cpp<PlayerInterpolator>();
             ClassInjector.RegisterTypeInIl2Cpp<EnemyInterpolator>();
             ClassInjector.RegisterTypeInIl2Cpp<BossOrbInterpolator>();
@@ -211,6 +210,7 @@ namespace MegabonkTogether
             ClassInjector.RegisterTypeInIl2Cpp<CustomButton>();
             ClassInjector.RegisterTypeInIl2Cpp<ModalBase>();
             ClassInjector.RegisterTypeInIl2Cpp<NetworkMenuTab>();
+            ClassInjector.RegisterTypeInIl2Cpp<Scripts.Modal.LobbyPanel>();
             ClassInjector.RegisterTypeInIl2Cpp<LoadingModal>();
             ClassInjector.RegisterTypeInIl2Cpp<UpdateAvailableModal>();
             ClassInjector.RegisterTypeInIl2Cpp<ChangelogModal>();
