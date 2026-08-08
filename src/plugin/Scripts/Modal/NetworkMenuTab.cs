@@ -1024,56 +1024,6 @@ namespace MegabonkTogether.Scripts
             }
 
             AudioManager.Instance.PlaySfx(AudioManager.Instance.uiSelect.sounds[0]);
-
-            // A HOST goes straight to the lobby panel, because the panel IS the waiting room.
-            //
-            // This used to fall through to the "waiting for a match" loop below and only show the
-            // panel once a second player had arrived — which meant a host saw the old modal the
-            // whole time it was waiting, and the new UI appeared to do nothing at all. The panel is
-            // where a host copies the code, watches members arrive and presses Start; none of that
-            // can happen if it is gated behind somebody already having joined.
-            //
-            // The coroutine ends here for a host rather than guarding its remaining modal calls:
-            // everything left in it — the match wait, the "Joined!" text, the automatic jump to
-            // character selection — is either owned by the panel now or replaced by the host's
-            // Start button. Ending is cleaner than keeping a coroutine alive that touches a modal
-            // it has just destroyed.
-            // Logs the branch decision, not just its failure. The previous run produced no [lobby]
-            // line at all while the screen showed end-of-coroutine text, which is a combination the
-            // existing logging cannot explain — so record what the coroutine actually decided.
-            Plugin.Log.LogInfo(
-                $"[lobby] HandleFriendlies: matchmaker connected. Mode={Plugin.Instance.Mode.Mode}, " +
-                $"Role={Plugin.Instance.Mode.Role}, code='{Plugin.Instance.Mode.RoomCode}'");
-
-            if (Plugin.Instance.Mode.Role == Role.Host)
-            {
-                // The code arrives on the websocket a moment after the connection reports ready,
-                // so wait briefly for it. Bounded, because a host with no code can still use the
-                // panel to leave — it just cannot invite anyone.
-                var codeWait = 0f;
-                while (codeWait < 5f && string.IsNullOrEmpty(Plugin.Instance.Mode.RoomCode))
-                {
-                    yield return new WaitForSeconds(0.1f);
-                    codeWait += 0.1f;
-                }
-
-                if (string.IsNullOrEmpty(Plugin.Instance.Mode.RoomCode))
-                {
-                    Plugin.Log.LogWarning("[lobby] Hosting started but no room code arrived; the panel will open without one.");
-                }
-
-                HideLoader();
-                stopButton.gameObject.SetActive(false);
-
-                // Panel first, modal second. ShowLobbyPanel reads this.mainMenu, and CloseModal
-                // destroys this component's GameObject — Unity defers the destroy to end of frame
-                // so the read would survive by luck, which is not a thing to depend on.
-                ShowLobbyPanel();
-                CloseModal();
-
-                yield break;
-            }
-
             var sharedExpStatus = ModConfig.EnabledSharedExperience.Value
                 ? "<color=green>ON</color>"
                 : "<color=red>OFF</color>";
@@ -1143,14 +1093,7 @@ namespace MegabonkTogether.Scripts
         /// </summary>
         private void ShowLobbyPanel()
         {
-            Plugin.Log.LogInfo("[lobby] ShowLobbyPanel: creating the panel object.");
-
             var panelObj = new GameObject("LobbyPanel");
-
-            // Matches LoadingModal.Show. Without it the object belongs to the active scene, and any
-            // scene change between creation and use takes the panel with it.
-            GameObject.DontDestroyOnLoad(panelObj);
-
             var lobbyPanel = panelObj.AddComponent<LobbyPanel>();
 
             // Handed the menu before the component builds itself — the panel clones one of
@@ -1159,8 +1102,6 @@ namespace MegabonkTogether.Scripts
 
             lobbyPanel.OnContinueRequested = GoToCharacterSelection;
             lobbyPanel.OnLeaveRequested = LeaveLobby;
-
-            Plugin.Log.LogInfo("[lobby] ShowLobbyPanel: component added and wired.");
         }
 
         /// <summary>The step the lobby panel now precedes rather than replaces.</summary>
@@ -1218,6 +1159,38 @@ namespace MegabonkTogether.Scripts
 
             AudioManager.Instance.PlaySfx(AudioManager.Instance.uiSelect.sounds[0]);
 
+            // A HOST goes straight to the lobby panel: the panel IS the waiting room, and gating it
+            // behind a second player having arrived is what made it look like the new UI did
+            // nothing. Everything left in this coroutine for a host is either owned by the panel now
+            // or replaced by its Start button, so it ends here rather than guarding modal calls it
+            // has just destroyed.
+            if (Plugin.Instance.Mode.Role == Role.Host)
+            {
+                // The code arrives on the websocket a moment after the connection reports ready.
+                // Bounded: a host with no code can still use the panel to leave.
+                var codeWait = 0f;
+                while (codeWait < 5f && string.IsNullOrEmpty(Plugin.Instance.Mode.RoomCode))
+                {
+                    yield return new WaitForSeconds(0.1f);
+                    codeWait += 0.1f;
+                }
+
+                if (string.IsNullOrEmpty(Plugin.Instance.Mode.RoomCode))
+                {
+                    Plugin.Log.LogWarning("[lobby] Hosting started but no room code arrived; the panel will open without one.");
+                }
+
+                HideLoader();
+                stopButton.gameObject.SetActive(false);
+
+                // Panel before modal: ShowLobbyPanel reads this.mainMenu and CloseModal destroys
+                // this component's GameObject.
+                ShowLobbyPanel();
+                CloseModal();
+
+                yield break;
+            }
+
             elapsed = 0f;
 
             while (elapsed < timeout && !Plugin.Instance.NetworkHandler.HasFoundMatch.HasValue)
@@ -1251,8 +1224,6 @@ namespace MegabonkTogether.Scripts
                 yield break;
             }
 
-            Plugin.Log.LogInfo("[lobby] HandleFriendlies: reached the match-found path (non-host).");
-
             AudioManager.Instance.PlaySfx(AudioManager.Instance.purchaseSfx.sounds[0]);
             HideLoader();
             SetStatusText("Joined!");
@@ -1269,6 +1240,8 @@ namespace MegabonkTogether.Scripts
 
             yield return new WaitForSeconds(1f);
             CloseModal();
+
+            ShowLobbyPanel();
         }
     }
 }
