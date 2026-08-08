@@ -70,6 +70,13 @@ namespace MegabonkTogether.Scripts.Modal
         private GameObject root;
 
         /// <summary>
+        /// The canvas built for this panel. Destroying it takes <see cref="root"/> with it, so
+        /// teardown targets this and not the prefab — destroying only the prefab would leave an
+        /// empty canvas behind on every open/close cycle.
+        /// </summary>
+        private GameObject canvasObject;
+
+        /// <summary>
         /// CanvasGroups added to the main-menu roots to hide them while the lobby is open, kept so
         /// they can be turned back on. Groups, not SetActive — see <see cref="HideMainMenuChrome"/>.
         /// </summary>
@@ -147,20 +154,10 @@ namespace MegabonkTogether.Scripts.Modal
                 return;
             }
 
-            var canvasObj = GameObject.Find("Canvas");
-            if (canvasObj == null)
-            {
-                Plugin.Log.LogError("[lobby] Canvas not found; the lobby panel cannot be shown.");
-                return;
-            }
-
             root = Instantiate(prefab);
             root.name = "MTLobbyPanel";
-            root.transform.SetParent(canvasObj.transform, false);
-
-            // In front of the game's menu. The prefab's own Blocker only dims what is behind it if
-            // it is actually in front of it.
-            root.transform.SetAsLastSibling();
+            canvasObject = CreateCanvas();
+            root.transform.SetParent(canvasObject.transform, false);
 
             if (!BindPrefabChildren())
             {
@@ -180,6 +177,42 @@ namespace MegabonkTogether.Scripts.Modal
             Refresh();
 
             Plugin.Log.LogInfo("[lobby] LobbyPanel built from prefab and refreshed.");
+        }
+
+        /// <summary>
+        /// Builds a canvas of our own for the panel to live on.
+        ///
+        /// <para>The panel used to be parented under the game's <c>GameObject.Find("Canvas")</c>,
+        /// which meant competing for sibling order with the menu it sits on top of — the source of
+        /// the <c>SetAsFirstSibling</c>/<c>SetAsLastSibling</c> shuffling that earlier builds
+        /// needed, and of the menu showing through the blocker. A separate canvas with a high
+        /// <c>sortingOrder</c> is in front by construction, and nothing the game does to its own
+        /// canvas can reorder us.</para>
+        ///
+        /// <para>The scaler matches the reference resolution the game's own UI is authored
+        /// against, so the prefab's pixel sizes mean the same thing at any window size.</para>
+        /// </summary>
+        private GameObject CreateCanvas()
+        {
+            var canvasObj = new GameObject("MTLobbyCanvas");
+
+            var canvas = canvasObj.AddComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+
+            // Well clear of the game's own canvases rather than one above them, so this does not
+            // become a race the next time the game adds a layer.
+            canvas.sortingOrder = 1000;
+
+            var scaler = canvasObj.AddComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(1920f, 1080f);
+            scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
+            scaler.matchWidthOrHeight = 0.5f;
+
+            // Without a raycaster the panel draws and nothing on it can be clicked.
+            canvasObj.AddComponent<GraphicRaycaster>();
+
+            return canvasObj;
         }
 
         /// <summary>
@@ -539,11 +572,7 @@ namespace MegabonkTogether.Scripts.Modal
             // panel would otherwise re-enter a half-destroyed object.
             OnClosed = null;
 
-            if (root != null)
-            {
-                Destroy(root);
-            }
-
+            DestroyUi();
             Destroy(gameObject);
             closed?.Invoke();
         }
@@ -560,13 +589,24 @@ namespace MegabonkTogether.Scripts.Modal
 
             memberRows.Clear();
 
-            // Destroying the root fires Window.OnDisable, which hands menu focus and the cursor
-            // back. Nothing else needs to undo that.
-            if (root != null)
+            DestroyUi();
+        }
+
+        /// <summary>
+        /// Tears down the canvas and everything on it.
+        ///
+        /// <para>Destroying the root fires <c>Window.OnDisable</c>, which hands menu focus and the
+        /// cursor back to the game. Nothing else needs to undo that.</para>
+        /// </summary>
+        private void DestroyUi()
+        {
+            if (canvasObject != null)
             {
-                Destroy(root);
-                root = null;
+                Destroy(canvasObject);
             }
+
+            canvasObject = null;
+            root = null;
         }
 
         #region Button helpers
