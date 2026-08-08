@@ -196,6 +196,7 @@ namespace MegabonkTogether
             ClassInjector.RegisterTypeInIl2Cpp<CoroutineRunner>();
             ClassInjector.RegisterTypeInIl2Cpp<MainThreadDispatcher>();
             ClassInjector.RegisterTypeInIl2Cpp<NetworkHandler>();
+            ClassInjector.RegisterTypeInIl2Cpp<Scripts.Modal.LobbyPanel>();
             ClassInjector.RegisterTypeInIl2Cpp<PlayerInterpolator>();
             ClassInjector.RegisterTypeInIl2Cpp<EnemyInterpolator>();
             ClassInjector.RegisterTypeInIl2Cpp<BossOrbInterpolator>();
@@ -244,6 +245,7 @@ namespace MegabonkTogether
                 services.AddSingleton<IChangelogService, ChangelogService>();
                 services.AddSingleton<IEncounterService, EncounterService>();
                 services.AddSingleton<IReadinessService, ReadinessService>();
+                services.AddSingleton<ILobbyViewService, LobbyViewService>();
                 services.AddSingleton<ITrackerService, TrackerService>();
             });
 
