@@ -19,8 +19,25 @@ Current in-game behaviour: panel renders centred, main menu hidden behind it, cu
 buttons respond — **and every click also triggers the main menu's focused button (PLAY)**, so
 pressing Copy Code copies the code and then advances to character selection.
 
-No bundle has been built yet. The csproj `Exists()` condition skips the embedded resource, and
-`UiAssetService` has therefore never executed.
+A bundle **has** been built and is embedded — the DLL carries
+`MegabonkTogether.Resources.megabonktogether.ui` at 8,761 bytes. Nothing consumes it yet;
+`UiAssetService` has still never executed at runtime.
+
+## The editor does not have to be opened by hand
+
+The whole pipeline runs headlessly, which is how the first prefab and bundle were produced:
+
+```powershell
+$u = "C:\Program Files\Unity\Hub\Editor\2023.2.22f1\Editor\Unity.exe"
+& $u -batchmode -quit -nographics -projectPath unity-ui `
+     -executeMethod MegabonkTogether.UiAuthoring.BuildUiBundle.Build -logFile bundle.log
+```
+
+Swap the method for `ScaffoldLobbyPanel.Scaffold` to regenerate the prefab. Use
+`Start-Process -Wait -PassThru` rather than the call operator if you need a reliable exit code.
+
+This makes the bundle checkable from a terminal like everything else here — a prefab change no
+longer needs a human in the editor to reach a running game.
 
 ## The one thing that has to be right
 
