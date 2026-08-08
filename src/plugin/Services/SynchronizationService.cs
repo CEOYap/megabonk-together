@@ -146,6 +146,7 @@ namespace MegabonkTogether.Services
         private readonly IGameBalanceService gameBalanceService;
         private readonly IEncounterService encounterService;
         private readonly IReadinessService readinessService;
+        private readonly ILobbyViewService lobbyViewService;
         private readonly ITrackerService trackerService;
         private readonly ManualLogSource logger;
         private readonly ConcurrentBag<SpawnedObject> toSpawns = [];
@@ -193,6 +194,7 @@ namespace MegabonkTogether.Services
             IGameBalanceService gameBalanceService,
             IEncounterService encounterService,
             IReadinessService readinessService,
+            ILobbyViewService lobbyViewService,
             ITrackerService trackerService
             )
         {
@@ -206,6 +208,7 @@ namespace MegabonkTogether.Services
             this.gameBalanceService = gameBalanceService;
             this.encounterService = encounterService;
             this.readinessService = readinessService;
+            this.lobbyViewService = lobbyViewService;
             this.trackerService = trackerService;
             this.logger = logger;
 
@@ -339,6 +342,10 @@ namespace MegabonkTogether.Services
             CoroutineRunner.Instance.Stop(readyRetryRoutine);
             readyRetryRoutine = null;
             readinessService.ResetSession();
+
+            // Lobby readiness is per lobby. Left behind, the next lobby would open with members
+            // it has never met already marked ready.
+            lobbyViewService.ResetReadyState();
 
             encounterService.ClearClosedEncounters();
 

@@ -84,13 +84,43 @@ the panel**. Same seam reasoning as `INetTransport`.
 
 ## Increments
 
-1. **Panel and member list** — centred panel, members with host crown, Leave / Copy / Join from
-   clipboard, Back. No wire change: the member list reads the roster that already replicates.
-2. **Ready / Start gate** — appended union tags for lobby readiness, host authority, and moving
-   the character-select step behind the host's Start.
+1. ~~**Panel and member list**~~ — **done.** Centred panel, members with host crown, Copy / Join
+   from clipboard / Leave. No wire change.
+2. ~~**Ready / Start gate**~~ — **done.** Three appended union tags, host authority, and the
+   character-select step moved behind the host's Start.
 
-Increment 1 is useful on its own: it makes the lobby visible and leaveable. Increment 2 changes
-the flow's shape and is where the wire change lands.
+### Wire, as built
+
+| Tag | Message | Direction |
+|---|---|---|
+| 73 | `LobbyReadyChanged` | client → host, "I toggled my readiness" |
+| 74 | `LobbyReadyState` | host → clients, the whole authoritative set |
+| 75 | `LobbyStartRequested` | host → clients, "advance to character selection" |
+
+**A client never applies its own readiness.** It sends the toggle and waits for the host's
+broadcast, exactly as with the level-load barrier — a peer that writes the flag it also reads
+cannot tell its own optimism from the host's answer, which is precisely the bug that hung the
+lobby. The host applies its own toggle directly, having no message to send itself.
+
+**The set is sent whole, not as a delta.** At most six entries, changing only when somebody
+presses a button, so a delta saves nothing measurable and adds the failure this project keeps
+paying for: a peer that misses one update and stays wrong with nothing to correct it.
+
+**Start is an instruction, not an inference.** A client could advance itself the moment the last
+member readies — and then the host's Start would do nothing, because everyone would already have
+gone. Making it explicit keeps the host in control of when the lobby ends.
+
+**`AreAllMembersReady` is false for an empty lobby**, which is the opposite of the choice
+`ReadinessService` makes for its own barrier. Deliberate: there, an empty participant set means a
+round with nobody to wait for and refusing to complete it would hang. Here it means nobody has
+arrived, and completing it would let a host start alone.
+
+### Deviation from the requested layout
+
+The request was Ready / Start / Back. **Back is merged into Leave Lobby**: the panel only exists
+while you are in a lobby, so going back *is* leaving, and two buttons doing one thing is worse
+than one that says what it does. A distinct Back earns its place if the flow ever gains a screen
+behind this one.
 
 ## Construction notes
 

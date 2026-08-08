@@ -70,6 +70,7 @@ namespace MegabonkTogether.Services
         private static event Action ReleaseBarrierEvents;
         private static event Action<ReadinessRoundStarted> ReadinessRoundStartedEvents;
         private static event Action ReadinessRoundReAskEvents;
+        private static event Action LobbyStartRequestedEvents;
         private static event Action<GoldChanged> GoldChangedEvents;
 
         public static void OnSpawnedObject(SpawnedObject spawnedObject)
@@ -864,6 +865,29 @@ namespace MegabonkTogether.Services
             MainThreadDispatcher.Enqueue(() =>
             {
                 ReadinessRoundReAskEvents?.Invoke();
+            });
+        }
+
+        /// <summary>
+        /// The host has ended the lobby and everyone should advance to character selection.
+        /// Payload-free: the host has already validated readiness, and re-deriving that decision on
+        /// the client would give two places an opinion about when the lobby ends.
+        /// </summary>
+        public static void SubscribeLobbyStartRequestedEvents(Action action)
+        {
+            LobbyStartRequestedEvents += action;
+        }
+
+        public static void UnsubscribeLobbyStartRequestedEvents(Action action)
+        {
+            LobbyStartRequestedEvents -= action;
+        }
+
+        public static void OnLobbyStartRequested()
+        {
+            MainThreadDispatcher.Enqueue(() =>
+            {
+                LobbyStartRequestedEvents?.Invoke();
             });
         }
 

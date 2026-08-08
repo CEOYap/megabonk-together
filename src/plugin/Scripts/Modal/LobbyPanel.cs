@@ -66,17 +66,13 @@ namespace MegabonkTogether.Scripts.Modal
         private CustomButton copyCodeButton;
         private CustomButton joinFromClipboardButton;
         private CustomButton leaveLobbyButton;
-        private CustomButton continueButton;
+        private CustomButton readyButton;
+        private CustomButton startButton;
 
         /// <summary>Set by the caller that opened the panel; runs after the panel closes.</summary>
         internal Action OnClosed { get; set; }
 
-        /// <summary>
-        /// Runs when Continue is pressed. Temporary: increment 2 replaces this single button with
-        /// Ready (every member) and Start (host, enabled only once every member is ready). It exists
-        /// now because the panel sits between joining and character selection, and without a way
-        /// forward the panel would be a dead end rather than a step.
-        /// </summary>
+        /// <summary>Runs when the lobby ends and this peer should advance to character selection.</summary>
         internal Action OnContinueRequested { get; set; }
 
         /// <summary>Runs when Leave lobby is pressed, before the panel closes.</summary>
@@ -93,6 +89,8 @@ namespace MegabonkTogether.Scripts.Modal
 
         protected override void OnUICreated()
         {
+            EventManager.SubscribeLobbyStartRequestedEvents(OnLobbyStartRequested);
+
             // The loader and status text ModalBase builds are for connection feedback; the panel
             // starts with neither showing.
             HideLoader();
@@ -136,15 +134,16 @@ namespace MegabonkTogether.Scripts.Modal
             // Cloned from the game's own PLAY button so the panel inherits its art, font and hover
             // behaviour rather than shipping a second visual language. CustomButton is required
             // because Unity Actions do not survive the BepInEx/IL2CPP boundary.
-            copyCodeButton = CreateButton("CopyCodeButton", "Copy Code", new Vector2(0f, -132f), OnCopyCodeClicked);
-            joinFromClipboardButton = CreateButton("JoinClipboardButton", "Join From Clipboard", new Vector2(0f, -188f), OnJoinFromClipboardClicked);
-            continueButton = CreateButton("LobbyContinueButton", "Continue", new Vector2(0f, -244f), OnContinueClicked);
+            copyCodeButton = CreateButton("CopyCodeButton", "Copy Code", new Vector2(0f, -104f), OnCopyCodeClicked);
+            joinFromClipboardButton = CreateButton("JoinClipboardButton", "Join From Clipboard", new Vector2(0f, -156f), OnJoinFromClipboardClicked);
+            readyButton = CreateButton("LobbyReadyButton", "Ready", new Vector2(0f, -208f), OnReadyClicked);
+            startButton = CreateButton("LobbyStartButton", "Start", new Vector2(0f, -260f), OnStartClicked);
 
             // "Back" and "Leave Lobby" would be the same action in this position — the panel only
             // exists while you are in a lobby, so going back IS leaving. Two buttons that do one
             // thing is worse than one that says what it does. A distinct Back returns in increment 2
             // if the flow gains a screen behind this one.
-            leaveLobbyButton = CreateButton("LeaveLobbyButton", "Leave Lobby", new Vector2(0f, -300f), OnLeaveLobbyClicked);
+            leaveLobbyButton = CreateButton("LeaveLobbyButton", "Leave Lobby", new Vector2(0f, -312f), OnLeaveLobbyClicked);
         }
 
         /// <summary>
@@ -178,7 +177,16 @@ namespace MegabonkTogether.Scripts.Modal
             SetButtonVisible(copyCodeButton, inLobby && !string.IsNullOrEmpty(code));
             SetButtonVisible(leaveLobbyButton, inLobby);
             SetButtonVisible(joinFromClipboardButton, !inLobby);
-            SetButtonVisible(continueButton, inLobby);
+            SetButtonVisible(readyButton, inLobby);
+
+            // Start is the host's alone. Shown greyed rather than hidden for the host, so the
+            // reason the run has not begun is visible ("everyone is not ready yet") instead of the
+            // button simply being missing; hidden entirely for clients, for whom it is not merely
+            // disabled but not theirs.
+            SetButtonVisible(startButton, inLobby && isHost);
+            SetButtonInteractable(startButton, lobbyViewService.AreAllMembersReady);
+
+            SetButtonLabel(readyButton, lobbyViewService.IsLocalPlayerReady ? "Not Ready" : "Ready");
 
             foreach (var row in memberRows)
             {
@@ -214,12 +222,19 @@ namespace MegabonkTogether.Scripts.Modal
             // icons because there is no avatar or icon source until Steam lobbies land in Phase 3,
             // and a placeholder image would promise something the row cannot yet show.
             var crown = member.IsHost ? "♛ " : "   ";
-            var you = member.IsLocal ? "  (you)" : "";
+            var you = member.IsLocal ? " (you)" : "";
 
-            label.text = $"{crown}{member.Name}{you}";
+            // Ready state is the thing a player scans this list for, so it gets its own column on
+            // the right rather than being folded into the name. Text, not a tick sprite — there is
+            // no icon source until Steam lobbies land, and the row already reads left-to-right.
+            var ready = member.IsReady ? "READY" : "";
+
+            label.text = $"{crown}{member.Name}{you}<pos=78%>{ready}";
             label.alignment = TextAlignmentOptions.Left;
             label.fontSize = 28f;
-            label.color = member.IsLocal ? new Color(1f, 0.95f, 0.6f) : Color.white;
+            label.color = member.IsReady
+                ? new Color(0.55f, 0.95f, 0.55f)
+                : (member.IsLocal ? new Color(1f, 0.95f, 0.6f) : Color.white);
 
             return rowObj;
         }
@@ -293,14 +308,40 @@ namespace MegabonkTogether.Scripts.Modal
         {
             PlaySelectSfx();
 
+            // Dropped here as well as on teardown: a stale ready set would make the next lobby
+            // start out believing people it has never met are already ready.
+            lobbyViewService?.ResetReadyState();
+
             OnLeaveRequested?.Invoke();
             Close();
         }
 
-        private void OnContinueClicked()
+        private void OnReadyClicked()
+        {
+            PlaySelectSfx();
+            lobbyViewService?.ToggleLocalReady();
+
+            // Redrawn immediately rather than waiting for the refresh tick: on the host the toggle
+            // is already applied, and on a client the label still needs to stop saying the thing
+            // that was just pressed. The host's broadcast is what actually settles it.
+            Refresh();
+        }
+
+        private void OnStartClicked()
         {
             PlaySelectSfx();
 
+            // Host-gated inside the service too, not just by this button's enabled state.
+            lobbyViewService?.RequestStart();
+        }
+
+        /// <summary>
+        /// The lobby has ended — either this peer's host pressed Start, or the host told us to
+        /// advance. One path for both, so the host does not take a different route to the same
+        /// screen than the clients do.
+        /// </summary>
+        private void OnLobbyStartRequested()
+        {
             var advance = OnContinueRequested;
             Close();
             advance?.Invoke();
@@ -320,6 +361,10 @@ namespace MegabonkTogether.Scripts.Modal
 
         public override void OnDestroy()
         {
+            // Unsubscribed or the delegate keeps this destroyed panel alive and a second lobby
+            // would advance twice.
+            EventManager.UnsubscribeLobbyStartRequestedEvents(OnLobbyStartRequested);
+
             foreach (var row in memberRows)
             {
                 if (row != null)
@@ -417,6 +462,30 @@ namespace MegabonkTogether.Scripts.Modal
             button.SetOnClickAction(onClick);
 
             return button;
+        }
+
+        private static void SetButtonLabel(CustomButton button, string label)
+        {
+            if (button == null)
+            {
+                return;
+            }
+
+            var wrapper = button.gameObject.GetComponent<ButtonTextWrapper>();
+            if (wrapper != null && wrapper.t_text != null && wrapper.t_text.text != label)
+            {
+                wrapper.t_text.text = label;
+            }
+        }
+
+        private static void SetButtonInteractable(CustomButton button, bool interactable)
+        {
+            if (button == null)
+            {
+                return;
+            }
+
+            button.SetInteractable(interactable);
         }
 
         private static void SetButtonVisible(CustomButton button, bool visible)
