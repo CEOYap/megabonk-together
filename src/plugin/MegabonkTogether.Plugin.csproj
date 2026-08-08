@@ -29,6 +29,17 @@
 		<CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
 	</PropertyGroup>
 
+	<!--
+		The UI AssetBundle, authored in unity-ui/ and built by MegabonkTogether/Build UI Bundle.
+		Conditional so the plugin still builds before the bundle has been generated: UiAssetService
+		reports the missing resource and the UI falls back rather than failing the build.
+	-->
+	<ItemGroup>
+		<EmbeddedResource Include="Resources/megabonktogether.ui"
+		                  LogicalName="MegabonkTogether.Resources.megabonktogether.ui"
+		                  Condition="Exists('$(MSBuildProjectDirectory)/Resources/megabonktogether.ui')" />
+	</ItemGroup>
+
 	<ItemGroup>
 		<None Include="CHANGELOG.toml">
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -85,6 +96,10 @@
 		</Reference>
 		<Reference Include="UnityEngine.AudioModule">
 			<HintPath>$(UnityLibPath)/UnityEngine.AudioModule.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+		<Reference Include="UnityEngine.AssetBundleModule">
+			<HintPath>$(UnityLibPath)/UnityEngine.AssetBundleModule.dll</HintPath>
 			<Private>false</Private>
 		</Reference>
 		<Reference Include="UnityEngine.UI">

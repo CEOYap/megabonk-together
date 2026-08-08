@@ -257,6 +257,7 @@ namespace MegabonkTogether
                 services.AddSingleton<IEncounterService, EncounterService>();
                 services.AddSingleton<IReadinessService, ReadinessService>();
                 services.AddSingleton<ILobbyViewService, LobbyViewService>();
+                services.AddSingleton<IUiAssetService, UiAssetService>();
                 services.AddSingleton<ITrackerService, TrackerService>();
             });
 
