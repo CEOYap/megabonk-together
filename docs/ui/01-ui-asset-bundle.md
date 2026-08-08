@@ -50,19 +50,29 @@ LobbyPanel                 RectTransform, CanvasGroup   (root, full-screen)
 ├── Blocker                Image                        full-screen scrim
 └── Panel                  Image                        the card itself
     ├── Title              TextMeshProUGUI
-    ├── Subtitle           TextMeshProUGUI              lobby code / status line
+    ├── Subtitle           TextMeshProUGUI              lobby code
+    ├── Status             TextMeshProUGUI              transient messages
     ├── Members            VerticalLayoutGroup
     │   └── MemberRow      Image                        template, starts inactive
     │       ├── Name       TextMeshProUGUI
     │       └── Ready      TextMeshProUGUI
-    └── Buttons            VerticalLayoutGroup
-        ├── Ready          Image + Button
+    └── Buttons            VerticalLayoutGroup          children replaced at runtime
+        ├── Ready          Image + Button               placeholder
         │   └── Label      TextMeshProUGUI
-        ├── Start          (same shape)
-        ├── CopyCode       (same shape)
-        ├── JoinCode       (same shape)
-        └── Leave          (same shape)
+        ├── Start          (same shape)                 placeholder
+        ├── CopyCode       (same shape)                 placeholder
+        ├── JoinCode       (same shape)                 placeholder
+        └── Leave          (same shape)                 placeholder
 ```
+
+`Status` is separate from `Subtitle` because `Subtitle` is rewritten on every refresh tick, so a
+message shown there would be erased within half a second.
+
+**The buttons under `Buttons` are placeholders and get destroyed at runtime.** They exist so the
+column's shape is visible in the editor. Megabonk's `Window` registry collects `MyButton`
+components and cannot see a plain uGUI Button, so the runtime clears the container and fills it
+with clones of the game's own button. Style the container and its layout group; styling the
+placeholder buttons themselves changes nothing in game.
 
 Free to change without touching code: every position, size, colour, sprite, font size, anchor,
 and any purely decorative object you add.

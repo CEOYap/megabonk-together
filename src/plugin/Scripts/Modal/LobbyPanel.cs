@@ -1,4 +1,4 @@
-﻿using MegabonkTogether.Scripts.Button;
+using MegabonkTogether.Scripts.Button;
 using MegabonkTogether.Services;
 using Microsoft.Extensions.DependencyInjection;
 using System;
@@ -14,76 +14,59 @@ namespace MegabonkTogether.Scripts.Modal
     /// <summary>
     /// The centred lobby panel: who is here, and what you can do about it.
     ///
-    /// <para><b>What it replaces.</b> Lobby state used to live in three places at once — a
-    /// top-left "Friendlies" banner, a top-right role/code block, and the character-selection
-    /// window doing double duty as the lobby — and none of them listed the members. A player who
-    /// joined was invisible until the run started. See
-    /// <c>docs/ui/00-lobby-panel.md</c>.</para>
+    /// <para><b>Prefab-driven.</b> The hierarchy, sizes and spacing come from
+    /// <c>Assets/Prefabs/LobbyPanel.prefab</c> in <c>unity-ui/</c>, loaded out of the embedded
+    /// AssetBundle. This class binds to named children and drives them; it does not lay anything
+    /// out. The version that did was wrong about button height, row pitch and font coverage in
+    /// three successive builds, because none of it was visible until the game was running.</para>
     ///
-    /// <para><b>Increment 1 of two.</b> This is the panel and the member list: no wire change, the
-    /// rows come from the roster that already replicates. Increment 2 adds lobby readiness
-    /// (appended union tags, host-authoritative) and moves character selection behind a host-gated
-    /// Start. <c>Ready</c> and <c>Start</c> are deliberately absent here rather than present and
-    /// inert — a button that does nothing is worse than one that is not there yet.</para>
+    /// <para><b>Buttons are still clones of the game's PLAY button.</b> Not an oversight and not
+    /// leftovers: Megabonk's <c>Window</c> collects <c>MyButton</c> components, and a plain uGUI
+    /// Button in the prefab is invisible to that registry — which is what let clicks fall through
+    /// to the main menu. The prefab supplies the container and its layout group; the runtime
+    /// supplies buttons the game can actually focus.</para>
     ///
-    /// <para><b>Invite is absent for a reason, not an oversight.</b> A real invite is a Steam
-    /// overlay call against a Steam lobby, which is migration Phase 3. Built now it would be a
-    /// second button that copies a code, which <c>Copy Code</c> already does.</para>
+    /// <para>Contract and failure modes: <c>docs/ui/01-ui-asset-bundle.md</c>. Why the ordering in
+    /// <see cref="Build"/> is not negotiable: <c>docs/ui/02-prefab-handover.md</c>.</para>
     /// </summary>
-    internal class LobbyPanel : ModalBase
+    internal class LobbyPanel : MonoBehaviour
     {
+        private const string PrefabPath = "Assets/Prefabs/LobbyPanel.prefab";
+
         /// <summary>
         /// Resolved in <see cref="Awake"/>, never in a static initialiser.
         ///
         /// <para>This was a <c>static readonly</c> field assigned from <c>Plugin.Services</c>, and
         /// it stopped the entire plugin loading. <c>ClassInjector.RegisterTypeInIl2Cpp&lt;T&gt;</c>
         /// runs the type's static constructor, and registration happens in <c>Plugin.Load</c> ~50
-        /// lines before the DI host is built — so the cctor dereferenced a null <c>Host</c>, and
-        /// because it threw during type initialisation the failure surfaced as
-        /// <c>TypeInitializationException</c> out of <c>RegisterTypeInIl2Cpp</c> rather than
-        /// anywhere near this file. Every other injected MonoBehaviour in this project resolves in
-        /// <c>Awake</c>; that is the reason, not a style preference.</para>
+        /// lines before the DI host is built.</para>
         /// </summary>
         private ILobbyViewService lobbyViewService;
 
-        /// <summary>Tall and narrow: this is a list, and a list reads better than it spreads.</summary>
-        protected override Vector2 PanelSize => new(560, 780);
-
-        protected override Color PanelBackgroundColor => new(0.06f, 0.06f, 0.07f, 0.94f);
+        private IUiAssetService uiAssetService;
 
         /// <summary>
         /// Rebuilt on a timer, never per frame. <see cref="ILobbyViewService.GetMembers"/> allocates
         /// a list and each rebuild touches TMP text, so at 60 Hz this would be exactly the kind of
-        /// idle allocation <c>docs/netplay/04-performance-and-gc.md</c> exists to prevent. Twice a
-        /// second is faster than anyone can join.
+        /// idle allocation <c>docs/netplay/04-performance-and-gc.md</c> exists to prevent.
         /// </summary>
         private const float RefreshIntervalSeconds = 0.5f;
 
         private float refreshAccumulator;
 
-        /// <summary>
-        /// Matches every other button in this UI (<c>NetworkMenuTab</c> uses 300x70 at eight sites).
-        /// The first version invented 420x48 and spaced rows 52 apart, so real 70px-tall clones
-        /// overlapped by 18px each — measure the thing you are cloning.
-        /// </summary>
-        private const float ButtonWidth = 300f;
-        private const float ButtonHeight = 70f;
+        /// <summary>How long a transient status message stays up before the panel clears it.</summary>
+        private const float StatusHoldSeconds = 4f;
 
-        /// <summary>Button pitch: the button's own height plus a small gap.</summary>
-        private const float ButtonPitch = ButtonHeight + 6f;
-
-        /// <summary>Centre of the first button row.</summary>
-        private const float FirstButtonY = -80f;
-
-        private static Vector2 ButtonSlot(int index) => new(0f, FirstButtonY - index * ButtonPitch);
+        private float statusClearAt;
 
         /// <summary>
-        /// Handed in rather than found. <c>NetworkMenuTab</c> does the same: the panel clones one of
-        /// MainMenu's buttons for every button it draws, and a scene search per clone is both
-        /// wasteful and fragile — it depends on the menu still being the active scene at the moment
-        /// the panel happens to build itself.
+        /// Handed in rather than found — the panel needs the menu's button to clone and its roots to
+        /// hide, and a scene search per use is both wasteful and fragile.
         /// </summary>
         private MainMenu mainMenu;
+
+        /// <summary>The instantiated prefab. Everything else is found underneath it.</summary>
+        private GameObject root;
 
         /// <summary>
         /// CanvasGroups added to the main-menu roots to hide them while the lobby is open, kept so
@@ -93,7 +76,11 @@ namespace MegabonkTogether.Scripts.Modal
 
         private TextMeshProUGUI titleText;
         private TextMeshProUGUI codeText;
-        private GameObject memberListRoot;
+        private TextMeshProUGUI statusTextField;
+        private Transform memberListRoot;
+        private GameObject memberRowTemplate;
+        private Transform buttonContainer;
+
         private readonly List<GameObject> memberRows = [];
 
         private CustomButton copyCodeButton;
@@ -101,6 +88,12 @@ namespace MegabonkTogether.Scripts.Modal
         private CustomButton leaveLobbyButton;
         private CustomButton readyButton;
         private CustomButton startButton;
+
+        /// <summary>
+        /// The game's own Window component. Added <b>after</b> the buttons exist — see
+        /// <see cref="Build"/>.
+        /// </summary>
+        private Window lobbyWindow;
 
         /// <summary>Set by the caller that opened the panel; runs after the panel closes.</summary>
         internal Action OnClosed { get; set; }
@@ -120,68 +113,144 @@ namespace MegabonkTogether.Scripts.Modal
             mainMenu = menu;
         }
 
-        /// <summary>
-        /// Runs before <c>ModalBase.Start</c>, so the service is available by the time
-        /// <see cref="OnUICreated"/> draws the first frame of the panel.
-        /// </summary>
         public void Awake()
         {
             lobbyViewService = Plugin.Services.GetService<ILobbyViewService>();
+            uiAssetService = Plugin.Services.GetService<IUiAssetService>();
 
             // Unconditional lifecycle logging, deliberately. Two rounds were spent unable to tell
             // "the panel never ran" from "the panel ran and rendered invisibly", because every log
-            // line in here was on a failure branch. A silent success path is exactly what this
-            // project's own doctrine warns about: absence of a log line is not absence of the event.
-            Plugin.Log.LogInfo($"[lobby] LobbyPanel.Awake; service resolved: {lobbyViewService != null}");
+            // line in here was on a failure branch.
+            Plugin.Log.LogInfo(
+                $"[lobby] LobbyPanel.Awake; lobby service: {lobbyViewService != null}, "
+                + $"asset service: {uiAssetService != null}");
         }
 
-        protected override void OnUICreated()
+        public void Start()
         {
-            Plugin.Log.LogInfo($"[lobby] LobbyPanel.OnUICreated; panel object: {panel != null}, mainMenu: {mainMenu != null}");
+            Build();
+        }
 
-            // ModalBase puts its blocker at SetAsFirstSibling — behind everything on the Canvas,
-            // including the game's own main menu. That is fine for a modal opened over the menu the
-            // mod itself drew, but this panel opens over the game's menu, which then showed through
-            // it: PLAY, UNLOCKS and TOGETHER! were all visible and clickable behind the lobby.
-            //
-            // Re-ordered so the blocker is in front of the menu and the panel in front of the
-            // blocker. Order matters: blocker first, then panel, or the panel ends up underneath.
-            blocker?.transform.SetAsLastSibling();
-            panel?.transform.SetAsLastSibling();
+        /// <summary>
+        /// <para><b>The order here is load-bearing.</b> <c>AddComponent&lt;Window&gt;()</c> fires
+        /// <c>OnEnable</c> immediately, which calls <c>FocusWindow</c>, which caches
+        /// <c>allButtons</c> from whatever children exist at that instant. Adding the Window before
+        /// the buttons cached an empty list and left nothing focusable — no click anywhere on the
+        /// panel did anything. Buttons first, Window second.</para>
+        /// </summary>
+        private void Build()
+        {
+            if (uiAssetService == null || !uiAssetService.TryGetPrefab(PrefabPath, out var prefab))
+            {
+                Plugin.Log.LogError("[lobby] UI bundle unavailable; the lobby panel cannot be shown.");
+                return;
+            }
 
+            var canvasObj = GameObject.Find("Canvas");
+            if (canvasObj == null)
+            {
+                Plugin.Log.LogError("[lobby] Canvas not found; the lobby panel cannot be shown.");
+                return;
+            }
+
+            root = Instantiate(prefab);
+            root.name = "MTLobbyPanel";
+            root.transform.SetParent(canvasObj.transform, false);
+
+            // In front of the game's menu. The prefab's own Blocker only dims what is behind it if
+            // it is actually in front of it.
+            root.transform.SetAsLastSibling();
+
+            if (!BindPrefabChildren())
+            {
+                return;
+            }
+
+            ApplyGameFont();
             HideMainMenuChrome();
 
             EventManager.SubscribeLobbyStartRequestedEvents(OnLobbyStartRequested);
 
-            // The loader and status text ModalBase builds are for connection feedback; the panel
-            // starts with neither showing.
-            HideLoader();
-
-            CreateTitle();
-            CreateCodeLine();
-            CreateMemberList();
             CreateButtons();
+
+            // Only now, with every button parented and present.
+            lobbyWindow = root.AddComponent<Window>();
 
             Refresh();
 
-            Plugin.Log.LogInfo("[lobby] LobbyPanel built and refreshed.");
+            Plugin.Log.LogInfo("[lobby] LobbyPanel built from prefab and refreshed.");
         }
 
         /// <summary>
-        /// Clears the main menu so the lobby sits on the empty scene, rather than floating over
-        /// PLAY / UNLOCKS / QUESTS / SHOP with the leaderboard and achievement cards still visible.
+        /// Resolves the named children the prefab contract guarantees. Missing ones are a contract
+        /// break — the prefab was renamed or reparented — so they are reported loudly rather than
+        /// tolerated into a half-drawn panel.
+        /// </summary>
+        private bool BindPrefabChildren()
+        {
+            titleText = FindText("Panel/Title");
+            codeText = FindText("Panel/Subtitle");
+            statusTextField = FindText("Panel/Status");
+            memberListRoot = root.transform.Find("Panel/Members");
+            buttonContainer = root.transform.Find("Panel/Buttons");
+
+            memberRowTemplate = memberListRoot == null
+                ? null
+                : memberListRoot.Find("MemberRow")?.gameObject;
+
+            if (titleText == null || memberListRoot == null || buttonContainer == null || memberRowTemplate == null)
+            {
+                Plugin.Log.LogError(
+                    "[lobby] Prefab contract broken — missing Title, Members, Buttons or MemberRow. "
+                    + "See docs/ui/01-ui-asset-bundle.md; child names are API.");
+                return false;
+            }
+
+            // The template is a shape to clone, never a row itself.
+            memberRowTemplate.SetActive(false);
+            return true;
+        }
+
+        private TextMeshProUGUI FindText(string path)
+        {
+            var child = root.transform.Find(path);
+            return child == null ? null : child.GetComponent<TextMeshProUGUI>();
+        }
+
+        /// <summary>
+        /// Re-points every TMP component at the font the game draws with.
         ///
-        /// <para>Hiding the roots rather than covering them with the blocker: a translucent panel
-        /// over a live menu still reads as two screens at once, and the buttons underneath stay
-        /// focusable by controller even when they cannot be clicked.</para>
+        /// <para>The bundle ships no font: a TMP atlas would dominate its size, and a font we
+        /// shipped would not be the game's, so the panel would read as foreign however well the
+        /// layout matched. The cost is that editor previews do not predict runtime glyph widths.</para>
+        /// </summary>
+        private void ApplyGameFont()
+        {
+            var source = mainMenu == null || mainMenu.btnPlay == null
+                ? null
+                : mainMenu.btnPlay.GetComponentInChildren<TextMeshProUGUI>();
+
+            if (source == null || source.font == null)
+            {
+                Plugin.Log.LogWarning("[lobby] No game font found to apply; the panel will use the bundle's default.");
+                return;
+            }
+
+            foreach (var label in root.GetComponentsInChildren<TextMeshProUGUI>(true))
+            {
+                label.font = source.font;
+                label.fontSharedMaterial = source.fontSharedMaterial;
+            }
+        }
+
+        /// <summary>
+        /// Clears the main menu so the lobby sits on the empty scene.
         ///
         /// <para><b>A CanvasGroup, never SetActive(false).</b> The game tracks open menus itself:
         /// <c>Window.OnDisable</c> calls <c>WindowManager.WindowClosed()</c>, and when the open-window
         /// count reaches zero <c>WindowManager.RefreshCursor()</c> hides the mouse cursor. tabMenu
         /// holds the active Window, so deactivating it left the panel drawn but the game convinced
-        /// no menu was open — cursor gone, nothing clickable. A CanvasGroup makes the subtree
-        /// invisible and non-interactive without ever firing OnDisable, so that bookkeeping is
-        /// untouched.</para>
+        /// no menu was open — cursor gone, nothing clickable.</para>
         /// </summary>
         private void HideMainMenuChrome()
         {
@@ -190,14 +259,14 @@ namespace MegabonkTogether.Scripts.Modal
                 return;
             }
 
-            foreach (var root in new[] { mainMenu.tabMenu, mainMenu.leaderboards, mainMenu.quickQuests })
+            foreach (var menuRoot in new[] { mainMenu.tabMenu, mainMenu.leaderboards, mainMenu.quickQuests })
             {
-                if (root == null || !root.activeSelf)
+                if (menuRoot == null || !menuRoot.activeSelf)
                 {
                     continue;
                 }
 
-                var group = root.GetComponent<CanvasGroup>() ?? root.AddComponent<CanvasGroup>();
+                var group = menuRoot.GetComponent<CanvasGroup>() ?? menuRoot.AddComponent<CanvasGroup>();
                 group.alpha = 0f;
                 group.interactable = false;
                 group.blocksRaycasts = false;
@@ -221,57 +290,32 @@ namespace MegabonkTogether.Scripts.Modal
             hiddenMenuGroups.Clear();
         }
 
-        private void CreateTitle()
-        {
-            titleText = CreateLabel("LobbyTitle", new Vector2(0f, 330f), new Vector2(520f, 60f), 40f);
-            titleText.text = "Lobby";
-            titleText.color = new Color(1f, 0.85f, 0.3f);
-        }
-
-        private void CreateCodeLine()
-        {
-            codeText = CreateLabel("LobbyCode", new Vector2(0f, 284f), new Vector2(520f, 40f), 24f);
-            codeText.color = new Color(0.75f, 0.75f, 0.78f);
-        }
-
-        private void CreateMemberList()
-        {
-            memberListRoot = new GameObject("MemberList");
-            memberListRoot.transform.SetParent(panel.transform, false);
-
-            var rect = memberListRoot.AddComponent<RectTransform>();
-            rect.anchorMin = new Vector2(0.5f, 0.5f);
-            rect.anchorMax = new Vector2(0.5f, 0.5f);
-            rect.pivot = new Vector2(0.5f, 1f);
-            rect.anchoredPosition = new Vector2(0f, 240f);
-
-            // Six rows at 46px. Stops above the first button row so a full lobby cannot run into it.
-            rect.sizeDelta = new Vector2(480f, 260f);
-        }
-
         private void CreateButtons()
         {
-            // Cloned from the game's own PLAY button so the panel inherits its art, font and hover
-            // behaviour rather than shipping a second visual language. CustomButton is required
-            // because Unity Actions do not survive the BepInEx/IL2CPP boundary.
-            // Copy and Join-from-clipboard share slot 0: they are mutually exclusive (you either
-            // have a lobby or you do not), so hiding one must not leave a gap in the column.
-            copyCodeButton = CreateButton("CopyCodeButton", "Copy Code", ButtonSlot(0), OnCopyCodeClicked);
-            joinFromClipboardButton = CreateButton("JoinClipboardButton", "Join From Clipboard", ButtonSlot(0), OnJoinFromClipboardClicked);
-            readyButton = CreateButton("LobbyReadyButton", "Ready", ButtonSlot(1), OnReadyClicked);
-            startButton = CreateButton("LobbyStartButton", "Start", ButtonSlot(2), OnStartClicked);
+            // The prefab's placeholder buttons exist so the column's shape is visible in the editor.
+            // They are uGUI Buttons, which Megabonk's Window registry does not collect, so they are
+            // cleared and replaced with clones of the game's own button.
+            for (var i = buttonContainer.childCount - 1; i >= 0; i--)
+            {
+                Destroy(buttonContainer.GetChild(i).gameObject);
+            }
 
-            // "Back" and "Leave Lobby" would be the same action in this position — the panel only
-            // exists while you are in a lobby, so going back IS leaving. Two buttons that do one
-            // thing is worse than one that says what it does. A distinct Back returns in increment 2
-            // if the flow gains a screen behind this one.
-            leaveLobbyButton = CreateButton("LeaveLobbyButton", "Leave Lobby", ButtonSlot(3), OnLeaveLobbyClicked);
+            // Copy and Join-from-clipboard are mutually exclusive — you either have a lobby or you
+            // do not — so hiding one must not leave a gap. The layout group closes it for free,
+            // which the hand-placed version could not do.
+            copyCodeButton = CreateButton("CopyCodeButton", "Copy Code", OnCopyCodeClicked);
+            joinFromClipboardButton = CreateButton("JoinClipboardButton", "Join From Clipboard", OnJoinFromClipboardClicked);
+            readyButton = CreateButton("LobbyReadyButton", "Ready", OnReadyClicked);
+            startButton = CreateButton("LobbyStartButton", "Start", OnStartClicked);
+
+            // "Back" and "Leave Lobby" would be the same action here — the panel only exists while
+            // you are in a lobby, so going back IS leaving.
+            leaveLobbyButton = CreateButton("LeaveLobbyButton", "Leave Lobby", OnLeaveLobbyClicked);
         }
 
         /// <summary>
         /// Rebuilds the member rows. Destroys and recreates rather than diffing: the list is at most
-        /// six entries and only redraws twice a second, so a diff would be more code guarding less
-        /// cost.
+        /// six entries and only redraws twice a second.
         /// </summary>
         private void Refresh()
         {
@@ -293,18 +337,15 @@ namespace MegabonkTogether.Scripts.Modal
                 codeText.text = string.IsNullOrEmpty(code) ? "" : $"Code: {code}";
             }
 
-            // Copying or leaving is meaningless without a lobby; hide rather than grey out, so the
-            // panel never offers an action that cannot work.
+            // Hide rather than grey out, so the panel never offers an action that cannot work.
             var inLobby = lobbyViewService.IsInLobby;
             SetButtonVisible(copyCodeButton, inLobby && !string.IsNullOrEmpty(code));
             SetButtonVisible(leaveLobbyButton, inLobby);
             SetButtonVisible(joinFromClipboardButton, !inLobby);
             SetButtonVisible(readyButton, inLobby);
 
-            // Start is the host's alone. Shown greyed rather than hidden for the host, so the
-            // reason the run has not begun is visible ("everyone is not ready yet") instead of the
-            // button simply being missing; hidden entirely for clients, for whom it is not merely
-            // disabled but not theirs.
+            // Start is the host's alone. Greyed rather than hidden for the host, so the reason the
+            // run has not begun is visible; hidden entirely for clients, for whom it is not theirs.
             SetButtonVisible(startButton, inLobby && isHost);
             SetButtonInteractable(startButton, lobbyViewService.AreAllMembersReady);
 
@@ -322,50 +363,56 @@ namespace MegabonkTogether.Scripts.Modal
             var members = lobbyViewService.GetMembers();
             for (var i = 0; i < members.Count; i++)
             {
-                memberRows.Add(CreateMemberRow(members[i], i));
+                memberRows.Add(CreateMemberRow(members[i]));
             }
+
+            // Last, after every show/hide above. The registry is a snapshot, so a button that was
+            // just hidden would otherwise stay focusable.
+            lobbyWindow?.FindAllButtonsInWindow();
         }
 
-        private GameObject CreateMemberRow(LobbyMemberView member, int index)
+        /// <summary>
+        /// Clones the prefab's MemberRow. No positioning here — the Members layout group owns that,
+        /// which is the point of the prefab. The hand-placed version computed row Y from a pitch
+        /// constant and spaced rows tighter than their own height.
+        /// </summary>
+        private GameObject CreateMemberRow(LobbyMemberView member)
         {
-            var rowObj = new GameObject($"Member_{member.ConnectionId}");
-            rowObj.transform.SetParent(memberListRoot.transform, false);
+            var row = Instantiate(memberRowTemplate, memberListRoot, false);
+            row.name = $"Member_{member.ConnectionId}";
+            row.SetActive(true);
 
-            var rect = rowObj.AddComponent<RectTransform>();
-            rect.anchorMin = new Vector2(0f, 1f);
-            rect.anchorMax = new Vector2(1f, 1f);
-            rect.pivot = new Vector2(0.5f, 1f);
-            rect.anchoredPosition = new Vector2(0f, -(index * 46f));
-            rect.sizeDelta = new Vector2(0f, 42f);
-
-            var label = rowObj.AddComponent<TextMeshProUGUI>();
-
-            // The crown marks the host; "(you)" marks the local player. Both are text rather than
-            // icons because there is no avatar or icon source until Steam lobbies land in Phase 3,
-            // and a placeholder image would promise something the row cannot yet show.
-            // Text, not a glyph. The first version used a crown character the game's font does not
-            // contain, so every host row rendered as a tofu box.
+            // Text, not glyphs. The first version used a crown character the game's font does not
+            // carry, so every host row rendered as a tofu box.
             var role = member.IsHost ? " (host)" : "";
             var you = member.IsLocal ? " (you)" : "";
 
-            // Ready state is the thing a player scans this list for, so it gets its own column on
-            // the right rather than being folded into the name. Text, not a tick sprite — there is
-            // no icon source until Steam lobbies land, and the row already reads left-to-right.
-            var ready = member.IsReady ? "READY" : "";
+            var nameLabel = row.transform.Find("Name")?.GetComponent<TextMeshProUGUI>();
+            if (nameLabel != null)
+            {
+                nameLabel.text = $"{member.Name}{role}{you}";
+                nameLabel.color = member.IsLocal ? new Color(1f, 0.95f, 0.6f) : Color.white;
+            }
 
-            label.text = $"{member.Name}{role}{you}<pos=76%>{ready}";
-            label.alignment = TextAlignmentOptions.Left;
-            label.fontSize = 28f;
-            label.color = member.IsReady
-                ? new Color(0.55f, 0.95f, 0.55f)
-                : (member.IsLocal ? new Color(1f, 0.95f, 0.6f) : Color.white);
+            // Its own object in the prefab, right-aligned. The previous version faked this column
+            // with a <pos=76%> tag inside a single label, which never got tested.
+            var readyLabel = row.transform.Find("Ready")?.GetComponent<TextMeshProUGUI>();
+            if (readyLabel != null)
+            {
+                readyLabel.text = member.IsReady ? "READY" : "";
+                readyLabel.color = new Color(0.55f, 0.95f, 0.55f);
+            }
 
-            return rowObj;
+            return row;
         }
 
-        protected override void Update()
+        public void Update()
         {
-            base.Update();
+            if (statusClearAt > 0f && Time.unscaledTime >= statusClearAt)
+            {
+                statusClearAt = 0f;
+                SetStatusText("");
+            }
 
             refreshAccumulator += Time.unscaledDeltaTime;
             if (refreshAccumulator < RefreshIntervalSeconds)
@@ -375,6 +422,17 @@ namespace MegabonkTogether.Scripts.Modal
             refreshAccumulator = 0f;
 
             Refresh();
+        }
+
+        private void SetStatusText(string text)
+        {
+            if (statusTextField == null)
+            {
+                return;
+            }
+
+            statusTextField.text = text;
+            statusClearAt = string.IsNullOrEmpty(text) ? 0f : Time.unscaledTime + StatusHoldSeconds;
         }
 
         private void OnCopyCodeClicked()
@@ -445,9 +503,8 @@ namespace MegabonkTogether.Scripts.Modal
             PlaySelectSfx();
             lobbyViewService?.ToggleLocalReady();
 
-            // Redrawn immediately rather than waiting for the refresh tick: on the host the toggle
-            // is already applied, and on a client the label still needs to stop saying the thing
-            // that was just pressed. The host's broadcast is what actually settles it.
+            // Redrawn immediately rather than waiting for the refresh tick: the label still needs to
+            // stop saying the thing that was just pressed. The host's broadcast settles it.
             Refresh();
         }
 
@@ -461,8 +518,7 @@ namespace MegabonkTogether.Scripts.Modal
 
         /// <summary>
         /// The lobby has ended — either this peer's host pressed Start, or the host told us to
-        /// advance. One path for both, so the host does not take a different route to the same
-        /// screen than the clients do.
+        /// advance. One path for both.
         /// </summary>
         private void OnLobbyStartRequested()
         {
@@ -475,61 +531,50 @@ namespace MegabonkTogether.Scripts.Modal
         {
             var closed = OnClosed;
 
-            // Cleared before invoking: CloseModal destroys this component, and a callback that
-            // reopens the panel would otherwise re-enter a half-destroyed object.
+            // Cleared before invoking: this destroys the component, and a callback that reopens the
+            // panel would otherwise re-enter a half-destroyed object.
             OnClosed = null;
 
-            CloseModal();
+            if (root != null)
+            {
+                Destroy(root);
+            }
+
+            Destroy(gameObject);
             closed?.Invoke();
         }
 
-        public override void OnDestroy()
+        public void OnDestroy()
         {
-            // Restored here rather than only in Close(), so a panel torn down by a scene change or
-            // a teardown path still gives the menu back instead of leaving the player on a blank
-            // screen.
+            // Restored here rather than only in Close(), so a panel torn down by a scene change
+            // still gives the menu back instead of leaving the player on a blank screen.
             RestoreMainMenuChrome();
 
             // Unsubscribed or the delegate keeps this destroyed panel alive and a second lobby
             // would advance twice.
             EventManager.UnsubscribeLobbyStartRequestedEvents(OnLobbyStartRequested);
 
-            foreach (var row in memberRows)
-            {
-                if (row != null)
-                {
-                    Destroy(row);
-                }
-            }
             memberRows.Clear();
 
-            base.OnDestroy();
+            // Destroying the root fires Window.OnDisable, which hands menu focus and the cursor
+            // back. Nothing else needs to undo that.
+            if (root != null)
+            {
+                Destroy(root);
+                root = null;
+            }
         }
 
-        #region UI construction helpers
+        #region Button helpers
 
-        private TextMeshProUGUI CreateLabel(string name, Vector2 anchoredPosition, Vector2 size, float fontSize)
-        {
-            var obj = new GameObject(name);
-            obj.transform.SetParent(panel.transform, false);
-
-            var rect = obj.AddComponent<RectTransform>();
-            rect.anchorMin = new Vector2(0.5f, 0.5f);
-            rect.anchorMax = new Vector2(0.5f, 0.5f);
-            rect.pivot = new Vector2(0.5f, 0.5f);
-            rect.anchoredPosition = anchoredPosition;
-            rect.sizeDelta = size;
-
-            var label = obj.AddComponent<TextMeshProUGUI>();
-            label.text = "";
-            label.alignment = TextAlignmentOptions.Center;
-            label.fontSize = fontSize;
-            label.color = Color.white;
-
-            return label;
-        }
-
-        private CustomButton CreateButton(string name, string label, Vector2 anchoredPosition, Action onClick)
+        /// <summary>
+        /// Clones the game's PLAY button into the prefab's button container.
+        ///
+        /// <para>No position or size is set: the container's VerticalLayoutGroup owns both. Every
+        /// hand-computed button constant in the previous version was wrong at least once — 420x48
+        /// against real 300x70 clones, then a pitch tighter than the button height.</para>
+        /// </summary>
+        private CustomButton CreateButton(string name, string label, Action onClick)
         {
             if (mainMenu == null || mainMenu.btnPlay == null)
             {
@@ -537,9 +582,9 @@ namespace MegabonkTogether.Scripts.Modal
                 return null;
             }
 
-            var buttonObj = GameObject.Instantiate(mainMenu.btnPlay.gameObject);
+            var buttonObj = Instantiate(mainMenu.btnPlay.gameObject);
             buttonObj.name = name;
-            buttonObj.transform.SetParent(panel.transform, false);
+            buttonObj.transform.SetParent(buttonContainer, false);
 
             // The clone carries the menu's own click handler and localisation binding. Both have to
             // go, or pressing this button also does whatever PLAY does and the label is overwritten
@@ -566,7 +611,6 @@ namespace MegabonkTogether.Scripts.Modal
             if (textWrapper != null && textWrapper.t_text != null)
             {
                 textWrapper.t_text.text = label;
-                textWrapper.t_text.fontSize = 30;
             }
             else
             {
@@ -575,16 +619,6 @@ namespace MegabonkTogether.Scripts.Modal
                 {
                     tmp.text = label;
                 }
-            }
-
-            var rect = buttonObj.GetComponent<RectTransform>();
-            if (rect != null)
-            {
-                rect.anchorMin = new Vector2(0.5f, 0.5f);
-                rect.anchorMax = new Vector2(0.5f, 0.5f);
-                rect.pivot = new Vector2(0.5f, 0.5f);
-                rect.anchoredPosition = anchoredPosition;
-                rect.sizeDelta = new Vector2(ButtonWidth, ButtonHeight);
             }
 
             var button = buttonObj.AddComponent<CustomButton>();

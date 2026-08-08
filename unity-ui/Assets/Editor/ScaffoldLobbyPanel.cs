@@ -46,6 +46,12 @@ namespace MegabonkTogether.UiAuthoring
             CreateText("Subtitle", panel.rectTransform, "", 24f,
                 new Vector2(0f, -100f), new Vector2(560f, 40f));
 
+            // Separate from Subtitle on purpose. Subtitle carries the lobby code and is rewritten
+            // on every refresh tick, so a transient message shown there would be erased within half
+            // a second — too fast to read.
+            CreateText("Status", panel.rectTransform, "", 22f,
+                new Vector2(0f, -136f), new Vector2(560f, 34f));
+
             // Members: a VerticalLayoutGroup fed at runtime by cloning MemberRow. Letting Unity
             // lay the rows out is the whole point — the code-built version hand-computed row Y
             // positions and got them wrong every time a font size changed.
@@ -80,6 +86,10 @@ namespace MegabonkTogether.UiAuthoring
             buttonLayout.childForceExpandHeight = false;
             buttonLayout.childAlignment = TextAnchor.UpperCenter;
 
+            // Placeholders, for seeing the column's shape in the editor only. The runtime clears
+            // this container and fills it with clones of the game's own button, because Megabonk's
+            // Window registry collects MyButton components and a plain uGUI Button is invisible to
+            // it — see docs/ui/02-prefab-handover.md.
             foreach (var name in new[] { "Ready", "Start", "CopyCode", "JoinCode", "Leave" })
             {
                 CreateButton(name, buttonsRect);
