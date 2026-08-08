@@ -126,6 +126,25 @@ gone. Making it explicit keeps the host in control of when the lobby ends.
 round with nobody to wait for and refusing to complete it would hang. Here it means nobody has
 arrived, and completing it would let a host start alone.
 
+### These tags are temporary — Steam replaces two of the three
+
+Tags 73 and 74 exist only because the current matchmaker offers nothing better. Steam lobbies
+carry per-member state natively as **lobby member data**
+([`ISteamMatchmaking`](https://partner.steamgames.com/doc/api/ISteamMatchmaking)): a member writes
+its own row with `SetLobbyMemberData`, everyone reads it with `GetLobbyMemberData` on a
+`LobbyDataUpdate_t` callback, and Steam does the replication.
+
+So at Phase 3, **73 and 74 stop being sent and 75 survives** — "the host says go" is an
+instruction, not replicated state. Two knock-on simplifications come with it: host authority for
+readiness becomes a platform guarantee (Steam only lets a member write its own row), and the
+`pendingLocalReady` reconciliation below can be deleted outright, because single-writer data has
+no stale-broadcast race to reconcile against. Recorded in
+[`../steamworks/00-migration-plan.md`](../steamworks/00-migration-plan.md) Phase 3 so the port
+does not carry forward two messages it can drop.
+
+Character, skin and hat are the same shape — per-member facts currently riding their own
+messages — and are worth migrating in the same pass rather than readiness alone.
+
 ### Deviation from the requested layout
 
 The request was Ready / Start / Back. **Back is merged into Leave Lobby**: the panel only exists
