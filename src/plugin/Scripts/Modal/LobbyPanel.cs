@@ -574,6 +574,13 @@ namespace MegabonkTogether.Scripts.Modal
         /// <summary>
         /// Clones the game's PLAY button into the prefab's button container.
         ///
+        /// <para><b>The game's own <c>MyButtonNormal</c> is kept, not replaced.</b> The previous
+        /// version destroyed it and added a <c>CustomButton : MyButtonNormal</c> subclass that
+        /// overrode <c>OnClick</c>. That injects a managed type into the IL2CPP vtable and throws
+        /// away everything the component does besides clicking — hover scaling, colour states,
+        /// SFX, and the focus handling that <c>Window</c>'s registry drives. Appending a listener
+        /// keeps all of it and adds ours on top.</para>
+        ///
         /// <para>No position or size is set: the container's VerticalLayoutGroup owns both. Every
         /// hand-computed button constant in the previous version was wrong at least once — 420x48
         /// against real 300x70 clones, then a pitch tighter than the button height.</para>
@@ -590,48 +597,85 @@ namespace MegabonkTogether.Scripts.Modal
             buttonObj.name = name;
             buttonObj.transform.SetParent(buttonContainer, false);
 
-            // The clone carries the menu's own click handler and localisation binding. Both have to
-            // go, or pressing this button also does whatever PLAY does and the label is overwritten
-            // by the localiser on the next refresh.
-            var original = buttonObj.GetComponent<MyButtonNormal>();
-            if (original != null)
-            {
-                Destroy(original);
-            }
-
             var unityButton = buttonObj.GetComponentInChildren<UnityEngine.UI.Button>();
             if (unityButton != null)
             {
                 unityButton.onClick.RemoveAllListeners();
             }
 
+            // The localiser has to go — these labels are not table entries, and it would overwrite
+            // the text on its next refresh.
             var localize = buttonObj.GetComponentInChildren<LocalizeStringEvent>();
             if (localize != null)
             {
                 Destroy(localize);
             }
 
-            var textWrapper = buttonObj.GetComponent<ButtonTextWrapper>();
-            if (textWrapper != null && textWrapper.t_text != null)
+            var button = ReplaceWithCustomButton(buttonObj);
+            if (button == null)
             {
-                textWrapper.t_text.text = label;
-            }
-            else
-            {
-                var tmp = buttonObj.GetComponentInChildren<TextMeshProUGUI>();
-                if (tmp != null)
-                {
-                    tmp.text = label;
-                }
+                Plugin.Log.LogWarning($"[lobby] Cloned button '{label}' had no MyButtonNormal to replace.");
+                return null;
             }
 
-            var button = buttonObj.AddComponent<CustomButton>();
             button.SetOnClickAction(onClick);
+            SetButtonLabel(button, label);
+            return button;
+        }
+
+        /// <summary>
+        /// Swaps the clone's <c>MyButtonNormal</c> for a <c>CustomButton</c>, <b>carrying its
+        /// serialized state across</b>.
+        ///
+        /// <para>The previous version destroyed the original and added a bare replacement, which
+        /// left <c>background</c>, <c>scaleOnHover</c>, <c>button</c> and <c>disabledOverlay</c>
+        /// null and the colours at type defaults. Those fields are what drive hover scaling,
+        /// colour states and the greyed-out look, so the buttons rendered but behaved wrongly —
+        /// and <see cref="SetButtonInteractable"/> in particular had nothing to grey out.</para>
+        ///
+        /// <para>Ideally the game's own component would be kept and a listener appended to
+        /// <c>Button.onClick</c>, which is how the design being followed does it. That is not
+        /// available here: <c>UnityEngine.CoreModule</c> is referenced from <c>unity-libs</c>, so
+        /// <c>UnityAction</c> compiles as a managed delegate with no bridge to the IL2CPP one.
+        /// Copying the fields gets the same behaviour without moving the whole codebase onto the
+        /// interop CoreModule.</para>
+        /// </summary>
+        private static CustomButton ReplaceWithCustomButton(GameObject buttonObj)
+        {
+            var original = buttonObj.GetComponent<MyButtonNormal>();
+            if (original == null)
+            {
+                return null;
+            }
+
+            var background = original.background;
+            var defaultColor = original.defaultColor;
+            var hoverColor = original.hoverColor;
+            var scaleOnHover = original.scaleOnHover;
+            var hoverScale = original.hoverScale;
+            var unityButton = original.button;
+            var disabledOverlay = original.disabledOverlay;
+            var customSfx = original.customSfx;
+
+            // Immediate, not deferred. Destroy() runs at end of frame, which would leave two
+            // MyButton-derived components on this object for the rest of the frame — and
+            // Window.FindAllButtonsInWindow collects every MyButton it can see.
+            DestroyImmediate(original);
+
+            var button = buttonObj.AddComponent<CustomButton>();
+            button.background = background;
+            button.defaultColor = defaultColor;
+            button.hoverColor = hoverColor;
+            button.scaleOnHover = scaleOnHover;
+            button.hoverScale = hoverScale;
+            button.button = unityButton;
+            button.disabledOverlay = disabledOverlay;
+            button.customSfx = customSfx;
 
             return button;
         }
 
-        private static void SetButtonLabel(CustomButton button, string label)
+        private static void SetButtonLabel(MyButtonNormal button, string label)
         {
             if (button == null)
             {
@@ -645,7 +689,7 @@ namespace MegabonkTogether.Scripts.Modal
             }
         }
 
-        private static void SetButtonInteractable(CustomButton button, bool interactable)
+        private static void SetButtonInteractable(MyButtonNormal button, bool interactable)
         {
             if (button == null)
             {
@@ -655,7 +699,7 @@ namespace MegabonkTogether.Scripts.Modal
             button.SetInteractable(interactable);
         }
 
-        private static void SetButtonVisible(CustomButton button, bool visible)
+        private static void SetButtonVisible(MyButtonNormal button, bool visible)
         {
             if (button != null && button.gameObject.activeSelf != visible)
             {
