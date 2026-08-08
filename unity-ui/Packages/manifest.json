@@ -1,8 +1,10 @@
 {
   "dependencies": {
-    "com.unity.textmeshpro": "3.0.7",
-    "com.unity.ugui": "1.0.0",
+    "com.unity.textmeshpro": "5.0.0",
+    "com.unity.ugui": "2.0.0",
     "com.unity.modules.ui": "1.0.0",
-    "com.unity.modules.uielements": "1.0.0"
+    "com.unity.modules.uielements": "1.0.0",
+    "com.unity.modules.imgui": "1.0.0",
+    "com.unity.modules.jsonserialize": "1.0.0"
   }
 }
