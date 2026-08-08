@@ -134,3 +134,52 @@ instantiating. Editor previews will not predict runtime glyph widths.
   little. Five changes this session compiled and failed on first load.
 - One logical change per commit, with what is unverified stated in the body.
 - MemoryPack union tags are append-only. None of this work should need a new one.
+
+
+## OPEN: this project's bundles do not load anywhere
+
+The lobby panel is blocked on this, and it is not a code problem. Everything below is measured,
+not inferred.
+
+**The editor that builds our bundles cannot load them back.** `MegabonkTogether/Verify UI Bundle`
+runs `AssetBundle.LoadFromFile` on the built bundle inside the editor and fails with:
+
+> could not be loaded because it is not compatible with this newer version of the Unity runtime
+
+The game rejects it with the identical message, so this is one fault, not two.
+
+### What has been ruled out
+
+| Hypothesis | Test | Result |
+|---|---|---|
+| Wrong Unity version | Editor and game are both build `2023.2.22.7018943`; bundle header revision is `2023.2.22f1` | Identical — **a newer Unity is not the fix** |
+| Bundle container malformed | Parsed both headers: format 8, `5.x.x`, flags `0x243`, declared size = file length | Identical to a bundle that loads |
+| Compression | Rebuilt uncompressed | Fails identically |
+| Wrong build target | Rebuilt with `-buildTarget Win64` | Byte-for-byte identical output |
+| Headless rendering | Rebuilt without `-nographics` | Byte-for-byte identical output |
+| Stale import artifacts | Deleted `Library/`, full reimport | Byte-for-byte identical output |
+| Prefab contents | `MegabonkTogether/Bisect Bundle` builds an **empty** prefab, an Image-only prefab and a TMP-only prefab | All three fail, including the empty one at 1094 bytes |
+| The verify tool giving false negatives | Pointed it at a known-good third-party bundle via `MT_VERIFY_BUNDLE` | Loads fine, 21 assets — **the tool is sound** |
+
+So: this editor loads someone else's 2023.2.22f1 bundle, and refuses every bundle it builds
+itself, down to an empty prefab. The fault is in how this project builds bundles, not in the
+prefab, the load code, or the runtime.
+
+### Where to look next
+
+Untested, roughly in order of promise:
+
+1. Build the same empty prefab from a project created by Unity itself (`-createProject`) rather
+   than this hand-assembled one. If that bundle loads, the difference is in `ProjectSettings`.
+2. Compare the inner `SerializedFile` version of an uncompressed bundle of ours against a
+   known-good one. The container headers match; the payload version has not been checked.
+3. Try the Scriptable Build Pipeline / Addressables instead of `BuildPipeline.BuildAssetBundles`.
+
+### Also learned
+
+Asset names inside a bundle are **lowercased** — a known-good bundle lists
+`assets/prefabs/customuiroot.prefab`. `LoadAsset` is case-insensitive so the current call should
+survive, but do not rely on the authoring capitalisation when listing or matching names.
+
+Bundles can and do ship fonts and textures; the known-good one carries a TMP font asset, its
+`.ttf`, and 18 textures. Our "no fonts in the bundle" rule is a size choice, not a constraint.

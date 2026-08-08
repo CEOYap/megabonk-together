@@ -19,6 +19,13 @@ namespace MegabonkTogether.UiAuthoring
         private const string PrefabFolder = "Assets/Prefabs";
 
         /// <summary>
+        /// ChunkBasedCompression (LZ4) stays compressed in memory and decompresses per chunk on
+        /// demand, rather than LZMA's full decompress on load.
+        /// </summary>
+        private static BuildAssetBundleOptions BuildOptions =>
+            BuildAssetBundleOptions.ChunkBasedCompression | BuildAssetBundleOptions.StrictMode;
+
+        /// <summary>
         /// Relative to the Unity project root (the parent of Assets/).
         /// </summary>
         private const string PluginResourcesRelativePath = "../src/plugin/Resources";
@@ -60,10 +67,7 @@ namespace MegabonkTogether.UiAuthoring
             var manifest = BuildPipeline.BuildAssetBundles(
                 staging,
                 new[] { build },
-                // ChunkBasedCompression (LZ4) stays compressed in memory and decompresses per
-                // chunk on demand. LZMA would be a smaller file but forces a full decompress on
-                // load, which is the one thing a synchronous load must not do.
-                BuildAssetBundleOptions.ChunkBasedCompression | BuildAssetBundleOptions.StrictMode,
+                BuildOptions,
                 BuildTarget.StandaloneWindows64);
 
             if (manifest == null)

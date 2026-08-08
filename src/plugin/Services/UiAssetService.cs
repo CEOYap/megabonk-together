@@ -156,6 +156,16 @@ namespace MegabonkTogether.Services
                 bundleBytes = bytes;
                 bundleStream = new Il2CppSystem.IO.MemoryStream(bundleBytes);
 
+                // Diagnostic, not decoration. Unity reports a bad bundle and a mis-delivered
+                // buffer with the same "not compatible with this newer version" message, and the
+                // two have opposite fixes. Comparing the header as the managed array sees it
+                // against the IL2CPP array and the stream separates them in one run: identical
+                // prefixes mean the bytes arrived intact and the bundle itself is at fault.
+                Plugin.Log.LogInfo(
+                    $"[UiAssets] managed {bytes.Length}B {Prefix(i => bytes[i])} | "
+                    + $"il2cpp {bundleBytes.Length}B {Prefix(i => bundleBytes[i])} | "
+                    + $"stream len {bundleStream.Length} pos {bundleStream.Position}");
+
                 bundle = AssetBundle.LoadFromStream(bundleStream);
             }
             catch (Exception ex)
@@ -176,6 +186,20 @@ namespace MegabonkTogether.Services
             bundle.hideFlags = KeepLoaded;
             Plugin.Log.LogInfo($"[UiAssets] Loaded UI bundle ({bytes.Length} bytes).");
             return true;
+        }
+
+        /// <summary>
+        /// First 20 bytes as hex. A valid bundle starts "55 6E 69 74 79 46 53" — "UnityFS".
+        /// </summary>
+        private static string Prefix(Func<int, byte> at)
+        {
+            var sb = new System.Text.StringBuilder(60);
+            for (var i = 0; i < 20; i++)
+            {
+                sb.Append(at(i).ToString("X2"));
+            }
+
+            return sb.ToString();
         }
 
         private static byte[] ReadEmbeddedBundle()
