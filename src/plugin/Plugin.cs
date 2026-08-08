@@ -231,6 +231,17 @@ namespace MegabonkTogether
                 services.AddSingleton<IWebsocketClientService, WebsocketClientService>();
 
                 services.AddSingleton<IUdpClientService, UdpClientService>();
+
+                // INetTransport resolves to the SAME instance as IUdpClientService, not a second
+                // one. UdpClientService implements both, but the container matches on the exact
+                // registered key — so without this line anything asking for INetTransport fails to
+                // activate, and registering the implementation twice would give two singletons,
+                // two LiteNetLib managers and two sockets.
+                //
+                // This forwarding is what lets a service depend on the transport contract rather
+                // than on the LiteNetLib session that happens to provide it today; Phase 4 changes
+                // which implementation sits behind it and no consumer notices.
+                services.AddSingleton<INetTransport>(sp => sp.GetRequiredService<IUdpClientService>());
                 services.AddSingleton<IPlayerManagerService, PlayerManagerService>();
                 services.AddSingleton<IEnemyManagerService, EnemyManagerService>();
                 services.AddSingleton<IProjectileManagerService, ProjectileManagerService>();
