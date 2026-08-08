@@ -7,9 +7,8 @@ editor preview would have shown in a second.
 
 This replaces that with prefabs authored in Unity, shipped inside the plugin DLL.
 
-**Status: pipeline only.** `UiAssetService` loads the bundle; nothing consumes it yet.
-`LobbyPanel` is still the code-built version. The swap is a separate change, deliberately, so the
-mod keeps a working panel while the bundle is being authored.
+**Status:** `LobbyPanel` is prefab-driven. The bundle is built, committed and embedded. The
+prefab is still scaffold styling — correct structure, placeholder colours.
 
 ## The version trap
 
@@ -18,8 +17,8 @@ mod keeps a working panel while the bundle is being authored.
 | Game's Unity version | **2023.2.22f1** |
 | Editor you must author in | **2023.2.22f1** |
 
-A bundle built by any other Unity major returns **null** from `AssetBundle.LoadFromMemory` — no
-exception, no reason, just null. `UiAssetService` calls this out in its error text because it is
+A bundle built by any other Unity major returns **null** from the load call — no exception, no
+reason, just null. `UiAssetService` calls this out in its error text because it is
 by far the most likely cause. Verify with:
 
 ```bash
@@ -97,8 +96,8 @@ runtime. Size text boxes with margin.
 
 ## Loading
 
-Synchronous, once, on first `TryGetPrefab`. The bundle is prefabs with no textures, so
-`LoadFromMemory` costs a few milliseconds at menu time.
+Synchronous, once, on first `TryGetPrefab`, via `LoadFromFile` — see "Why the bundle is staged
+on disk". The bundle is prefabs with no textures, so it costs a few milliseconds at menu time.
 
 The asynchronous alternative needs an `AsyncOperation` completion delegate held alive across the
 native boundary for the duration — a managed field whose only job is to stop the GC collecting a
@@ -114,11 +113,29 @@ instances.
 | Symptom | Cause |
 |---|---|
 | `Embedded resource ... is missing` | Built without running Build UI Bundle. The csproj `Exists()` condition skips the resource silently. |
-| `LoadFromMemory returned null` | Unity version mismatch. See above. |
+| `LoadFromFile returned null` | Unity version mismatch. See above. |
 | `'<path>' is not in the bundle` | Asset paths are the authoring path (`Assets/Prefabs/X.prefab`) and case-sensitive. |
 | Prefab instantiates, a child is null | Renamed or reparented against the contract. |
 | `MissingMethodException: LoadFromMemory(Byte[])` | The reference resolved to `unity-libs` instead of `interop`. See below. |
-| `ObjectCollectedException` inside `LoadFromMemory_Internal` | The `Il2CppStructArray<byte>` was passed as a temporary and collected mid-call. It must be reachable from a field. |
+| `ObjectCollectedException` inside `LoadFromMemory_Internal` | Do not use `LoadFromMemory`. See below. |
+
+## Why the bundle is staged on disk
+
+`UiAssetService` writes the embedded bundle into BepInEx's cache directory and calls
+`AssetBundle.LoadFromFile`. It does **not** call `LoadFromMemory`.
+
+`LoadFromMemory` takes an `Il2CppStructArray<byte>`, and converting a managed `byte[]` allocates
+an object in the IL2CPP domain that was collected *during* the call —
+`ObjectCollectedException` raised inside `LoadFromMemory_Internal`, not at the call site. Holding
+the wrapper in a managed field does not fix it: that roots the wrapper, not the IL2CPP object it
+points at.
+
+`LoadFromFile` takes a string, so nothing has to survive in the IL2CPP domain across the call. It
+also memory-maps the file instead of holding a second copy of the bytes.
+
+The staged file is only rewritten when its length differs from the embedded copy. Unity holds a
+loaded bundle's file open, so a second game instance on the same machine — which is how this mod
+is tested — could not overwrite it.
 
 ## interop vs unity-libs
 

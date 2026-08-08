@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
-using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using UnityEngine;
 
 namespace MegabonkTogether.Services
@@ -47,21 +46,6 @@ namespace MegabonkTogether.Services
         private AssetBundle bundle;
         private bool loadAttempted;
 
-        /// <summary>
-        /// The IL2CPP-side copy of the bundle bytes, held in a field rather than passed as a
-        /// temporary.
-        ///
-        /// <para>Converting a managed <c>byte[]</c> allocates an object in the IL2CPP domain whose
-        /// only owner is the wrapper. As a temporary it was collected <b>during</b> the call that
-        /// consumed it — <c>ObjectCollectedException</c> out of <c>Il2CppObjectBase.get_Pointer</c>,
-        /// raised inside <c>LoadFromMemory_Internal</c>, not at the call site. A field keeps the
-        /// wrapper, and therefore its handle, alive.</para>
-        ///
-        /// <para>Never cleared. It is 8 KB, and Unity is not documented as copying the buffer out
-        /// of the caller's hands, so releasing it would be trading a certain small cost for an
-        /// uncertain large one.</para>
-        /// </summary>
-        private Il2CppStructArray<byte> bundleBytes;
 
         public bool IsAvailable => bundle != null;
 
@@ -139,35 +123,73 @@ namespace MegabonkTogether.Services
                 return false;
             }
 
+            string bundlePath;
             try
             {
-                // Two separate statements on purpose: the conversion's result must be reachable
-                // from a field before the call, or it is collected mid-call. See bundleBytes.
-                bundleBytes = bytes;
-
-                // Synchronous by choice. The bundle is prefabs and no textures, so this is a
-                // few milliseconds once, and it avoids having to keep an AsyncOperation
-                // completion delegate alive across the native boundary.
-                bundle = AssetBundle.LoadFromMemory(bundleBytes);
+                bundlePath = StageBundleOnDisk(bytes);
             }
             catch (Exception ex)
             {
-                Plugin.Log.LogError($"[UiAssets] LoadFromMemory threw: {ex}");
+                Plugin.Log.LogError($"[UiAssets] Could not stage the bundle on disk: {ex}");
+                return false;
+            }
+
+            try
+            {
+                // LoadFromFile, not LoadFromMemory. The in-memory path takes an
+                // Il2CppStructArray<byte>, and the array was collected in the IL2CPP domain
+                // *during* the call — ObjectCollectedException raised inside
+                // LoadFromMemory_Internal. Holding the wrapper in a managed field did not help,
+                // because that roots the wrapper rather than the object it points at.
+                //
+                // LoadFromFile takes a string, so no IL2CPP-domain object has to survive the call
+                // at all. It also memory-maps rather than holding a second copy of the bytes.
+                bundle = AssetBundle.LoadFromFile(bundlePath);
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError($"[UiAssets] LoadFromFile threw: {ex}");
                 return false;
             }
 
             if (bundle == null)
             {
                 Plugin.Log.LogError(
-                    $"[UiAssets] LoadFromMemory returned null for {bytes.Length} bytes. This is "
-                    + "almost always a Unity version mismatch — the bundle must be built with the "
-                    + "editor version the game ships (see docs/ui/01-ui-asset-bundle.md).");
+                    $"[UiAssets] LoadFromFile returned null for {bundlePath} ({bytes.Length} bytes). "
+                    + "This is almost always a Unity version mismatch — the bundle must be built "
+                    + "with the editor version the game ships (see docs/ui/01-ui-asset-bundle.md).");
                 return false;
             }
 
             bundle.hideFlags = KeepLoaded;
             Plugin.Log.LogInfo($"[UiAssets] Loaded UI bundle ({bytes.Length} bytes).");
             return true;
+        }
+
+        /// <summary>
+        /// Writes the embedded bundle into BepInEx's cache directory and returns its path.
+        ///
+        /// <para>Skipped when a file of the same length is already there. Unity keeps a loaded
+        /// bundle's file open, so a second game instance on the same machine — which is how this
+        /// mod gets tested — would otherwise fail to overwrite it. Length is a weak check, but it
+        /// changes whenever the prefab does, and the cost of being wrong is a stale panel rather
+        /// than a corrupt one.</para>
+        /// </summary>
+        private static string StageBundleOnDisk(byte[] bytes)
+        {
+            var directory = Path.Combine(BepInEx.Paths.CachePath, "MegabonkTogether");
+            Directory.CreateDirectory(directory);
+
+            var path = Path.Combine(directory, "megabonktogether.ui");
+
+            var existing = new FileInfo(path);
+            if (existing.Exists && existing.Length == bytes.Length)
+            {
+                return path;
+            }
+
+            File.WriteAllBytes(path, bytes);
+            return path;
         }
 
         private static byte[] ReadEmbeddedBundle()
