@@ -118,24 +118,26 @@ instances.
 | Prefab instantiates, a child is null | Renamed or reparented against the contract. |
 | `MissingMethodException: LoadFromMemory(Byte[])` | The reference resolved to `unity-libs` instead of `interop`. See below. |
 | `ObjectCollectedException` inside `LoadFromMemory_Internal` | Do not use `LoadFromMemory`. See below. |
+| `MissingMethodException: ReadOnlySpan\`1.GetPinnableReference` | Do not use `LoadFromFile`. See below. |
 
-## Why the bundle is staged on disk
+## Only one of the three load entry points works
 
-`UiAssetService` writes the embedded bundle into BepInEx's cache directory and calls
-`AssetBundle.LoadFromFile`. It does **not** call `LoadFromMemory`.
+Use **`AssetBundle.LoadFromStream`** over an `Il2CppSystem.IO.MemoryStream`, with both the stream
+and the `Il2CppStructArray<byte>` held in fields. All three were tried in-game; the other two
+fail, each for its own reason.
 
-`LoadFromMemory` takes an `Il2CppStructArray<byte>`, and converting a managed `byte[]` allocates
-an object in the IL2CPP domain that was collected *during* the call —
-`ObjectCollectedException` raised inside `LoadFromMemory_Internal`, not at the call site. Holding
-the wrapper in a managed field does not fix it: that roots the wrapper, not the IL2CPP object it
-points at.
+| Entry point | Result |
+|---|---|
+| `LoadFromMemory(Il2CppStructArray<byte>)` | `ObjectCollectedException` — the array is collected in the IL2CPP domain *during* the call. A managed field does not help: it roots the wrapper, not the IL2CPP object behind it. |
+| `LoadFromFile(string)` | `MissingMethodException` — marshals its path through `Il2CppSystem.ReadOnlySpan<T>.GetPinnableReference`, which the interop assemblies do not define. |
+| `LoadFromStream(Stream)` | Works. |
 
-`LoadFromFile` takes a string, so nothing has to survive in the IL2CPP domain across the call. It
-also memory-maps the file instead of holding a second copy of the bytes.
+A `MemoryStream` is itself an IL2CPP object holding an IL2CPP-side reference to the array, which
+is what actually keeps it alive. **Keep both fields.** Dropping either reintroduces the
+collection.
 
-The staged file is only rewritten when its length differs from the embedded copy. Unity holds a
-loaded bundle's file open, so a second game instance on the same machine — which is how this mod
-is tested — could not overwrite it.
+The failure is not that the array is unreachable from managed code — it is that IL2CPP's GC
+cannot see managed references at all. Only another IL2CPP object counts.
 
 ## interop vs unity-libs
 
