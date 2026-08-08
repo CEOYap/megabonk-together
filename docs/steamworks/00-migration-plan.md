@@ -225,14 +225,60 @@ measured and the part that has to be accepted.
 > It is therefore blocked behind this migration too — or it ships accepting that a
 > version-mismatched pair desyncs silently instead of refusing to connect.
 
-### Phase 1 — Introduce the seam (no behaviour change)
-- Add `INetTransport` and `NetDelivery`.
-- Make `UdpClientService` implement it; map `NetDelivery` → `LiteNetLib.DeliveryMethod`.
-- Replace all 91 `udpClientService.` call sites with `netTransport.`.
-- Replace `SendToClient(NetPeer, ...)` with `SendToClient(uint connectionId, ...)`.
-- **Decide the `RelayEnvelope.ToFilters` question here** — see below.
-- **Exit criteria:** `LiteNetLib` types appear only inside `LiteNetTransport`. Behaviour and
-  bandwidth identical to Phase 0.
+### Phase 1 — Introduce the seam (no behaviour change) — **DONE and playtested**
+- ~~Add `INetTransport` and `NetDelivery`.~~ `src/plugin/Services/INetTransport.cs`,
+  `NetDelivery.cs`.
+- ~~Make `UdpClientService` implement it; map `NetDelivery` → `LiteNetLib.DeliveryMethod`.~~
+  `IUdpClientService : INetTransport`; the mapping is the single `ToLiteNetLib` switch.
+- ~~Replace `SendToClient(NetPeer, ...)` with `SendToClient(uint connectionId, ...)`.~~ Also
+  `SendToAllClientsExcept(int, uint, T)` → `(uint excludedConnectionId, T)`.
+- ~~Decide the `RelayEnvelope.ToFilters` question.~~ Ported deliberately, both defects collapsed.
+- **Exit criteria met:** no `LiteNetLib` *type* appears outside `UdpClientService` — the only
+  remaining mention anywhere else is a string literal in a bandwidth log line. Builds clean.
+- **Playtested 2026-08-08**, two instances on one PC. A full run start-to-finish: both barriers
+  worked (`[readiness]` round 1 completed, `[barrier]` report/release/apply on both peers),
+  `EncounterClosedStamped` and `ClientReadyStamped` both observed on the wire, and per-stream
+  bandwidth shape unchanged. **This validates function, not bandwidth:** `rtt 0 ms` on one machine
+  is not a network test, and the session was too short to compare against Phase 0's
+  median 24.1 / p90 64.9 / max 201.3 KB/s internet baseline. A regression check against that
+  baseline still wants an internet session.
+
+**Deviation from the plan as written, and why.** The plan named the implementation
+`LiteNetTransport`. It stayed `UdpClientService`: that class is more than a transport — it also owns
+matchmaking handshake, NAT introduction, relay fallback and the per-tick send loop — so renaming it
+would have asserted a separation that does not exist yet, while touching every DI and call site in a
+phase whose whole value is being a provable no-op. The separation that *does* matter is expressed as
+the interface split: gameplay code depends on `INetTransport`, and `IUdpClientService` carries the
+session lifecycle. Phase 5 can extract the class once the Steam implementation shows where the real
+seam falls.
+
+**One deliberate behaviour change**, which makes this not a pure no-op and should be watched in the
+playtest. `SendToAllClientsExcept` used to exclude *the peer the packet arrived on* (a
+`NetPeer.Id`); it now excludes *the player that originated the message* (a connection id). These
+coincide in the star topology the mod runs, which is why the old code worked. Where they could
+diverge, the new behaviour is the correct one — the exclusion exists so an originator does not
+receive its own delta back (P1-1).
+
+**What Phase 1 hands Phase 4** — read `NetDelivery`'s remarks before writing the Steam mapping.
+Steam's flags (`k_nSteamNetworkingSend_*`, [ISteamNetworkingSockets](https://partner.steamgames.com/doc/api/ISteamNetworkingSockets),
+via [Steamworks.NET](https://github.com/rlabrecque/Steamworks.NET)) offer only `Reliable` (always
+ordered) and `Unreliable`, plus `NoNagle` / `NoDelay`. So:
+
+| `NetDelivery` | Steam | Consequence |
+|---|---|---|
+| `Unreliable` | `k_nSteamNetworkingSend_Unreliable` | exact |
+| `ReliableOrdered` | `k_nSteamNetworkingSend_Reliable` | exact, and Steam fragments |
+| `ReliableUnordered` | `Reliable` | **degrades** — regains the head-of-line blocking it exists to avoid |
+| `ReliableSequenced` | *none* | **no equivalent**; neither flag means "only the newest is guaranteed" |
+
+`ReliableSequenced` has exactly one user — the implicit default on the client's `Introduced`
+handshake, which is a one-shot that arguably should never have been on that channel. **Settle that
+call site before choosing a mapping**, rather than picking a lossy translation by default.
+
+Also recorded on `INetTransport`: sends return `void`, so a Steam implementation must log its own
+`EResult` failures — throttled, with a suppressed count, naming the message type and target.
+`SendMessageToConnection` can fail where `NetPeer.Send` could not, and these paths reach 233
+sends/s, so an unthrottled log would cost more than the sends.
 
 This is the largest mechanical step and the one most likely to introduce a regression. Do it
 alone, and playtest it as a no-op change before continuing.

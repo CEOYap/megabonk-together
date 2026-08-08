@@ -36,7 +36,13 @@ namespace MegabonkTogether.Services
         }
     }
 
-    public interface IUdpClientService
+    /// <summary>
+    /// The LiteNetLib session: matchmaking handshake, NAT introduction, relay fallback and the
+    /// per-tick send loop. The transport half of this — everything that puts bytes on a wire — is
+    /// <see cref="INetTransport"/>, which is what gameplay code depends on; the members declared
+    /// here are session lifecycle and are expected to change shape during the Steamworks migration.
+    /// </summary>
+    public interface IUdpClientService : INetTransport
     {
         public bool Initialize();
         public void Update();
@@ -46,13 +52,6 @@ namespace MegabonkTogether.Services
         public Task<bool> HandleMatch(MatchInfo matchInfo, uint selfConnectionId, string rdvServerHost, uint rdvServerPort, bool enabledSharedExperience);
         public bool HasAllPeersConnected();
 
-        public void SendToAllClients<T>(T data, DeliveryMethod deliveryMethod) where T : IGameNetworkMessage;
-        public void SendToAllClients(byte[] data, DeliveryMethod deliveryMethod, string messageTypeName = null);
-
-        public void SendToHost<T>(T data, DeliveryMethod? deliveryMethod = null) where T : IGameNetworkMessage;
-        public void SendToClient<T>(NetPeer client, T data, uint netPlayerId) where T : IGameNetworkMessage;
-        public void SendToAllClientsExcept<T>(int netPlayerId, uint sender, T data) where T : IGameNetworkMessage;
-        public bool? IsHost();
         public void UpdateEnemies();
         public void UpdateProjectiles();
         public void UpdateTumbleWeeds();
@@ -63,7 +62,6 @@ namespace MegabonkTogether.Services
         public int GetNetPeerCount();
         public bool AreAllPeersReady();
         public int GetCurrentReadyPeersCount();
-        public int GetLatency(uint connectionId);
         public void UpdateMode(bool isHost);
         public bool IsHandlingConnection();
         public void CancelAnyNatIntroduction();
@@ -476,7 +474,7 @@ namespace MegabonkTogether.Services
                         };
 
                         EventManager.OnPlayerDisconnected(disconnectedPlayer as PlayerDisconnected);
-                        SendToAllClients(disconnectedPlayer, DeliveryMethod.ReliableOrdered);
+                        SendToAllClients(disconnectedPlayer, NetDelivery.ReliableOrdered);
                     }
                 }
             }
@@ -799,10 +797,8 @@ namespace MegabonkTogether.Services
                             IsHost = isHost.Value
                         };
 
-                        var peer = gamePeers.FirstOrDefault(p => p.Value.Id == netPeerId).Value;
-                        if (peer != null)
                         {
-                            SendToClient(peer, introducedResponse, introduced.ConnectionId);
+                            SendToClient(introduced.ConnectionId, introducedResponse);
 
                             var playerModel = playerManagerService.GetPlayer(introduced.ConnectionId);
                             if (playerModel != null)
@@ -926,7 +922,7 @@ namespace MegabonkTogether.Services
                         toUpdate.Skin = selectedCharacter.Skin;
                         playerManagerService.UpdatePlayer(toUpdate);
 
-                        SendToAllClientsExcept(netPeerId, selectedCharacter.ConnectionId, selectedCharacter);
+                        SendToAllClientsExcept(selectedCharacter.ConnectionId, selectedCharacter);
 
                         if (AreAllPeersReady() && playerManagerService.HasSelectedCharacter() && Plugin.Instance.IS_HOST_READY)
                         {
@@ -936,35 +932,35 @@ namespace MegabonkTogether.Services
                         break;
                     case AbstractSpawnedProjectile spawnedProjectile:
                         EventManager.OnSpawnedProjectile(spawnedProjectile);
-                        SendToAllClientsExcept(netPeerId, spawnedProjectile.OwnerId, spawnedProjectile);
+                        SendToAllClientsExcept(spawnedProjectile.OwnerId, spawnedProjectile);
                         break;
                     case ProjectileDone projectileDone:
                         EventManager.OnProjectileDone(projectileDone);
-                        SendToAllClientsExcept(netPeerId, projectileDone.SenderConnectionId, projectileDone);
+                        SendToAllClientsExcept(projectileDone.SenderConnectionId, projectileDone);
                         break;
                     case EnemyDied enemyDied:
                         EventManager.OnEnemyDied(enemyDied);
-                        SendToAllClientsExcept(netPeerId, enemyDied.DiedByOwnerId, enemyDied);
+                        SendToAllClientsExcept(enemyDied.DiedByOwnerId, enemyDied);
                         break;
                     case PickupApplied pickupApplied:
                         EventManager.OnPickupApplied(pickupApplied);
-                        SendToAllClientsExcept(netPeerId, pickupApplied.OwnerId, pickupApplied);
+                        SendToAllClientsExcept(pickupApplied.OwnerId, pickupApplied);
                         break;
                     case PickupFollowingPlayer pickupFollowingPlayer:
                         EventManager.OnPickupFollowingPlayer(pickupFollowingPlayer);
-                        SendToAllClientsExcept(netPeerId, pickupFollowingPlayer.PlayerId, pickupFollowingPlayer);
+                        SendToAllClientsExcept(pickupFollowingPlayer.PlayerId, pickupFollowingPlayer);
                         break;
                     case ChestOpened chestOpened:
                         EventManager.OnChestOpened(chestOpened);
-                        SendToAllClientsExcept(netPeerId, chestOpened.OwnerId, chestOpened);
+                        SendToAllClientsExcept(chestOpened.OwnerId, chestOpened);
                         break;
                     case WeaponAdded weaponAdded:
                         EventManager.OnWeaponAdded(weaponAdded);
-                        SendToAllClientsExcept(netPeerId, weaponAdded.OwnerId, weaponAdded);
+                        SendToAllClientsExcept(weaponAdded.OwnerId, weaponAdded);
                         break;
                     case InteractableUsed interactableUsed:
                         EventManager.OnInteractableUsed(interactableUsed);
-                        SendToAllClientsExcept(netPeerId, interactableUsed.OwnerId, interactableUsed);
+                        SendToAllClientsExcept(interactableUsed.OwnerId, interactableUsed);
                         break;
                     case StartingChargingShrine startingChargingShrine:
                         EventManager.OnStartingChargingShrine(startingChargingShrine);
@@ -974,11 +970,11 @@ namespace MegabonkTogether.Services
                         break;
                     case EnemyExploder enemyExploder:
                         EventManager.OnEnemyExploder(enemyExploder);
-                        SendToAllClientsExcept(netPeerId, enemyExploder.SenderId, enemyExploder);
+                        SendToAllClientsExcept(enemyExploder.SenderId, enemyExploder);
                         break;
                     case EnemyDamaged enemyDamaged:
                         EventManager.OnEnemyDamaged(enemyDamaged);
-                        SendToAllClientsExcept(netPeerId, enemyDamaged.AttackerId, enemyDamaged);
+                        SendToAllClientsExcept(enemyDamaged.AttackerId, enemyDamaged);
                         break;
                     //case SpawnedEnemySpecialAttack spawnedEnemySpecialAttack:
                     //    EventManager.OnSpawnedEnemySpecialAttack(spawnedEnemySpecialAttack);
@@ -986,11 +982,11 @@ namespace MegabonkTogether.Services
                     //    break;
                     case StartingChargingPylon startingChargingPylon:
                         EventManager.OnStartingChargingPylon(startingChargingPylon);
-                        SendToAllClientsExcept(netPeerId, startingChargingPylon.PlayerChargingId, startingChargingPylon);
+                        SendToAllClientsExcept(startingChargingPylon.PlayerChargingId, startingChargingPylon);
                         break;
                     case StoppingChargingPylon stoppingChargingPylon:
                         EventManager.OnStoppingChargingPylon(stoppingChargingPylon);
-                        SendToAllClientsExcept(netPeerId, stoppingChargingPylon.PlayerChargingId, stoppingChargingPylon);
+                        SendToAllClientsExcept(stoppingChargingPylon.PlayerChargingId, stoppingChargingPylon);
                         break;
                     //case FinalBossOrbSpawned finalBossOrbSpawned:
                     //    EventManager.OnFinalBossOrbSpawned(finalBossOrbSpawned);
@@ -998,14 +994,14 @@ namespace MegabonkTogether.Services
                     //    break;
                     case FinalBossOrbDestroyed finalBossOrbDestroyed:
                         EventManager.OnFinalBossOrbDestroyed(finalBossOrbDestroyed);
-                        SendToAllClientsExcept(netPeerId, finalBossOrbDestroyed.SenderId, finalBossOrbDestroyed);
+                        SendToAllClientsExcept(finalBossOrbDestroyed.SenderId, finalBossOrbDestroyed);
                         break;
                     case PlayerDied playerDied:
                         EventManager.OnPlayerDied(playerDied);
                         break;
                     case TomeAdded tomeAdded:
                         EventManager.OnTomeAdded(tomeAdded);
-                        SendToAllClientsExcept(netPeerId, tomeAdded.OwnerId, tomeAdded);
+                        SendToAllClientsExcept(tomeAdded.OwnerId, tomeAdded);
                         break;
                     case InteractableCharacterFightEnemySpawned interactableCharacterFightEnemySpawned:
                         EventManager.OnInteractableCharacterFightEnemySpawned(interactableCharacterFightEnemySpawned);
@@ -1015,15 +1011,15 @@ namespace MegabonkTogether.Services
                         break;
                     case ItemAdded itemAdded:
                         EventManager.OnItemAdded(itemAdded);
-                        SendToAllClientsExcept(netPeerId, itemAdded.OwnerId, itemAdded);
+                        SendToAllClientsExcept(itemAdded.OwnerId, itemAdded);
                         break;
                     case ItemRemoved itemRemoved:
                         EventManager.OnItemRemoved(itemRemoved);
-                        SendToAllClientsExcept(netPeerId, itemRemoved.OwnerId, itemRemoved);
+                        SendToAllClientsExcept(itemRemoved.OwnerId, itemRemoved);
                         break;
                     case WeaponToggled weaponToggled:
                         EventManager.OnWeaponToggled(weaponToggled);
-                        SendToAllClientsExcept(netPeerId, weaponToggled.OwnerId, weaponToggled);
+                        SendToAllClientsExcept(weaponToggled.OwnerId, weaponToggled);
                         break;
                     //case SpawnedObjectInCrypt spawnedObjectInCrypt:
                     //    EventManager.OnSpawnedObjectInCrypt(spawnedObjectInCrypt);
@@ -1031,19 +1027,19 @@ namespace MegabonkTogether.Services
                     //    break;
                     case StartingChargingLamp startingChargingLamp:
                         EventManager.OnStartingChargingLamp(startingChargingLamp);
-                        SendToAllClientsExcept(netPeerId, startingChargingLamp.PlayerChargingId, startingChargingLamp);
+                        SendToAllClientsExcept(startingChargingLamp.PlayerChargingId, startingChargingLamp);
                         break;
                     case StoppingChargingLamp stoppingChargingLamp:
                         EventManager.OnStoppingChargingLamp(stoppingChargingLamp);
-                        SendToAllClientsExcept(netPeerId, stoppingChargingLamp.PlayerChargingId, stoppingChargingLamp);
+                        SendToAllClientsExcept(stoppingChargingLamp.PlayerChargingId, stoppingChargingLamp);
                         break;
                     case TimerStarted timerStarted:
                         EventManager.OnTimerStarted(timerStarted);
-                        SendToAllClientsExcept(netPeerId, timerStarted.SenderId, timerStarted);
+                        SendToAllClientsExcept(timerStarted.SenderId, timerStarted);
                         break;
                     case HatChanged hatChanged:
                         EventManager.OnHatChanged(hatChanged);
-                        SendToAllClientsExcept(netPeerId, hatChanged.OwnerId, hatChanged);
+                        SendToAllClientsExcept(hatChanged.OwnerId, hatChanged);
                         break;
                     case PlayerDisconnected playerDisconnected: //Host only receives this message by the rdv server, normally its handled in LiteNet's PeerDisconnectedEvent
                         if (!usesRelay.Remove(playerDisconnected.ConnectionId))
@@ -1053,12 +1049,12 @@ namespace MegabonkTogether.Services
                         }
 
                         EventManager.OnPlayerDisconnected(playerDisconnected);
-                        SendToAllClients(playerDisconnected, DeliveryMethod.ReliableOrdered);
+                        SendToAllClients(playerDisconnected, NetDelivery.ReliableOrdered);
 
                         break;
                     case AddXp addXp:
                         EventManager.OnAddXp(addXp);
-                        SendToAllClientsExcept(netPeerId, addXp.OwnerId, addXp);
+                        SendToAllClientsExcept(addXp.OwnerId, addXp);
                         break;
                     case EncounterClosedStamped encounterClosedStamped:
                         // SE-5, report half. A report that does not name the round this host has
@@ -1107,7 +1103,7 @@ namespace MegabonkTogether.Services
                         break;
                     case GoldChanged goldChanged:
                         EventManager.OnGoldChanged(goldChanged);
-                        SendToAllClientsExcept(netPeerId, goldChanged.OwnerId, goldChanged);
+                        SendToAllClientsExcept(goldChanged.OwnerId, goldChanged);
                         break;
                     default:
                         Plugin.Log.LogWarning($"Unknown message type received {message}");
@@ -1451,7 +1447,7 @@ namespace MegabonkTogether.Services
                 {
                     isGameOver = true;
                     IGameNetworkMessage wsMessage = new GameOver();
-                    SendToAllClients(wsMessage, DeliveryMethod.ReliableOrdered);
+                    SendToAllClients(wsMessage, NetDelivery.ReliableOrdered);
                     EventManager.OnGameOver(wsMessage as GameOver);
 
                     return;
@@ -1467,7 +1463,7 @@ namespace MegabonkTogether.Services
                     Plugin.Log.LogWarning("Local player update is null, cannot send to host");
                     return;
                 }
-                SendToHost(playerUpdate, DeliveryMethod.Unreliable);
+                SendToHost(playerUpdate, NetDelivery.Unreliable);
             }
         }
 
@@ -1717,8 +1713,8 @@ namespace MegabonkTogether.Services
 
         /// <summary>
         /// Sends one tick of a per-entity stream, splitting an oversized tick into several sub-MTU
-        /// <see cref="DeliveryMethod.Unreliable"/> datagrams instead of promoting the whole tick to
-        /// <see cref="DeliveryMethod.ReliableOrdered"/>.
+        /// <see cref="NetDelivery.Unreliable"/> datagrams instead of promoting the whole tick to
+        /// <see cref="NetDelivery.ReliableOrdered"/>.
         ///
         /// <para><b>What this replaces.</b> Each of these senders used to do
         /// <c>if (serialized.Length >= MAX_PACKET_SIZE_BYTES) deliveryMethod = ReliableOrdered</c>.
@@ -1771,7 +1767,7 @@ namespace MegabonkTogether.Services
             // exactly as it did before — one serialize, one send, no extra allocation.
             if (serialized.Length < MAX_PACKET_SIZE_BYTES)
             {
-                SendToAllClients(serialized, DeliveryMethod.Unreliable, label);
+                SendToAllClients(serialized, NetDelivery.Unreliable, label);
                 return;
             }
 
@@ -1792,15 +1788,17 @@ namespace MegabonkTogether.Services
                 // Only reachable when the average underestimated this chunk, or when one item is
                 // bigger than the whole budget. Reliable is the sole way such a message arrives.
                 var deliveryMethod = chunkBytes.Length >= MAX_PACKET_SIZE_BYTES
-                    ? DeliveryMethod.ReliableOrdered
-                    : DeliveryMethod.Unreliable;
+                    ? NetDelivery.ReliableOrdered
+                    : NetDelivery.Unreliable;
 
                 SendToAllClients(chunkBytes, deliveryMethod, label);
             }
         }
 
-        public void SendToAllClients<T>(T data, DeliveryMethod deliveryMethod) where T : IGameNetworkMessage
+        public void SendToAllClients<T>(T data, NetDelivery delivery) where T : IGameNetworkMessage
         {
+            var deliveryMethod = ToLiteNetLib(delivery);
+
             if (!EnsureIsHost())
             {
                 return;
@@ -1839,7 +1837,7 @@ namespace MegabonkTogether.Services
             BandwidthDiagnostics.Record(data.GetType().Name, msgBytes.Length, gamePeers.Count + (usesRelay.Any() ? 1 : 0));
         }
 
-        public void SendToHost<T>(T data, DeliveryMethod? overrideDeliveryMethod = null) where T : IGameNetworkMessage
+        public void SendToHost<T>(T data, NetDelivery? delivery = null) where T : IGameNetworkMessage
         {
             if (!EnsureIsClient())
             {
@@ -1848,7 +1846,7 @@ namespace MegabonkTogether.Services
 
             var msgBytes = MemoryPackSerializer.Serialize<IGameNetworkMessage>(data);
 
-            var deliveryMethod = overrideDeliveryMethod ?? DeliveryMethod.ReliableSequenced;
+            var deliveryMethod = delivery.HasValue ? ToLiteNetLib(delivery.Value) : DeliveryMethod.ReliableSequenced;
 
             if (msgBytes.Length >= MAX_PACKET_SIZE_BYTES)
             {
@@ -1885,7 +1883,12 @@ namespace MegabonkTogether.Services
             BandwidthDiagnostics.Record(data.GetType().Name, msgBytes.Length, 1);
         }
 
-        public void SendToClient<T>(NetPeer client, T data, uint connectionId) where T : IGameNetworkMessage
+        /// <summary>
+        /// Takes a game connection id rather than a <c>NetPeer</c>, per <see cref="INetTransport"/>.
+        /// The peer lookup that the single caller used to do inline now happens here, which is the
+        /// point of the seam: no caller outside this class names a LiteNetLib handle.
+        /// </summary>
+        public void SendToClient<T>(uint connectionId, T data) where T : IGameNetworkMessage
         {
             if (!EnsureIsHost())
             {
@@ -1909,6 +1912,15 @@ namespace MegabonkTogether.Services
                 }
 
                 BandwidthDiagnostics.Record(data.GetType().Name, msgBytes.Length, 1);
+                return;
+            }
+
+            if (!TryResolvePeer(connectionId, out var client))
+            {
+                // Previously impossible to reach: the one caller resolved the peer itself and
+                // skipped the send when it came back null, so a miss was silent. Now that the
+                // lookup lives here it can say so.
+                Plugin.Log.LogWarning($"SendToClient: no connected peer for connection id {connectionId}; message dropped.");
                 return;
             }
 
@@ -1993,7 +2005,28 @@ namespace MegabonkTogether.Services
             return -1;
         }
 
-        public void SendToAllClientsExcept<T>(int netPlayerId, uint sender, T data) where T : IGameNetworkMessage
+        /// <summary>
+        /// One id, one space — see <see cref="INetTransport.SendToAllClientsExcept"/>. The two-id
+        /// signature this replaces took a LiteNetLib <c>NetPeer.Id</c> for the direct path and a
+        /// game connection id for the relay path.
+        ///
+        /// <para><b>This is the one deliberate behaviour change in Phase 1.</b> The old direct path
+        /// excluded <i>the peer the packet arrived on</i>; this excludes <i>the player that
+        /// originated it</i>. In the star topology the mod actually runs, the host receives a
+        /// client's message directly from that client and the two coincide, which is why the old
+        /// code worked. They are not the same concept, though, and the originator is the one that
+        /// must not receive its own delta back — that is what the exclusion is for (P1-1). Where
+        /// they ever diverge, the new behaviour is the correct one.</para>
+        ///
+        /// <para>Both defects the Phase 0 trace found are collapsed here rather than carried across
+        /// the seam, as the migration plan requires: the old relay branch looked <c>sender</c> up in
+        /// <c>gamePeersIntroducedByRelay</c> and read back <c>.ConnectionId</c> — which equals the
+        /// key by construction, so it was an identity function — and then re-scanned the same
+        /// dictionary on that same field whenever the result was <c>0</c>, a fallback that could
+        /// never produce a different answer and that existed only because <c>0</c> was doing double
+        /// duty as "not found" and as a legal connection id.</para>
+        /// </summary>
+        public void SendToAllClientsExcept<T>(uint excludedConnectionId, T data) where T : IGameNetworkMessage
         {
             if (!EnsureIsHost())
             {
@@ -2004,29 +2037,14 @@ namespace MegabonkTogether.Services
 
             if (usesRelay.Any())
             {
-                bool found = false;
-                uint toExcept = 0;
-                if (gamePeersIntroducedByRelay.ContainsKey(sender))
-                {
-                    toExcept = gamePeersIntroducedByRelay[sender].ConnectionId;
-                    found = true;
-                }
-
-                if (toExcept == 0)
-                {
-                    var normalPeer = gamePeersIntroducedByRelay.FirstOrDefault(p => p.Value.ConnectionId == sender).Value;
-
-                    if (normalPeer != null)
-                    {
-                        toExcept = normalPeer.ConnectionId;
-                        found = true;
-                    }
-                }
-
-
+                // Membership, not a lookup: the value's ConnectionId is the key. A relayed peer that
+                // is not in the map is a direct peer, and direct peers are not in the relay
+                // session's client list, so an empty filter cannot echo to them.
                 RelayEnvelope relayEnvelope = new()
                 {
-                    ToFilters = found ? [toExcept] : [],
+                    ToFilters = gamePeersIntroducedByRelay.ContainsKey(excludedConnectionId)
+                        ? [excludedConnectionId]
+                        : [],
                     Payload = msgBytes,
                 };
 
@@ -2046,20 +2064,73 @@ namespace MegabonkTogether.Services
             NetDataWriter writer = new NetDataWriter();
             writer.Put(msgBytes);
 
+            // Resolved once, outside the loop. A miss means the excluded player is not a direct peer
+            // — relayed, or already gone — in which case nothing here needs excluding.
+            var excludedPeerId = ResolvePeerId(excludedConnectionId);
+
             var sent = 0;
-            var filteredPeers = gamePeers.Where(p => p.Value.Id != netPlayerId);
-            foreach (var (_, peer) in filteredPeers)
+            foreach (var (peerId, peer) in gamePeers)
             {
+                if (excludedPeerId.HasValue && peerId == excludedPeerId.Value)
+                {
+                    continue;
+                }
+
                 peer.Send(writer, DeliveryMethod.ReliableOrdered);
                 sent++;
             }
 
-            // Counted from the loop rather than gamePeers.Count, because this is the exclusion path:
-            // netPlayerId is a LiteNetLib NetPeer.Id and `sender` is a game connection id, and the
-            // migration plan calls transposing them an easy and silent mistake. Counting what the
-            // loop actually sent cannot inherit that confusion.
+            // Counted from the loop rather than gamePeers.Count, because this is the exclusion path
+            // and the count must reflect what was actually sent.
             BandwidthDiagnostics.Record(data.GetType().Name, msgBytes.Length, sent + (usesRelay.Any() ? 1 : 0));
         }
+
+        /// <summary>
+        /// Game connection id → LiteNetLib peer id, the mapping the seam moved inside the transport.
+        /// Null when the id is not a currently-connected direct peer.
+        ///
+        /// <para>A linear scan over at most six peers, on paths that already allocate and serialize.
+        /// A maintained reverse map would be faster and would be a second thing to keep in sync
+        /// across connect, disconnect and relay promotion — the scan cannot go stale.</para>
+        /// </summary>
+        private int? ResolvePeerId(uint connectionId)
+        {
+            foreach (var (peerId, intro) in gamePeersIntroduced)
+            {
+                if (intro.ConnectionId == connectionId)
+                {
+                    return peerId;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>Game connection id → connected <c>NetPeer</c>. See <see cref="ResolvePeerId"/>.</summary>
+        private bool TryResolvePeer(uint connectionId, out NetPeer peer)
+        {
+            var peerId = ResolvePeerId(connectionId);
+
+            if (peerId.HasValue && gamePeers.TryGetValue(peerId.Value, out peer))
+            {
+                return true;
+            }
+
+            peer = null;
+            return false;
+        }
+
+        /// <summary>
+        /// The single place the mod's delivery vocabulary meets LiteNetLib's. Phase 4 adds the
+        /// Steam equivalent beside it rather than editing any call site.
+        /// </summary>
+        private static DeliveryMethod ToLiteNetLib(NetDelivery delivery) => delivery switch
+        {
+            NetDelivery.Unreliable => DeliveryMethod.Unreliable,
+            NetDelivery.ReliableUnordered => DeliveryMethod.ReliableUnordered,
+            NetDelivery.ReliableSequenced => DeliveryMethod.ReliableSequenced,
+            _ => DeliveryMethod.ReliableOrdered,
+        };
 
         /// <summary>
         /// <paramref name="messageTypeName"/> exists only for the bandwidth counters: this overload
@@ -2069,8 +2140,10 @@ namespace MegabonkTogether.Services
         /// holds the typed message, so the name is passed down rather than inferred. Optional so a
         /// future caller cannot fail to compile, but it should always be supplied.
         /// </summary>
-        public void SendToAllClients(byte[] data, DeliveryMethod deliveryMethod, string messageTypeName = null)
+        public void SendToAllClients(byte[] data, NetDelivery delivery, string messageTypeName = null)
         {
+            var deliveryMethod = ToLiteNetLib(delivery);
+
             if (!EnsureIsHost())
             {
                 return;
