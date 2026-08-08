@@ -1038,6 +1038,13 @@ namespace MegabonkTogether.Scripts
             // character selection — is either owned by the panel now or replaced by the host's
             // Start button. Ending is cleaner than keeping a coroutine alive that touches a modal
             // it has just destroyed.
+            // Logs the branch decision, not just its failure. The previous run produced no [lobby]
+            // line at all while the screen showed end-of-coroutine text, which is a combination the
+            // existing logging cannot explain — so record what the coroutine actually decided.
+            Plugin.Log.LogInfo(
+                $"[lobby] HandleFriendlies: matchmaker connected. Mode={Plugin.Instance.Mode.Mode}, " +
+                $"Role={Plugin.Instance.Mode.Role}, code='{Plugin.Instance.Mode.RoomCode}'");
+
             if (Plugin.Instance.Mode.Role == Role.Host)
             {
                 // The code arrives on the websocket a moment after the connection reports ready,
@@ -1243,6 +1250,8 @@ namespace MegabonkTogether.Scripts
                 SetStatusText("");
                 yield break;
             }
+
+            Plugin.Log.LogInfo("[lobby] HandleFriendlies: reached the match-found path (non-host).");
 
             AudioManager.Instance.PlaySfx(AudioManager.Instance.purchaseSfx.sounds[0]);
             HideLoader();
