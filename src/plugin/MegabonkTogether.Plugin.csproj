@@ -98,6 +98,10 @@
 			<HintPath>$(UnityLibPath)/UnityEngine.AudioModule.dll</HintPath>
 			<Private>false</Private>
 		</Reference>
+		<Reference Include="UnityEngine.UIModule">
+			<HintPath>$(UnityLibPath)/UnityEngine.UIModule.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
 		<Reference Include="UnityEngine.AssetBundleModule">
 			<HintPath>$(UnityLibPath)/UnityEngine.AssetBundleModule.dll</HintPath>
 			<Private>false</Private>

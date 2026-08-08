@@ -86,11 +86,10 @@ namespace MegabonkTogether.Scripts.Modal
         private MainMenu mainMenu;
 
         /// <summary>
-        /// Main-menu roots hidden while the lobby is open, remembered so they can be put back
-        /// exactly as they were. Only ones that were actually active are recorded, so restoring
-        /// cannot switch on something the game had deliberately hidden.
+        /// CanvasGroups added to the main-menu roots to hide them while the lobby is open, kept so
+        /// they can be turned back on. Groups, not SetActive — see <see cref="HideMainMenuChrome"/>.
         /// </summary>
-        private readonly List<GameObject> hiddenMenuRoots = [];
+        private readonly List<CanvasGroup> hiddenMenuGroups = [];
 
         private TextMeshProUGUI titleText;
         private TextMeshProUGUI codeText;
@@ -175,6 +174,14 @@ namespace MegabonkTogether.Scripts.Modal
         /// <para>Hiding the roots rather than covering them with the blocker: a translucent panel
         /// over a live menu still reads as two screens at once, and the buttons underneath stay
         /// focusable by controller even when they cannot be clicked.</para>
+        ///
+        /// <para><b>A CanvasGroup, never SetActive(false).</b> The game tracks open menus itself:
+        /// <c>Window.OnDisable</c> calls <c>WindowManager.WindowClosed()</c>, and when the open-window
+        /// count reaches zero <c>WindowManager.RefreshCursor()</c> hides the mouse cursor. tabMenu
+        /// holds the active Window, so deactivating it left the panel drawn but the game convinced
+        /// no menu was open — cursor gone, nothing clickable. A CanvasGroup makes the subtree
+        /// invisible and non-interactive without ever firing OnDisable, so that bookkeeping is
+        /// untouched.</para>
         /// </summary>
         private void HideMainMenuChrome()
         {
@@ -185,26 +192,33 @@ namespace MegabonkTogether.Scripts.Modal
 
             foreach (var root in new[] { mainMenu.tabMenu, mainMenu.leaderboards, mainMenu.quickQuests })
             {
-                if (root != null && root.activeSelf)
+                if (root == null || !root.activeSelf)
                 {
-                    root.SetActive(false);
-                    hiddenMenuRoots.Add(root);
+                    continue;
                 }
+
+                var group = root.GetComponent<CanvasGroup>() ?? root.AddComponent<CanvasGroup>();
+                group.alpha = 0f;
+                group.interactable = false;
+                group.blocksRaycasts = false;
+                hiddenMenuGroups.Add(group);
             }
         }
 
         /// <summary>Puts back exactly what <see cref="HideMainMenuChrome"/> took away.</summary>
         private void RestoreMainMenuChrome()
         {
-            foreach (var root in hiddenMenuRoots)
+            foreach (var group in hiddenMenuGroups)
             {
-                if (root != null)
+                if (group != null)
                 {
-                    root.SetActive(true);
+                    group.alpha = 1f;
+                    group.interactable = true;
+                    group.blocksRaycasts = true;
                 }
             }
 
-            hiddenMenuRoots.Clear();
+            hiddenMenuGroups.Clear();
         }
 
         private void CreateTitle()
