@@ -66,10 +66,18 @@ namespace MegabonkTogether.Scripts.Modal
         private CustomButton copyCodeButton;
         private CustomButton joinFromClipboardButton;
         private CustomButton leaveLobbyButton;
-        private CustomButton backButton;
+        private CustomButton continueButton;
 
-        /// <summary>Set by the caller that opened the panel; runs when Back or Leave is pressed.</summary>
+        /// <summary>Set by the caller that opened the panel; runs after the panel closes.</summary>
         internal Action OnClosed { get; set; }
+
+        /// <summary>
+        /// Runs when Continue is pressed. Temporary: increment 2 replaces this single button with
+        /// Ready (every member) and Start (host, enabled only once every member is ready). It exists
+        /// now because the panel sits between joining and character selection, and without a way
+        /// forward the panel would be a dead end rather than a step.
+        /// </summary>
+        internal Action OnContinueRequested { get; set; }
 
         /// <summary>Runs when Leave lobby is pressed, before the panel closes.</summary>
         internal Action OnLeaveRequested { get; set; }
@@ -130,8 +138,13 @@ namespace MegabonkTogether.Scripts.Modal
             // because Unity Actions do not survive the BepInEx/IL2CPP boundary.
             copyCodeButton = CreateButton("CopyCodeButton", "Copy Code", new Vector2(0f, -132f), OnCopyCodeClicked);
             joinFromClipboardButton = CreateButton("JoinClipboardButton", "Join From Clipboard", new Vector2(0f, -188f), OnJoinFromClipboardClicked);
-            leaveLobbyButton = CreateButton("LeaveLobbyButton", "Leave Lobby", new Vector2(0f, -244f), OnLeaveLobbyClicked);
-            backButton = CreateButton("LobbyBackButton", "Back", new Vector2(0f, -300f), OnBackClicked);
+            continueButton = CreateButton("LobbyContinueButton", "Continue", new Vector2(0f, -244f), OnContinueClicked);
+
+            // "Back" and "Leave Lobby" would be the same action in this position — the panel only
+            // exists while you are in a lobby, so going back IS leaving. Two buttons that do one
+            // thing is worse than one that says what it does. A distinct Back returns in increment 2
+            // if the flow gains a screen behind this one.
+            leaveLobbyButton = CreateButton("LeaveLobbyButton", "Leave Lobby", new Vector2(0f, -300f), OnLeaveLobbyClicked);
         }
 
         /// <summary>
@@ -165,6 +178,7 @@ namespace MegabonkTogether.Scripts.Modal
             SetButtonVisible(copyCodeButton, inLobby && !string.IsNullOrEmpty(code));
             SetButtonVisible(leaveLobbyButton, inLobby);
             SetButtonVisible(joinFromClipboardButton, !inLobby);
+            SetButtonVisible(continueButton, inLobby);
 
             foreach (var row in memberRows)
             {
@@ -283,10 +297,13 @@ namespace MegabonkTogether.Scripts.Modal
             Close();
         }
 
-        private void OnBackClicked()
+        private void OnContinueClicked()
         {
             PlaySelectSfx();
+
+            var advance = OnContinueRequested;
             Close();
+            advance?.Invoke();
         }
 
         private void Close()

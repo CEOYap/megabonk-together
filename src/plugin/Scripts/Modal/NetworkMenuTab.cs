@@ -1079,6 +1079,53 @@ namespace MegabonkTogether.Scripts
 
             yield return new WaitForSeconds(1f);
             CloseModal();
+
+            ShowLobbyPanel();
+        }
+
+        /// <summary>
+        /// Opens the lobby panel, which now sits between joining and character selection.
+        ///
+        /// <para>This step used to not exist: a successful join went straight to
+        /// <c>GoToCharacterSelection</c>, which made the character screen double as the lobby and
+        /// left no point at which a player could see who else had arrived. See
+        /// <c>docs/ui/00-lobby-panel.md</c>.</para>
+        /// </summary>
+        private void ShowLobbyPanel()
+        {
+            var panelObj = new GameObject("LobbyPanel");
+            var lobbyPanel = panelObj.AddComponent<LobbyPanel>();
+
+            // Handed the menu before the component builds itself — the panel clones one of
+            // MainMenu's buttons per button it draws.
+            lobbyPanel.Initialize(mainMenu);
+
+            lobbyPanel.OnContinueRequested = GoToCharacterSelection;
+            lobbyPanel.OnLeaveRequested = LeaveLobby;
+        }
+
+        /// <summary>The step the lobby panel now precedes rather than replaces.</summary>
+        private void GoToCharacterSelection()
+        {
+            mainMenu.GoToCharacterSelection();
+
+            var characterMenu = WindowManager.activeWindow as CharacterMenu;
+            if (characterMenu != null)
+            {
+                characterMenu.selectedButton = characterMenu.characterButtons[0];
+                characterMenu.b_confirm.SetInteractable(false);
+            }
+        }
+
+        /// <summary>
+        /// Tears the session down and returns to the main menu. Routed through
+        /// <c>ResetNetworking</c> rather than just closing the panel, because a peer that abandons
+        /// the UI while still connected is exactly the "player who never reports" case the lobby
+        /// barrier has to survive — better to actually leave.
+        /// </summary>
+        private void LeaveLobby()
+        {
+            Plugin.Instance.NetworkHandler.ResetNetworking();
         }
 
         private IEnumerator HandleFriendlies()
@@ -1149,15 +1196,6 @@ namespace MegabonkTogether.Scripts
             HideLoader();
             SetStatusText("Joined!");
             stopButton.gameObject.SetActive(false);
-
-            mainMenu.GoToCharacterSelection();
-
-            var characterMenu = WindowManager.activeWindow as CharacterMenu;
-            if (characterMenu != null)
-            {
-                characterMenu.selectedButton = characterMenu.characterButtons[0];
-                characterMenu.b_confirm.SetInteractable(false);
-            }
 
             if (Plugin.Instance.NetworkHandler.IsHost)
             {
