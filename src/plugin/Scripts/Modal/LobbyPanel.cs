@@ -47,7 +47,7 @@ namespace MegabonkTogether.Scripts.Modal
         private ILobbyViewService lobbyViewService;
 
         /// <summary>Tall and narrow: this is a list, and a list reads better than it spreads.</summary>
-        protected override Vector2 PanelSize => new(560, 620);
+        protected override Vector2 PanelSize => new(560, 780);
 
         protected override Color PanelBackgroundColor => new(0.06f, 0.06f, 0.07f, 0.94f);
 
@@ -62,12 +62,35 @@ namespace MegabonkTogether.Scripts.Modal
         private float refreshAccumulator;
 
         /// <summary>
+        /// Matches every other button in this UI (<c>NetworkMenuTab</c> uses 300x70 at eight sites).
+        /// The first version invented 420x48 and spaced rows 52 apart, so real 70px-tall clones
+        /// overlapped by 18px each — measure the thing you are cloning.
+        /// </summary>
+        private const float ButtonWidth = 300f;
+        private const float ButtonHeight = 70f;
+
+        /// <summary>Button pitch: the button's own height plus a small gap.</summary>
+        private const float ButtonPitch = ButtonHeight + 6f;
+
+        /// <summary>Centre of the first button row.</summary>
+        private const float FirstButtonY = -80f;
+
+        private static Vector2 ButtonSlot(int index) => new(0f, FirstButtonY - index * ButtonPitch);
+
+        /// <summary>
         /// Handed in rather than found. <c>NetworkMenuTab</c> does the same: the panel clones one of
         /// MainMenu's buttons for every button it draws, and a scene search per clone is both
         /// wasteful and fragile — it depends on the menu still being the active scene at the moment
         /// the panel happens to build itself.
         /// </summary>
         private MainMenu mainMenu;
+
+        /// <summary>
+        /// Main-menu roots hidden while the lobby is open, remembered so they can be put back
+        /// exactly as they were. Only ones that were actually active are recorded, so restoring
+        /// cannot switch on something the game had deliberately hidden.
+        /// </summary>
+        private readonly List<GameObject> hiddenMenuRoots = [];
 
         private TextMeshProUGUI titleText;
         private TextMeshProUGUI codeText;
@@ -117,6 +140,18 @@ namespace MegabonkTogether.Scripts.Modal
         {
             Plugin.Log.LogInfo($"[lobby] LobbyPanel.OnUICreated; panel object: {panel != null}, mainMenu: {mainMenu != null}");
 
+            // ModalBase puts its blocker at SetAsFirstSibling — behind everything on the Canvas,
+            // including the game's own main menu. That is fine for a modal opened over the menu the
+            // mod itself drew, but this panel opens over the game's menu, which then showed through
+            // it: PLAY, UNLOCKS and TOGETHER! were all visible and clickable behind the lobby.
+            //
+            // Re-ordered so the blocker is in front of the menu and the panel in front of the
+            // blocker. Order matters: blocker first, then panel, or the panel ends up underneath.
+            blocker?.transform.SetAsLastSibling();
+            panel?.transform.SetAsLastSibling();
+
+            HideMainMenuChrome();
+
             EventManager.SubscribeLobbyStartRequestedEvents(OnLobbyStartRequested);
 
             // The loader and status text ModalBase builds are for connection feedback; the panel
@@ -133,16 +168,55 @@ namespace MegabonkTogether.Scripts.Modal
             Plugin.Log.LogInfo("[lobby] LobbyPanel built and refreshed.");
         }
 
+        /// <summary>
+        /// Clears the main menu so the lobby sits on the empty scene, rather than floating over
+        /// PLAY / UNLOCKS / QUESTS / SHOP with the leaderboard and achievement cards still visible.
+        ///
+        /// <para>Hiding the roots rather than covering them with the blocker: a translucent panel
+        /// over a live menu still reads as two screens at once, and the buttons underneath stay
+        /// focusable by controller even when they cannot be clicked.</para>
+        /// </summary>
+        private void HideMainMenuChrome()
+        {
+            if (mainMenu == null)
+            {
+                return;
+            }
+
+            foreach (var root in new[] { mainMenu.tabMenu, mainMenu.leaderboards, mainMenu.quickQuests })
+            {
+                if (root != null && root.activeSelf)
+                {
+                    root.SetActive(false);
+                    hiddenMenuRoots.Add(root);
+                }
+            }
+        }
+
+        /// <summary>Puts back exactly what <see cref="HideMainMenuChrome"/> took away.</summary>
+        private void RestoreMainMenuChrome()
+        {
+            foreach (var root in hiddenMenuRoots)
+            {
+                if (root != null)
+                {
+                    root.SetActive(true);
+                }
+            }
+
+            hiddenMenuRoots.Clear();
+        }
+
         private void CreateTitle()
         {
-            titleText = CreateLabel("LobbyTitle", new Vector2(0f, 260f), new Vector2(520f, 60f), 40f);
+            titleText = CreateLabel("LobbyTitle", new Vector2(0f, 330f), new Vector2(520f, 60f), 40f);
             titleText.text = "Lobby";
             titleText.color = new Color(1f, 0.85f, 0.3f);
         }
 
         private void CreateCodeLine()
         {
-            codeText = CreateLabel("LobbyCode", new Vector2(0f, 212f), new Vector2(520f, 40f), 24f);
+            codeText = CreateLabel("LobbyCode", new Vector2(0f, 284f), new Vector2(520f, 40f), 24f);
             codeText.color = new Color(0.75f, 0.75f, 0.78f);
         }
 
@@ -155,8 +229,10 @@ namespace MegabonkTogether.Scripts.Modal
             rect.anchorMin = new Vector2(0.5f, 0.5f);
             rect.anchorMax = new Vector2(0.5f, 0.5f);
             rect.pivot = new Vector2(0.5f, 1f);
-            rect.anchoredPosition = new Vector2(0f, 180f);
-            rect.sizeDelta = new Vector2(480f, 300f);
+            rect.anchoredPosition = new Vector2(0f, 240f);
+
+            // Six rows at 46px. Stops above the first button row so a full lobby cannot run into it.
+            rect.sizeDelta = new Vector2(480f, 260f);
         }
 
         private void CreateButtons()
@@ -164,16 +240,18 @@ namespace MegabonkTogether.Scripts.Modal
             // Cloned from the game's own PLAY button so the panel inherits its art, font and hover
             // behaviour rather than shipping a second visual language. CustomButton is required
             // because Unity Actions do not survive the BepInEx/IL2CPP boundary.
-            copyCodeButton = CreateButton("CopyCodeButton", "Copy Code", new Vector2(0f, -104f), OnCopyCodeClicked);
-            joinFromClipboardButton = CreateButton("JoinClipboardButton", "Join From Clipboard", new Vector2(0f, -156f), OnJoinFromClipboardClicked);
-            readyButton = CreateButton("LobbyReadyButton", "Ready", new Vector2(0f, -208f), OnReadyClicked);
-            startButton = CreateButton("LobbyStartButton", "Start", new Vector2(0f, -260f), OnStartClicked);
+            // Copy and Join-from-clipboard share slot 0: they are mutually exclusive (you either
+            // have a lobby or you do not), so hiding one must not leave a gap in the column.
+            copyCodeButton = CreateButton("CopyCodeButton", "Copy Code", ButtonSlot(0), OnCopyCodeClicked);
+            joinFromClipboardButton = CreateButton("JoinClipboardButton", "Join From Clipboard", ButtonSlot(0), OnJoinFromClipboardClicked);
+            readyButton = CreateButton("LobbyReadyButton", "Ready", ButtonSlot(1), OnReadyClicked);
+            startButton = CreateButton("LobbyStartButton", "Start", ButtonSlot(2), OnStartClicked);
 
             // "Back" and "Leave Lobby" would be the same action in this position — the panel only
             // exists while you are in a lobby, so going back IS leaving. Two buttons that do one
             // thing is worse than one that says what it does. A distinct Back returns in increment 2
             // if the flow gains a screen behind this one.
-            leaveLobbyButton = CreateButton("LeaveLobbyButton", "Leave Lobby", new Vector2(0f, -312f), OnLeaveLobbyClicked);
+            leaveLobbyButton = CreateButton("LeaveLobbyButton", "Leave Lobby", ButtonSlot(3), OnLeaveLobbyClicked);
         }
 
         /// <summary>
@@ -251,7 +329,9 @@ namespace MegabonkTogether.Scripts.Modal
             // The crown marks the host; "(you)" marks the local player. Both are text rather than
             // icons because there is no avatar or icon source until Steam lobbies land in Phase 3,
             // and a placeholder image would promise something the row cannot yet show.
-            var crown = member.IsHost ? "♛ " : "   ";
+            // Text, not a glyph. The first version used a crown character the game's font does not
+            // contain, so every host row rendered as a tofu box.
+            var role = member.IsHost ? " (host)" : "";
             var you = member.IsLocal ? " (you)" : "";
 
             // Ready state is the thing a player scans this list for, so it gets its own column on
@@ -259,7 +339,7 @@ namespace MegabonkTogether.Scripts.Modal
             // no icon source until Steam lobbies land, and the row already reads left-to-right.
             var ready = member.IsReady ? "READY" : "";
 
-            label.text = $"{crown}{member.Name}{you}<pos=78%>{ready}";
+            label.text = $"{member.Name}{role}{you}<pos=76%>{ready}";
             label.alignment = TextAlignmentOptions.Left;
             label.fontSize = 28f;
             label.color = member.IsReady
@@ -391,6 +471,11 @@ namespace MegabonkTogether.Scripts.Modal
 
         public override void OnDestroy()
         {
+            // Restored here rather than only in Close(), so a panel torn down by a scene change or
+            // a teardown path still gives the menu back instead of leaving the player on a blank
+            // screen.
+            RestoreMainMenuChrome();
+
             // Unsubscribed or the delegate keeps this destroyed panel alive and a second lobby
             // would advance twice.
             EventManager.UnsubscribeLobbyStartRequestedEvents(OnLobbyStartRequested);
@@ -485,7 +570,7 @@ namespace MegabonkTogether.Scripts.Modal
                 rect.anchorMax = new Vector2(0.5f, 0.5f);
                 rect.pivot = new Vector2(0.5f, 0.5f);
                 rect.anchoredPosition = anchoredPosition;
-                rect.sizeDelta = new Vector2(420f, 48f);
+                rect.sizeDelta = new Vector2(ButtonWidth, ButtonHeight);
             }
 
             var button = buttonObj.AddComponent<CustomButton>();
