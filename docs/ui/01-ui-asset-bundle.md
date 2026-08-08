@@ -118,6 +118,7 @@ instances.
 | `'<path>' is not in the bundle` | Asset paths are the authoring path (`Assets/Prefabs/X.prefab`) and case-sensitive. |
 | Prefab instantiates, a child is null | Renamed or reparented against the contract. |
 | `MissingMethodException: LoadFromMemory(Byte[])` | The reference resolved to `unity-libs` instead of `interop`. See below. |
+| `ObjectCollectedException` inside `LoadFromMemory_Internal` | The `Il2CppStructArray<byte>` was passed as a temporary and collected mid-call. It must be reachable from a field. |
 
 ## interop vs unity-libs
 

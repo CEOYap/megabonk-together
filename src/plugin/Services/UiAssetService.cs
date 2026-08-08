@@ -47,6 +47,22 @@ namespace MegabonkTogether.Services
         private AssetBundle bundle;
         private bool loadAttempted;
 
+        /// <summary>
+        /// The IL2CPP-side copy of the bundle bytes, held in a field rather than passed as a
+        /// temporary.
+        ///
+        /// <para>Converting a managed <c>byte[]</c> allocates an object in the IL2CPP domain whose
+        /// only owner is the wrapper. As a temporary it was collected <b>during</b> the call that
+        /// consumed it — <c>ObjectCollectedException</c> out of <c>Il2CppObjectBase.get_Pointer</c>,
+        /// raised inside <c>LoadFromMemory_Internal</c>, not at the call site. A field keeps the
+        /// wrapper, and therefore its handle, alive.</para>
+        ///
+        /// <para>Never cleared. It is 8 KB, and Unity is not documented as copying the buffer out
+        /// of the caller's hands, so releasing it would be trading a certain small cost for an
+        /// uncertain large one.</para>
+        /// </summary>
+        private Il2CppStructArray<byte> bundleBytes;
+
         public bool IsAvailable => bundle != null;
 
         public bool TryGetPrefab(string assetPath, out GameObject prefab)
@@ -125,10 +141,14 @@ namespace MegabonkTogether.Services
 
             try
             {
+                // Two separate statements on purpose: the conversion's result must be reachable
+                // from a field before the call, or it is collected mid-call. See bundleBytes.
+                bundleBytes = bytes;
+
                 // Synchronous by choice. The bundle is prefabs and no textures, so this is a
                 // few milliseconds once, and it avoids having to keep an AsyncOperation
                 // completion delegate alive across the native boundary.
-                bundle = AssetBundle.LoadFromMemory((Il2CppStructArray<byte>)bytes);
+                bundle = AssetBundle.LoadFromMemory(bundleBytes);
             }
             catch (Exception ex)
             {
