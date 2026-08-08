@@ -98,12 +98,19 @@
 			<HintPath>$(UnityLibPath)/UnityEngine.AudioModule.dll</HintPath>
 			<Private>false</Private>
 		</Reference>
+		<!--
+			interop, not unity-libs. unity-libs holds stock Unity assemblies whose array-taking
+			signatures are byte[]/T[]; the interop proxies that actually load at runtime take
+			Il2CppStructArray<T>. Compiling AssetBundle.LoadFromMemory against unity-libs bound to
+			an overload that does not exist in the game and threw MissingMethodException at the
+			first call. Any module whose API passes arrays belongs here.
+		-->
 		<Reference Include="UnityEngine.UIModule">
-			<HintPath>$(UnityLibPath)/UnityEngine.UIModule.dll</HintPath>
+			<HintPath>$(AssemblyPath)/UnityEngine.UIModule.dll</HintPath>
 			<Private>false</Private>
 		</Reference>
 		<Reference Include="UnityEngine.AssetBundleModule">
-			<HintPath>$(UnityLibPath)/UnityEngine.AssetBundleModule.dll</HintPath>
+			<HintPath>$(AssemblyPath)/UnityEngine.AssetBundleModule.dll</HintPath>
 			<Private>false</Private>
 		</Reference>
 		<Reference Include="UnityEngine.UI">

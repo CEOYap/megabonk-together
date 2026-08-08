@@ -1,3 +1,4 @@
+using MegabonkTogether.Helpers;
 using MegabonkTogether.Scripts.Button;
 using MegabonkTogether.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -236,7 +237,10 @@ namespace MegabonkTogether.Scripts.Modal
                 return;
             }
 
-            foreach (var label in root.GetComponentsInChildren<TextMeshProUGUI>(true))
+            // The repo's reflection wrapper, not the direct call. Under IL2CPP the generic
+            // GetComponentsInChildren<T> does not bind the way the stock signature suggests, which
+            // is exactly why Helpers/Helper.cs carries this.
+            foreach (var label in root.RuntimeGetComponentsInChildren<TextMeshProUGUI>(true))
             {
                 label.font = source.font;
                 label.fontSharedMaterial = source.fontSharedMaterial;

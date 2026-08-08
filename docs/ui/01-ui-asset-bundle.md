@@ -117,6 +117,23 @@ instances.
 | `LoadFromMemory returned null` | Unity version mismatch. See above. |
 | `'<path>' is not in the bundle` | Asset paths are the authoring path (`Assets/Prefabs/X.prefab`) and case-sensitive. |
 | Prefab instantiates, a child is null | Renamed or reparented against the contract. |
+| `MissingMethodException: LoadFromMemory(Byte[])` | The reference resolved to `unity-libs` instead of `interop`. See below. |
+
+## interop vs unity-libs
+
+`UnityEngine.AssetBundleModule` and `UnityEngine.UIModule` are referenced from **`$(AssemblyPath)`
+(interop)**, not `$(UnityLibPath)`. This is not interchangeable.
+
+`unity-libs` holds stock Unity assemblies, where array-taking APIs are `byte[]` and `T[]`. The
+Il2CppInterop proxies that actually load at runtime take `Il2CppStructArray<T>`. Compiling
+`AssetBundle.LoadFromMemory` against `unity-libs` binds to an overload the game does not have, and
+the failure arrives as `MissingMethodException` at the first call — nothing catches it earlier,
+because both signatures are perfectly valid at compile time.
+
+The same trap applies to `GetComponentsInChildren<T>`, which is why `Helpers/Helper.cs` carries
+`RuntimeGetComponentsInChildren<T>`. Use the wrapper rather than the direct call.
+
+**Rule of thumb: any module whose API passes arrays must be referenced from `interop`.**
 
 None of this is verified in-game — nothing in this repo is until it has been run. The bundle has
 not yet been built, so the load path above has never executed.
