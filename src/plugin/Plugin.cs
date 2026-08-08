@@ -262,6 +262,11 @@ namespace MegabonkTogether
 
             Host = builder.Build();
 
+            // Subscribed after the host exists, and explicitly rather than from the service's
+            // constructor: the transport publishes these, and having the consumer resolve during
+            // construction is what created the cycle that deadlocked startup.
+            Services.GetRequiredService<ILobbyViewService>().SubscribeToLobbyMessages();
+
 
             _ = Services.GetRequiredService<ISynchronizationService>(); // Initialize SynchronizationService
             _ = Host.StartAsync(cancellationToken);

@@ -78,6 +78,9 @@ namespace MegabonkTogether.Services
         /// No-op unless <see cref="AreAllMembersReady"/>.
         /// </summary>
         void RequestStart();
+
+        /// <summary>Hooks up the lobby message handlers. Called once from <c>Plugin.Load</c>.</summary>
+        void SubscribeToLobbyMessages();
     }
 
     internal class LobbyViewService(
@@ -127,6 +130,34 @@ namespace MegabonkTogether.Services
         /// which is the failure mode this project keeps paying for.
         /// </summary>
         private const long PendingReadyTimeoutMs = 3000;
+
+        /// <summary>
+        /// Subscribes to the lobby messages rather than being called into by the transport.
+        ///
+        /// <para><b>This is why the plugin hung on launch.</b> The first version had
+        /// <c>UdpClientService</c> take <c>ILobbyViewService</c> and call the handlers directly from
+        /// its receive switch — a cycle, because this service needs <c>INetTransport</c> and that
+        /// resolves to the same <c>UdpClientService</c>. The container normally detects a circular
+        /// dependency and throws, but the <c>INetTransport</c> registration is a factory lambda,
+        /// which is opaque to its call-site graph; instead of an exception it deadlocked on the
+        /// singleton lock, so the game never reached the main menu and nothing was logged at all.
+        /// </para>
+        ///
+        /// <para>Publishing through <c>EventManager</c> is the house convention for exactly this
+        /// reason — the transport stays unaware of whatever consumes its messages. It also moves
+        /// these handlers onto the main thread, since the dispatcher marshals them.</para>
+        /// </summary>
+        public void SubscribeToLobbyMessages()
+        {
+            EventManager.SubscribeLobbyReadyChangedEvents(OnLobbyReadyChanged);
+            EventManager.SubscribeLobbyReadyStateEvents(OnLobbyReadyState);
+        }
+
+        private void OnLobbyReadyChanged(Common.Messages.GameNetworkMessages.LobbyReadyChanged changed) =>
+            ApplyClientReady(changed.ConnectionId, changed.IsReady);
+
+        private void OnLobbyReadyState(Common.Messages.GameNetworkMessages.LobbyReadyState state) =>
+            ApplyHostState(state.Entries);
 
         public bool IsInLobby =>
             Plugin.Instance?.Mode != null
@@ -250,7 +281,7 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>Host only. Applies a client's toggle and republishes the whole set.</summary>
-        internal void ApplyClientReady(uint connectionId, bool isReady)
+        private void ApplyClientReady(uint connectionId, bool isReady)
         {
             if (netTransport.IsHost() != true)
             {
@@ -272,7 +303,7 @@ namespace MegabonkTogether.Services
         /// on its refresh tick, and a plain Dictionary mutated from two threads is a data race that
         /// shows up as a corrupted read long after the fact.</para>
         /// </summary>
-        internal void ApplyHostState(IEnumerable<Common.Messages.GameNetworkMessages.LobbyReadyEntry> entries)
+        private void ApplyHostState(IEnumerable<Common.Messages.GameNetworkMessages.LobbyReadyEntry> entries)
         {
             readyByConnectionId.Clear();
 

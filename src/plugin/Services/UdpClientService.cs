@@ -77,7 +77,6 @@ namespace MegabonkTogether.Services
             ISpawnedObjectManagerService spawnedObjectManagerService,
             IEncounterService encounterService,
             IReadinessService readinessService,
-            ILobbyViewService lobbyViewService,
             ManualLogSource logger) : IUdpClientService
     {
         private const int MAX_PACKET_SIZE_BYTES = 1000;
@@ -748,7 +747,7 @@ namespace MegabonkTogether.Services
                         EventManager.OnReadinessRoundStarted(readinessRoundStarted);
                         break;
                     case LobbyReadyState lobbyReadyState:
-                        (lobbyViewService as LobbyViewService)?.ApplyHostState(lobbyReadyState.Entries);
+                        EventManager.OnLobbyReadyState(lobbyReadyState);
                         break;
                     case LobbyStartRequested:
                         EventManager.OnLobbyStartRequested();
@@ -817,10 +816,7 @@ namespace MegabonkTogether.Services
 
                         break;
                     case LobbyReadyChanged lobbyReadyChanged:
-                        // Host only. The client does not apply its own toggle — this is what makes
-                        // it true, and the rebroadcast is what tells the client.
-                        (lobbyViewService as LobbyViewService)?.ApplyClientReady(
-                            lobbyReadyChanged.ConnectionId, lobbyReadyChanged.IsReady);
+                        EventManager.OnLobbyReadyChanged(lobbyReadyChanged);
                         break;
                     case ClientReadyStamped clientReadyStamped:
                         var stampedReadyId = clientReadyStamped.ConnectionId;
