@@ -105,10 +105,18 @@ namespace MegabonkTogether.Scripts.Modal
         public void Awake()
         {
             lobbyViewService = Plugin.Services.GetService<ILobbyViewService>();
+
+            // Unconditional lifecycle logging, deliberately. Two rounds were spent unable to tell
+            // "the panel never ran" from "the panel ran and rendered invisibly", because every log
+            // line in here was on a failure branch. A silent success path is exactly what this
+            // project's own doctrine warns about: absence of a log line is not absence of the event.
+            Plugin.Log.LogInfo($"[lobby] LobbyPanel.Awake; service resolved: {lobbyViewService != null}");
         }
 
         protected override void OnUICreated()
         {
+            Plugin.Log.LogInfo($"[lobby] LobbyPanel.OnUICreated; panel object: {panel != null}, mainMenu: {mainMenu != null}");
+
             EventManager.SubscribeLobbyStartRequestedEvents(OnLobbyStartRequested);
 
             // The loader and status text ModalBase builds are for connection feedback; the panel
@@ -121,6 +129,8 @@ namespace MegabonkTogether.Scripts.Modal
             CreateButtons();
 
             Refresh();
+
+            Plugin.Log.LogInfo("[lobby] LobbyPanel built and refreshed.");
         }
 
         private void CreateTitle()

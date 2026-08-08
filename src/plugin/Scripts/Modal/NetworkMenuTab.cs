@@ -1136,7 +1136,14 @@ namespace MegabonkTogether.Scripts
         /// </summary>
         private void ShowLobbyPanel()
         {
+            Plugin.Log.LogInfo("[lobby] ShowLobbyPanel: creating the panel object.");
+
             var panelObj = new GameObject("LobbyPanel");
+
+            // Matches LoadingModal.Show. Without it the object belongs to the active scene, and any
+            // scene change between creation and use takes the panel with it.
+            GameObject.DontDestroyOnLoad(panelObj);
+
             var lobbyPanel = panelObj.AddComponent<LobbyPanel>();
 
             // Handed the menu before the component builds itself — the panel clones one of
@@ -1145,6 +1152,8 @@ namespace MegabonkTogether.Scripts
 
             lobbyPanel.OnContinueRequested = GoToCharacterSelection;
             lobbyPanel.OnLeaveRequested = LeaveLobby;
+
+            Plugin.Log.LogInfo("[lobby] ShowLobbyPanel: component added and wired.");
         }
 
         /// <summary>The step the lobby panel now precedes rather than replaces.</summary>
