@@ -97,10 +97,21 @@ the panel**. Same seam reasoning as `INetTransport`.
 | 74 | `LobbyReadyState` | host → clients, the whole authoritative set |
 | 75 | `LobbyStartRequested` | host → clients, "advance to character selection" |
 
-**A client never applies its own readiness.** It sends the toggle and waits for the host's
-broadcast, exactly as with the level-load barrier — a peer that writes the flag it also reads
-cannot tell its own optimism from the host's answer, which is precisely the bug that hung the
-lobby. The host applies its own toggle directly, having no message to send itself.
+**A client shows its own toggle immediately, then reconciles.** The press is applied locally and
+held until the host's broadcast agrees with it, with a 3-second timeout after which the host wins
+and the disagreement is logged.
+
+This is deliberately *not* what the level-load barrier does, and the difference is worth being
+precise about. That barrier's retry loop used a self-written flag as proof the host had
+acknowledged it, so a client could exit having sent nothing — the bug that hung the lobby. Here
+nothing reads the local value to make a decision: `Start` is host-only and the host checks its own
+set. So an optimistic value costs correctness nothing, and waiting a round-trip only makes the
+button look broken.
+
+The holding matters as much as the writing. `ApplyHostState` replaces the whole set, so a
+broadcast the host generated *before* it processed the toggle would flip the label back and then
+forward again — a visible flicker. The pending value overrides the mirrored set until confirmed.
+The timeout is what stops it becoming a silent divergence.
 
 **The set is sent whole, not as a delta.** At most six entries, changing only when somebody
 presses a button, so a delta saves nothing measurable and adds the failure this project keeps

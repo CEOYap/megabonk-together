@@ -1,4 +1,6 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Linq;
 
 namespace MegabonkTogether.Services
@@ -92,7 +94,39 @@ namespace MegabonkTogether.Services
         /// something else — level-load readiness, owned by <c>ReadinessService</c> — which is the
         /// ambiguity that produced the lobby hang.</para>
         /// </summary>
-        private readonly Dictionary<uint, bool> readyByConnectionId = [];
+        private readonly ConcurrentDictionary<uint, bool> readyByConnectionId = [];
+
+        /// <summary>
+        /// The local player's own toggle, shown immediately and held until the host's broadcast
+        /// agrees with it. Null when nothing is in flight.
+        ///
+        /// <para><b>Why optimistic here, when the level-load barrier deliberately is not.</b> That
+        /// barrier's retry loop used a self-written flag as proof the host had acknowledged it,
+        /// which is how a client could exit having sent nothing and hang the lobby. Nothing here
+        /// reads this value to make a decision — <c>Start</c> is host-only and the host checks its
+        /// own set — so showing the press immediately costs correctness nothing and saves a
+        /// round-trip of the button looking broken.</para>
+        ///
+        /// <para>It is <i>held</i> rather than merely written because <see cref="ApplyHostState"/>
+        /// replaces the whole set: a broadcast the host generated before it processed this toggle
+        /// would otherwise flip the label back, then forward again a moment later.</para>
+        /// </summary>
+        private bool? pendingLocalReady;
+
+        /// <summary>
+        /// When the pending toggle was made. <c>Environment.TickCount64</c> rather than
+        /// <c>Time.unscaledTime</c>: this is set on the main thread but examined from
+        /// <see cref="ApplyHostState"/>, which runs on the LiteNetLib receive thread, and touching a
+        /// Unity API off the main thread is a hard crash with no managed stack.
+        /// </summary>
+        private long pendingSinceTicks;
+
+        /// <summary>
+        /// How long an unconfirmed toggle keeps overriding the host. Past this the host wins and the
+        /// disagreement is logged: a local value that never yields would be a silent divergence,
+        /// which is the failure mode this project keeps paying for.
+        /// </summary>
+        private const long PendingReadyTimeoutMs = 3000;
 
         public bool IsInLobby =>
             Plugin.Instance?.Mode != null
@@ -160,16 +194,18 @@ namespace MegabonkTogether.Services
             if (netTransport.IsHost() == true)
             {
                 // The host owns the set, so it applies its own toggle directly and republishes.
-                // There is no message for it to send to itself.
+                // There is no message for it to send to itself, and nothing to reconcile.
                 readyByConnectionId[local.ConnectionId] = next;
                 BroadcastReadyState();
                 return;
             }
 
-            // A client does NOT apply its own toggle. The host's broadcast is what makes it true,
-            // exactly as with the level-load barrier — a peer that writes the flag it is also
-            // reading cannot tell its own optimism from the host's answer, which is the bug that
-            // hung the lobby.
+            // Shown immediately, then reconciled against the host's broadcast. See
+            // pendingLocalReady for why an optimistic value is safe here and deliberately is not on
+            // the level-load barrier.
+            pendingLocalReady = next;
+            pendingSinceTicks = Environment.TickCount64;
+
             netTransport.SendToHost(
                 new Common.Messages.GameNetworkMessages.LobbyReadyChanged
                 {
@@ -182,6 +218,7 @@ namespace MegabonkTogether.Services
         public void ResetReadyState()
         {
             readyByConnectionId.Clear();
+            pendingLocalReady = null;
         }
 
         public void RequestStart()
@@ -226,7 +263,15 @@ namespace MegabonkTogether.Services
             BroadcastReadyState();
         }
 
-        /// <summary>Client only. Replaces the mirrored set with the host's.</summary>
+        /// <summary>
+        /// Client only. Replaces the mirrored set with the host's, then reconciles any toggle still
+        /// in flight.
+        ///
+        /// <para>Runs on the LiteNetLib receive thread, which is why the set is a
+        /// <see cref="ConcurrentDictionary{TKey,TValue}"/> — the panel reads it from the main thread
+        /// on its refresh tick, and a plain Dictionary mutated from two threads is a data race that
+        /// shows up as a corrupted read long after the fact.</para>
+        /// </summary>
         internal void ApplyHostState(IEnumerable<Common.Messages.GameNetworkMessages.LobbyReadyEntry> entries)
         {
             readyByConnectionId.Clear();
@@ -234,6 +279,44 @@ namespace MegabonkTogether.Services
             foreach (var entry in entries)
             {
                 readyByConnectionId[entry.ConnectionId] = entry.IsReady;
+            }
+
+            ReconcilePendingReady();
+        }
+
+        /// <summary>
+        /// Drops the pending toggle once the host agrees with it, or once it has waited too long.
+        /// Without the timeout an unconfirmed toggle would override the host indefinitely and the
+        /// two would disagree with nothing to say so.
+        /// </summary>
+        private void ReconcilePendingReady()
+        {
+            if (!pendingLocalReady.HasValue)
+            {
+                return;
+            }
+
+            var local = playerManagerService.GetLocalPlayer();
+            if (local == null)
+            {
+                pendingLocalReady = null;
+                return;
+            }
+
+            var hostSaysReady = readyByConnectionId.TryGetValue(local.ConnectionId, out var v) && v;
+
+            if (hostSaysReady == pendingLocalReady.Value)
+            {
+                pendingLocalReady = null;
+                return;
+            }
+
+            if (Environment.TickCount64 - pendingSinceTicks >= PendingReadyTimeoutMs)
+            {
+                Plugin.Log.LogWarning(
+                    $"[lobby] Readiness toggle to {pendingLocalReady.Value} was not acknowledged within " +
+                    $"{PendingReadyTimeoutMs} ms; accepting the host's value of {hostSaysReady}.");
+                pendingLocalReady = null;
             }
         }
 
@@ -263,7 +346,28 @@ namespace MegabonkTogether.Services
             netTransport.SendToAllClients(message, NetDelivery.ReliableOrdered);
         }
 
-        private bool IsReady(uint connectionId) =>
-            readyByConnectionId.TryGetValue(connectionId, out var ready) && ready;
+        private bool IsReady(uint connectionId)
+        {
+            // The local player's own unconfirmed toggle wins over the mirrored set, so the button
+            // answers to the press rather than to the round-trip.
+            if (pendingLocalReady.HasValue)
+            {
+                var local = playerManagerService.GetLocalPlayer();
+                if (local != null && local.ConnectionId == connectionId)
+                {
+                    // Timed out on the read path as well as on receive, so a toggle that is never
+                    // acknowledged still gives up even if no further host broadcast ever arrives to
+                    // trigger reconciliation.
+                    if (Environment.TickCount64 - pendingSinceTicks < PendingReadyTimeoutMs)
+                    {
+                        return pendingLocalReady.Value;
+                    }
+
+                    pendingLocalReady = null;
+                }
+            }
+
+            return readyByConnectionId.TryGetValue(connectionId, out var ready) && ready;
+        }
     }
 }
