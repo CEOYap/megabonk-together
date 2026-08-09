@@ -114,11 +114,29 @@ instances.
 |---|---|
 | `Embedded resource ... is missing` | Built without running Build UI Bundle. The csproj `Exists()` condition skips the resource silently. |
 | `LoadFromStream returned null`, or "not compatible with this newer version of the Unity runtime" | Almost certainly **not** the Unity version. First check `Packages/manifest.json` still lists `com.unity.modules.assetbundle` — without it the build silently produces an unloadable file. Confirm with `MegabonkTogether/Verify UI Bundle`. |
-| `'<path>' is not in the bundle` | Asset paths are the authoring path (`Assets/Prefabs/X.prefab`) and case-sensitive. |
+| `No GameObject named '<x>' in the bundle` | The prefab file name does not match. Matching is on the file name, not the full path. |
 | Prefab instantiates, a child is null | Renamed or reparented against the contract. |
 | `MissingMethodException: LoadFromMemory(Byte[])` | The reference resolved to `unity-libs` instead of `interop`. See below. |
 | `ObjectCollectedException` inside `LoadFromMemory_Internal` | Do not use `LoadFromMemory`. See below. |
-| `MissingMethodException: ReadOnlySpan\`1.GetPinnableReference` | Do not use `LoadFromFile`. See below. |
+| `MissingMethodException: ReadOnlySpan\`1.GetPinnableReference` | A string was passed to an AssetBundle API. See below. |
+
+## No AssetBundle API that takes a string can be used
+
+`Il2CppSystem.ReadOnlySpan<T>.GetPinnableReference` does not exist in the interop assemblies, and
+Unity's string-taking AssetBundle entry points all marshal through it. Both of these die with
+`MissingMethodException` raised inside the `_Internal` method, not at the call site:
+
+```
+AssetBundle.LoadFromFile(path)
+AssetBundle.LoadAsset<T>(name)      // and LoadAsset(name, type)
+```
+
+Use the argument-free forms instead. `UiAssetService` loads with `LoadFromStream` and resolves
+prefabs with `LoadAllAssets<GameObject>()`, matching on `name` — nothing crosses the boundary as
+a string.
+
+This is a property of the interop assemblies for this BepInEx build, not of the bundle. Reading
+strings back out (`Object.name`) is fine; passing them in is not.
 
 ## Only one of the three load entry points works
 

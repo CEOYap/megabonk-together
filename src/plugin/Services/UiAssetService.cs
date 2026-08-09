@@ -76,21 +76,38 @@ namespace MegabonkTogether.Services
                 return false;
             }
 
+            // Matched by name against everything in the bundle, rather than LoadAsset(path).
+            //
+            // Every AssetBundle entry point that takes a string marshals it through
+            // Il2CppSystem.ReadOnlySpan<T>.GetPinnableReference, which the interop assemblies do
+            // not define — LoadFromFile and LoadAsset both die on it with MissingMethodException.
+            // LoadAllAssets takes no arguments, so nothing crosses the boundary as a string.
+            var wanted = Path.GetFileNameWithoutExtension(assetPath);
+
             try
             {
-                prefab = bundle.LoadAsset<GameObject>(assetPath);
+                // The generic overload returns GameObjects directly, so there is no cast to get
+                // wrong — UnityEngine.Object compiles from unity-libs here and has no TryCast.
+                foreach (var candidate in bundle.LoadAllAssets<GameObject>())
+                {
+                    if (candidate != null && candidate.name == wanted)
+                    {
+                        prefab = candidate;
+                        break;
+                    }
+                }
             }
             catch (Exception ex)
             {
-                Plugin.Log.LogError($"[UiAssets] LoadAsset('{assetPath}') threw: {ex}");
+                Plugin.Log.LogError($"[UiAssets] LoadAllAssets for '{assetPath}' threw: {ex}");
                 return false;
             }
 
             if (prefab == null)
             {
                 Plugin.Log.LogError(
-                    $"[UiAssets] '{assetPath}' is not in the bundle. Asset paths are the authoring "
-                    + "paths and are case-sensitive — check the name in unity-ui/Assets/Prefabs.");
+                    $"[UiAssets] No GameObject named '{wanted}' in the bundle. Check the prefab name "
+                    + "in unity-ui/Assets/Prefabs; matching is on the file name, not the full path.");
                 return false;
             }
 
@@ -156,16 +173,6 @@ namespace MegabonkTogether.Services
                 bundleBytes = bytes;
                 bundleStream = new Il2CppSystem.IO.MemoryStream(bundleBytes);
 
-                // Diagnostic, not decoration. Unity reports a bad bundle and a mis-delivered
-                // buffer with the same "not compatible with this newer version" message, and the
-                // two have opposite fixes. Comparing the header as the managed array sees it
-                // against the IL2CPP array and the stream separates them in one run: identical
-                // prefixes mean the bytes arrived intact and the bundle itself is at fault.
-                Plugin.Log.LogInfo(
-                    $"[UiAssets] managed {bytes.Length}B {Prefix(i => bytes[i])} | "
-                    + $"il2cpp {bundleBytes.Length}B {Prefix(i => bundleBytes[i])} | "
-                    + $"stream len {bundleStream.Length} pos {bundleStream.Position}");
-
                 bundle = AssetBundle.LoadFromStream(bundleStream);
             }
             catch (Exception ex)
@@ -186,20 +193,6 @@ namespace MegabonkTogether.Services
             bundle.hideFlags = KeepLoaded;
             Plugin.Log.LogInfo($"[UiAssets] Loaded UI bundle ({bytes.Length} bytes).");
             return true;
-        }
-
-        /// <summary>
-        /// First 20 bytes as hex. A valid bundle starts "55 6E 69 74 79 46 53" — "UnityFS".
-        /// </summary>
-        private static string Prefix(Func<int, byte> at)
-        {
-            var sb = new System.Text.StringBuilder(60);
-            for (var i = 0; i < 20; i++)
-            {
-                sb.Append(at(i).ToString("X2"));
-            }
-
-            return sb.ToString();
         }
 
         private static byte[] ReadEmbeddedBundle()
