@@ -113,7 +113,7 @@ instances.
 | Symptom | Cause |
 |---|---|
 | `Embedded resource ... is missing` | Built without running Build UI Bundle. The csproj `Exists()` condition skips the resource silently. |
-| `LoadFromFile returned null` | Unity version mismatch. See above. |
+| `LoadFromStream returned null`, or "not compatible with this newer version of the Unity runtime" | Almost certainly **not** the Unity version. First check `Packages/manifest.json` still lists `com.unity.modules.assetbundle` — without it the build silently produces an unloadable file. Confirm with `MegabonkTogether/Verify UI Bundle`. |
 | `'<path>' is not in the bundle` | Asset paths are the authoring path (`Assets/Prefabs/X.prefab`) and case-sensitive. |
 | Prefab instantiates, a child is null | Renamed or reparented against the contract. |
 | `MissingMethodException: LoadFromMemory(Byte[])` | The reference resolved to `unity-libs` instead of `interop`. See below. |

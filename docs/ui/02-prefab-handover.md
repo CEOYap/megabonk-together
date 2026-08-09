@@ -136,10 +136,22 @@ instantiating. Editor previews will not predict runtime glyph widths.
 - MemoryPack union tags are append-only. None of this work should need a new one.
 
 
-## OPEN: this project's bundles do not load anywhere
+## RESOLVED: this project's bundles did not load anywhere
 
-The lobby panel is blocked on this, and it is not a code problem. Everything below is measured,
-not inferred.
+**Cause: `Packages/manifest.json` was missing `com.unity.modules.assetbundle`.** The
+hand-written manifest listed only the modules the editor scripts needed to compile.
+`BuildPipeline.BuildAssetBundles` still ran, still reported success, and still wrote a file with a
+correct-looking `UnityFS` header — the file simply was not loadable. No error at any point.
+
+Found by building the same empty prefab in a project created by Unity itself
+(`-createProject`), which produced a bundle that loaded. Diffing the two manifests showed the
+missing module. `unity-ui/Packages/manifest.json` now carries Unity's full default module set
+plus `com.unity.ugui` and `com.unity.textmeshpro`.
+
+**Do not trim that manifest.** Nothing in the build reports a missing module, and the failure
+surfaces four layers away as a runtime load error blaming the Unity version.
+
+Everything below is the record of narrowing it down, kept because the symptom is so misleading.
 
 **The editor that builds our bundles cannot load them back.** `MegabonkTogether/Verify UI Bundle`
 runs `AssetBundle.LoadFromFile` on the built bundle inside the editor and fails with:
