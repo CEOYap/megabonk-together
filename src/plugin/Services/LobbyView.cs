@@ -168,6 +168,15 @@ namespace MegabonkTogether.Services
         public bool IsLocalPlayerHost =>
             Plugin.Instance?.Mode?.Role == Common.Models.Role.Host;
 
+        /// <summary>
+        /// The name the local player will appear under, from config rather than the roster —
+        /// the roster entry does not exist yet at the point this matters.
+        /// </summary>
+        private static string LocalPlayerName =>
+            string.IsNullOrWhiteSpace(Configuration.ModConfig.PlayerName?.Value)
+                ? "Player"
+                : Configuration.ModConfig.PlayerName.Value;
+
         public IReadOnlyList<LobbyMemberView> GetMembers()
         {
             var local = playerManagerService.GetLocalPlayer();
@@ -175,7 +184,7 @@ namespace MegabonkTogether.Services
 
             // Host first, then by connection id so the order is stable between refreshes. An
             // unstable order makes rows appear to swap places while people are reading them.
-            return playerManagerService.GetAllPlayers()
+            var members = playerManagerService.GetAllPlayers()
                 .OrderByDescending(p => p.IsHost)
                 .ThenBy(p => p.ConnectionId)
                 .Select(p => new LobbyMemberView(
@@ -185,6 +194,26 @@ namespace MegabonkTogether.Services
                     localId.HasValue && p.ConnectionId == localId.Value,
                     IsReady(p.ConnectionId)))
                 .ToList();
+
+            // A host alone in a fresh lobby is in no roster, so the list would be empty and the
+            // panel would show a lobby with nobody in it — including the person looking at it.
+            //
+            // The roster is only ever filled from the matchmaker's peer list
+            // (UdpClientService/WebsocketClientService both call AddPlayer while walking it), and
+            // you are not a peer of yourself. Rather than change what the roster means — it is
+            // shared with the whole netcode layer — the missing row is synthesized here, in the
+            // view that needs it.
+            if (IsInLobby && !members.Any(m => m.IsLocal))
+            {
+                members.Insert(0, new LobbyMemberView(
+                    localId ?? 0u,
+                    LocalPlayerName,
+                    IsLocalPlayerHost,
+                    isLocal: true,
+                    IsLocalPlayerReady));
+            }
+
+            return members;
         }
 
         public bool IsLocalPlayerReady

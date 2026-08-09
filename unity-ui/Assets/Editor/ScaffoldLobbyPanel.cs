@@ -17,6 +17,14 @@ namespace MegabonkTogether.UiAuthoring
     {
         private const string PrefabPath = "Assets/Prefabs/LobbyPanel.prefab";
 
+        /// <summary>
+        /// The size of the game's own button, which the runtime clones into the Buttons container.
+        /// The placeholders must match it or the editor preview lies about how much room the column
+        /// needs — the first prefab used 44px here and the real 70px buttons overflowed the card.
+        /// </summary>
+        private const float ButtonWidth = 300f;
+        private const float ButtonHeight = 70f;
+
         [MenuItem("MegabonkTogether/Scaffold Lobby Panel Prefab")]
         public static void Scaffold()
         {
@@ -39,7 +47,7 @@ namespace MegabonkTogether.UiAuthoring
             Stretch(blocker.rectTransform);
 
             var panel = CreateImage("Panel", rootRect, new Color(0.08f, 0.08f, 0.10f, 0.98f));
-            Centre(panel.rectTransform, new Vector2(620f, 760f));
+            Centre(panel.rectTransform, new Vector2(620f, 900f));
 
             CreateText("Title", panel.rectTransform, "LOBBY", 44f,
                 new Vector2(0f, -46f), new Vector2(560f, 60f));
@@ -58,7 +66,7 @@ namespace MegabonkTogether.UiAuthoring
             var members = new GameObject("Members", typeof(RectTransform), typeof(VerticalLayoutGroup));
             members.transform.SetParent(panel.transform, worldPositionStays: false);
             var membersRect = members.GetComponent<RectTransform>();
-            Anchor(membersRect, new Vector2(0f, -150f), new Vector2(560f, 300f));
+            Anchor(membersRect, new Vector2(0f, -170f), new Vector2(560f, 260f));
             var layout = members.GetComponent<VerticalLayoutGroup>();
             layout.spacing = 6f;
             layout.childControlHeight = false;
@@ -79,7 +87,7 @@ namespace MegabonkTogether.UiAuthoring
             var buttons = new GameObject("Buttons", typeof(RectTransform), typeof(VerticalLayoutGroup));
             buttons.transform.SetParent(panel.transform, worldPositionStays: false);
             var buttonsRect = buttons.GetComponent<RectTransform>();
-            Anchor(buttonsRect, new Vector2(0f, -480f), new Vector2(560f, 250f));
+            Anchor(buttonsRect, new Vector2(0f, -450f), new Vector2(560f, 410f));
             var buttonLayout = buttons.GetComponent<VerticalLayoutGroup>();
             buttonLayout.spacing = 8f;
             buttonLayout.childControlHeight = false;
@@ -130,8 +138,8 @@ namespace MegabonkTogether.UiAuthoring
         {
             var image = CreateImage(name, parent, new Color(1f, 1f, 1f, 0.12f));
             image.gameObject.AddComponent<Button>();
-            Anchor(image.rectTransform, Vector2.zero, new Vector2(300f, 44f));
-            var label = CreateText("Label", image.rectTransform, name, 26f, Vector2.zero, new Vector2(300f, 44f));
+            Anchor(image.rectTransform, Vector2.zero, new Vector2(ButtonWidth, ButtonHeight));
+            var label = CreateText("Label", image.rectTransform, name, 30f, Vector2.zero, new Vector2(ButtonWidth, ButtonHeight));
             Stretch(label.rectTransform);
         }
 
