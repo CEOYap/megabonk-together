@@ -41,6 +41,37 @@ direction. You cannot simply add a second managed wrapper alongside the game's, 
 drain the same manual-dispatch pipe and consume each other's callbacks. Mod S avoids that by
 making sure the game's dispatcher never runs at all.
 
+### It ships the native DLL too, and that is not incidental
+
+Their shipped files are `Megabonk.BonkWithFriends.dll`, `Steamworks.NET.dll` (managed,
+**2025.162.1**) and **`steam_api64.dll` (native)**, alongside `Semver.dll` and `TextCopy.dll`.
+Interface version strings read out of each binary:
+
+| Binary | Friends | MatchMaking | NetSockets | NetUtils | User | Utils |
+|---|---|---|---|---|---|---|
+| Game's IL2CPP wrapper (`dump.cs`) | **017** | 009 | 012 | 004 | 023 | 010 |
+| Game's native `Megabonk_Data/Plugins/x86_64/steam_api64.dll` | **017** | 009 | 012 | 004 | 023 | 010 |
+| Mod S managed `Steamworks.NET.dll` 2025.162.1 | **018** | 009 | 012 | 004 | 023 | 010 |
+| Mod S native `steam_api64.dll` | **018** | 009 | 012 | 004 | 023 | 010 |
+| Steamworks.NET standalone 2025.164.1 | **018** | 009 | 012 | 004 | 023 | 010 |
+
+Everything this migration touches is identical across all five. The single divergence is
+`SteamFriends`, and it explains the native DLL: the game's own `steam_api64.dll` exposes
+`SteamFriends017` only, so a managed wrapper asking for `SteamFriends018` would get null from it.
+Mod S needs friends — avatars, personas, `GameLobbyJoinRequested_t` — so it has to bring a native
+DLL new enough to answer.
+
+LIKELY, not confirmed: since Windows resolves `DllImport("steam_api64.dll")` by base name and
+reuses an already-loaded module, this only works if their copy is loaded **first**. A BepInEx
+plugin P/Invoking during startup wins that race against Unity's lazy native-plugin load, and they
+have already suppressed the game's `SteamManager`, so nothing else is asking early.
+
+**This sharpens the recommendation rather than softening it.** Adopting their approach is not
+"reference one more DLL": it is shipping a managed wrapper, shipping a native `steam_api64.dll`
+to match it, and depending on winning an in-process native load race against the game — forever,
+across game updates. We take the game's `SteamFriends017` through its own wrapper instead, which
+has rich presence and lobby-join callbacks all the same.
+
 **We must not copy this.** Suppressing `SteamManager.Load` means the game's own
 `SteamAchievementsManager`, `SteamStatsManager` and `Leaderboards` — which are IL2CPP code bound
 to the game's dispatcher — stop receiving callbacks. For a mod that suppresses uploads anyway that
