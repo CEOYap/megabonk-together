@@ -120,6 +120,32 @@ instances.
 | `ObjectCollectedException` inside `LoadFromMemory_Internal` | Do not use `LoadFromMemory`. See below. |
 | `MissingMethodException: ReadOnlySpan\`1.GetPinnableReference` | A string was passed to an AssetBundle API. See below. |
 
+## BLOCKER: no asset can be loaded out of the bundle on BepInEx be.785
+
+The bundle loads. Getting a prefab out of it does not, and there is currently no way around it
+by choosing a different API.
+
+Every asset-loading entry point funnels into an `_Internal` method that takes a `String`, and all
+of them die the same way:
+
+```
+MissingMethodException: '!0 ByRef Il2CppSystem.ReadOnlySpan`1.GetPinnableReference()'
+   at AssetBundle.LoadAsset_Internal(String name, Type type)
+   at AssetBundle.LoadAssetWithSubAssets_Internal(String name, Type type)   // LoadAllAssets<T>()
+```
+
+`LoadAllAssets<T>()` looks argument-free and is not — it passes a string internally.
+
+**This is not the game stripping the method.** `ReadOnlySpan<char>.GetPinnableReference` is
+present in the local dump (`build-21750826/dump.cs`). Il2CppInterop is failing to bind it.
+
+**Most likely cause: the BepInEx version.** The interop assemblies are generated per BepInEx
+build, and the third-party mod that demonstrably loads bundle assets by string in this same game
+declares `BepInEx-BepInExPack_IL2CPP-6.0.755`. This install runs **be.785**.
+
+Untested. Trying be.755 is the next step, and it is an environment change rather than a code one.
+The plugin's own `PackageReference` is `6.0.0-be.*`, so it compiles against either.
+
 ## No AssetBundle API that takes a string can be used
 
 `Il2CppSystem.ReadOnlySpan<T>.GetPinnableReference` does not exist in the interop assemblies, and
