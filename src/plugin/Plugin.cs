@@ -217,6 +217,7 @@ namespace MegabonkTogether
             ClassInjector.RegisterTypeInIl2Cpp<TargetSwitcher>();
             ClassInjector.RegisterTypeInIl2Cpp<TargetSwitcherManager>();
             ClassInjector.RegisterTypeInIl2Cpp<EnemyInterpolatorManager>();
+            ClassInjector.RegisterTypeInIl2Cpp<SteamStatusTicker>();
             ClassInjector.RegisterTypeInIl2Cpp<InteractableReviver>();
             ClassInjector.RegisterTypeInIl2Cpp<NotificationQueueManager>();
 
@@ -259,6 +260,7 @@ namespace MegabonkTogether
                 services.AddSingleton<ILobbyViewService, LobbyViewService>();
                 services.AddSingleton<IUiAssetService, UiAssetService>();
                 services.AddSingleton<ITrackerService, TrackerService>();
+                services.AddSingleton<ISteamService, SteamService>();
             });
 
             Host = builder.Build();
@@ -343,6 +345,14 @@ namespace MegabonkTogether
             var goEnemyInterpolatorManager = new GameObject("EnemyInterpolatorManager");
             GameObject.DontDestroyOnLoad(goEnemyInterpolatorManager);
             goEnemyInterpolatorManager.AddComponent<EnemyInterpolatorManager>();
+
+            // Steam's relay network and authentication are asked for from here rather than from
+            // this method directly: the game's SteamManager initialises after the first scene
+            // loads, which is after BepInEx loads plugins, so there is nothing to call yet. The
+            // ticker retries at 1 Hz until Steam exists, then stops.
+            var goSteamStatusTicker = new GameObject("SteamStatusTicker");
+            GameObject.DontDestroyOnLoad(goSteamStatusTicker);
+            goSteamStatusTicker.AddComponent<SteamStatusTicker>();
         }
 
         public void AddPrefab(GameObject prefab)

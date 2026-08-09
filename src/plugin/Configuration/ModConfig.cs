@@ -19,6 +19,7 @@ namespace MegabonkTogether.Configuration
         public static ConfigEntry<float> EncounterInputGraceSeconds { get; private set; }
         public static ConfigEntry<bool> LogAllocationRate { get; private set; }
         public static ConfigEntry<bool> LogBandwidth { get; private set; }
+        public static ConfigEntry<bool> LogSteamStatus { get; private set; }
 
         public static void Initialize(ConfigFile config)
         {
@@ -75,6 +76,15 @@ namespace MegabonkTogether.Configuration
                 "Log outgoing bandwidth per message type every 10 seconds, plus round-trip time " +
                 "per peer. Off by default. Turn it on to record a baseline before the Steamworks " +
                 "migration, or to find which stream is responsible for a bandwidth problem."
+            );
+            LogSteamStatus = config.Bind(
+                "Diagnostics",
+                "LogSteamStatus",
+                false,
+                "Log the local SteamID and the state of Steam's relay network and authentication " +
+                "every 10 seconds. Off by default. Turn it on when a Steam connection problem " +
+                "needs to be told apart from a network one. Note that an instance launched " +
+                "outside Steam has no Steam at all, which this will say."
             );
             EncounterInputGraceSeconds = config.Bind(
                 "Gameplay",
