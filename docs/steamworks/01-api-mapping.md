@@ -81,7 +81,7 @@ boundary.
 > states, arrived at independently. It is also a direct rebuttal of the Sea-Bass fork's blanket
 > downgrade of 17 event RPCs to `Unreliable`.
 
-> **Do not pass `0` as a blanket flag.** `Multibonk/Networking/SteamNetworking.cs:580` does
+> **Do not pass `0` as a blanket flag.** Another implementation for this game does
 > exactly this — `SendMessageToConnection(conn, ptr, (uint)len, 0, out long _)` — which is
 > `Unreliable`. That is correct for its position-snapshot-only payload. It is wrong for
 > anything in our message set except the position tick.
@@ -120,7 +120,7 @@ Anything with a list, a string, or an inventory snapshot is reliable-only. See
 | rendezvous server / match codes | `SteamMatchmaking` lobbies |
 
 `nVirtualPort` is an application-level port, not a UDP port. Any small constant works;
-Multibonk uses `1`. Pick one and keep it stable — it must match between host and client.
+Another implementation for this game uses `1`. Pick one and keep it stable — it must match between host and client.
 
 ---
 
@@ -212,7 +212,7 @@ private void SendRaw(HSteamNetConnection conn, ReadOnlySpan<byte> payload, int s
 }
 ```
 
-Reusing one pinned buffer avoids the per-message `GCHandle.Alloc`/`Free` pair that Multibonk
+Reusing one pinned buffer avoids the per-message `GCHandle.Alloc`/`Free` pair that the other implementation
 does. For the per-tick enemy delta, consider `SendMessages` (the batch variant) instead.
 
 **Always check the `EResult`.** LiteNetLib's `Send` is fire-and-forget; Steam's returns a
