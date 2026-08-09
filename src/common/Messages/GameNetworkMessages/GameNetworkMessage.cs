@@ -77,6 +77,9 @@ namespace MegabonkTogether.Common.Messages
     [MemoryPackUnion(70, typeof(CloseEncounterStamped))]
     [MemoryPackUnion(71, typeof(ReadinessRoundStarted))]
     [MemoryPackUnion(72, typeof(ClientReadyStamped))]
+    [MemoryPackUnion(73, typeof(LobbyReadyChanged))]
+    [MemoryPackUnion(74, typeof(LobbyReadyState))]
+    [MemoryPackUnion(75, typeof(LobbyStartRequested))]
     public partial interface IGameNetworkMessage
     {
 

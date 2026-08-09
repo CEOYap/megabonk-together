@@ -70,6 +70,9 @@ namespace MegabonkTogether.Services
         private static event Action ReleaseBarrierEvents;
         private static event Action<ReadinessRoundStarted> ReadinessRoundStartedEvents;
         private static event Action ReadinessRoundReAskEvents;
+        private static event Action LobbyStartRequestedEvents;
+        private static event Action<LobbyReadyChanged> LobbyReadyChangedEvents;
+        private static event Action<LobbyReadyState> LobbyReadyStateEvents;
         private static event Action<GoldChanged> GoldChangedEvents;
 
         public static void OnSpawnedObject(SpawnedObject spawnedObject)
@@ -864,6 +867,65 @@ namespace MegabonkTogether.Services
             MainThreadDispatcher.Enqueue(() =>
             {
                 ReadinessRoundReAskEvents?.Invoke();
+            });
+        }
+
+        /// <summary>
+        /// The host has ended the lobby and everyone should advance to character selection.
+        /// Payload-free: the host has already validated readiness, and re-deriving that decision on
+        /// the client would give two places an opinion about when the lobby ends.
+        /// </summary>
+        public static void SubscribeLobbyStartRequestedEvents(Action action)
+        {
+            LobbyStartRequestedEvents += action;
+        }
+
+        public static void UnsubscribeLobbyStartRequestedEvents(Action action)
+        {
+            LobbyStartRequestedEvents -= action;
+        }
+
+        public static void OnLobbyStartRequested()
+        {
+            MainThreadDispatcher.Enqueue(() =>
+            {
+                LobbyStartRequestedEvents?.Invoke();
+            });
+        }
+
+        /// <summary>
+        /// Host-side. A client toggled its lobby readiness.
+        ///
+        /// <para>Published rather than handed straight to the lobby service, and not only for
+        /// tidiness: <c>UdpClientService</c> taking <c>ILobbyViewService</c> as a constructor
+        /// dependency created a cycle — the lobby service needs <c>INetTransport</c>, which is the
+        /// same object — and the container deadlocked building it. Going through here is what keeps
+        /// the transport unaware of the things that consume its messages.</para>
+        /// </summary>
+        public static void SubscribeLobbyReadyChangedEvents(Action<LobbyReadyChanged> action)
+        {
+            LobbyReadyChangedEvents += action;
+        }
+
+        public static void OnLobbyReadyChanged(LobbyReadyChanged changed)
+        {
+            MainThreadDispatcher.Enqueue(() =>
+            {
+                LobbyReadyChangedEvents?.Invoke(changed);
+            });
+        }
+
+        /// <summary>Client-side. The host's authoritative lobby-ready set.</summary>
+        public static void SubscribeLobbyReadyStateEvents(Action<LobbyReadyState> action)
+        {
+            LobbyReadyStateEvents += action;
+        }
+
+        public static void OnLobbyReadyState(LobbyReadyState state)
+        {
+            MainThreadDispatcher.Enqueue(() =>
+            {
+                LobbyReadyStateEvents?.Invoke(state);
             });
         }
 

@@ -746,6 +746,12 @@ namespace MegabonkTogether.Services
                     case ReadinessRoundStarted readinessRoundStarted:
                         EventManager.OnReadinessRoundStarted(readinessRoundStarted);
                         break;
+                    case LobbyReadyState lobbyReadyState:
+                        EventManager.OnLobbyReadyState(lobbyReadyState);
+                        break;
+                    case LobbyStartRequested:
+                        EventManager.OnLobbyStartRequested();
+                        break;
                     case CloseEncounter closeEncounter:
                         EventManager.OnCloseEncounter(closeEncounter);
                         break;
@@ -808,6 +814,9 @@ namespace MegabonkTogether.Services
                             }
                         }
 
+                        break;
+                    case LobbyReadyChanged lobbyReadyChanged:
+                        EventManager.OnLobbyReadyChanged(lobbyReadyChanged);
                         break;
                     case ClientReadyStamped clientReadyStamped:
                         var stampedReadyId = clientReadyStamped.ConnectionId;

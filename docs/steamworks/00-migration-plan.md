@@ -368,6 +368,44 @@ is demonstrably stable with the reference added.
   - **Do not key the gate off the plugin's semantic version.** Two releases differing only in
     gameplay or UI stay wire-compatible; bump the protocol number only when a type under
     `Messages/` changes.
+
+#### Delete tags 73 and 74 here — do not port them
+
+The lobby panel added three tags: **73** `LobbyReadyChanged`, **74** `LobbyReadyState`, **75**
+`LobbyStartRequested`. Two of the three exist only because the current matchmaker has nothing
+better, and Steam lobbies replace them with a platform feature.
+
+Per-member state belongs in **lobby member data**
+([`ISteamMatchmaking`](https://partner.steamgames.com/doc/api/ISteamMatchmaking)):
+
+```csharp
+SteamMatchmaking.SetLobbyMemberData(lobbyId, "ready", isReady.ToString());   // own row only
+SteamMatchmaking.GetLobbyMemberData(lobbyId, memberId, "ready");             // on LobbyDataUpdate_t
+```
+
+| Tag | Fate at Phase 3 | Why |
+|---|---|---|
+| 73 `LobbyReadyChanged` | **delete** | becomes `SetLobbyMemberData(…, "ready", …)` |
+| 74 `LobbyReadyState` | **delete** | becomes `GetLobbyMemberData` on `LobbyDataUpdate_t` |
+| 75 `LobbyStartRequested` | **keep** | "the host says go" is an instruction, not replicated state, and has no member-data equivalent |
+
+Three consequences worth having written down before the work starts:
+
+1. **Host authority for readiness stops being ours to enforce.** Steam only lets a member write
+   its own row, so "a client cannot set someone else's readiness" becomes a platform guarantee
+   instead of something `LobbyViewService` maintains. That is a real simplification, not just a
+   relocation.
+2. **The optimistic-write reconciliation can go with it.** `pendingLocalReady` and its timeout
+   exist because our set is host-mediated and a broadcast generated before the host saw a toggle
+   can arrive after it. Single-writer member data has no such race: write locally, write the key,
+   done.
+3. **Character, skin and hat are the same shape.** They are per-member facts that today ride
+   their own messages; member data would carry them the same way. Worth considering together
+   rather than migrating readiness alone.
+
+Tags 73 and 74 stay in the union permanently once shipped — tags are append-only and are never
+renumbered or reused. "Delete" here means *stop sending and stop handling them*, leaving the
+numbers burned, exactly as tags 1, 65 and 66 were left when their stamped replacements landed.
 - Set `SteamFriends.SetRichPresence` for lobby/in-game status.
 - **Exit criteria:** players can find and join a lobby without the rendezvous server. The old
   transport still carries gameplay traffic.

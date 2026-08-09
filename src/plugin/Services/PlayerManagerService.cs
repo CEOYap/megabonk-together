@@ -86,6 +86,9 @@ namespace MegabonkTogether.Services
         private ConcurrentDictionary<uint, NetPlayer> spawnedPlayers = [];
         private uint localConnectionId = 0;
         private bool isLocalPlayerSet = false;
+
+        /// <summary>Latches the "connection ID not set" warning so it logs once per transition.</summary>
+        private bool warnedLocalPlayerUnset = false;
         private bool hasSelectedCharacter = false;
         private int seed = 0;
         private ConcurrentQueue<uint> projectileToSpawnQueue = new();
@@ -585,9 +588,20 @@ namespace MegabonkTogether.Services
         {
             if (!isLocalPlayerSet)
             {
-                logger.LogWarning("Local connection ID is not set.");
+                // Once per transition, not once per call. The lobby panel polls this while it is
+                // open, which turned a genuine warning into 55 identical lines in a 176-line log
+                // and buried everything else. Still says it the first time, which is the part
+                // that carries information.
+                if (!warnedLocalPlayerUnset)
+                {
+                    warnedLocalPlayerUnset = true;
+                    logger.LogWarning("Local connection ID is not set.");
+                }
+
                 return null;
             }
+
+            warnedLocalPlayerUnset = false;
 
             return GetPlayer(localConnectionId);
         }

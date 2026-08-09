@@ -1,0 +1,2 @@
+Prefabs land here. Build UI Bundle scans this folder, and AssetDatabase.FindAssets
+errors on a search path that does not exist — so the folder is tracked even when empty.

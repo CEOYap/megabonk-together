@@ -1,0 +1,16 @@
+# Unity-generated. Only Assets/, Packages/manifest.json and ProjectSettings/ are tracked.
+/Library/
+/Temp/
+/Obj/
+/Build/
+/Builds/
+/Logs/
+/UserSettings/
+/[Bb]undles/
+*.csproj
+*.sln
+*.user
+*.pidb
+*.booproj
+*.svd
+*.userprefs
