@@ -15,18 +15,25 @@ Branch `claude/lobby-panel-ui`. Builds clean.
 | `354e616` | Made the panel a game `Window` — **reverted**, but the idea was right; see below |
 | `c7e2148` | The revert |
 
-**The prefab panel works in-game.** Verified: bundle loads, prefab instantiates, children bind,
-buttons render with the game's own art at correct size and spacing, and Start greys out when it
-should. The full chain is embedded resource → `LoadFromStream` → `LoadAssetAsync` → reflective
-rewrap → instantiate → bind → `Window`.
+**Done and verified with two players.** Host and client both render correctly, the roster shows
+both members with the right host/you marking, Start is hidden on the client, the readiness
+broadcast fires, and the host-gated Start advances every peer to character selection. A run with
+zero `Error :MegabonkTogether` lines.
 
-Two things remain, both visual and both fixable in the editor without a game launch:
+Verified in that run:
 
-1. The button column overflows the bottom of the panel card — the `Buttons` container sits too
-   low, or the card is too short for five buttons.
-2. The member list renders no rows. Needs checking against `GetMembers()` before assuming it is
-   a layout problem; the code-built panel showed no rows either at this point in the flow, so
-   this may predate the prefab work.
+| | |
+|---|---|
+| Bundle load → prefab instantiate → bind → `Window` | works |
+| Buttons: game art, correct size and spacing, inside the card | works |
+| Start greyed until everyone is ready, hidden entirely on clients | works |
+| Local row synthesized before the peer list arrives | works |
+| Roster rows once a second player joins | works |
+| Ready toggle → broadcast → host Start → advance | works |
+| Reopening the panel | clean, no leaked canvas |
+
+Not yet confirmed visually: the member row's READY column. The log shows readiness state being
+set, but no screenshot has caught a row while ready, so the green text has never been seen.
 
 A bundle **has** been built and is embedded — the DLL carries
 `MegabonkTogether.Resources.megabonktogether.ui` at 8,761 bytes. Nothing consumes it yet;
