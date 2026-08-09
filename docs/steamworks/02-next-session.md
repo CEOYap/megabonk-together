@@ -35,15 +35,32 @@ a run that uploads a netplay score is the worst regression available here.
 seconds of the menu. `Diagnostics.LogSteamStatus = true` repeats it every 10s with which half of
 SDR is up.
 
-**3. The riskiest single thing on this branch.** `GetRelayNetworkStatus` and
-`GetAuthenticationStatus` each take an `out` struct and have no overload without one. Both structs
-carry a managed `byte[]`, so Il2CppInterop generates them as `ValueType`-derived proxies rather
-than blittable structs, and an `out` of one is a shape this project has never used. **If it is
-wrong it crashes natively** — no managed stack trace, and the `catch` in `SteamService` will not
-see it. A crash a second or two after reaching the menu, in a build that was fine before, is this.
+**3. ~~The riskiest single thing on this branch.~~ It already happened, and it is fixed.** The
+first build of this crashed on reaching the main menu:
 
-The fallback is direct P/Invoke to the flat C API for those two calls only. It does not undo the
-Gotcha 1 decision: a P/Invoke does not create a second callback registry.
+```
+Fatal error. System.AccessViolationException: Attempted to read or write protected memory.
+   at Steamworks.SteamRelayNetworkStatus_t.get_m_bPingMeasurementInProgress()
+```
+
+The `out` structs on `GetRelayNetworkStatus` and `GetAuthenticationStatus` are **safe to pass and
+fatal to read** — both carry a managed `byte[]`, so the proxy is a `ValueType`-derived class
+wrapping a pointer that is not ours. Everything else in the path was fine: the log carried
+`[steam] Relay access and authentication requested; SteamID …`, so the gate, both `Init` calls and
+the SteamID read all work.
+
+Both are now `out _`, deciding on the return value, which Steam documents as the same value the
+struct carries in `m_eAvail`. This is the same shape a shipping implementation for this game uses
+— see [`03-observed-steam-usage.md`](03-observed-steam-usage.md).
+
+The cost is that the readout can no longer say *which* half of SDR is missing. Getting that back
+needs a `Callback<SteamRelayNetworkStatus_t>`, which is the open question below.
+
+**The open question, and it is the pivot of Phase 3.** Does `Callback<T>` work through the game's
+interop assembly? Nobody knows, and the reference implementation proves nothing either way because
+it ships its own managed wrapper. One throwaway `Callback<PersonaStateChange_t>.Create` answers
+it, and the answer decides whether Phase 3 is mostly polling or mostly callbacks. Run it before
+designing anything.
 
 **4. The lobby panel, with two players.** The styling and the Ready button's re-fit both need
 eyes. Specifically: does `NOT READY` now sit inside its button, and does the card read as one
