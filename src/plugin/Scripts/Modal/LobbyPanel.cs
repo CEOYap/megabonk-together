@@ -148,9 +148,28 @@ namespace MegabonkTogether.Scripts.Modal
         /// </summary>
         private void Build()
         {
-            if (uiAssetService == null || !uiAssetService.TryGetPrefab(PrefabPath, out var prefab))
+            if (uiAssetService == null)
             {
-                Plugin.Log.LogError("[lobby] UI bundle unavailable; the lobby panel cannot be shown.");
+                Plugin.Log.LogError("[lobby] No UI asset service; the lobby panel cannot be shown.");
+                return;
+            }
+
+            // Asynchronous because the synchronous entry points cannot marshal their asset name on
+            // this install. The callback always fires exactly once, so there is no timeout to run.
+            uiAssetService.RequestPrefab(PrefabPath, BuildFromPrefab);
+        }
+
+        private void BuildFromPrefab(GameObject prefab)
+        {
+            // The panel can be torn down while the load is in flight — leaving a lobby, or a scene
+            // change. Building onto a destroyed component would strand a canvas with no owner.
+            if (this == null || prefab == null)
+            {
+                if (prefab == null)
+                {
+                    Plugin.Log.LogError("[lobby] UI bundle unavailable; the lobby panel cannot be shown.");
+                }
+
                 return;
             }
 

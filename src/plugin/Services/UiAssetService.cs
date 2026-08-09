@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
@@ -21,6 +22,19 @@ namespace MegabonkTogether.Services
         /// Must be called on the Unity main thread.
         /// </summary>
         bool TryGetPrefab(string assetPath, out GameObject prefab);
+
+        /// <summary>
+        /// Asynchronous counterpart to <see cref="TryGetPrefab"/>. <paramref name="onLoaded"/> is
+        /// invoked on the main thread with the prefab, or with null if it could not be resolved —
+        /// always exactly once, so the caller never has to time out.
+        ///
+        /// <para>This exists because the synchronous path is unusable on this install:
+        /// <c>LoadAsset</c> and <c>LoadAllAssets</c> both marshal their name through
+        /// <c>Il2CppSystem.ReadOnlySpan&lt;char&gt;.GetPinnableReference</c>, which Il2CppInterop
+        /// cannot bind. Whether the async wrapper avoids that is the open question this is here to
+        /// answer.</para>
+        /// </summary>
+        void RequestPrefab(string assetPath, Action<GameObject> onLoaded);
     }
 
     /// <summary>
@@ -114,6 +128,113 @@ namespace MegabonkTogether.Services
             prefab.hideFlags = KeepLoaded;
             prefabCache[assetPath] = prefab;
             return true;
+        }
+
+        public void RequestPrefab(string assetPath, Action<GameObject> onLoaded)
+        {
+            if (onLoaded == null)
+            {
+                return;
+            }
+
+            if (prefabCache.TryGetValue(assetPath, out var cached) && cached != null)
+            {
+                onLoaded(cached);
+                return;
+            }
+
+            if (!EnsureBundleLoaded())
+            {
+                onLoaded(null);
+                return;
+            }
+
+            AssetBundleRequest request;
+            try
+            {
+                request = bundle.LoadAssetAsync<GameObject>(assetPath);
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError($"[UiAssets] LoadAssetAsync('{assetPath}') threw: {ex}");
+                onLoaded(null);
+                return;
+            }
+
+            if (request == null)
+            {
+                Plugin.Log.LogError($"[UiAssets] LoadAssetAsync('{assetPath}') returned null.");
+                onLoaded(null);
+                return;
+            }
+
+            Helpers.CoroutineRunner.Instance.Run(AwaitRequest(assetPath, request, onLoaded));
+        }
+
+        /// <summary>
+        /// Polls the request rather than assigning <c>AsyncOperation.m_completeCallback</c>.
+        ///
+        /// <para>That field is how the design being followed does it, and it is not reachable
+        /// here: <c>AsyncOperation</c> compiles from <c>unity-libs</c>, which exposes only Unity's
+        /// public surface. Polling <c>isDone</c> needs nothing but that public surface and cannot
+        /// leak a native callback.</para>
+        /// </summary>
+        private IEnumerator AwaitRequest(string assetPath, AssetBundleRequest request, Action<GameObject> onLoaded)
+        {
+            while (!request.isDone)
+            {
+                yield return null;
+            }
+
+            GameObject prefab = null;
+            try
+            {
+                prefab = ExtractPrefab(request);
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError($"[UiAssets] Reading the result of '{assetPath}' threw: {ex}");
+            }
+
+            if (prefab == null)
+            {
+                Plugin.Log.LogError($"[UiAssets] '{assetPath}' resolved to nothing.");
+                onLoaded(null);
+                yield break;
+            }
+
+            prefab.hideFlags = KeepLoaded;
+            prefabCache[assetPath] = prefab;
+            onLoaded(prefab);
+        }
+
+        /// <summary>
+        /// Pulls the GameObject out of a finished request.
+        ///
+        /// <para><c>as</c> rather than <c>TryCast</c>, because <c>UnityEngine.Object</c> compiles
+        /// from <c>unity-libs</c> here and has no <c>TryCast</c>. That is a real hazard: if
+        /// Il2CppInterop hands back a base <c>Object</c> wrapper rather than a <c>GameObject</c>
+        /// one, the cast yields null and looks identical to a failed load. The mismatch is logged
+        /// explicitly so the next run can tell those two apart.</para>
+        /// </summary>
+        private static GameObject ExtractPrefab(AssetBundleRequest request)
+        {
+            var asset = request.asset;
+            if (asset == null)
+            {
+                Plugin.Log.LogError("[UiAssets] The request completed but its asset is null.");
+                return null;
+            }
+
+            var prefab = asset as GameObject;
+            if (prefab == null)
+            {
+                Plugin.Log.LogError(
+                    $"[UiAssets] Asset loaded but is not a GameObject to this build — runtime type "
+                    + $"'{asset.GetType().FullName}'. The load worked; the cast did not.");
+            }
+
+            return prefab;
         }
 
         private bool EnsureBundleLoaded()
