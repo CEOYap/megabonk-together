@@ -768,7 +768,44 @@ namespace MegabonkTogether.Scripts.Modal
             if (wrapper != null && wrapper.t_text != null && wrapper.t_text.text != label)
             {
                 wrapper.t_text.text = label;
+                ResizeButtonToLabel(wrapper);
             }
+        }
+
+        /// <summary>
+        /// Re-fits the button's background to the label that was just written into it.
+        ///
+        /// <para>The game sizes its buttons from their text rather than authoring a width per
+        /// button, which is why five clones of the same PLAY button come out five different widths.
+        /// <c>ButtonTextWrapper.Refresh</c> is what does it — decompiled, it sets
+        /// <c>rect.sizeDelta = t_text.rectTransform.sizeDelta + 2 * (paddingX, paddingY)</c> and
+        /// re-anchors the label. Something in the game's own lifecycle calls it once when a button
+        /// comes up, which is why the first label always fits.</para>
+        ///
+        /// <para><b>Nothing calls it again.</b> The Ready button is the only label here that changes
+        /// after creation, and "Not Ready" was drawn at the width computed for "Ready" — the text
+        /// spilling out past both ends of the background.</para>
+        ///
+        /// <para>The two forcing calls before it are not decoration. <c>Refresh</c> reads the label's
+        /// <b>current</b> <c>sizeDelta</c>, and a TMP component does not resize on assignment: with
+        /// <c>autoSizeTextContainer</c> its rect follows the mesh, which regenerates on the next
+        /// canvas update, and under a <c>ContentSizeFitter</c> it follows the next layout pass.
+        /// Calling <c>Refresh</c> without forcing both would fit the background to the previous
+        /// label — the same defect one frame earlier. Which of the two mechanisms this button
+        /// actually uses is unknown; both are covered because neither costs anything on a label
+        /// change that happens when somebody presses a button.</para>
+        /// </summary>
+        private static void ResizeButtonToLabel(ButtonTextWrapper wrapper)
+        {
+            var textRect = wrapper.t_text.rectTransform;
+            if (textRect == null)
+            {
+                return;
+            }
+
+            wrapper.t_text.ForceMeshUpdate(false, false);
+            LayoutRebuilder.ForceRebuildLayoutImmediate(textRect);
+            wrapper.Refresh();
         }
 
         private static void SetButtonInteractable(MyButtonNormal button, bool interactable)
