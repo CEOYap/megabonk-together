@@ -56,11 +56,16 @@ struct carries in `m_eAvail`. This is the same shape a shipping implementation f
 The cost is that the readout can no longer say *which* half of SDR is missing. Getting that back
 needs a `Callback<SteamRelayNetworkStatus_t>`, which is the open question below.
 
-**The open question, and it is the pivot of Phase 3.** Does `Callback<T>` work through the game's
-interop assembly? Nobody knows, and the reference implementation proves nothing either way because
-it ships its own managed wrapper. One throwaway `Callback<PersonaStateChange_t>.Create` answers
-it, and the answer decides whether Phase 3 is mostly polling or mostly callbacks. Run it before
-designing anything.
+**~~The open question, and it is the pivot of Phase 3.~~ Answered from the dump, and it is no
+longer a pivot.** IL2CPP is ahead-of-time compiled, so a generic exists only for the type
+arguments the game itself used: `Callback<T>` for `GameOverlayActivated_t`, `PersonaStateChange_t`
+and `UserStatsReceived_t`, `CallResult<T>` for the three leaderboard types. Nothing this migration
+needs has a concrete instantiation.
+
+So **Phase 3 is designed on the non-generic API** — `IsAPICallCompleted` / `GetAPICallResult` into
+a buffer we allocate ourselves, and `GetLobbyMemberData` polling. Details and the exact call list
+are in [`00-migration-plan.md`](00-migration-plan.md) under *Phase 3 does not need generics at
+all*. That route is safer than the proxy structs, not a fallback from them.
 
 **4. The lobby panel, with two players.** The styling and the Ready button's re-fit both need
 eyes. Specifically: does `NOT READY` now sit inside its button, and does the card read as one

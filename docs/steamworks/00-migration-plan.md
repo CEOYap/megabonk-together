@@ -523,16 +523,63 @@ later phases would have taken from a `Callback<T>` has to arrive another way:
 None of that is free, but it is all cheaper than a class of bug that only shows up as somebody's
 achievement quietly not unlocking.
 
-**The table above assumes `Callback<T>` does not work through the game's interop assembly, and
-that assumption has never been tested.** It is a generic IL2CPP type taking a delegate, which is
-awkward, not proven impossible. If it works, every row but the last collapses and Phase 3 gets the
-status structs' contents back as well.
+#### Why the polling route is the recommendation, not the consolation prize
 
-**Settle it before designing Phase 3.** One throwaway `Callback<PersonaStateChange_t>.Create`
-against the game's assembly answers it in ten minutes, and the answer decides how much of the next
-phase is polling. Note that Mod S proves nothing here — it ships its own managed wrapper, where
-`Callback<T>` is ordinary C#. See
+**IL2CPP is ahead-of-time compiled, and a generic only exists for the type arguments the game
+itself used.** From `dump.cs`, the complete list of concrete instantiations:
+
+| Generic | Instantiated for | Also present |
+|---|---|---|
+| `Callback<T>` | `GameOverlayActivated_t`, `PersonaStateChange_t`, `UserStatsReceived_t` | `__Il2CppFullySharedGenericType` |
+| `CallResult<T>` | `LeaderboardFindResult_t`, `LeaderboardScoreUploaded_t`, `LeaderboardScoresDownloaded_t` | `__Il2CppFullySharedGenericType` |
+
+Those six are exactly what the game's own overlay, persona, stats and leaderboard code uses.
+**Every type this migration needs — `SteamNetConnectionStatusChangedCallback_t`,
+`LobbyDataUpdate_t`, `GameLobbyJoinRequested_t`, `LobbyCreated_t`, `LobbyEnter_t`,
+`LobbyMatchList_t`, `SteamRelayNetworkStatus_t` — has no concrete instantiation.**
+
+The full-generic-sharing fallback is compiled in, so a novel instantiation is not proven
+impossible; it would run through the shared path with a boxed representation, and Il2CppInterop
+would have to build the generic instance and marshal a delegate on top of that. Nobody has tried
+it. Treat it as UNVERIFIED and unlikely to be worth the attempt, rather than as a closed door.
+
+> **A correction, because the wrong version of this test was written down here.** An earlier draft
+> proposed settling it with `Callback<PersonaStateChange_t>.Create`. That is one of the three the
+> game already instantiates, so it would have succeeded and proved nothing. **Any test must use a
+> type the game never instantiates** — `LobbyDataUpdate_t` is the natural choice.
+
+Mod S proves nothing either way: it ships its own managed wrapper, where `Callback<T>` is ordinary
+C# and AOT instantiation does not apply. See
 [`03-observed-steam-usage.md`](03-observed-steam-usage.md).
+
+#### Phase 3 does not need generics at all
+
+Every call the lobby flow needs exists non-generically in the game's assembly:
+
+```csharp
+SteamAPICall_t CreateLobby(ELobbyType, int cMaxMembers);
+SteamAPICall_t JoinLobby(CSteamID);
+bool  IsAPICallCompleted(SteamAPICall_t, out bool pbFailed);          // SteamUtils
+bool  GetAPICallResult(SteamAPICall_t, IntPtr pCallback, int cubCallback,
+                       int iCallbackExpected, out bool pbFailed);      // SteamUtils
+int      GetNumLobbyMembers(CSteamID);
+CSteamID GetLobbyMemberByIndex(CSteamID, int);
+string   GetLobbyMemberData(CSteamID, CSteamID, string pchKey);
+void     SetLobbyMemberData(CSteamID, string pchKey, string pchValue);
+```
+
+`GetAPICallResult` takes an `IntPtr` and a size, so the result lands in a buffer **we** allocate
+with `Marshal.AllocHGlobal` and read at known offsets. That is strictly safer than the proxy
+structs, not a workaround for them — it is the same class of call that already crashed us, done
+the way that cannot crash, because no `ValueType`-derived proxy is involved and we own the memory.
+Field offsets come from `dump.cs`; `k_iCallback` for each type is in the dump as a constant.
+
+**One thing to check early rather than assume:** `GetLobbyMemberData` passes a `string` *into* the
+boundary. Ordinary game methods take strings fine throughout this codebase, but `AssetBundle`'s
+did not — it marshalled through `Il2CppSystem.ReadOnlySpan<char>.GetPinnableReference`, which is
+unbound here (see [`../ui/01-ui-asset-bundle.md`](../ui/01-ui-asset-bundle.md)). Steamworks.NET
+marshals through its own `InteropHelp` UTF-8 handle instead, so it should be fine — but one
+`SetLobbyData` round trip proves it in a minute and is worth doing before the flow is built on it.
 
 ### 2. Call `InitRelayNetworkAccess()`
 
