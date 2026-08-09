@@ -15,9 +15,18 @@ Branch `claude/lobby-panel-ui`. Builds clean.
 | `354e616` | Made the panel a game `Window` — **reverted**, but the idea was right; see below |
 | `c7e2148` | The revert |
 
-Current in-game behaviour: panel renders centred, main menu hidden behind it, cursor works,
-buttons respond — **and every click also triggers the main menu's focused button (PLAY)**, so
-pressing Copy Code copies the code and then advances to character selection.
+**The prefab panel works in-game.** Verified: bundle loads, prefab instantiates, children bind,
+buttons render with the game's own art at correct size and spacing, and Start greys out when it
+should. The full chain is embedded resource → `LoadFromStream` → `LoadAssetAsync` → reflective
+rewrap → instantiate → bind → `Window`.
+
+Two things remain, both visual and both fixable in the editor without a game launch:
+
+1. The button column overflows the bottom of the panel card — the `Buttons` container sits too
+   low, or the card is too short for five buttons.
+2. The member list renders no rows. Needs checking against `GetMembers()` before assuming it is
+   a layout problem; the code-built panel showed no rows either at this point in the flow, so
+   this may predate the prefab work.
 
 A bundle **has** been built and is embedded — the DLL carries
 `MegabonkTogether.Resources.megabonktogether.ui` at 8,761 bytes. Nothing consumes it yet;
