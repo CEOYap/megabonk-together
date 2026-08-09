@@ -35,12 +35,6 @@ namespace MegabonkTogether.Services
         private ESteamNetworkingAvailability relayAvailability = ESteamNetworkingAvailability.k_ESteamNetworkingAvailability_NeverTried;
         private ESteamNetworkingAvailability authAvailability = ESteamNetworkingAvailability.k_ESteamNetworkingAvailability_NeverTried;
 
-        // Diagnostics only, from the relay details struct. Nothing gates on them: they exist so a
-        // log line can say *which* half of SDR is not up, which is the difference between "Steam is
-        // still measuring pings" and "this machine cannot reach a relay at all".
-        private ESteamNetworkingAvailability networkConfigAvailability = ESteamNetworkingAvailability.k_ESteamNetworkingAvailability_NeverTried;
-        private ESteamNetworkingAvailability anyRelayAvailability = ESteamNetworkingAvailability.k_ESteamNetworkingAvailability_NeverTried;
-        private bool pingMeasurementInProgress;
 
         /// <summary>
         /// Latches off the whole service if a Steam call ever throws. One failure means the
@@ -179,22 +173,24 @@ namespace MegabonkTogether.Services
 
             try
             {
-                // These two out parameters are the riskiest marshalling in this change, and there
-                // is no overload without them. Both structs carry a managed byte[] for their debug
-                // message, so Il2CppInterop generates them as ValueType-derived proxy classes
-                // rather than blittable structs, and an out parameter of one is a shape this
-                // project has not exercised before. If it is wrong it will be wrong natively — an
-                // access violation, not the exception the catch below is for.
+                // Discard both out parameters. They are safe to *pass* and fatal to *read*.
                 //
-                // The gate reads the return value rather than pDetails.m_eAvail. Steam documents
-                // them as the same value, and keeping the decision off the struct means a bad read
-                // of the details would degrade the diagnostics rather than the behaviour.
-                relayAvailability = SteamNetworkingUtils.GetRelayNetworkStatus(out var relayDetails);
+                // Neither has an overload without the parameter, so it has to be supplied. But the
+                // struct Il2CppInterop hands back does not own valid memory: reading a single field
+                // off it — `m_bPingMeasurementInProgress` — took the game down with
+                // `AccessViolationException: Attempted to read or write protected memory`, in a
+                // build where the two calls themselves had already succeeded and logged. Both
+                // structs carry a managed byte[] for their debug message, so the proxy is a
+                // ValueType-derived class rather than a blittable struct, and what comes back is a
+                // wrapper around a pointer that is no longer ours.
+                //
+                // The return value is fine, and Steam documents it as the same value the struct
+                // carries in m_eAvail — so nothing is lost for the gate. A shipping Steamworks
+                // implementation for this game does exactly this: `out var _`, decide on the return
+                // value, and get the *contents* of the status from a Callback<T> instead, where the
+                // dispatcher constructs the struct properly.
+                relayAvailability = SteamNetworkingUtils.GetRelayNetworkStatus(out _);
                 authAvailability = SteamNetworkingSockets.GetAuthenticationStatus(out _);
-
-                pingMeasurementInProgress = relayDetails.m_bPingMeasurementInProgress != 0;
-                networkConfigAvailability = relayDetails.m_eAvailNetworkConfig;
-                anyRelayAvailability = relayDetails.m_eAvailAnyRelay;
             }
             catch (Exception ex)
             {
@@ -223,11 +219,11 @@ namespace MegabonkTogether.Services
                 return "Steam is not initialised. Launched outside Steam? Netplay does not need it yet.";
             }
 
+            // No sub-availabilities and no m_debugMsg: they live in the details struct, and that
+            // struct cannot be read. Getting them needs a Callback<SteamRelayNetworkStatus_t>,
+            // which Phase 3 has to settle anyway.
             return $"SteamID {LocalSteamId}, readiness {Readiness}, "
-                + $"relay {Describe(relayAvailability)}, auth {Describe(authAvailability)}, "
-                + $"network config {Describe(networkConfigAvailability)}, "
-                + $"any relay {Describe(anyRelayAvailability)}"
-                + (pingMeasurementInProgress ? ", still measuring pings." : ".");
+                + $"relay {Describe(relayAvailability)}, auth {Describe(authAvailability)}.";
         }
 
         /// <summary>
