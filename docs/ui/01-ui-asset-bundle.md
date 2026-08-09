@@ -120,7 +120,26 @@ instances.
 | `ObjectCollectedException` inside `LoadFromMemory_Internal` | Do not use `LoadFromMemory`. See below. |
 | `MissingMethodException: ReadOnlySpan\`1.GetPinnableReference` | A string was passed to an AssetBundle API. See below. |
 
-## BLOCKER: no asset can be loaded out of the bundle on BepInEx be.785
+## Loading an asset: use LoadAssetAsync, then rewrap the result
+
+**Synchronous loads do not work.** `LoadAsset` and `LoadAllAssets` marshal their name through
+`Il2CppSystem.ReadOnlySpan<char>.GetPinnableReference`, which Il2CppInterop cannot bind here.
+`LoadAssetAsync` does work — verified in-game — even though every variant has the same
+`_Injected(IntPtr, ManagedSpanWrapper&, Type)` native form. The difference is in the managed
+wrapper Il2CppInterop generated, not the native entry point, so **signatures cannot tell you
+which of these is usable**; only running it can.
+
+The async result then arrives typed as the base `UnityEngine.Object`, and `as GameObject` yields
+null. `UiAssetService.RewrapAsGameObject` rebuilds the wrapper reflectively via
+`Il2CppObjectBase.Pointer` and `GameObject(IntPtr)`. Both exist at runtime and neither is visible
+at compile time, because `UnityEngine.CoreModule` is referenced from `unity-libs`.
+
+Two dead ends, both tested rather than argued: BepInEx **be.755** behaves identically to
+**be.785**, and deleting `BepInEx/interop` to force proxy regeneration changed nothing.
+
+### Historic: the earlier blocker
+
+
 
 The bundle loads. Getting a prefab out of it does not, and there is currently no way around it
 by choosing a different API.

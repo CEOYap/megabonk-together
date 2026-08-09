@@ -226,12 +226,57 @@ namespace MegabonkTogether.Services
                 return null;
             }
 
-            var prefab = asset as GameObject;
-            if (prefab == null)
+            // Fast path: sometimes Il2CppInterop already hands back the derived wrapper.
+            var direct = asset as GameObject;
+            if (direct != null)
+            {
+                return direct;
+            }
+
+            return RewrapAsGameObject(asset);
+        }
+
+        /// <summary>
+        /// Rebuilds a <see cref="GameObject"/> wrapper around an asset that arrived typed as the
+        /// base <c>UnityEngine.Object</c>.
+        ///
+        /// <para>The asset really is a GameObject in the IL2CPP domain — <c>LoadAssetAsync</c>
+        /// filtered on the type. Il2CppInterop simply returned a base wrapper, and the usual
+        /// remedy, <c>TryCast&lt;T&gt;</c>, is unavailable because <c>UnityEngine.Object</c>
+        /// compiles from <c>unity-libs</c> rather than <c>interop</c>.</para>
+        ///
+        /// <para>Reflection closes that gap, because the compile-time view is the only thing that
+        /// is wrong. At runtime the loaded assembly <b>is</b> the interop one: the object derives
+        /// from <c>Il2CppObjectBase</c> and so exposes <c>Pointer</c>, and <c>GameObject</c> has
+        /// the <c>IntPtr</c> constructor every interop proxy carries. Same technique as
+        /// <c>Il2CppFindHelper</c> in <c>Helpers/Helper.cs</c>, for the same underlying reason.</para>
+        /// </summary>
+        private static GameObject RewrapAsGameObject(UnityEngine.Object asset)
+        {
+            var pointerProperty = asset.GetType().GetProperty(
+                "Pointer", BindingFlags.Instance | BindingFlags.Public);
+
+            if (pointerProperty?.GetValue(asset) is not IntPtr pointer || pointer == IntPtr.Zero)
             {
                 Plugin.Log.LogError(
-                    $"[UiAssets] Asset loaded but is not a GameObject to this build — runtime type "
-                    + $"'{asset.GetType().FullName}'. The load worked; the cast did not.");
+                    $"[UiAssets] Asset arrived as '{asset.GetType().FullName}' with no usable "
+                    + "Il2CppObjectBase.Pointer, so it cannot be rewrapped as a GameObject.");
+                return null;
+            }
+
+            var constructor = typeof(GameObject).GetConstructor([typeof(IntPtr)]);
+            if (constructor == null)
+            {
+                Plugin.Log.LogError(
+                    "[UiAssets] GameObject has no IntPtr constructor at runtime. That means "
+                    + "UnityEngine.CoreModule resolved to the stock assembly rather than interop.");
+                return null;
+            }
+
+            var prefab = constructor.Invoke([pointer]) as GameObject;
+            if (prefab == null)
+            {
+                Plugin.Log.LogError("[UiAssets] Rewrapping the asset as a GameObject produced null.");
             }
 
             return prefab;
