@@ -523,6 +523,17 @@ later phases would have taken from a `Callback<T>` has to arrive another way:
 None of that is free, but it is all cheaper than a class of bug that only shows up as somebody's
 achievement quietly not unlocking.
 
+**The table above assumes `Callback<T>` does not work through the game's interop assembly, and
+that assumption has never been tested.** It is a generic IL2CPP type taking a delegate, which is
+awkward, not proven impossible. If it works, every row but the last collapses and Phase 3 gets the
+status structs' contents back as well.
+
+**Settle it before designing Phase 3.** One throwaway `Callback<PersonaStateChange_t>.Create`
+against the game's assembly answers it in ten minutes, and the answer decides how much of the next
+phase is polling. Note that Mod S proves nothing here — it ships its own managed wrapper, where
+`Callback<T>` is ordinary C#. See
+[`03-observed-steam-usage.md`](03-observed-steam-usage.md).
+
 ### 2. Call `InitRelayNetworkAccess()`
 
 ```csharp
