@@ -114,6 +114,22 @@ References added and stripped this session: `UnityEngine.AssetBundleModule`,
 
 Full contract and failure table: [`01-ui-asset-bundle.md`](01-ui-asset-bundle.md).
 
+## Cloned game buttons carry persistent listeners
+
+`Button.onClick.RemoveAllListeners()` removes **runtime** listeners only. Listeners serialized on
+the prefab in the Inspector — *persistent* listeners — survive it, and cannot be removed at
+runtime at all, only switched off:
+
+```csharp
+for (var i = button.onClick.GetPersistentEventCount() - 1; i >= 0; i--)
+    button.onClick.SetPersistentListenerState(i, UnityEventCallState.Off);
+```
+
+Every button on the panel is a clone of `mainMenu.btnPlay`, and PLAY's persistent listener is
+what advances to character selection. Without this, each button ran its own handler *and* started
+the game — a symptom that reads like the panel failing to capture input, and was misdiagnosed
+that way twice.
+
 ## Do not undo these
 
 **`CanvasGroup`, never `SetActive(false)`, for hiding main-menu chrome.** `Window.OnDisable`

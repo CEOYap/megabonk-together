@@ -659,7 +659,7 @@ namespace MegabonkTogether.Scripts.Modal
             var unityButton = buttonObj.GetComponentInChildren<UnityEngine.UI.Button>();
             if (unityButton != null)
             {
-                unityButton.onClick.RemoveAllListeners();
+                StripPlayButtonHandlers(unityButton);
             }
 
             // The localiser has to go — these labels are not table entries, and it would overwrite
@@ -680,6 +680,29 @@ namespace MegabonkTogether.Scripts.Modal
             button.SetOnClickAction(onClick);
             SetButtonLabel(button, label);
             return button;
+        }
+
+        /// <summary>
+        /// Silences everything the cloned PLAY button was wired to do.
+        ///
+        /// <para><c>RemoveAllListeners</c> alone is not enough, and this cost several rounds of
+        /// "the button works and also starts the game". It removes only listeners added at
+        /// <b>runtime</b>; the ones serialized on the prefab in the Inspector — <b>persistent</b>
+        /// listeners — survive it untouched. PLAY's persistent listener is what advances to
+        /// character selection, so every clone carried that behaviour no matter what we bound on
+        /// top of it.</para>
+        ///
+        /// <para>Persistent listeners cannot be removed at runtime, only switched off, which is
+        /// what <c>SetPersistentListenerState(i, Off)</c> does.</para>
+        /// </summary>
+        private static void StripPlayButtonHandlers(UnityEngine.UI.Button button)
+        {
+            button.onClick.RemoveAllListeners();
+
+            for (var i = button.onClick.GetPersistentEventCount() - 1; i >= 0; i--)
+            {
+                button.onClick.SetPersistentListenerState(i, UnityEngine.Events.UnityEventCallState.Off);
+            }
         }
 
         /// <summary>
