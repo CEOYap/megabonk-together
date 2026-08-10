@@ -26,6 +26,12 @@ namespace MegabonkTogether.Services
         /// </summary>
         private string publishedCode = "";
 
+        /// <summary>
+        /// The room code we last tried to follow, so a host without Steam costs one search rather
+        /// than one every tick.
+        /// </summary>
+        private string joinedForCode = "";
+
         public void Poll()
         {
             // No Steam, no bridge, and no complaint: an instance launched outside Steam is a
@@ -35,16 +41,21 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            var shouldHost = lobbyViewService.IsInLobby && lobbyViewService.IsLocalPlayerHost;
-
-            if (!shouldHost)
+            if (!lobbyViewService.IsInLobby)
             {
                 if (steamLobbyService.State == SteamLobbyState.InLobby)
                 {
                     steamLobbyService.LeaveLobby();
-                    publishedCode = "";
                 }
 
+                publishedCode = "";
+                joinedForCode = "";
+                return;
+            }
+
+            if (!lobbyViewService.IsLocalPlayerHost)
+            {
+                FollowHostLobby();
                 return;
             }
 
@@ -66,6 +77,36 @@ namespace MegabonkTogether.Services
                 default:
                     return;
             }
+        }
+
+        /// <summary>
+        /// Puts a client into the same Steam lobby as its host, found by the matchmaker room code
+        /// they are both already in.
+        ///
+        /// <para>Membership is the point, not the code: everything the Steam lobby is for from here
+        /// — per-member readiness, personas, avatars — needs both players to actually be in it. A
+        /// client that typed a room code never saw a Steam lobby id, and one that accepted an
+        /// invite deliberately left again after reading the code, so both arrive here.</para>
+        ///
+        /// <para><b>Failure is silent and harmless.</b> The session is carried by the matchmaker
+        /// either way; without this only the extras hung off the Steam lobby are missing. Attempted
+        /// once per room code so a host who is not running Steam does not produce a search every
+        /// quarter second forever.</para>
+        /// </summary>
+        private void FollowHostLobby()
+        {
+            var code = lobbyViewService.LobbyCode ?? "";
+            if (string.IsNullOrEmpty(code)
+                || steamLobbyService.State == SteamLobbyState.InLobby
+                || steamLobbyService.HasPendingCall
+                || joinedForCode == code)
+            {
+                return;
+            }
+
+            joinedForCode = code;
+            Plugin.Log.LogInfo($"[steam-lobby] Looking for the Steam lobby behind room {code}.");
+            steamLobbyService.JoinByMatchmakerCode(code);
         }
 
         private void PublishMatchmakerCode()

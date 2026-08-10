@@ -105,6 +105,15 @@ namespace MegabonkTogether.Services
         void JoinByCode(string code);
 
         /// <summary>
+        /// Joins the Steam lobby standing for a matchmaker room, found by that room's code.
+        ///
+        /// <para>How a client that typed a room code — and so never saw a Steam lobby id — ends up
+        /// in the same Steam lobby as its host. Silent about failure: the session works without it,
+        /// and only the extras hung off the Steam lobby are lost.</para>
+        /// </summary>
+        void JoinByMatchmakerCode(string code);
+
+        /// <summary>
         /// Searches for a lobby by code <b>without joining it</b>, leaving the result in
         /// <see cref="FoundLobbyId"/>. Usable while already in a lobby, which is what lets the
         /// discovery path be checked at all without a second player — and what a lobby browser

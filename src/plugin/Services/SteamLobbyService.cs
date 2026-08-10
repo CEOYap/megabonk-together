@@ -557,12 +557,26 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            StartSearch(code, joinWhenFound: true);
+            StartSearch(SteamLobbyKeys.Code, code, joinWhenFound: true);
         }
 
-        public void FindLobbyByCode(string code) => StartSearch(code, joinWhenFound: false);
+        public void JoinByMatchmakerCode(string code)
+        {
+            if (State == SteamLobbyState.InLobby)
+            {
+                return;
+            }
 
-        private void StartSearch(string code, bool joinWhenFound)
+            // Searches on the matchmaker's room code rather than the Steam lobby's own. A client
+            // that joined by typing a room code never saw a Steam lobby id, and this is how it
+            // finds the one standing for the session it is already in.
+            StartSearch(SteamLobbyKeys.MatchmakerCode, code, joinWhenFound: true);
+        }
+
+        public void FindLobbyByCode(string code) =>
+            StartSearch(SteamLobbyKeys.Code, code, joinWhenFound: false);
+
+        private void StartSearch(string key, string code, bool joinWhenFound)
         {
             if (!steamService.IsAvailable)
             {
@@ -594,7 +608,7 @@ namespace MegabonkTogether.Services
                 SteamMatchmaking.AddRequestLobbyListStringFilter(
                     Protocol.VersionKey, Protocol.Version.ToString(), ELobbyComparison.k_ELobbyComparisonEqual);
                 SteamMatchmaking.AddRequestLobbyListStringFilter(
-                    SteamLobbyKeys.Code, normalised, ELobbyComparison.k_ELobbyComparisonEqual);
+                    key, normalised, ELobbyComparison.k_ELobbyComparisonEqual);
 
                 // A code identifies one lobby. Asking for more results would be asking Steam to do
                 // work whose answer we would throw away.
