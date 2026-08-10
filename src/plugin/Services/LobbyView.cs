@@ -102,8 +102,41 @@ namespace MegabonkTogether.Services
     internal class LobbyViewService(
         IPlayerManagerService playerManagerService,
         INetTransport netTransport,
-        ISteamLobbyService steamLobbyService) : ILobbyViewService
+        ISteamLobbyService steamLobbyService,
+        ISteamService steamService,
+        SteamPersonaService steamPersonaService) : ILobbyViewService
     {
+        /// <summary>Steam member-data key for readiness, replacing union tags 73 and 74.</summary>
+        private const string ReadyKey = SteamLobbyKeys.MemberReady;
+
+        /// <summary>
+        /// Whether readiness can be read from the Steam lobby rather than from tags 73 and 74.
+        ///
+        /// <para><b>The membership counts must agree, and that guard is the whole safety of this.</b>
+        /// The Start button is gated on everyone being ready, and the two sets are not the same
+        /// thing: a client whose Steam lobby join failed — host without Steam, a search that found
+        /// nothing — is in the session but not in the Steam lobby, and would simply not be counted.
+        /// The host would then be free to start with somebody who never readied, silently. When the
+        /// sets disagree for any reason we use the messages instead, which is the path that has
+        /// been played.</para>
+        /// </summary>
+        private bool UseSteamMembership
+        {
+            get
+            {
+                if (!steamService.IsAvailable || steamLobbyService.State != SteamLobbyState.InLobby)
+                {
+                    return false;
+                }
+
+                var steamCount = steamLobbyService.GetMembers().Count;
+                return steamCount > 0 && steamCount == playerManagerService.GetAllPlayers().Count();
+            }
+        }
+
+        private static bool ParseReady(string value) =>
+            bool.TryParse(value, out var ready) && ready;
+
         /// <summary>
         /// Invite is answered here rather than in the panel so the panel never learns that Steam
         /// exists. That was the point of putting a view model in front of it: the lobby panel's
@@ -215,6 +248,11 @@ namespace MegabonkTogether.Services
 
         public IReadOnlyList<LobbyMemberView> GetMembers()
         {
+            if (UseSteamMembership)
+            {
+                return GetSteamMembers();
+            }
+
             var local = playerManagerService.GetLocalPlayer();
             var localId = local?.ConnectionId;
 
@@ -252,10 +290,49 @@ namespace MegabonkTogether.Services
             return members;
         }
 
+        /// <summary>
+        /// The roster as Steam sees it: who is in the lobby, who owns it, and each member's own
+        /// readiness row.
+        ///
+        /// <para>Names come from <see cref="SteamPersonaService"/> and can be empty the first time
+        /// somebody who is not a friend appears — the name is requested and arrives a moment later.
+        /// A blank row would look broken, so it falls back to "Player" until then.</para>
+        ///
+        /// <para>The <c>ConnectionId</c> on the view is a truncated SteamID here rather than a
+        /// transport id. It is used for exactly one thing — naming the row's GameObject — and the
+        /// two id spaces never meet, because this branch and the message branch are never both in
+        /// use.</para>
+        /// </summary>
+        private IReadOnlyList<LobbyMemberView> GetSteamMembers()
+        {
+            var localSteamId = steamService.LocalSteamId;
+            var ownerSteamId = steamLobbyService.OwnerSteamId;
+
+            return steamLobbyService.GetMembers()
+                .OrderByDescending(id => id == ownerSteamId)
+                .ThenBy(id => id)
+                .Select(id =>
+                {
+                    var name = steamPersonaService.GetName(id);
+                    return new LobbyMemberView(
+                        (uint)(id & 0xFFFFFFFF),
+                        string.IsNullOrWhiteSpace(name) ? "Player" : name,
+                        id == ownerSteamId,
+                        id == localSteamId,
+                        ParseReady(steamLobbyService.GetMemberData(id, ReadyKey)));
+                })
+                .ToList();
+        }
+
         public bool IsLocalPlayerReady
         {
             get
             {
+                if (UseSteamMembership)
+                {
+                    return ParseReady(steamLobbyService.GetMemberData(steamService.LocalSteamId, ReadyKey));
+                }
+
                 var local = playerManagerService.GetLocalPlayer();
                 return local != null && IsReady(local.ConnectionId);
             }
@@ -265,6 +342,13 @@ namespace MegabonkTogether.Services
         {
             get
             {
+                if (UseSteamMembership)
+                {
+                    var steamMembers = steamLobbyService.GetMembers();
+                    return steamMembers.Count > 0
+                        && steamMembers.All(id => ParseReady(steamLobbyService.GetMemberData(id, ReadyKey)));
+                }
+
                 var members = playerManagerService.GetAllPlayers().ToList();
 
                 // An empty lobby is not "everyone is ready" — it is a lobby nobody has joined, and
@@ -278,6 +362,18 @@ namespace MegabonkTogether.Services
 
         public void ToggleLocalReady()
         {
+            if (UseSteamMembership)
+            {
+                // Written straight to our own member row and nothing is sent. Steam replicates it,
+                // and only a member may write its own row — so host authority over readiness stops
+                // being something this class maintains and becomes a platform guarantee. The
+                // optimistic-write reconciliation the message path needs has nothing to reconcile
+                // against here, which is why none of it appears in this branch.
+                var nextSteamReady = !IsLocalPlayerReady;
+                steamLobbyService.SetLocalMemberData(ReadyKey, nextSteamReady.ToString());
+                return;
+            }
+
             var local = playerManagerService.GetLocalPlayer();
             if (local == null)
             {

@@ -140,6 +140,8 @@ namespace MegabonkTogether.Services
 
         public bool IsOwner { get; private set; }
 
+        public ulong OwnerSteamId { get; private set; }
+
         public ulong LaunchLobbyId { get; }
 
         public bool HasPendingCall => hasPendingCall;
@@ -274,6 +276,7 @@ namespace MegabonkTogether.Services
             LobbyId = 0UL;
             LobbyCode = "";
             IsOwner = false;
+            OwnerSteamId = 0UL;
             members.Clear();
             State = SteamLobbyState.None;
 
@@ -911,7 +914,8 @@ namespace MegabonkTogether.Services
                     members.Add(SteamMatchmaking.GetLobbyMemberByIndex(lobby, i).m_SteamID);
                 }
 
-                IsOwner = SteamMatchmaking.GetLobbyOwner(lobby).m_SteamID == steamService.LocalSteamId;
+                OwnerSteamId = SteamMatchmaking.GetLobbyOwner(lobby).m_SteamID;
+                IsOwner = OwnerSteamId == steamService.LocalSteamId;
             }
             catch (Exception ex)
             {

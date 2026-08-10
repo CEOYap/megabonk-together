@@ -78,6 +78,9 @@ namespace MegabonkTogether.Services
         /// <summary>Whether the local player owns the current lobby. False when not in one.</summary>
         bool IsOwner { get; }
 
+        /// <summary>The lobby owner's SteamID, or 0. The host, in lobby terms.</summary>
+        ulong OwnerSteamId { get; }
+
         /// <summary>
         /// Starts creating a private lobby. Asynchronous: <see cref="State"/> goes to
         /// <see cref="SteamLobbyState.Pending"/> and <see cref="Poll"/> resolves it.
