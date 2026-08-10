@@ -514,8 +514,8 @@ later phases would have taken from a `Callback<T>` has to arrive another way:
 
 | Wanted | Phase | Route without a registry |
 |---|---|---|
-| `SteamRelayNetworkStatus_t`, `SteamNetAuthenticationStatus_t` | 2 | Poll `GetRelayNetworkStatus` / `GetAuthenticationStatus`. **Done** — the callbacks were never needed. |
-| `LobbyCreated_t`, `LobbyEnter_t` and other call results | 3 | Poll `SteamUtils.IsAPICallCompleted` then `GetAPICallResult`. |
+| `SteamRelayNetworkStatus_t`, `SteamNetAuthenticationStatus_t` | 2 | Poll `GetRelayNetworkStatus` / `GetAuthenticationStatus`. **Done and verified** — the callbacks were never needed. |
+| `LobbyCreated_t`, `LobbyEnter_t` and other call results | 3 | Poll `SteamUtils.IsAPICallCompleted` then `GetAPICallResult`. **Verified in game** — see below. |
 | `LobbyDataUpdate_t` | 3 | Poll `GetLobbyMemberData`. The lobby panel already refreshes twice a second, so there is no new timer. |
 | `GameLobbyJoinRequested_t` (friends-list "Join Game") | 3 | **No polling equivalent.** This one genuinely needs a callback, and is the first place (c) will be required. |
 | `SteamNetConnectionStatusChangedCallback_t` | 4 | `SteamNetworkingUtils.SetConfigValue` with `Callback_ConnectionStatusChanged` and a function pointer — the documented registry-free route, and it takes `IntPtr`s, which marshal cleanly. |
@@ -552,7 +552,33 @@ Mod S proves nothing either way: it ships its own managed wrapper, where `Callba
 C# and AOT instantiation does not apply. See
 [`03-observed-steam-usage.md`](03-observed-steam-usage.md).
 
-#### Phase 3 does not need generics at all
+#### Phase 3 does not need generics at all — CONFIRMED in game
+
+**Proved on buildid 21750826, 2026-08-10**, by `SteamLobbySelfTest` in a single-player run:
+
+```
+[steam-lobby] Self-test: strings round-trip correctly.
+[steam-lobby] CreateLobby requested, max 6.
+[steam-lobby] Lobby 109775241643755414 created, owner True, 1 member(s).
+[steam-lobby] Self-test: lobby data write True, read '1', compatible True.
+                         Member data write True, read '1'. Members: 1.
+[steam-lobby] Self-test finished: PASSED
+```
+
+Two things that were open are now closed:
+
+1. **Strings marshal correctly** across the boundary into Steamworks calls. The `AssetBundle`
+   failure was specific to `ReadOnlySpan<char>.GetPinnableReference`; Steamworks.NET's own UTF-8
+   handle is unaffected.
+2. **The game's callback pump does not invalidate a polled call result.** This was the real
+   worry: the game drains the process's single manual-dispatch pipe every frame and calls
+   `FreeLastCallback`, and if that released the result too, `GetAPICallResult` could never see
+   ours. It does not. The self-test polls at 4 Hz while the game pumps at frame rate, so roughly
+   fifteen pump cycles elapsed between `CreateLobby` and the successful read — this is not a race
+   that was won by luck, the two mechanisms are independent.
+
+So the polling routes in the table above are the design, not a fallback, and every row of it is
+now backed by a call that has actually run.
 
 Every call the lobby flow needs exists non-generically in the game's assembly:
 
