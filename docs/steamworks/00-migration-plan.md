@@ -573,7 +573,66 @@ Two things that were open are now closed:
 2. ~~**The game's callback pump does not invalidate a polled call result.**~~ **Wrong — retracted.**
    The claim was made off one passing run and the run after it disproved the reasoning behind it.
 
-### The pump race is real. Correcting the claim above
+### RESOLVED: register a CallResult with the game's dispatcher
+
+**The race is over, and the answer generalises.** Rather than compete with the game's callback pump
+for our own results, we register with it. `SteamCallResult` derives from Steamworks' **non-generic**
+abstract `CallResult`, is injected with `ClassInjector`, and is handed to
+`CallbackDispatcher.Register`. `RunFrame` then retrieves each completed call, looks the handle up in
+`m_registeredCallResults`, and invokes our instance. It cannot lose the race because it *is* the
+race.
+
+Verified in game, buildid 21750826:
+
+```
+[steam-lobby] CreateLobby requested, max 6.
+[steam-lobby] Result delivered by the game's dispatcher.
+[steam-lobby] Lobby 109775241651088375 created, code R9XUW7, owner True, 1 member(s).
+[steam-lobby] Code R9XUW7 resolved to lobby 109775241651088375.
+[steam-lobby] Self-test finished: PASSED
+```
+
+Three things that were open are now closed:
+
+1. **`ClassInjector` handles an abstract IL2CPP base.** All three abstract slots are filled and the
+   dispatcher accepts the injected type. The existing precedent (`CustomButton : MyButtonNormal`)
+   was a concrete base; this is a stronger case and it works.
+2. **The lobby-list search works**, filtered on code *and* protocol version.
+3. **Steam does return a lobby to a machine already in it.** That was recorded as unresolvable
+   single-player; it is now simply answered, which is why the self-test could pass alone.
+
+**Polling is kept alongside it, and both paths fire in practice.** In the same run, the first
+create was delivered by the dispatcher and a second create was picked up by the poll — our ticker
+updates before the game's `SteamManager`, so on the frame a result lands the poll can legitimately
+get there first. They race each other harmlessly and converge on one `ApplyResult`; whoever is
+second finds nothing pending. Do not "simplify" this by deleting the poll without re-reading the
+history above: the poll alone is what produced `InvalidHandle`.
+
+#### The same trick unlocks plain callbacks, which is the bigger prize
+
+`Callback`'s non-generic base has exactly the same shape — abstract, no type parameter, result as a
+raw `IntPtr`:
+
+```csharp
+public abstract class Callback {
+    public   abstract bool get_IsGameServer();
+    internal abstract Type GetCallbackType();
+    internal abstract void OnRunCallback(IntPtr pvParam);
+    internal abstract void SetUnregistered();
+}
+```
+
+So the three callbacks the migration had written off as unreachable are very likely reachable the
+same way: **`GameLobbyJoinRequested_t`** (accepting an invite while the game is already running —
+the one gap in invites), **`LobbyDataUpdate_t`** (per-member readiness without polling), and
+**`SteamNetConnectionStatusChangedCallback_t`** (Phase 4's connection lifecycle, which was going to
+need a config-value function pointer).
+
+That removes the last structural blocker in the migration. It is *likely*, not proven — `Callback`
+has a fourth abstract member and is registered through a different overload — but the shape is
+identical and the hard part is done.
+
+### Historic: the pump race, and correcting the claim above
 
 A second run, identical but for the lobby type, failed at the same point:
 
