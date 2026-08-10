@@ -30,9 +30,9 @@ namespace MegabonkTogether.Scripts
         private const float PollIntervalSeconds = 1f;
 
         /// <summary>
-        /// Faster than the status poll. A pending lobby call is something a player is waiting on,
-        /// and a second of latency on top of Steam's own would be felt; the status poll is
-        /// background work nobody is watching.
+        /// The idle cadence for the lobby service. While a Steam call is actually in flight the
+        /// service is polled every frame instead — see <see cref="PollLobby"/> for why that is a
+        /// correctness matter rather than a latency one.
         /// </summary>
         private const float LobbyPollIntervalSeconds = 0.25f;
 
@@ -116,13 +116,31 @@ namespace MegabonkTogether.Scripts
                 return;
             }
 
-            lobbyPollAccumulator += delta;
-            if (lobbyPollAccumulator < LobbyPollIntervalSeconds)
+            // Every frame while a call is in flight, on an interval otherwise.
+            //
+            // This is not impatience. The game pumps Steam's callback dispatcher from its own
+            // Update, and that pump drains the shared manual-dispatch pipe and frees each message
+            // — including the completion for our call. Polling on a 0.25s interval leaves roughly
+            // fifteen frames in which the pump can reach the result first, and a run where it did
+            // came back as InvalidHandle. Polling every frame means we look in the first frame the
+            // result exists, and this GameObject is created in Plugin.Load, well before the game's
+            // own SteamManager, so our Update runs first.
+            //
+            // That last sentence is the fragile part and it is worth saying out loud: Unity does
+            // not guarantee execution order between two default-priority scripts. This narrows the
+            // window rather than closing it. If InvalidHandle still appears, the answer is not a
+            // faster poll — it is to stop depending on the shared pipe.
+            if (steamLobbyService.State != SteamLobbyState.Pending)
             {
-                return;
+                lobbyPollAccumulator += delta;
+                if (lobbyPollAccumulator < LobbyPollIntervalSeconds)
+                {
+                    return;
+                }
+
+                lobbyPollAccumulator = 0f;
             }
 
-            lobbyPollAccumulator = 0f;
             steamLobbyService.Poll();
 
             if (ModConfig.SteamLobbySelfTest.Value && steamLobbySelfTest is { IsFinished: false })

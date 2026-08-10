@@ -19,13 +19,20 @@ namespace MegabonkTogether.Services
     /// offsets taken from <c>dump.cs</c>. No <c>ValueType</c>-derived proxy is involved, which is
     /// the specific thing that crashed Phase 2.</para>
     ///
-    /// <para><b>The obvious objection to polling has been tested and does not hold.</b> The game
-    /// pumps <c>CallbackDispatcher.RunFrame</c> every frame, which drains the process's single
+    /// <para><b>There is a race here, and it is the main risk in this class.</b> The game pumps
+    /// <c>CallbackDispatcher.RunFrame</c> every frame, which drains the process's single
     /// manual-dispatch pipe — including the <c>SteamAPICallCompleted_t</c> raised for <i>our</i>
-    /// call — then calls <c>FreeLastCallback</c>. If that release also invalidated the result for
-    /// <c>GetAPICallResult</c>, none of this could work. It does not: <c>SteamLobbySelfTest</c>
-    /// created and read back a lobby with roughly fifteen pump cycles in between, so the two
-    /// mechanisms are independent rather than racing. Verified in game on buildid 21750826.</para>
+    /// call — and frees each message. Whoever reaches the result first gets it. One run created and
+    /// read back a lobby successfully; the next reported the call complete with its failure flag
+    /// set, which is what a consumed handle looks like.</para>
+    ///
+    /// <para>Mitigated by polling every frame while a call is in flight, from a ticker whose
+    /// GameObject is created in <c>Plugin.Load</c> and therefore updates before the game's own
+    /// <c>SteamManager</c>. <b>That narrows the window rather than closing it</b> — Unity does not
+    /// guarantee ordering between two default-priority scripts. If
+    /// <c>k_ESteamAPICallFailureInvalidHandle</c> keeps appearing, the fix is not a faster poll but
+    /// a private pipe: direct P/Invoke, or a <c>CallResult</c> injected into the game's own
+    /// dispatcher.</para>
     /// </summary>
     internal class SteamLobbyService : ISteamLobbyService
     {
@@ -289,8 +296,9 @@ namespace MegabonkTogether.Services
 
             if (ioFailure)
             {
+                var reason = DescribeCallFailure();
                 ClearPending();
-                Fail("IsAPICallCompleted reported an IO failure.");
+                Fail($"The call completed but its result is unusable: {reason}.");
                 return;
             }
 
@@ -629,6 +637,40 @@ namespace MegabonkTogether.Services
             {
                 Plugin.Log.LogWarning($"[steam-lobby] SetRichPresence threw: {ex.GetType().Name}: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Asks Steam why the in-flight call's result is unusable, and says what that means here.
+        ///
+        /// <para>The distinction that matters is <c>InvalidHandle</c>. It means the handle no
+        /// longer exists — which is what "the game's callback pump retrieved and freed our result
+        /// before we polled for it" looks like from this side. Anything else is an ordinary
+        /// failure and says nothing about the polling approach.</para>
+        /// </summary>
+        private string DescribeCallFailure()
+        {
+            ESteamAPICallFailure reason;
+            try
+            {
+                reason = SteamUtils.GetAPICallFailureReason(pendingCall);
+            }
+            catch (Exception ex)
+            {
+                return $"reason unavailable ({ex.GetType().Name})";
+            }
+
+            return reason switch
+            {
+                ESteamAPICallFailure.k_ESteamAPICallFailureInvalidHandle =>
+                    "InvalidHandle — the result was already consumed, almost certainly by the game's "
+                    + "own callback pump draining the shared manual-dispatch pipe before we read it",
+                ESteamAPICallFailure.k_ESteamAPICallFailureMismatchedCallback =>
+                    "MismatchedCallback — the expected callback id does not match the call",
+                ESteamAPICallFailure.k_ESteamAPICallFailureNetworkFailure => "NetworkFailure",
+                ESteamAPICallFailure.k_ESteamAPICallFailureSteamGone => "SteamGone",
+                ESteamAPICallFailure.k_ESteamAPICallFailureNone => "None reported, which is itself odd",
+                _ => $"unknown ({(int)reason})",
+            };
         }
 
         private static string NormaliseCode(string code) =>

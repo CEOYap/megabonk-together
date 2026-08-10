@@ -570,15 +570,49 @@ Two things that were open are now closed:
 1. **Strings marshal correctly** across the boundary into Steamworks calls. The `AssetBundle`
    failure was specific to `ReadOnlySpan<char>.GetPinnableReference`; Steamworks.NET's own UTF-8
    handle is unaffected.
-2. **The game's callback pump does not invalidate a polled call result.** This was the real
-   worry: the game drains the process's single manual-dispatch pipe every frame and calls
-   `FreeLastCallback`, and if that released the result too, `GetAPICallResult` could never see
-   ours. It does not. The self-test polls at 4 Hz while the game pumps at frame rate, so roughly
-   fifteen pump cycles elapsed between `CreateLobby` and the successful read — this is not a race
-   that was won by luck, the two mechanisms are independent.
+2. ~~**The game's callback pump does not invalidate a polled call result.**~~ **Wrong — retracted.**
+   The claim was made off one passing run and the run after it disproved the reasoning behind it.
 
-So the polling routes in the table above are the design, not a fallback, and every row of it is
-now backed by a call that has actually run.
+### The pump race is real. Correcting the claim above
+
+A second run, identical but for the lobby type, failed at the same point:
+
+```
+[steam-lobby] CreateLobby requested, max 6.
+[steam-lobby] IsAPICallCompleted reported an IO failure.
+```
+
+`IsAPICallCompleted` returned *completed* with its failure flag set, which is what a handle that
+no longer exists looks like. The reasoning that produced the retracted claim — "fifteen pump
+cycles elapsed and the result survived, so the mechanisms must be independent" — was the wrong
+inference from a single success. **One run cannot establish the absence of a race; it can only
+fail to observe it.** The likelier explanation of the first run is that the completion happened to
+land in a frame where our poll ran before the game's pump did.
+
+So the honest state is:
+
+- **Polling `GetAPICallResult` works when we reach the result first.** Verified — a lobby was
+  created, written to and read back.
+- **The game's pump can reach it first, and then the result is gone.** Observed once.
+
+Two changes follow. The failure path now reports `GetAPICallFailureReason`, so
+`k_ESteamAPICallFailureInvalidHandle` can be distinguished from an ordinary network failure rather
+than guessed at — the next run says which this is. And the service is polled **every frame while a
+call is in flight** rather than at 4 Hz, so we look in the first frame the result exists.
+
+**That narrows the window; it does not close it.** It relies on our `Update` running before the
+game's `SteamManager.Update`, which is true in practice — our GameObject is created in
+`Plugin.Load`, long before the game's — but Unity does not guarantee ordering between two
+default-priority scripts. If `InvalidHandle` survives this change, the answer is not a faster
+poll: it is to stop depending on the shared pipe at all, and the options there are direct
+P/Invoke with our own `HSteamPipe`, or injecting a `CallResult` subclass into the game's own
+dispatcher.
+
+Both of the other findings from the first run stand, and neither is affected by the race:
+
+- **Strings marshal correctly** into Steamworks calls.
+- **Lobby data, member data and the member list all work**, including `Protocol.IsCompatible`
+  against a version written and read back.
 
 Every call the lobby flow needs exists non-generically in the game's assembly:
 
