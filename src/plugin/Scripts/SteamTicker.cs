@@ -16,13 +16,25 @@ namespace MegabonkTogether.Scripts
     /// pointers are still null and calling through one is a native access violation. Retrying on a
     /// timer until the gate opens is as early as it can be asked for.</para>
     ///
-    /// <para>It stops on its own. Steam either comes up in the first few seconds or it never will,
-    /// and a mod that polls forever for something that cannot change is a per-frame cost with no
-    /// reader.</para>
+    /// <para>The status half stops on its own. Steam either comes up in the first few seconds or it
+    /// never will, and a mod that polls forever for something that cannot change is a per-frame
+    /// cost with no reader.</para>
+    ///
+    /// <para><b>It also pumps the lobby service</b>, which is why it is no longer called
+    /// <c>SteamStatusTicker</c>. Steam's asynchronous results are polled rather than delivered by
+    /// callback — see <see cref="ISteamLobbyService"/> — so something has to drive them, and one
+    /// ticker for every Steam concern beats a GameObject each.</para>
     /// </summary>
-    internal class SteamStatusTicker : MonoBehaviour
+    internal class SteamTicker : MonoBehaviour
     {
         private const float PollIntervalSeconds = 1f;
+
+        /// <summary>
+        /// Faster than the status poll. A pending lobby call is something a player is waiting on,
+        /// and a second of latency on top of Steam's own would be felt; the status poll is
+        /// background work nobody is watching.
+        /// </summary>
+        private const float LobbyPollIntervalSeconds = 0.25f;
 
         /// <summary>
         /// How long to keep looking for a Steam that never arrives. Launched straight from the exe
@@ -35,8 +47,11 @@ namespace MegabonkTogether.Scripts
         private const float DiagnosticIntervalSeconds = 10f;
 
         private ISteamService steamService;
+        private ISteamLobbyService steamLobbyService;
+        private SteamLobbySelfTest steamLobbySelfTest;
 
         private float pollAccumulator;
+        private float lobbyPollAccumulator;
         private float diagnosticAccumulator;
         private float waitedForSteam;
 
@@ -48,6 +63,8 @@ namespace MegabonkTogether.Scripts
             // Resolved here, never in a static initialiser: RegisterTypeInIl2Cpp runs the type's
             // static constructor during Plugin.Load, before the DI host exists.
             steamService = Plugin.Services.GetService<ISteamService>();
+            steamLobbyService = Plugin.Services.GetService<ISteamLobbyService>();
+            steamLobbySelfTest = Plugin.Services.GetService<SteamLobbySelfTest>();
         }
 
         public void Update()
@@ -69,6 +86,8 @@ namespace MegabonkTogether.Scripts
                 }
             }
 
+            PollLobby(delta);
+
             if (!ModConfig.LogSteamStatus.Value)
             {
                 return;
@@ -79,6 +98,36 @@ namespace MegabonkTogether.Scripts
             {
                 diagnosticAccumulator = 0f;
                 Plugin.Log.LogInfo($"[steam] {steamService.DescribeStatus()}");
+            }
+        }
+
+        /// <summary>
+        /// Drives the lobby service's pending work, and the self-test when it is switched on.
+        ///
+        /// <para>Both are no-ops until there is something to do — the service returns immediately
+        /// with no call in flight, and the self-test returns immediately once finished — so this
+        /// costs an accumulator and two branches in the common case where nobody is using Steam
+        /// lobbies at all, which today is everybody.</para>
+        /// </summary>
+        private void PollLobby(float delta)
+        {
+            if (steamLobbyService == null)
+            {
+                return;
+            }
+
+            lobbyPollAccumulator += delta;
+            if (lobbyPollAccumulator < LobbyPollIntervalSeconds)
+            {
+                return;
+            }
+
+            lobbyPollAccumulator = 0f;
+            steamLobbyService.Poll();
+
+            if (ModConfig.SteamLobbySelfTest.Value && steamLobbySelfTest is { IsFinished: false })
+            {
+                steamLobbySelfTest.Advance();
             }
         }
 

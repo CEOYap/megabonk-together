@@ -20,6 +20,7 @@ namespace MegabonkTogether.Configuration
         public static ConfigEntry<bool> LogAllocationRate { get; private set; }
         public static ConfigEntry<bool> LogBandwidth { get; private set; }
         public static ConfigEntry<bool> LogSteamStatus { get; private set; }
+        public static ConfigEntry<bool> SteamLobbySelfTest { get; private set; }
 
         public static void Initialize(ConfigFile config)
         {
@@ -85,6 +86,15 @@ namespace MegabonkTogether.Configuration
                 "every 10 seconds. Off by default. Turn it on when a Steam connection problem " +
                 "needs to be told apart from a network one. Note that an instance launched " +
                 "outside Steam has no Steam at all, which this will say."
+            );
+            SteamLobbySelfTest = config.Bind(
+                "Diagnostics",
+                "SteamLobbySelfTest",
+                false,
+                "Once per launch, create a private Steam lobby, write and read back lobby and " +
+                "member data, then leave it, and log what happened. Off by default. This exists " +
+                "to prove the Steamworks migration's lobby primitives on a real install; it " +
+                "changes nothing about how you play and needs only one player."
             );
             EncounterInputGraceSeconds = config.Bind(
                 "Gameplay",

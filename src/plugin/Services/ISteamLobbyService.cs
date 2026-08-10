@@ -1,0 +1,74 @@
+using System.Collections.Generic;
+
+namespace MegabonkTogether.Services
+{
+    public enum SteamLobbyState
+    {
+        /// <summary>Not in a lobby and not trying to be.</summary>
+        None,
+
+        /// <summary>A create or join call is in flight, waiting on its result.</summary>
+        Pending,
+
+        /// <summary>In a lobby. <see cref="ISteamLobbyService.LobbyId"/> is valid.</summary>
+        InLobby,
+
+        /// <summary>The last operation failed. <see cref="ISteamLobbyService.DescribeStatus"/> says how.</summary>
+        Failed,
+    }
+
+    /// <summary>
+    /// Steam lobbies: create, join, leave, and the key/value data hung off them.
+    ///
+    /// <para>Phase 3 of the Steamworks migration. This does not yet replace the WebSocket
+    /// matchmaker — nothing in the game flow calls it. It exists so the primitives underneath can
+    /// be exercised and proved before the lobby flow is moved onto them.</para>
+    ///
+    /// <para><b>No callbacks anywhere.</b> `Callback&lt;T&gt;` and `CallResult&lt;T&gt;` have
+    /// concrete IL2CPP instantiations only for the six type arguments the game itself uses, and
+    /// none of them is a lobby type — so asynchronous results are polled instead. See
+    /// <c>docs/steamworks/00-migration-plan.md</c>, "Phase 3 does not need generics at all".</para>
+    /// </summary>
+    public interface ISteamLobbyService
+    {
+        SteamLobbyState State { get; }
+
+        /// <summary>The current lobby, or 0.</summary>
+        ulong LobbyId { get; }
+
+        /// <summary>Whether the local player owns the current lobby. False when not in one.</summary>
+        bool IsOwner { get; }
+
+        /// <summary>
+        /// Starts creating a private lobby. Asynchronous: <see cref="State"/> goes to
+        /// <see cref="SteamLobbyState.Pending"/> and <see cref="Poll"/> resolves it.
+        /// </summary>
+        void CreateLobby(int maxMembers);
+
+        /// <summary>Leaves the current lobby, if any. Safe to call when not in one.</summary>
+        void LeaveLobby();
+
+        /// <summary>
+        /// Drives any in-flight call and keeps the member list current. Cheap and re-entrant-safe
+        /// when idle, but it is native calls — drive it from an accumulator, not every frame.
+        /// </summary>
+        void Poll();
+
+        bool SetLobbyData(string key, string value);
+
+        string GetLobbyData(string key);
+
+        /// <summary>
+        /// Writes one of the local player's own member-data rows. Steam only lets a member write
+        /// its own row, which is why host authority over readiness stops being ours to enforce.
+        /// </summary>
+        bool SetLocalMemberData(string key, string value);
+
+        string GetMemberData(ulong steamId, string key);
+
+        /// <summary>Members of the current lobby, empty when not in one.</summary>
+        IReadOnlyList<ulong> GetMembers();
+
+        string DescribeStatus();
+    }
+}
