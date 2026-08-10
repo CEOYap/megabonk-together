@@ -380,10 +380,49 @@ instead of `pDetails.m_eAvail`, which Steam documents as the same value, so that
 struct degrades the diagnostics rather than the decision. If it does crash, the fallback is direct
 P/Invoke to the flat C API for these two calls only — see option (c) in [Gotcha 1](#gotcha-1).
 
-### Phase 3 — `SteamLobbyService`
-- Create/join lobbies via `SteamMatchmaking`.
-- Publish `Protocol.Version`, host name, player count, and mode as lobby data.
-- Handle `GameLobbyJoinRequested_t` (friends-list "Join Game") and `LobbyDataUpdate_t`.
+### Phase 3 — `SteamLobbyService` — **PARTLY DONE. Read the exit criterion before believing otherwise.**
+
+**Verified over the internet with two accounts, both directions, zero mod errors on either side.**
+Steam lobbies, discovery by code, the protocol gate, and invites all work:
+
+```
+[steam-invite] A friend invited us to lobby 109775241659443022.
+[steam-lobby]  Joined lobby ..., code ULZVEZ, owner False, 2 member(s), protocol 1.
+[steam-invite] Invite resolved to room code IFN1OZ.
+[steam-invite] Opening the netplay menu to act on an invite.
+[steam-invite] Joining room IFN1OZ from an invite.
+```
+
+| Item | State |
+|---|---|
+| Create/join lobbies via `SteamMatchmaking` | done, verified |
+| `Protocol.cs` re-created, published and filtered on | done, verified — a joiner reads `protocol 1` back |
+| Lobby list search by code, filtered on version | done, verified |
+| `GameLobbyJoinRequested_t` | done, verified — invites accepted mid-session |
+| `+connect_lobby` launch invites | done, verified |
+| `SetRichPresence` connect string | done, verified (Join Game appears) |
+| Host name as lobby data | done |
+| Player count and mode as lobby data | **not done** — no lobby browser needs them yet |
+| `LobbyDataUpdate_t` | **not done** — readiness still rides tags 73/74 |
+| Retire tags 73 and 74 | **not done** |
+| **Exit criterion: find and join a lobby without the rendezvous server** | **NOT MET** |
+
+**What actually shipped is a bridge, not the replacement.** The Steam lobby carries the WebSocket
+matchmaker's room code as lobby data (`mt_mm_code`); discovery and invites are Steam's, and the
+session itself is still matched and carried by the rendezvous server exactly as before. That was
+deliberate — it makes invites work without touching the transport — but it means Phase 3's own
+exit criterion is unmet and the server cannot be decommissioned yet.
+
+**What is left in Phase 3**, in the order that makes sense:
+
+1. Move readiness onto lobby member data and stop sending tags 73 and 74. The keys are already
+   agreed (`ready`, and `character`/`skinType`/`hat` alongside it) and member data is verified
+   working. `LobbyDataUpdate_t` now has a viable mechanism — see `SteamCallback`.
+2. Make the Steam lobby the session's identity rather than a courier for someone else's code, so
+   `mt_mm_code` can go.
+3. Only then is the rendezvous server removable, which is Phase 5.
+
+- ~~Handle `GameLobbyJoinRequested_t` (friends-list "Join Game")~~ and `LobbyDataUpdate_t`.
 - Filter the lobby list by protocol version — this is [P1-3](../netplay/01-critical-fixes.md#p1-3)
   in its final form, and the **only** form of it that works. Three carried-over decisions:
   - `src/common/Protocol.cs` was written and then reverted with the failed LiteNetLib attempt.
