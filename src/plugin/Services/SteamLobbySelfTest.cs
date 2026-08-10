@@ -31,6 +31,7 @@ namespace MegabonkTogether.Services
             Strings,
             AwaitingLobby,
             LobbyData,
+            AwaitingSearch,
             Done,
         }
 
@@ -42,6 +43,7 @@ namespace MegabonkTogether.Services
 
         private Step step = Step.NotStarted;
         private bool stringsPassed;
+        private string searchedCode = "";
 
         public SteamLobbySelfTest(ISteamService steamService, ISteamLobbyService lobbyService)
         {
@@ -88,8 +90,42 @@ namespace MegabonkTogether.Services
 
                 case Step.LobbyData:
                     RunLobbyDataRoundTrip();
+
+                    // The code has to be captured before leaving: LeaveLobby clears it, and the
+                    // search below is the only part of the discovery path a single player can
+                    // exercise at all.
+                    searchedCode = lobbyService.LobbyCode;
                     lobbyService.LeaveLobby();
-                    Finish(true, "lobby created, written to, read back and left");
+
+                    if (string.IsNullOrEmpty(searchedCode))
+                    {
+                        Finish(false, "the host published no lobby code");
+                        return;
+                    }
+
+                    lobbyService.JoinByCode(searchedCode);
+                    step = Step.AwaitingSearch;
+                    return;
+
+                case Step.AwaitingSearch:
+                    if (lobbyService.State == SteamLobbyState.Pending)
+                    {
+                        return;
+                    }
+
+                    // Rejoining our own just-left lobby is a real round trip through
+                    // RequestLobbyList with the code and protocol filters, which is the half of
+                    // "join by code" that does not need a second player. What it cannot prove is
+                    // that a *different* machine can find it, because Steam's lobby list is
+                    // eventually consistent and we may be reading our own recent write.
+                    var found = lobbyService.State == SteamLobbyState.InLobby;
+                    lobbyService.LeaveLobby();
+
+                    Finish(
+                        found,
+                        found
+                            ? $"lobby created, written to, read back, found again by code {searchedCode} and left"
+                            : $"code {searchedCode} did not come back from the lobby list");
                     return;
             }
         }

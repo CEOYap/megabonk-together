@@ -52,6 +52,14 @@ namespace MegabonkTogether.Services
         private const int LobbyEnterLobbyIdOffset = 0;
         private const int LobbyEnterResponseOffset = 16;
 
+        //   LobbyMatchList_t k_iCallback 510   m_nLobbiesMatching @0x0 (uint)
+        //
+        // Four bytes, not eight. Steam's pack(8) caps alignment, it does not pad a struct up to
+        // it, and cubCallback has to be the size Steam actually wrote.
+        private const int LobbyMatchListCallbackId = 510;
+        private const int LobbyMatchListSize = 4;
+        private const int LobbyMatchListCountOffset = 0;
+
         /// <summary><c>k_EChatRoomEnterResponseSuccess</c>. Every other value is a refusal.</summary>
         private const uint ChatRoomEnterSuccess = 1;
 
@@ -63,6 +71,9 @@ namespace MegabonkTogether.Services
             None,
             Create,
             Join,
+
+            /// <summary>A lobby-list search, whose result feeds a join.</summary>
+            List,
         }
 
         /// <summary>
@@ -86,15 +97,42 @@ namespace MegabonkTogether.Services
 
         private string lastError = "";
 
+        /// <summary>The code the in-flight search is looking for, held so the result can say so.</summary>
+        private string pendingJoinCode = "";
+
+        /// <summary>
+        /// Codes avoid characters that are misread when spoken or retyped: no O against 0, no I or
+        /// l against 1. Thirty-two symbols over six places is about a billion codes, which is
+        /// ample for a game where a lobby lives for minutes.
+        /// </summary>
+        private const string CodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+        private const int CodeLength = 6;
+
         public SteamLobbyState State { get; private set; } = SteamLobbyState.None;
 
         public ulong LobbyId { get; private set; }
 
+        public string LobbyCode { get; private set; } = "";
+
         public bool IsOwner { get; private set; }
+
+        public ulong LaunchLobbyId { get; }
 
         public SteamLobbyService(ISteamService steamService)
         {
             this.steamService = steamService;
+
+            // Read once, here, rather than polled: the command line cannot change while the process
+            // runs, and this is pure .NET with no Steam involved, so it is safe long before Steam
+            // is up. Nothing acts on it yet — the lobby flow is still the WebSocket matchmaker's —
+            // but it is logged so an invite-launch is visible in a log we are sent.
+            LaunchLobbyId = Helpers.LaunchArguments.GetConnectLobbyId();
+            if (LaunchLobbyId != 0UL)
+            {
+                Plugin.Log.LogInfo(
+                    $"[steam-lobby] Launched with +connect_lobby {LaunchLobbyId}; a friend invited us. "
+                    + "Nothing consumes this yet.");
+            }
         }
 
         public void CreateLobby(int maxMembers)
@@ -113,10 +151,13 @@ namespace MegabonkTogether.Services
 
             try
             {
-                // Private. This is a real lobby on Valve's infrastructure, not a local object, and
-                // a friends-only or public one would advertise the mod's test runs to a friends
-                // list. Nothing about the migration needs visibility yet.
-                pendingCall = SteamMatchmaking.CreateLobby(ELobbyType.k_ELobbyTypePrivate, maxMembers);
+                // Public, which is a real change from the WebSocket matchmaker and worth being
+                // explicit about. RequestLobbyList only returns public lobbies to a non-friend, so
+                // a code that strangers can use requires one. The code is what keeps a lobby
+                // private in practice — the same model as today, where the six characters are the
+                // only thing standing between a stranger and your session — but the lobby itself
+                // is now enumerable by anyone who asks Steam for this app's list.
+                pendingCall = SteamMatchmaking.CreateLobby(ELobbyType.k_ELobbyTypePublic, maxMembers);
                 pendingCallKind = PendingCall.Create;
                 hasPendingCall = true;
 
@@ -199,9 +240,13 @@ namespace MegabonkTogether.Services
             }
 
             LobbyId = 0UL;
+            LobbyCode = "";
             IsOwner = false;
             members.Clear();
             State = SteamLobbyState.None;
+
+            // Cleared or the friends list keeps offering Join Game for a lobby we have left.
+            PublishConnectString();
         }
 
         public void Poll()
@@ -257,6 +302,10 @@ namespace MegabonkTogether.Services
 
                 case PendingCall.Join:
                     ReadLobbyEnterResult();
+                    return;
+
+                case PendingCall.List:
+                    ReadLobbyMatchListResult();
                     return;
 
                 default:
@@ -318,10 +367,11 @@ namespace MegabonkTogether.Services
                 State = SteamLobbyState.InLobby;
                 lastError = "";
                 RefreshMembers();
+                PublishHostData();
 
                 Plugin.Log.LogInfo(
-                    $"[steam-lobby] Lobby {LobbyId} created, owner {IsOwner}, {members.Count} member(s). "
-                    + "Polled call results work on this install.");
+                    $"[steam-lobby] Lobby {LobbyId} created, code {LobbyCode}, owner {IsOwner}, "
+                    + $"{members.Count} member(s).");
             }
             finally
             {
@@ -394,14 +444,214 @@ namespace MegabonkTogether.Services
                     return;
                 }
 
+                LobbyCode = GetLobbyData(SteamLobbyKeys.Code);
+                PublishConnectString();
+
                 Plugin.Log.LogInfo(
-                    $"[steam-lobby] Joined lobby {LobbyId}, owner {IsOwner}, {members.Count} member(s), "
-                    + $"protocol {published}.");
+                    $"[steam-lobby] Joined lobby {LobbyId}, code {LobbyCode}, owner {IsOwner}, "
+                    + $"{members.Count} member(s), protocol {published}.");
             }
             finally
             {
                 Marshal.FreeHGlobal(buffer);
             }
+        }
+
+        public void JoinByCode(string code)
+        {
+            if (!steamService.IsAvailable)
+            {
+                Fail("Steam is not available, so no lobby can be searched for.");
+                return;
+            }
+
+            if (hasPendingCall || State == SteamLobbyState.InLobby)
+            {
+                Fail($"Refusing to search for a lobby while {State}.");
+                return;
+            }
+
+            var normalised = NormaliseCode(code);
+            if (normalised.Length != CodeLength)
+            {
+                Fail($"'{code}' is not a {CodeLength}-character lobby code.");
+                return;
+            }
+
+            try
+            {
+                // Both filters, not just the code. Filtering the browser by protocol version is
+                // P1-3 in its final form: a mismatched build never appears in the results, so it is
+                // refused before a connection is attempted rather than after. The entry check in
+                // ReadLobbyEnterResult still stands, because a lobby reached by id or by an invite
+                // never passed through here.
+                SteamMatchmaking.AddRequestLobbyListStringFilter(
+                    Protocol.VersionKey, Protocol.Version.ToString(), ELobbyComparison.k_ELobbyComparisonEqual);
+                SteamMatchmaking.AddRequestLobbyListStringFilter(
+                    SteamLobbyKeys.Code, normalised, ELobbyComparison.k_ELobbyComparisonEqual);
+
+                // A code identifies one lobby. Asking for more results would be asking Steam to do
+                // work whose answer we would throw away.
+                SteamMatchmaking.AddRequestLobbyListResultCountFilter(1);
+
+                pendingCall = SteamMatchmaking.RequestLobbyList();
+                pendingCallKind = PendingCall.List;
+                pendingJoinCode = normalised;
+                hasPendingCall = true;
+                pendingCallElapsedSeconds = 0f;
+                lastPollTime = 0f;
+                State = SteamLobbyState.Pending;
+                lastError = "";
+
+                Plugin.Log.LogInfo($"[steam-lobby] Searching for lobby code {normalised}.");
+            }
+            catch (Exception ex)
+            {
+                Fail($"RequestLobbyList threw: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+        public void OpenInviteOverlay()
+        {
+            if (State != SteamLobbyState.InLobby)
+            {
+                return;
+            }
+
+            try
+            {
+                // Steam's own invite dialog, so the friend list, the invite and the accept flow are
+                // all Valve's. Nothing comes back to us here: accepting produces a
+                // GameLobbyJoinRequested_t on the invitee's machine, which this install cannot
+                // receive, or a +connect_lobby launch argument if their game was closed.
+                SteamFriends.ActivateGameOverlayInviteDialog(new CSteamID(LobbyId));
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning($"[steam-lobby] ActivateGameOverlayInviteDialog threw: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Reads <c>LobbyMatchList_t</c> and joins the single lobby it should contain.
+        /// </summary>
+        private void ReadLobbyMatchListResult()
+        {
+            var buffer = Marshal.AllocHGlobal(LobbyMatchListSize);
+            var code = pendingJoinCode;
+            try
+            {
+                bool resultFailure;
+                bool got;
+                try
+                {
+                    got = SteamUtils.GetAPICallResult(
+                        pendingCall, buffer, LobbyMatchListSize, LobbyMatchListCallbackId, out resultFailure);
+                }
+                catch (Exception ex)
+                {
+                    ClearPending();
+                    Fail($"GetAPICallResult threw: {ex.GetType().Name}: {ex.Message}");
+                    return;
+                }
+
+                ClearPending();
+
+                if (!got || resultFailure)
+                {
+                    Fail($"GetAPICallResult returned {got} with failure flag {resultFailure}.");
+                    return;
+                }
+
+                var matching = (uint)Marshal.ReadInt32(buffer, LobbyMatchListCountOffset);
+                if (matching == 0)
+                {
+                    // One message for both causes on purpose. A player cannot tell "no such lobby"
+                    // from "that lobby is a different mod version", and neither can we — the version
+                    // filter is applied by Steam, so a mismatched lobby is simply absent from the
+                    // results rather than reported as incompatible.
+                    Fail(
+                        $"No lobby found with code {code}. Either nobody is hosting it, or the host "
+                        + "is running a different version of the mod.");
+                    return;
+                }
+
+                ulong lobbyId;
+                try
+                {
+                    lobbyId = SteamMatchmaking.GetLobbyByIndex(0).m_SteamID;
+                }
+                catch (Exception ex)
+                {
+                    Fail($"GetLobbyByIndex threw: {ex.GetType().Name}: {ex.Message}");
+                    return;
+                }
+
+                Plugin.Log.LogInfo($"[steam-lobby] Code {code} resolved to lobby {lobbyId}; joining.");
+                JoinLobby(lobbyId);
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+
+        /// <summary>
+        /// Writes everything a joiner needs to find and vet this lobby. Host only — Steam refuses
+        /// lobby-level writes from anyone but the owner, so this silently does nothing elsewhere.
+        /// </summary>
+        private void PublishHostData()
+        {
+            LobbyCode = GenerateCode();
+
+            SetLobbyData(Protocol.VersionKey, Protocol.Version.ToString());
+            SetLobbyData(SteamLobbyKeys.Code, LobbyCode);
+            SetLobbyData(SteamLobbyKeys.HostName, Configuration.ModConfig.PlayerName.Value ?? "");
+
+            PublishConnectString();
+        }
+
+        /// <summary>
+        /// Sets, or clears, the rich-presence string that puts <b>Join Game</b> next to our name on
+        /// a friend's list. Steam looks for the literal key "connect" and hands its value back to
+        /// the friend's game as a launch argument, which is the half of invites this install can
+        /// actually receive.
+        /// </summary>
+        private void PublishConnectString()
+        {
+            try
+            {
+                SteamFriends.SetRichPresence(
+                    SteamLobbyKeys.RichPresenceConnect,
+                    LobbyId == 0UL ? "" : $"+connect_lobby {LobbyId}");
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning($"[steam-lobby] SetRichPresence threw: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+        private static string NormaliseCode(string code) =>
+            string.IsNullOrWhiteSpace(code) ? "" : code.Trim().ToUpperInvariant();
+
+        /// <summary>
+        /// A code drawn from a cryptographic source rather than <c>System.Random</c>. Not because a
+        /// lobby code is a secret worth attacking, but because a predictable one lets anybody walk
+        /// the space and drop into strangers' games, and the whole reason the lobby is public is
+        /// that the code is the only thing keeping them out.
+        /// </summary>
+        private static string GenerateCode()
+        {
+            var bytes = new byte[CodeLength];
+            System.Security.Cryptography.RandomNumberGenerator.Fill(bytes);
+
+            var chars = new char[CodeLength];
+            for (var i = 0; i < CodeLength; i++)
+            {
+                chars[i] = CodeAlphabet[bytes[i] % CodeAlphabet.Length];
+            }
+
+            return new string(chars);
         }
 
         public bool SetLobbyData(string key, string value)
