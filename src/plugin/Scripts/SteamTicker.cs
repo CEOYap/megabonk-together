@@ -50,6 +50,7 @@ namespace MegabonkTogether.Scripts
         private ISteamLobbyService steamLobbyService;
         private SteamLobbySelfTest steamLobbySelfTest;
         private SteamLobbyPresenceService steamLobbyPresenceService;
+        private SteamInviteService steamInviteService;
 
         private float pollAccumulator;
         private float lobbyPollAccumulator;
@@ -68,6 +69,7 @@ namespace MegabonkTogether.Scripts
             steamLobbyService = Plugin.Services.GetService<ISteamLobbyService>();
             steamLobbySelfTest = Plugin.Services.GetService<SteamLobbySelfTest>();
             steamLobbyPresenceService = Plugin.Services.GetService<SteamLobbyPresenceService>();
+            steamInviteService = Plugin.Services.GetService<SteamInviteService>();
         }
 
         public void Update()
@@ -165,6 +167,15 @@ namespace MegabonkTogether.Scripts
             if (selfTestRunning)
             {
                 steamLobbySelfTest.Advance();
+                return;
+            }
+
+            steamInviteService?.Poll();
+
+            // The invite flow joins a Steam lobby it does not own, and the bridge leaves any Steam
+            // lobby it did not create — so the bridge waits until the code has been read out.
+            if (steamInviteService is { IsResolving: true })
+            {
                 return;
             }
 

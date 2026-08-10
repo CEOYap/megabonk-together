@@ -272,6 +272,7 @@ namespace MegabonkTogether
                 services.AddSingleton<ISteamLobbyService, SteamLobbyService>();
                 services.AddSingleton<SteamLobbySelfTest>();
                 services.AddSingleton<SteamLobbyPresenceService>();
+                services.AddSingleton<SteamInviteService>();
             });
 
             Host = builder.Build();

@@ -4,6 +4,7 @@ using MegabonkTogether.Configuration;
 using MegabonkTogether.Helpers;
 using MegabonkTogether.Scripts.Button;
 using MegabonkTogether.Scripts.Modal;
+using Microsoft.Extensions.DependencyInjection;
 using System.Collections;
 using TMPro;
 using UnityEngine;
@@ -45,9 +46,16 @@ namespace MegabonkTogether.Scripts
         private CustomButton sharedExpToggleRightButton;
         private TextMeshProUGUI sharedExpToggleStatusText;
 
+        /// <summary>
+        /// Resolved in Awake, never in a static initialiser — RegisterTypeInIl2Cpp runs the type's
+        /// static constructor during Plugin.Load, before the DI host exists.
+        /// </summary>
+        private Services.SteamInviteService steamInviteService;
+
         protected void Awake()
         {
             filter = new ProfanityFilter.ProfanityFilter();
+            steamInviteService = Plugin.Services.GetService<Services.SteamInviteService>();
         }
 
         public void SetMainMenu(MainMenu menu)
@@ -984,6 +992,42 @@ namespace MegabonkTogether.Scripts
             codeInput.gameObject.SetActive(isVisible);
             joinButton.gameObject.SetActive(isVisible);
             friendliesBackButton.gameObject.SetActive(isVisible);
+
+            if (isVisible)
+            {
+                PrefillInvitedCode();
+            }
+        }
+
+        /// <summary>
+        /// Fills the room code in for a player who got here by accepting a friend's Steam invite,
+        /// so they do not have to retype something they were handed.
+        ///
+        /// <para>Deliberately stops at filling the box rather than joining for them. Driving this
+        /// screen's own flow from outside would mean reproducing what <see cref="OnJoinClicked"/>
+        /// does to <c>Plugin.Instance.Mode</c>, the loader and the connection coroutine, and
+        /// getting that subtly wrong would strand a player in a half-started join with no way back.
+        /// One press of Join is a small price for not owning that risk yet.</para>
+        ///
+        /// <para>The code is consumed, so it is offered once. A player who backs out and comes
+        /// again gets an empty box rather than a stale invite from an hour ago.</para>
+        /// </summary>
+        private void PrefillInvitedCode()
+        {
+            if (codeInput == null || !string.IsNullOrWhiteSpace(codeInput.text))
+            {
+                return;
+            }
+
+            var invited = steamInviteService?.ConsumeJoinCode();
+            if (string.IsNullOrEmpty(invited))
+            {
+                return;
+            }
+
+            codeInput.text = invited;
+            SetStatusText("Invite ready - press Join");
+            Plugin.Log.LogInfo($"[steam-invite] Filled the room code from an invite: {invited}.");
         }
 
         private void UpdateNetplayOptionsUI(bool isVisible)
