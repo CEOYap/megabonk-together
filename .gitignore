@@ -74,3 +74,13 @@ ghidra_projects/
 # Python bytecode from scripts/re
 __pycache__/
 *.pyc
+
+# Steamworks.NET, downloaded as a reference for struct layouts and callback ids.
+# Never shipped: the mod calls Steam through the game's own Steamworks assembly.
+# See docs/steamworks/00-migration-plan.md, Gotcha 1.
+/Steamworks.NET-Standalone*/
+/LICENSE.txt
+/README-Standalone.md
+/OSX-Linux-x64/
+/Windows-x64/
+/Windows-x86/
