@@ -91,6 +91,7 @@ namespace MegabonkTogether.Scripts.Modal
 
         private readonly List<GameObject> memberRows = [];
 
+        private CustomButton inviteButton;
         private CustomButton copyCodeButton;
         private CustomButton joinFromClipboardButton;
         private CustomButton leaveLobbyButton;
@@ -356,6 +357,12 @@ namespace MegabonkTogether.Scripts.Modal
                 Destroy(buttonContainer.GetChild(i).gameObject);
             }
 
+            // Invite sits above Copy Code: it is the friendlier of the two ways to bring someone
+            // in, and the one a player reaches for first. It hides entirely without a Steam lobby
+            // to invite to — on a client, or when the game was launched outside Steam — rather than
+            // greying out, because there is no action behind it to explain.
+            inviteButton = CreateButton("InviteButton", "Invite", OnInviteClicked);
+
             // Copy and Join-from-clipboard are mutually exclusive — you either have a lobby or you
             // do not — so hiding one must not leave a gap. The layout group closes it for free,
             // which the hand-placed version could not do.
@@ -395,6 +402,7 @@ namespace MegabonkTogether.Scripts.Modal
 
             // Hide rather than grey out, so the panel never offers an action that cannot work.
             var inLobby = lobbyViewService.IsInLobby;
+            SetButtonVisible(inviteButton, inLobby && lobbyViewService.CanInvite);
             SetButtonVisible(copyCodeButton, inLobby && !string.IsNullOrEmpty(code));
             SetButtonVisible(leaveLobbyButton, inLobby);
             SetButtonVisible(joinFromClipboardButton, !inLobby);
@@ -489,6 +497,16 @@ namespace MegabonkTogether.Scripts.Modal
 
             statusTextField.text = text;
             statusClearAt = string.IsNullOrEmpty(text) ? 0f : Time.unscaledTime + StatusHoldSeconds;
+        }
+
+        private void OnInviteClicked()
+        {
+            PlaySelectSfx();
+
+            // No status message on success: what follows is Steam's overlay taking over the
+            // screen, which is its own feedback. A failure here would mean the button should not
+            // have been visible, and Refresh will hide it on the next tick.
+            lobbyViewService?.InviteFriends();
         }
 
         private void OnCopyCodeClicked()

@@ -74,6 +74,22 @@ namespace MegabonkTogether.Services
         void ResetReadyState();
 
         /// <summary>
+        /// Whether there is a Steam lobby to invite friends to. False for a client, false without
+        /// Steam, and false until the Steam lobby has finished being created — so the button that
+        /// binds to this hides rather than failing when pressed.
+        /// </summary>
+        bool CanInvite { get; }
+
+        /// <summary>
+        /// Opens Steam's invite dialog for this lobby. No-op unless <see cref="CanInvite"/>.
+        ///
+        /// <para>Everything after the click belongs to Steam: the friend list, the invite, and the
+        /// accept. What comes back to us is a <c>+connect_lobby</c> launch argument if the friend's
+        /// game was closed — see <c>Helpers/LaunchArguments.cs</c>.</para>
+        /// </summary>
+        void InviteFriends();
+
+        /// <summary>
         /// Host only. Ends the lobby and tells every peer to advance to character selection.
         /// No-op unless <see cref="AreAllMembersReady"/>.
         /// </summary>
@@ -85,8 +101,28 @@ namespace MegabonkTogether.Services
 
     internal class LobbyViewService(
         IPlayerManagerService playerManagerService,
-        INetTransport netTransport) : ILobbyViewService
+        INetTransport netTransport,
+        ISteamLobbyService steamLobbyService) : ILobbyViewService
     {
+        /// <summary>
+        /// Invite is answered here rather than in the panel so the panel never learns that Steam
+        /// exists. That was the point of putting a view model in front of it: the lobby panel's
+        /// design note said Phase 3 should be able to add invite "without touching the panel", and
+        /// the panel's side of this is one button bound to two members.
+        /// </summary>
+        public bool CanInvite =>
+            IsLocalPlayerHost && steamLobbyService.State == SteamLobbyState.InLobby;
+
+        public void InviteFriends()
+        {
+            if (!CanInvite)
+            {
+                return;
+            }
+
+            steamLobbyService.OpenInviteOverlay();
+        }
+
         /// <summary>
         /// The authoritative lobby-ready set on the host, and the host's last broadcast as mirrored
         /// on a client. Keyed by game connection id.

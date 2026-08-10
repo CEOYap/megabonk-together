@@ -49,6 +49,7 @@ namespace MegabonkTogether.Scripts
         private ISteamService steamService;
         private ISteamLobbyService steamLobbyService;
         private SteamLobbySelfTest steamLobbySelfTest;
+        private SteamLobbyPresenceService steamLobbyPresenceService;
 
         private float pollAccumulator;
         private float lobbyPollAccumulator;
@@ -65,6 +66,7 @@ namespace MegabonkTogether.Scripts
             steamService = Plugin.Services.GetService<ISteamService>();
             steamLobbyService = Plugin.Services.GetService<ISteamLobbyService>();
             steamLobbySelfTest = Plugin.Services.GetService<SteamLobbySelfTest>();
+            steamLobbyPresenceService = Plugin.Services.GetService<SteamLobbyPresenceService>();
         }
 
         public void Update()
@@ -143,10 +145,22 @@ namespace MegabonkTogether.Scripts
 
             steamLobbyService.Poll();
 
-            if (ModConfig.SteamLobbySelfTest.Value && steamLobbySelfTest is { IsFinished: false })
+            // The two are mutually exclusive, and they have to be. Both own the same single Steam
+            // lobby: the self-test creates one while no matchmaker lobby exists, and the presence
+            // bridge leaves any Steam lobby it did not ask for — so left to run together, the
+            // bridge would tear down the self-test's lobby the moment it appeared.
+            var selfTestRunning = ModConfig.SteamLobbySelfTest.Value
+                && steamLobbySelfTest is { IsFinished: false };
+
+            if (selfTestRunning)
             {
                 steamLobbySelfTest.Advance();
+                return;
             }
+
+            // After Poll, so a lobby that finished being created this tick is already InLobby and
+            // the bridge can publish into it without waiting another quarter second.
+            steamLobbyPresenceService?.Poll();
         }
 
         private void PollUntilSettled(float delta)

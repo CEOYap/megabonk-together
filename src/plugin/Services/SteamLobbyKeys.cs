@@ -24,5 +24,15 @@ namespace MegabonkTogether.Services
 
         /// <summary>Per-member readiness, replacing union tags 73 and 74.</summary>
         public const string MemberReady = "ready";
+
+        /// <summary>
+        /// The WebSocket matchmaker's join code, carried inside the Steam lobby.
+        ///
+        /// <para>Distinct from <see cref="Code"/>, which is the Steam lobby's own. This one exists
+        /// only while the migration is half done: it is how a friend who accepts a Steam invite
+        /// finds their way into a session that is still being matched and carried by the old
+        /// transport. It disappears at Phase 4, when the Steam lobby <i>is</i> the session.</para>
+        /// </summary>
+        public const string MatchmakerCode = "mt_mm_code";
     }
 }
