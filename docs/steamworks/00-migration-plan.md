@@ -402,10 +402,13 @@ Steam lobbies, discovery by code, the protocol gate, and invites all work:
 | `+connect_lobby` launch invites | done, verified |
 | `SetRichPresence` connect string | done, verified (Join Game appears) |
 | Host name as lobby data | done |
+| Both players in one Steam lobby | done — host creates, client follows by room code |
+| Roster and readiness from Steam member data | done, **unverified** |
+| Retire tags 73 and 74 | done in the sense meant — stop sending when Steam can answer; numbers stay burned |
+| Persona names | done, **unverified** — cache plus `PersonaStateChange_t` |
 | Player count and mode as lobby data | **not done** — no lobby browser needs them yet |
-| `LobbyDataUpdate_t` | **not done** — readiness still rides tags 73/74 |
-| Retire tags 73 and 74 | **not done** |
-| **Exit criterion: find and join a lobby without the rendezvous server** | **NOT MET** |
+| `LobbyDataUpdate_t` | **not needed** — the panel already refreshes twice a second, and member data is read on that tick |
+| **Exit criterion: find and join a lobby without the rendezvous server** | **NOT MET, and cannot be met before Phase 4** |
 
 **What actually shipped is a bridge, not the replacement.** The Steam lobby carries the WebSocket
 matchmaker's room code as lobby data (`mt_mm_code`); discovery and invites are Steam's, and the
@@ -413,14 +416,20 @@ session itself is still matched and carried by the rendezvous server exactly as 
 deliberate — it makes invites work without touching the transport — but it means Phase 3's own
 exit criterion is unmet and the server cannot be decommissioned yet.
 
-**What is left in Phase 3**, in the order that makes sense:
+**Why the exit criterion cannot be met in Phase 3, and should be moved.** It reads "players can
+find and join a lobby without the rendezvous server", with the old transport still carrying
+gameplay. Finding is done — Steam does discovery, codes and invites. *Joining* is not, and cannot
+be: the rendezvous server is not only a matchmaker, it performs the NAT introduction that lets two
+LiteNetLib peers reach each other at all, and it relays when they cannot. Nothing short of SDR
+replaces that. **This criterion belongs to Phase 4**, and carrying it here makes Phase 3 look
+permanently unfinished for a reason that has nothing to do with lobbies.
 
-1. Move readiness onto lobby member data and stop sending tags 73 and 74. The keys are already
-   agreed (`ready`, and `character`/`skinType`/`hat` alongside it) and member data is verified
-   working. `LobbyDataUpdate_t` now has a viable mechanism — see `SteamCallback`.
-2. Make the Steam lobby the session's identity rather than a courier for someone else's code, so
-   `mt_mm_code` can go.
-3. Only then is the rendezvous server removable, which is Phase 5.
+What remains genuinely open:
+
+1. `character` / `skinType` / `hat` as member data, alongside `ready`. Same shape, same mechanism;
+   they are simply not moved yet.
+2. Player count and mode as lobby data, when something wants a browser.
+3. `mt_mm_code` disappears when the Steam lobby *is* the session, which is Phase 4's business.
 
 - ~~Handle `GameLobbyJoinRequested_t` (friends-list "Join Game")~~ and `LobbyDataUpdate_t`.
 - Filter the lobby list by protocol version — this is [P1-3](../netplay/01-critical-fixes.md#p1-3)

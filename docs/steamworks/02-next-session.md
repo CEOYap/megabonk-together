@@ -49,9 +49,41 @@ evidence about this shape.**
 
 **Phase 3's own exit criterion is not met.** What shipped is a bridge: the Steam lobby carries the
 WebSocket matchmaker's room code as `mt_mm_code`, and the session is still matched and carried by
-the rendezvous server. Invites and discovery are Steam's; the session is not. Order of remaining
-work is in [`00-migration-plan.md`](00-migration-plan.md) — readiness onto member data and tags 73
-and 74 retired, then the Steam lobby becoming the session's identity, then the server is removable.
+the rendezvous server. Invites and discovery are Steam's; the session is not.
+
+Both players are now **in** the host's Steam lobby — host creates and publishes, client follows by
+the room code — so the membership retiring tags 73 and 74 depends on exists. Nothing reads it yet.
+
+### Retiring tags 73 and 74: what actually blocks it
+
+Worth reading before starting, because the obvious approach does not work and the reason is not
+obvious.
+
+**The roster is keyed by `ConnectionId`; Steam member data is keyed by SteamID, and there is no
+mapping between them.** `Player` cannot carry a SteamID — it is serialized inside `LobbyUpdates`,
+union tag 0, and MemoryPack is positional, so widening it corrupts sessions between builds. So
+readiness cannot simply be re-pointed at member data while the roster stays as it is. The panel's
+member list has to come from the Steam lobby too, which is what
+[`../ui/00-lobby-panel.md`](../ui/00-lobby-panel.md) always intended. `LobbyMemberView.ConnectionId`
+is used in exactly one place — a GameObject name — so the panel itself is not the obstacle.
+
+**Three things are:**
+
+1. **The Start gate would be computed over a different set than the session.** `AreAllMembersReady`
+   decides whether the host may start, and a client that failed to reach the Steam lobby — host
+   without Steam, a search that found nothing — would be invisible to it. The host could start with
+   somebody not ready, silently. Any implementation needs an explicit guard that the Steam lobby's
+   membership matches the matchmaker roster, and must fall back to the tag path when it does not.
+2. **Names.** A roster from Steam needs persona names, and `GetFriendPersonaName` returns nothing
+   useful for a non-friend until their info has been requested and a `PersonaStateChange_t` has come
+   back. That is a cache and another callback, not a getter — the implementation for this game
+   described in [`03-observed-steam-usage.md`](03-observed-steam-usage.md) has a whole class for it.
+3. **"Delete 73 and 74" should mean "stop sending them when the Steam path is active"**, not remove
+   them. The fallback in (1) needs them, and they are permanently burned in the union either way.
+
+None of this is hard; all of it is easy to get subtly wrong, and it changes the most-verified thing
+on this branch. **Do it as its own change, with the two-account test available**, rather than
+tacking it onto something else.
 
 ## Two things deliberately parked
 
