@@ -1,3 +1,4 @@
+using MegabonkTogether.Common;
 using Steamworks;
 using System;
 using System.Collections.Generic;
@@ -18,13 +19,13 @@ namespace MegabonkTogether.Services
     /// offsets taken from <c>dump.cs</c>. No <c>ValueType</c>-derived proxy is involved, which is
     /// the specific thing that crashed Phase 2.</para>
     ///
-    /// <para><b>UNVERIFIED, and this is the reason the self-test exists.</b> The game pumps
-    /// <c>CallbackDispatcher.RunFrame</c> every frame, and that drains the process's single
+    /// <para><b>The obvious objection to polling has been tested and does not hold.</b> The game
+    /// pumps <c>CallbackDispatcher.RunFrame</c> every frame, which drains the process's single
     /// manual-dispatch pipe — including the <c>SteamAPICallCompleted_t</c> raised for <i>our</i>
-    /// call — then calls <c>FreeLastCallback</c>. If that release also invalidates the result for
-    /// <c>GetAPICallResult</c>, we will never observe our own call completing, and no amount of
-    /// polling will help. Nobody has measured which way it goes. <c>SteamLobbySelfTest</c> is built
-    /// to answer exactly that and to say which failure it saw.</para>
+    /// call — then calls <c>FreeLastCallback</c>. If that release also invalidated the result for
+    /// <c>GetAPICallResult</c>, none of this could work. It does not: <c>SteamLobbySelfTest</c>
+    /// created and read back a lobby with roughly fifteen pump cycles in between, so the two
+    /// mechanisms are independent rather than racing. Verified in game on buildid 21750826.</para>
     /// </summary>
     internal class SteamLobbyService : ISteamLobbyService
     {
@@ -42,7 +43,27 @@ namespace MegabonkTogether.Services
         private const int LobbyCreatedResultOffset = 0;
         private const int LobbyCreatedLobbyIdOffset = 8;
 
+        //   LobbyEnter_t     k_iCallback 504   m_ulSteamIDLobby @0x0 (ulong)
+        //                                      m_rgfChatPermissions @0x8 (uint)
+        //                                      m_bLocked @0xC (bool)
+        //                                      m_EChatRoomEnterResponse @0x10 (uint)
+        private const int LobbyEnterCallbackId = 504;
+        private const int LobbyEnterSize = 24;
+        private const int LobbyEnterLobbyIdOffset = 0;
+        private const int LobbyEnterResponseOffset = 16;
+
+        /// <summary><c>k_EChatRoomEnterResponseSuccess</c>. Every other value is a refusal.</summary>
+        private const uint ChatRoomEnterSuccess = 1;
+
         #endregion
+
+        /// <summary>Which result the in-flight call will produce.</summary>
+        private enum PendingCall
+        {
+            None,
+            Create,
+            Join,
+        }
 
         /// <summary>
         /// How long to wait for an in-flight call before giving up on it.
@@ -58,6 +79,7 @@ namespace MegabonkTogether.Services
         private readonly List<ulong> members = [];
 
         private SteamAPICall_t pendingCall;
+        private PendingCall pendingCallKind = PendingCall.None;
         private bool hasPendingCall;
         private float pendingCallElapsedSeconds;
         private float lastPollTime;
@@ -95,6 +117,7 @@ namespace MegabonkTogether.Services
                 // a friends-only or public one would advertise the mod's test runs to a friends
                 // list. Nothing about the migration needs visibility yet.
                 pendingCall = SteamMatchmaking.CreateLobby(ELobbyType.k_ELobbyTypePrivate, maxMembers);
+                pendingCallKind = PendingCall.Create;
                 hasPendingCall = true;
 
                 // Both, not just the elapsed count. lastPollTime survives from any previous call,
@@ -111,6 +134,44 @@ namespace MegabonkTogether.Services
             catch (Exception ex)
             {
                 Fail($"CreateLobby threw: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+        public void JoinLobby(ulong lobbyId)
+        {
+            if (!steamService.IsAvailable)
+            {
+                Fail("Steam is not available, so no lobby can be joined.");
+                return;
+            }
+
+            if (hasPendingCall || State == SteamLobbyState.InLobby)
+            {
+                Fail($"Refusing to join a lobby while {State}.");
+                return;
+            }
+
+            if (lobbyId == 0UL)
+            {
+                Fail("Refusing to join lobby id 0.");
+                return;
+            }
+
+            try
+            {
+                pendingCall = SteamMatchmaking.JoinLobby(new CSteamID(lobbyId));
+                pendingCallKind = PendingCall.Join;
+                hasPendingCall = true;
+                pendingCallElapsedSeconds = 0f;
+                lastPollTime = 0f;
+                State = SteamLobbyState.Pending;
+                lastError = "";
+
+                Plugin.Log.LogInfo($"[steam-lobby] JoinLobby {lobbyId} requested.");
+            }
+            catch (Exception ex)
+            {
+                Fail($"JoinLobby threw: {ex.GetType().Name}: {ex.Message}");
             }
         }
 
@@ -173,13 +234,9 @@ namespace MegabonkTogether.Services
             {
                 if (pendingCallElapsedSeconds >= PendingCallTimeoutSeconds)
                 {
+                    var kind = pendingCallKind;
                     ClearPending();
-                    Fail(
-                        "The CreateLobby result never arrived. The likely cause is the game's own "
-                        + "callback pump: it drains the process's single manual-dispatch pipe every "
-                        + "frame and frees each message, so our call result may be released before "
-                        + "we can read it. If this is what happened, polling cannot be made to work "
-                        + "and Phase 3 needs a different mechanism — see docs/steamworks/.");
+                    Fail($"The {kind} result never arrived within {PendingCallTimeoutSeconds:F0}s.");
                 }
 
                 return;
@@ -192,7 +249,21 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            ReadLobbyCreatedResult();
+            switch (pendingCallKind)
+            {
+                case PendingCall.Create:
+                    ReadLobbyCreatedResult();
+                    return;
+
+                case PendingCall.Join:
+                    ReadLobbyEnterResult();
+                    return;
+
+                default:
+                    ClearPending();
+                    Fail("A call completed with no record of what it was.");
+                    return;
+            }
         }
 
         /// <summary>
@@ -251,6 +322,81 @@ namespace MegabonkTogether.Services
                 Plugin.Log.LogInfo(
                     $"[steam-lobby] Lobby {LobbyId} created, owner {IsOwner}, {members.Count} member(s). "
                     + "Polled call results work on this install.");
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+
+        /// <summary>
+        /// Reads <c>LobbyEnter_t</c>, then applies the protocol gate.
+        ///
+        /// <para><b>The version is checked after entering, not before, and that is not a
+        /// compromise.</b> Lobby metadata is only readable once you are a member — before that
+        /// there is nothing to read except through the lobby list, which the browser filters
+        /// separately. Entering and leaving again costs a round trip and no state, and it is the
+        /// only way to gate a lobby reached by id or by an invite that never went through a
+        /// filtered list.</para>
+        /// </summary>
+        private void ReadLobbyEnterResult()
+        {
+            var buffer = Marshal.AllocHGlobal(LobbyEnterSize);
+            try
+            {
+                bool resultFailure;
+                bool got;
+                try
+                {
+                    got = SteamUtils.GetAPICallResult(
+                        pendingCall, buffer, LobbyEnterSize, LobbyEnterCallbackId, out resultFailure);
+                }
+                catch (Exception ex)
+                {
+                    ClearPending();
+                    Fail($"GetAPICallResult threw: {ex.GetType().Name}: {ex.Message}");
+                    return;
+                }
+
+                ClearPending();
+
+                if (!got || resultFailure)
+                {
+                    Fail($"GetAPICallResult returned {got} with failure flag {resultFailure}.");
+                    return;
+                }
+
+                var lobbyId = (ulong)Marshal.ReadInt64(buffer, LobbyEnterLobbyIdOffset);
+                var response = (uint)Marshal.ReadInt32(buffer, LobbyEnterResponseOffset);
+
+                if (response != ChatRoomEnterSuccess)
+                {
+                    Fail($"Steam refused entry to lobby {lobbyId}: EChatRoomEnterResponse {response}.");
+                    return;
+                }
+
+                LobbyId = lobbyId;
+                State = SteamLobbyState.InLobby;
+                lastError = "";
+                RefreshMembers();
+
+                var published = GetLobbyData(Protocol.VersionKey);
+                if (!Protocol.IsCompatible(published))
+                {
+                    // Left immediately rather than tolerated. A version mismatch is exactly the
+                    // silent-corruption case the constant exists to prevent, and an empty value
+                    // means a build from before the gate existed — refused on purpose.
+                    var describe = string.IsNullOrEmpty(published) ? "no version" : $"version '{published}'";
+                    LeaveLobby();
+                    Fail(
+                        $"Lobby {lobbyId} publishes {describe}; this build speaks protocol "
+                        + $"{Protocol.Version}. Left it. Both players need the same mod version.");
+                    return;
+                }
+
+                Plugin.Log.LogInfo(
+                    $"[steam-lobby] Joined lobby {LobbyId}, owner {IsOwner}, {members.Count} member(s), "
+                    + $"protocol {published}.");
             }
             finally
             {
@@ -378,6 +524,7 @@ namespace MegabonkTogether.Services
         private void ClearPending()
         {
             hasPendingCall = false;
+            pendingCallKind = PendingCall.None;
             lastPollTime = 0f;
             pendingCallElapsedSeconds = 0f;
         }

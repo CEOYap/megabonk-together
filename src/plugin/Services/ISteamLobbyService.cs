@@ -45,6 +45,17 @@ namespace MegabonkTogether.Services
         /// </summary>
         void CreateLobby(int maxMembers);
 
+        /// <summary>
+        /// Starts joining an existing lobby by id. Asynchronous, same as
+        /// <see cref="CreateLobby"/>.
+        ///
+        /// <para>On entry the lobby's published protocol version is checked, and a lobby that does
+        /// not match is left again with <see cref="State"/> set to
+        /// <see cref="SteamLobbyState.Failed"/>. The check happens after entering because lobby
+        /// metadata is only readable to a member — see the remarks on the implementation.</para>
+        /// </summary>
+        void JoinLobby(ulong lobbyId);
+
         /// <summary>Leaves the current lobby, if any. Safe to call when not in one.</summary>
         void LeaveLobby();
 
