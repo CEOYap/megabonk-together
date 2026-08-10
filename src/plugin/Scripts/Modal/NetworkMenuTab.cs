@@ -71,6 +71,33 @@ namespace MegabonkTogether.Scripts
             CreateStopButton();
             CreateFriendliesUI();
             CreateNetplayOptionsUI();
+
+            TryJoinFromInvite();
+        }
+
+        /// <summary>
+        /// If a Steam invite is waiting, join it now rather than leaving the player to find the
+        /// pre-filled code themselves.
+        ///
+        /// <para>Here, at the end of <see cref="OnUICreated"/>, because everything
+        /// <see cref="JoinWithCode"/> touches — the code field, the loader, the friendlies panel —
+        /// has just been built. Running it any earlier dereferences a half-made screen.</para>
+        ///
+        /// <para>The invite is consumed, so the pre-fill in <see cref="UpdateFriendliesUI"/> will
+        /// not offer it a second time. The two paths cover different orderings: this one when the
+        /// menu opens <i>because</i> an invite arrived, the pre-fill when an invite arrives while
+        /// the menu is already open.</para>
+        /// </summary>
+        private void TryJoinFromInvite()
+        {
+            var invited = steamInviteService?.ConsumeJoinCode();
+            if (string.IsNullOrEmpty(invited))
+            {
+                return;
+            }
+
+            Plugin.Log.LogInfo($"[steam-invite] Joining room {invited} from an invite.");
+            JoinWithCode(invited);
         }
 
         private void CreateCloseButton()
@@ -916,6 +943,16 @@ namespace MegabonkTogether.Scripts
                 return;
             }
 
+            JoinWithCode(code);
+        }
+
+        /// <summary>
+        /// Joins a room by code. Factored out of <see cref="OnJoinClicked"/> so that accepting a
+        /// Steam invite takes exactly the same path a player pressing Join does — rather than a
+        /// parallel one that would drift out of step with it.
+        /// </summary>
+        internal void JoinWithCode(string code)
+        {
             Plugin.Instance.Mode.Mode = NetworkModeType.Friendlies;
             Plugin.Instance.Mode.Role = Role.Client;
             Plugin.Instance.Mode.RoomCode = code;
