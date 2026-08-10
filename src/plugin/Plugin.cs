@@ -218,6 +218,11 @@ namespace MegabonkTogether
             ClassInjector.RegisterTypeInIl2Cpp<TargetSwitcherManager>();
             ClassInjector.RegisterTypeInIl2Cpp<EnemyInterpolatorManager>();
             ClassInjector.RegisterTypeInIl2Cpp<SteamTicker>();
+
+            // Not a MonoBehaviour: this one derives from Steamworks' abstract CallResult so the
+            // game's own callback dispatcher will accept it. Registered here with everything else
+            // because it still has to exist in the IL2CPP domain before it can be constructed.
+            ClassInjector.RegisterTypeInIl2Cpp<Services.SteamCallResult>();
             ClassInjector.RegisterTypeInIl2Cpp<InteractableReviver>();
             ClassInjector.RegisterTypeInIl2Cpp<NotificationQueueManager>();
 

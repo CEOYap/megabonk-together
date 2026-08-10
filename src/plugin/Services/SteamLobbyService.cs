@@ -98,6 +98,14 @@ namespace MegabonkTogether.Services
 
         private SteamAPICall_t pendingCall;
         private PendingCall pendingCallKind = PendingCall.None;
+
+        /// <summary>
+        /// Registered with the game's dispatcher for the duration of a call, so the result is
+        /// delivered rather than raced for. Held in a field because unregistering needs the same
+        /// instance, and because letting it be collected while the dispatcher holds a reference
+        /// would be a use-after-free on the native side.
+        /// </summary>
+        private SteamCallResult pendingCallResult;
         private bool hasPendingCall;
         private float pendingCallElapsedSeconds;
         private float lastPollTime;
@@ -182,6 +190,7 @@ namespace MegabonkTogether.Services
                 pendingCall = SteamMatchmaking.CreateLobby(ELobbyType.k_ELobbyTypePublic, maxMembers);
                 pendingCallKind = PendingCall.Create;
                 hasPendingCall = true;
+                RegisterPendingCallResult();
 
                 // Both, not just the elapsed count. lastPollTime survives from any previous call,
                 // and leaving it set would make this call's first poll add every second since that
@@ -225,6 +234,7 @@ namespace MegabonkTogether.Services
                 pendingCall = SteamMatchmaking.JoinLobby(new CSteamID(lobbyId));
                 pendingCallKind = PendingCall.Join;
                 hasPendingCall = true;
+                RegisterPendingCallResult();
                 pendingCallElapsedSeconds = 0f;
                 lastPollTime = 0f;
                 State = SteamLobbyState.Pending;
@@ -270,6 +280,93 @@ namespace MegabonkTogether.Services
             // Cleared or the friends list keeps offering Join Game for a lobby we have left.
             PublishConnectString();
         }
+
+        /// <summary>
+        /// Registers a <see cref="SteamCallResult"/> for the call now in flight, so the game's own
+        /// callback pump hands us the result instead of consuming it.
+        ///
+        /// <para>Failure here is not fatal and is not treated as such: the poll in <see cref="Poll"/>
+        /// remains, and between them whichever arrives first wins. That redundancy is deliberate
+        /// while the injected type is unproven — if registration silently never dispatches, the
+        /// behaviour is exactly what it was before this existed rather than worse.</para>
+        /// </summary>
+        private void RegisterPendingCallResult()
+        {
+            try
+            {
+                pendingCallResult = new SteamCallResult { Handler = OnResultDelivered };
+                CallbackDispatcher.Register(pendingCall, pendingCallResult);
+            }
+            catch (Exception ex)
+            {
+                pendingCallResult = null;
+                Plugin.Log.LogWarning(
+                    $"[steam-lobby] Could not register a call result, falling back to polling: "
+                    + $"{ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// The dispatcher delivering our result, from inside the game's own <c>Update</c>.
+        ///
+        /// <para><c>result</c> is the dispatcher's buffer and is freed as soon as this returns, so
+        /// it is read here and not kept.</para>
+        /// </summary>
+        private void OnResultDelivered(IntPtr result, bool failed)
+        {
+            // The poll may have got there first on a lucky frame. Whoever is second finds nothing
+            // pending and does nothing, rather than applying the same result twice.
+            if (!hasPendingCall)
+            {
+                return;
+            }
+
+            Plugin.Log.LogInfo("[steam-lobby] Result delivered by the game's dispatcher.");
+            ApplyResult(pendingCallKind, result, failed);
+        }
+
+        /// <summary>
+        /// The one place a completed call is turned into state, whichever path delivered it.
+        /// </summary>
+        private void ApplyResult(PendingCall kind, IntPtr result, bool failed)
+        {
+            ClearPending();
+
+            if (failed)
+            {
+                Fail($"Steam reported a failure completing the {kind} call.");
+                return;
+            }
+
+            switch (kind)
+            {
+                case PendingCall.Create:
+                    ApplyLobbyCreated(result);
+                    return;
+
+                case PendingCall.Join:
+                    ApplyLobbyEnter(result);
+                    return;
+
+                case PendingCall.List:
+                    ApplyLobbyMatchList(result);
+                    return;
+
+                default:
+                    Fail("A call completed with no record of what it was.");
+                    return;
+            }
+        }
+
+        /// <summary>Result size and callback id for each kind, kept next to the layouts above.</summary>
+        private static (int Size, int CallbackId) ResultShapeFor(PendingCall kind) =>
+            kind switch
+            {
+                PendingCall.Create => (LobbyCreatedSize, LobbyCreatedCallbackId),
+                PendingCall.Join => (LobbyEnterSize, LobbyEnterCallbackId),
+                PendingCall.List => (LobbyMatchListSize, LobbyMatchListCallbackId),
+                _ => (0, 0),
+            };
 
         public void Poll()
         {
@@ -317,24 +414,59 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            switch (pendingCallKind)
+            ReadPolledResult();
+        }
+
+        /// <summary>
+        /// The fallback path: fetch the result ourselves, for the case where the dispatcher never
+        /// delivered it.
+        ///
+        /// <para>Kept alongside the registered <see cref="SteamCallResult"/> rather than replaced by
+        /// it. If registration works this rarely runs; if the injected type silently never
+        /// dispatches, this is still the mechanism and the behaviour is what it was before. The one
+        /// thing it cannot do is beat the game's pump, which is the whole reason the registration
+        /// exists.</para>
+        /// </summary>
+        private void ReadPolledResult()
+        {
+            var kind = pendingCallKind;
+            var (size, callbackId) = ResultShapeFor(kind);
+            if (size == 0)
             {
-                case PendingCall.Create:
-                    ReadLobbyCreatedResult();
-                    return;
+                ClearPending();
+                Fail("A call completed with no record of what it was.");
+                return;
+            }
 
-                case PendingCall.Join:
-                    ReadLobbyEnterResult();
-                    return;
-
-                case PendingCall.List:
-                    ReadLobbyMatchListResult();
-                    return;
-
-                default:
+            var buffer = Marshal.AllocHGlobal(size);
+            try
+            {
+                bool resultFailure;
+                bool got;
+                try
+                {
+                    got = SteamUtils.GetAPICallResult(pendingCall, buffer, size, callbackId, out resultFailure);
+                }
+                catch (Exception ex)
+                {
                     ClearPending();
-                    Fail("A call completed with no record of what it was.");
+                    Fail($"GetAPICallResult threw: {ex.GetType().Name}: {ex.Message}");
                     return;
+                }
+
+                if (!got || resultFailure)
+                {
+                    var reason = DescribeCallFailure();
+                    ClearPending();
+                    Fail($"The result could not be retrieved: {reason}.");
+                    return;
+                }
+
+                ApplyResult(kind, buffer, failed: false);
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
             }
         }
 
@@ -347,59 +479,26 @@ namespace MegabonkTogether.Services
         /// the dump. Phase 2 crashed reading a field off a <c>ValueType</c>-derived proxy that Steam
         /// had filled through an <c>out</c> parameter; this shape cannot fail that way.</para>
         /// </summary>
-        private void ReadLobbyCreatedResult()
+        private void ApplyLobbyCreated(IntPtr buffer)
         {
-            var buffer = Marshal.AllocHGlobal(LobbyCreatedSize);
-            try
+            var result = (EResult)Marshal.ReadInt32(buffer, LobbyCreatedResultOffset);
+            var lobbyId = (ulong)Marshal.ReadInt64(buffer, LobbyCreatedLobbyIdOffset);
+
+            if (result != EResult.k_EResultOK)
             {
-                bool resultFailure;
-                bool got;
-                try
-                {
-                    got = SteamUtils.GetAPICallResult(
-                        pendingCall, buffer, LobbyCreatedSize, LobbyCreatedCallbackId, out resultFailure);
-                }
-                catch (Exception ex)
-                {
-                    ClearPending();
-                    Fail($"GetAPICallResult threw: {ex.GetType().Name}: {ex.Message}");
-                    return;
-                }
-
-                ClearPending();
-
-                if (!got || resultFailure)
-                {
-                    Fail(
-                        $"GetAPICallResult returned {got} with failure flag {resultFailure}. The call "
-                        + "completed, so the handle was valid — this is the result itself being "
-                        + "unavailable, which is what the game's pump consuming it would look like.");
-                    return;
-                }
-
-                var result = (EResult)Marshal.ReadInt32(buffer, LobbyCreatedResultOffset);
-                var lobbyId = (ulong)Marshal.ReadInt64(buffer, LobbyCreatedLobbyIdOffset);
-
-                if (result != EResult.k_EResultOK)
-                {
-                    Fail($"Steam refused the lobby: EResult {result}.");
-                    return;
-                }
-
-                LobbyId = lobbyId;
-                State = SteamLobbyState.InLobby;
-                lastError = "";
-                RefreshMembers();
-                PublishHostData();
-
-                Plugin.Log.LogInfo(
-                    $"[steam-lobby] Lobby {LobbyId} created, code {LobbyCode}, owner {IsOwner}, "
-                    + $"{members.Count} member(s).");
+                Fail($"Steam refused the lobby: EResult {result}.");
+                return;
             }
-            finally
-            {
-                Marshal.FreeHGlobal(buffer);
-            }
+
+            LobbyId = lobbyId;
+            State = SteamLobbyState.InLobby;
+            lastError = "";
+            RefreshMembers();
+            PublishHostData();
+
+            Plugin.Log.LogInfo(
+                $"[steam-lobby] Lobby {LobbyId} created, code {LobbyCode}, owner {IsOwner}, "
+                + $"{members.Count} member(s).");
         }
 
         /// <summary>
@@ -412,72 +511,42 @@ namespace MegabonkTogether.Services
         /// only way to gate a lobby reached by id or by an invite that never went through a
         /// filtered list.</para>
         /// </summary>
-        private void ReadLobbyEnterResult()
+        private void ApplyLobbyEnter(IntPtr buffer)
         {
-            var buffer = Marshal.AllocHGlobal(LobbyEnterSize);
-            try
+            var lobbyId = (ulong)Marshal.ReadInt64(buffer, LobbyEnterLobbyIdOffset);
+            var response = (uint)Marshal.ReadInt32(buffer, LobbyEnterResponseOffset);
+
+            if (response != ChatRoomEnterSuccess)
             {
-                bool resultFailure;
-                bool got;
-                try
-                {
-                    got = SteamUtils.GetAPICallResult(
-                        pendingCall, buffer, LobbyEnterSize, LobbyEnterCallbackId, out resultFailure);
-                }
-                catch (Exception ex)
-                {
-                    ClearPending();
-                    Fail($"GetAPICallResult threw: {ex.GetType().Name}: {ex.Message}");
-                    return;
-                }
-
-                ClearPending();
-
-                if (!got || resultFailure)
-                {
-                    Fail($"GetAPICallResult returned {got} with failure flag {resultFailure}.");
-                    return;
-                }
-
-                var lobbyId = (ulong)Marshal.ReadInt64(buffer, LobbyEnterLobbyIdOffset);
-                var response = (uint)Marshal.ReadInt32(buffer, LobbyEnterResponseOffset);
-
-                if (response != ChatRoomEnterSuccess)
-                {
-                    Fail($"Steam refused entry to lobby {lobbyId}: EChatRoomEnterResponse {response}.");
-                    return;
-                }
-
-                LobbyId = lobbyId;
-                State = SteamLobbyState.InLobby;
-                lastError = "";
-                RefreshMembers();
-
-                var published = GetLobbyData(Protocol.VersionKey);
-                if (!Protocol.IsCompatible(published))
-                {
-                    // Left immediately rather than tolerated. A version mismatch is exactly the
-                    // silent-corruption case the constant exists to prevent, and an empty value
-                    // means a build from before the gate existed — refused on purpose.
-                    var describe = string.IsNullOrEmpty(published) ? "no version" : $"version '{published}'";
-                    LeaveLobby();
-                    Fail(
-                        $"Lobby {lobbyId} publishes {describe}; this build speaks protocol "
-                        + $"{Protocol.Version}. Left it. Both players need the same mod version.");
-                    return;
-                }
-
-                LobbyCode = GetLobbyData(SteamLobbyKeys.Code);
-                PublishConnectString();
-
-                Plugin.Log.LogInfo(
-                    $"[steam-lobby] Joined lobby {LobbyId}, code {LobbyCode}, owner {IsOwner}, "
-                    + $"{members.Count} member(s), protocol {published}.");
+                Fail($"Steam refused entry to lobby {lobbyId}: EChatRoomEnterResponse {response}.");
+                return;
             }
-            finally
+
+            LobbyId = lobbyId;
+            State = SteamLobbyState.InLobby;
+            lastError = "";
+            RefreshMembers();
+
+            var published = GetLobbyData(Protocol.VersionKey);
+            if (!Protocol.IsCompatible(published))
             {
-                Marshal.FreeHGlobal(buffer);
+                // Left immediately rather than tolerated. A version mismatch is exactly the
+                // silent-corruption case the constant exists to prevent, and an empty value
+                // means a build from before the gate existed — refused on purpose.
+                var describe = string.IsNullOrEmpty(published) ? "no version" : $"version '{published}'";
+                LeaveLobby();
+                Fail(
+                    $"Lobby {lobbyId} publishes {describe}; this build speaks protocol "
+                    + $"{Protocol.Version}. Left it. Both players need the same mod version.");
+                return;
             }
+
+            LobbyCode = GetLobbyData(SteamLobbyKeys.Code);
+            PublishConnectString();
+
+            Plugin.Log.LogInfo(
+                $"[steam-lobby] Joined lobby {LobbyId}, code {LobbyCode}, owner {IsOwner}, "
+                + $"{members.Count} member(s), protocol {published}.");
         }
 
         public void JoinByCode(string code)
@@ -536,6 +605,7 @@ namespace MegabonkTogether.Services
                 pendingJoinCode = normalised;
                 joinAfterSearch = joinWhenFound;
                 hasPendingCall = true;
+                RegisterPendingCallResult();
                 pendingCallElapsedSeconds = 0f;
                 lastPollTime = 0f;
 
@@ -582,87 +652,57 @@ namespace MegabonkTogether.Services
         /// <summary>
         /// Reads <c>LobbyMatchList_t</c> and joins the single lobby it should contain.
         /// </summary>
-        private void ReadLobbyMatchListResult()
+        private void ApplyLobbyMatchList(IntPtr buffer)
         {
-            var buffer = Marshal.AllocHGlobal(LobbyMatchListSize);
             var code = pendingJoinCode;
-            try
+            var matching = (uint)Marshal.ReadInt32(buffer, LobbyMatchListCountOffset);
+            State = stateBeforeSearch;
+
+            if (matching == 0)
             {
-                bool resultFailure;
-                bool got;
-                try
-                {
-                    got = SteamUtils.GetAPICallResult(
-                        pendingCall, buffer, LobbyMatchListSize, LobbyMatchListCallbackId, out resultFailure);
-                }
-                catch (Exception ex)
-                {
-                    ClearPending();
-                    Fail($"GetAPICallResult threw: {ex.GetType().Name}: {ex.Message}");
-                    return;
-                }
-
-                ClearPending();
-
-                if (!got || resultFailure)
-                {
-                    Fail($"GetAPICallResult returned {got} with failure flag {resultFailure}.");
-                    return;
-                }
-
-                var matching = (uint)Marshal.ReadInt32(buffer, LobbyMatchListCountOffset);
-                State = stateBeforeSearch;
-
-                if (matching == 0)
-                {
-                    SearchState = SteamLobbySearchState.Completed;
-                    FoundLobbyId = 0UL;
-
-                    if (!joinAfterSearch)
-                    {
-                        // Not a failure on the search-only path: "nothing matched" is a result.
-                        Plugin.Log.LogInfo($"[steam-lobby] No lobby matched code {code}.");
-                        return;
-                    }
-
-                    // One message for both causes on purpose. A player cannot tell "no such lobby"
-                    // from "that lobby is a different mod version", and neither can we — the version
-                    // filter is applied by Steam, so a mismatched lobby is simply absent from the
-                    // results rather than reported as incompatible.
-                    Fail(
-                        $"No lobby found with code {code}. Either nobody is hosting it, or the host "
-                        + "is running a different version of the mod.");
-                    return;
-                }
-
-                ulong lobbyId;
-                try
-                {
-                    lobbyId = SteamMatchmaking.GetLobbyByIndex(0).m_SteamID;
-                }
-                catch (Exception ex)
-                {
-                    SearchState = SteamLobbySearchState.Failed;
-                    Fail($"GetLobbyByIndex threw: {ex.GetType().Name}: {ex.Message}");
-                    return;
-                }
-
                 SearchState = SteamLobbySearchState.Completed;
-                FoundLobbyId = lobbyId;
+                FoundLobbyId = 0UL;
 
                 if (!joinAfterSearch)
                 {
-                    Plugin.Log.LogInfo($"[steam-lobby] Code {code} resolved to lobby {lobbyId}.");
+                    // Not a failure on the search-only path: "nothing matched" is a result.
+                    Plugin.Log.LogInfo($"[steam-lobby] No lobby matched code {code}.");
                     return;
                 }
 
-                Plugin.Log.LogInfo($"[steam-lobby] Code {code} resolved to lobby {lobbyId}; joining.");
-                JoinLobby(lobbyId);
+                // One message for both causes on purpose. A player cannot tell "no such lobby"
+                // from "that lobby is a different mod version", and neither can we — the version
+                // filter is applied by Steam, so a mismatched lobby is simply absent from the
+                // results rather than reported as incompatible.
+                Fail(
+                    $"No lobby found with code {code}. Either nobody is hosting it, or the host "
+                    + "is running a different version of the mod.");
+                return;
             }
-            finally
+
+            ulong lobbyId;
+            try
             {
-                Marshal.FreeHGlobal(buffer);
+                lobbyId = SteamMatchmaking.GetLobbyByIndex(0).m_SteamID;
             }
+            catch (Exception ex)
+            {
+                SearchState = SteamLobbySearchState.Failed;
+                Fail($"GetLobbyByIndex threw: {ex.GetType().Name}: {ex.Message}");
+                return;
+            }
+
+            SearchState = SteamLobbySearchState.Completed;
+            FoundLobbyId = lobbyId;
+
+            if (!joinAfterSearch)
+            {
+                Plugin.Log.LogInfo($"[steam-lobby] Code {code} resolved to lobby {lobbyId}.");
+                return;
+            }
+
+            Plugin.Log.LogInfo($"[steam-lobby] Code {code} resolved to lobby {lobbyId}; joining.");
+            JoinLobby(lobbyId);
         }
 
         /// <summary>
@@ -876,6 +916,23 @@ namespace MegabonkTogether.Services
 
         private void ClearPending()
         {
+            // Unregistered before anything else: the dispatcher holds this instance, and a result
+            // arriving for a call we have finished with would re-enter a cleared state machine.
+            if (pendingCallResult != null)
+            {
+                try
+                {
+                    CallbackDispatcher.Unregister(pendingCall, pendingCallResult);
+                }
+                catch (Exception ex)
+                {
+                    Plugin.Log.LogWarning(
+                        $"[steam-lobby] Unregistering a call result threw: {ex.GetType().Name}: {ex.Message}");
+                }
+
+                pendingCallResult = null;
+            }
+
             hasPendingCall = false;
             pendingCallKind = PendingCall.None;
             lastPollTime = 0f;
