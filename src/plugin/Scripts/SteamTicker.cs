@@ -58,6 +58,7 @@ namespace MegabonkTogether.Scripts
 
         private bool settled;
         private bool loggedGiveUp;
+        private bool reappliedStackTraces;
 
         public void Awake()
         {
@@ -71,6 +72,15 @@ namespace MegabonkTogether.Scripts
 
         public void Update()
         {
+            if (!reappliedStackTraces)
+            {
+                // A frame has run, so the game has finished setting its own stack-trace policy and
+                // ours will not be overwritten by it.
+                reappliedStackTraces = true;
+                Helpers.UnityDiagnostics.AllowReapply();
+                Helpers.UnityDiagnostics.EnableStackTraces();
+            }
+
             if (steamService == null)
             {
                 return;

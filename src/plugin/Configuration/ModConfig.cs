@@ -1,4 +1,4 @@
-using BepInEx.Configuration;
+﻿using BepInEx.Configuration;
 
 namespace MegabonkTogether.Configuration
 {
@@ -21,6 +21,7 @@ namespace MegabonkTogether.Configuration
         public static ConfigEntry<bool> LogBandwidth { get; private set; }
         public static ConfigEntry<bool> LogSteamStatus { get; private set; }
         public static ConfigEntry<bool> SteamLobbySelfTest { get; private set; }
+        public static ConfigEntry<bool> LogUnityStackTraces { get; private set; }
 
         public static void Initialize(ConfigFile config)
         {
@@ -95,6 +96,16 @@ namespace MegabonkTogether.Configuration
                 "member data, then leave it, and log what happened. Off by default. This exists " +
                 "to prove the Steamworks migration's lobby primitives on a real install; it " +
                 "changes nothing about how you play and needs only one player."
+            );
+            LogUnityStackTraces = config.Bind(
+                "Diagnostics",
+                "LogUnityStackTraces",
+                false,
+                "Re-enable Unity's script stack traces, so errors in LogOutput.log say where they " +
+                "came from. The game ships with them off, which is why a NullReferenceException " +
+                "there is a bare one-line message. Off by default because it changes logging for " +
+                "the whole game, not just the mod. Turn it on for one run when chasing an " +
+                "unattributed error, then turn it off."
             );
             EncounterInputGraceSeconds = config.Bind(
                 "Gameplay",

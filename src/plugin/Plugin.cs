@@ -154,6 +154,9 @@ namespace MegabonkTogether
             Log.LogInfo($"Plugin {MyPluginInfo.PLUGIN_GUID} is loaded!");
 
             ModConfig.Initialize(Config);
+
+            // Early, so anything that goes wrong during our own startup is attributable too.
+            Helpers.UnityDiagnostics.EnableStackTraces();
             Log.LogInfo($"Player name set to: {ModConfig.PlayerName.Value}");
 
             // Diagnostic, delete once the client-side exception storm is attributed. Called here
