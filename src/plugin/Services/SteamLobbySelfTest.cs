@@ -41,9 +41,15 @@ namespace MegabonkTogether.Services
         private readonly ISteamService steamService;
         private readonly ISteamLobbyService lobbyService;
 
+        /// <summary>Roughly nine seconds of grace for Steam to index a lobby it has just created.</summary>
+        private const int MaxSearchAttempts = 6;
+        private const float SearchRetryIntervalSeconds = 1.5f;
+
         private Step step = Step.NotStarted;
         private bool stringsPassed;
         private string searchedCode = "";
+        private int searchAttempts;
+        private float nextSearchAt;
 
         public SteamLobbySelfTest(ISteamService steamService, ISteamLobbyService lobbyService)
         {
@@ -91,43 +97,82 @@ namespace MegabonkTogether.Services
                 case Step.LobbyData:
                     RunLobbyDataRoundTrip();
 
-                    // The code has to be captured before leaving: LeaveLobby clears it, and the
-                    // search below is the only part of the discovery path a single player can
-                    // exercise at all.
                     searchedCode = lobbyService.LobbyCode;
-                    lobbyService.LeaveLobby();
-
                     if (string.IsNullOrEmpty(searchedCode))
                     {
+                        lobbyService.LeaveLobby();
                         Finish(false, "the host published no lobby code");
                         return;
                     }
 
-                    lobbyService.JoinByCode(searchedCode);
+                    // Searched from *inside* the lobby, which the first version of this test got
+                    // wrong: it left first, and the last member leaving destroys the lobby, so it
+                    // was searching for something that no longer existed and reporting the empty
+                    // result as a search failure.
                     step = Step.AwaitingSearch;
+                    StartSearchAttempt();
                     return;
 
                 case Step.AwaitingSearch:
-                    if (lobbyService.State == SteamLobbyState.Pending)
-                    {
-                        return;
-                    }
-
-                    // Rejoining our own just-left lobby is a real round trip through
-                    // RequestLobbyList with the code and protocol filters, which is the half of
-                    // "join by code" that does not need a second player. What it cannot prove is
-                    // that a *different* machine can find it, because Steam's lobby list is
-                    // eventually consistent and we may be reading our own recent write.
-                    var found = lobbyService.State == SteamLobbyState.InLobby;
-                    lobbyService.LeaveLobby();
-
-                    Finish(
-                        found,
-                        found
-                            ? $"lobby created, written to, read back, found again by code {searchedCode} and left"
-                            : $"code {searchedCode} did not come back from the lobby list");
+                    AdvanceSearch();
                     return;
             }
+        }
+
+        /// <summary>
+        /// Searches for our own lobby, retrying for a few seconds.
+        ///
+        /// <para>Steam's lobby list is an index, not the lobby itself, and a lobby created and
+        /// written to a moment ago may not be in it yet. A single attempt would report an indexing
+        /// delay as a broken search.</para>
+        /// </summary>
+        private void AdvanceSearch()
+        {
+            if (lobbyService.SearchState == SteamLobbySearchState.Searching)
+            {
+                return;
+            }
+
+            if (lobbyService.FoundLobbyId != 0UL)
+            {
+                var matchedOurs = lobbyService.FoundLobbyId == lobbyService.LobbyId;
+                lobbyService.LeaveLobby();
+
+                Finish(
+                    matchedOurs,
+                    matchedOurs
+                        ? $"lobby created, written to, read back, and found by code {searchedCode}"
+                        : $"code {searchedCode} matched lobby {lobbyService.FoundLobbyId}, not ours");
+                return;
+            }
+
+            if (searchAttempts < MaxSearchAttempts)
+            {
+                if (UnityEngine.Time.unscaledTime >= nextSearchAt)
+                {
+                    StartSearchAttempt();
+                }
+
+                return;
+            }
+
+            lobbyService.LeaveLobby();
+
+            // Not reported as a pass or a clean fail, because a single player cannot tell the two
+            // apart: either the filtered search does not work, or Steam declines to return a lobby
+            // to the machine already sitting in it. Only a second machine settles that.
+            Finish(
+                false,
+                $"code {searchedCode} never came back from the lobby list after {MaxSearchAttempts} "
+                + "attempts. Inconclusive on one machine — this is either a broken search or Steam "
+                + "not listing a lobby back to its own member. A second player settles it.");
+        }
+
+        private void StartSearchAttempt()
+        {
+            searchAttempts++;
+            nextSearchAt = UnityEngine.Time.unscaledTime + SearchRetryIntervalSeconds;
+            lobbyService.FindLobbyByCode(searchedCode);
         }
 
         /// <summary>

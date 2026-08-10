@@ -130,7 +130,7 @@ namespace MegabonkTogether.Scripts
             // not guarantee execution order between two default-priority scripts. This narrows the
             // window rather than closing it. If InvalidHandle still appears, the answer is not a
             // faster poll — it is to stop depending on the shared pipe.
-            if (steamLobbyService.State != SteamLobbyState.Pending)
+            if (!steamLobbyService.HasPendingCall)
             {
                 lobbyPollAccumulator += delta;
                 if (lobbyPollAccumulator < LobbyPollIntervalSeconds)

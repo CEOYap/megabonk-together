@@ -107,6 +107,15 @@ namespace MegabonkTogether.Services
         /// <summary>The code the in-flight search is looking for, held so the result can say so.</summary>
         private string pendingJoinCode = "";
 
+        /// <summary>Whether the in-flight search should join what it finds.</summary>
+        private bool joinAfterSearch;
+
+        /// <summary>
+        /// Restored when a search-only completes. A search does not change lobby membership, so it
+        /// must not leave <see cref="State"/> saying it did.
+        /// </summary>
+        private SteamLobbyState stateBeforeSearch = SteamLobbyState.None;
+
         /// <summary>
         /// Codes avoid characters that are misread when spoken or retyped: no O against 0, no I or
         /// l against 1. Thirty-two symbols over six places is about a billion codes, which is
@@ -124,6 +133,12 @@ namespace MegabonkTogether.Services
         public bool IsOwner { get; private set; }
 
         public ulong LaunchLobbyId { get; }
+
+        public bool HasPendingCall => hasPendingCall;
+
+        public SteamLobbySearchState SearchState { get; private set; } = SteamLobbySearchState.Idle;
+
+        public ulong FoundLobbyId { get; private set; }
 
         public SteamLobbyService(ISteamService steamService)
         {
@@ -467,21 +482,35 @@ namespace MegabonkTogether.Services
 
         public void JoinByCode(string code)
         {
+            if (State == SteamLobbyState.InLobby)
+            {
+                Fail("Refusing to join a lobby while already in one.");
+                return;
+            }
+
+            StartSearch(code, joinWhenFound: true);
+        }
+
+        public void FindLobbyByCode(string code) => StartSearch(code, joinWhenFound: false);
+
+        private void StartSearch(string code, bool joinWhenFound)
+        {
             if (!steamService.IsAvailable)
             {
                 Fail("Steam is not available, so no lobby can be searched for.");
                 return;
             }
 
-            if (hasPendingCall || State == SteamLobbyState.InLobby)
+            if (hasPendingCall)
             {
-                Fail($"Refusing to search for a lobby while {State}.");
+                Fail("Refusing to search while another Steam call is in flight.");
                 return;
             }
 
             var normalised = NormaliseCode(code);
             if (normalised.Length != CodeLength)
             {
+                SearchState = SteamLobbySearchState.Failed;
                 Fail($"'{code}' is not a {CodeLength}-character lobby code.");
                 return;
             }
@@ -505,13 +534,23 @@ namespace MegabonkTogether.Services
                 pendingCall = SteamMatchmaking.RequestLobbyList();
                 pendingCallKind = PendingCall.List;
                 pendingJoinCode = normalised;
+                joinAfterSearch = joinWhenFound;
                 hasPendingCall = true;
                 pendingCallElapsedSeconds = 0f;
                 lastPollTime = 0f;
+
+                SearchState = SteamLobbySearchState.Searching;
+                FoundLobbyId = 0UL;
+
+                // Remembered rather than assumed None: a search-only can run from inside a lobby,
+                // and it must give membership back exactly as it found it.
+                stateBeforeSearch = State;
                 State = SteamLobbyState.Pending;
                 lastError = "";
 
-                Plugin.Log.LogInfo($"[steam-lobby] Searching for lobby code {normalised}.");
+                Plugin.Log.LogInfo(
+                    $"[steam-lobby] Searching for lobby code {normalised}"
+                    + (joinWhenFound ? ", will join it." : ", without joining."));
             }
             catch (Exception ex)
             {
@@ -572,8 +611,20 @@ namespace MegabonkTogether.Services
                 }
 
                 var matching = (uint)Marshal.ReadInt32(buffer, LobbyMatchListCountOffset);
+                State = stateBeforeSearch;
+
                 if (matching == 0)
                 {
+                    SearchState = SteamLobbySearchState.Completed;
+                    FoundLobbyId = 0UL;
+
+                    if (!joinAfterSearch)
+                    {
+                        // Not a failure on the search-only path: "nothing matched" is a result.
+                        Plugin.Log.LogInfo($"[steam-lobby] No lobby matched code {code}.");
+                        return;
+                    }
+
                     // One message for both causes on purpose. A player cannot tell "no such lobby"
                     // from "that lobby is a different mod version", and neither can we — the version
                     // filter is applied by Steam, so a mismatched lobby is simply absent from the
@@ -591,7 +642,17 @@ namespace MegabonkTogether.Services
                 }
                 catch (Exception ex)
                 {
+                    SearchState = SteamLobbySearchState.Failed;
                     Fail($"GetLobbyByIndex threw: {ex.GetType().Name}: {ex.Message}");
+                    return;
+                }
+
+                SearchState = SteamLobbySearchState.Completed;
+                FoundLobbyId = lobbyId;
+
+                if (!joinAfterSearch)
+                {
+                    Plugin.Log.LogInfo($"[steam-lobby] Code {code} resolved to lobby {lobbyId}.");
                     return;
                 }
 

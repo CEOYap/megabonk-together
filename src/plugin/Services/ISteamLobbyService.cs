@@ -17,6 +17,18 @@ namespace MegabonkTogether.Services
         Failed,
     }
 
+    /// <summary>Where a lobby-list search has got to. Independent of lobby membership.</summary>
+    public enum SteamLobbySearchState
+    {
+        Idle,
+        Searching,
+
+        /// <summary>Finished. <see cref="ISteamLobbyService.FoundLobbyId"/> is 0 if nothing matched.</summary>
+        Completed,
+
+        Failed,
+    }
+
     /// <summary>
     /// Steam lobbies: create, join, leave, and the key/value data hung off them.
     ///
@@ -32,6 +44,17 @@ namespace MegabonkTogether.Services
     public interface ISteamLobbyService
     {
         SteamLobbyState State { get; }
+
+        /// <summary>
+        /// Whether a Steam call is in flight. The ticker polls every frame while this is true,
+        /// because the result has to be read before the game's callback pump frees it.
+        /// </summary>
+        bool HasPendingCall { get; }
+
+        SteamLobbySearchState SearchState { get; }
+
+        /// <summary>The lobby the last search found, or 0 if it found nothing.</summary>
+        ulong FoundLobbyId { get; }
 
         /// <summary>The current lobby, or 0.</summary>
         ulong LobbyId { get; }
@@ -80,6 +103,14 @@ namespace MegabonkTogether.Services
         /// an incompatible build is simply absent from the results.</para>
         /// </summary>
         void JoinByCode(string code);
+
+        /// <summary>
+        /// Searches for a lobby by code <b>without joining it</b>, leaving the result in
+        /// <see cref="FoundLobbyId"/>. Usable while already in a lobby, which is what lets the
+        /// discovery path be checked at all without a second player — and what a lobby browser
+        /// will want.
+        /// </summary>
+        void FindLobbyByCode(string code);
 
         /// <summary>
         /// Opens Steam's own invite dialog for the current lobby. No-op outside a lobby.
