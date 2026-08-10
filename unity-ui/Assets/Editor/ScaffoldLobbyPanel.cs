@@ -7,32 +7,121 @@ using UnityEngine.UI;
 namespace MegabonkTogether.UiAuthoring
 {
     /// <summary>
-    /// Generates Assets/Prefabs/LobbyPanel.prefab with exactly the hierarchy the runtime binds
-    /// to. Run this once, then style it in the editor — move, resize and recolour freely, but do
-    /// not rename or reparent the objects listed in docs/ui/01-ui-asset-bundle.md, because the
-    /// runtime resolves them by path. A renamed child is a silent null at runtime, not a build
-    /// error, which is exactly why this scaffold exists rather than a "build it by hand" note.
+    /// Generates Assets/Prefabs/LobbyPanel.prefab: the hierarchy the runtime binds to, styled.
+    ///
+    /// <para><b>This generator is the prefab's source of truth, not a one-time starting point.</b>
+    /// It began as a scaffold to be styled by hand in the editor, and that never happened, because
+    /// every session working on this panel drives the editor headlessly — there is no human in the
+    /// Inspector. Colours and geometry authored by hand would be lost the next time somebody
+    /// regenerated, and nothing would warn them. Keeping the styling here instead means the panel
+    /// is diffable, reviewable and reproducible from a terminal like everything else in the repo.
+    /// Editing the prefab in the editor still works; just fold the result back into this file, or
+    /// the next run discards it.</para>
+    ///
+    /// <para>Names and paths are API — the runtime resolves children with
+    /// <c>transform.Find("Panel/Members")</c> and friends, so a rename is a silent null at runtime
+    /// rather than a build error. See docs/ui/01-ui-asset-bundle.md for the contract. Anything
+    /// <i>not</i> in that contract (Fill, HeaderRule, FooterRule) is decoration the runtime never
+    /// looks for.</para>
     /// </summary>
     public static class ScaffoldLobbyPanel
     {
         private const string PrefabPath = "Assets/Prefabs/LobbyPanel.prefab";
 
+        #region Palette
+
         /// <summary>
-        /// The size of the game's own button, which the runtime clones into the Buttons container.
-        /// The placeholders must match it or the editor preview lies about how much room the column
-        /// needs — the first prefab used 44px here and the real 70px buttons overflowed the card.
+        /// Warm near-black through parchment, taken to sit with Megabonk's own menus rather than to
+        /// stand out from them. The game's UI is dark, warm-grey and gothic with gold accents; a
+        /// neutral or cool panel reads as a mod overlay sitting on top of the game instead of a
+        /// screen belonging to it.
+        ///
+        /// <para><b>Two of these are overwritten at runtime and are only editor previews:</b> the
+        /// member row's Name (tinted for the local player) and Ready (green) labels are recoloured
+        /// in <c>LobbyPanel.CreateMemberRow</c>. Changing them here changes nothing in game.</para>
         /// </summary>
-        private const float ButtonWidth = 300f;
-        private const float ButtonHeight = 70f;
+        private static readonly Color Scrim = new Color(0f, 0f, 0f, 0.78f);
+        private static readonly Color PanelBorder = Hex("#0A0908", 1f);
+        private static readonly Color PanelFill = Hex("#1B1714", 0.98f);
+        private static readonly Color Rule = Hex("#5A4A34", 0.85f);
+        private static readonly Color TitleInk = Hex("#F2DFA6");
+        private static readonly Color SubtitleInk = Hex("#A99C86");
+        private static readonly Color StatusInk = Hex("#E8B94F");
+        private static readonly Color MembersWell = Hex("#0E0C0A", 0.55f);
+        private static readonly Color MemberRowFill = Hex("#2E2721", 0.60f);
+        private static readonly Color PlaceholderButton = Hex("#3A322B", 0.55f);
+
+        #endregion
+
+        #region Geometry
+
+        // The card. Top-anchored children measure downward from its top edge, so every offset below
+        // reads in the order the panel is drawn.
+        private const float PanelWidth = 620f;
+        private const float PanelHeight = 900f;
+
+        /// <summary>Thickness of the border, drawn by insetting <c>Fill</c> inside <c>Panel</c>.</summary>
+        private const float BorderThickness = 3f;
+
+        private const float ContentWidth = 560f;
+        private const float RuleWidth = 540f;
+
+        /// <summary>
+        /// Room for the button column. <b>410 is measured, not chosen</b>: the runtime replaces the
+        /// placeholders with clones of the game's PLAY button, whose real height is well above the
+        /// 44 an earlier version assumed, and four of them plus spacing just fill this. At most four
+        /// are ever visible at once — Copy Code and Join From Clipboard are mutually exclusive — so
+        /// this is the true worst case. Shrinking it draws buttons past the bottom of the card;
+        /// nothing clips them.
+        /// </summary>
+        private const float ButtonColumnHeight = 410f;
+
+        private const float ButtonSpacing = 8f;
+
+        /// <summary>
+        /// Placeholder size, for the editor preview only. It should stay in the neighbourhood of a
+        /// real cloned button or the preview lies about how much room the column needs.
+        /// </summary>
+        private const float PlaceholderButtonWidth = 300f;
+        private const float PlaceholderButtonHeight = 70f;
+
+        // The members well is sized for a full lobby and never resizes. Six rows are always
+        // reserved even when two are filled: the alternative is a button column that moves under
+        // the cursor as people join, and empty rows inside a framed well read as free slots rather
+        // than as a void — which is what the unstyled panel's blank middle looked like.
+        private const int MaxMembers = 6;
+        private const float MemberRowHeight = 40f;
+        private const float MemberRowSpacing = 5f;
+        private const float WellPadding = 8f;
+        private const float MembersWidth = ContentWidth - 4f;
+
+        private const float MembersHeight =
+            (MaxMembers * MemberRowHeight) + ((MaxMembers - 1) * MemberRowSpacing) + (2f * WellPadding);
+
+        private const float TitleY = -24f;
+        private const float TitleHeight = 52f;
+        private const float SubtitleY = -80f;
+        private const float SubtitleHeight = 30f;
+        private const float HeaderRuleY = -118f;
+        private const float MembersY = -128f;
+        private const float StatusY = MembersY - MembersHeight - 8f;
+        private const float StatusHeight = 28f;
+        private const float FooterRuleY = StatusY - StatusHeight - 8f;
+        private const float ButtonsY = FooterRuleY - 12f;
+
+        #endregion
 
         [MenuItem("MegabonkTogether/Scaffold Lobby Panel Prefab")]
         public static void Scaffold()
         {
-            if (File.Exists(PrefabPath)
+            // Application.isBatchMode first: EditorUtility.DisplayDialog cannot be answered from a
+            // headless run, and this is the entry point -executeMethod calls.
+            if (!Application.isBatchMode
+                && File.Exists(PrefabPath)
                 && !EditorUtility.DisplayDialog(
-                    "Overwrite prefab?",
+                    "Regenerate prefab?",
                     $"{PrefabPath} already exists. Regenerating discards every edit made in the editor.",
-                    "Overwrite",
+                    "Regenerate",
                     "Cancel"))
             {
                 return;
@@ -43,73 +132,131 @@ namespace MegabonkTogether.UiAuthoring
             Stretch(rootRect);
 
             // Blocker: full-screen scrim that both dims the menu and eats clicks aimed at it.
-            var blocker = CreateImage("Blocker", rootRect, new Color(0f, 0f, 0f, 0.85f));
+            var blocker = CreateImage("Blocker", rootRect, Scrim);
             Stretch(blocker.rectTransform);
 
-            var panel = CreateImage("Panel", rootRect, new Color(0.08f, 0.08f, 0.10f, 0.98f));
-            Centre(panel.rectTransform, new Vector2(620f, 900f));
+            // Panel is the border; Fill is the interior, inset by BorderThickness. A child cannot
+            // draw behind its parent, so the frame has to be the outer object — which also means it
+            // follows automatically if the card is ever resized. No sprite, no texture in the
+            // bundle, and no 9-slice to get wrong.
+            var panel = CreateImage("Panel", rootRect, PanelBorder);
+            Centre(panel.rectTransform, new Vector2(PanelWidth, PanelHeight));
 
-            CreateText("Title", panel.rectTransform, "LOBBY", 44f,
-                new Vector2(0f, -46f), new Vector2(560f, 60f));
-            CreateText("Subtitle", panel.rectTransform, "", 24f,
-                new Vector2(0f, -100f), new Vector2(560f, 40f));
+            var fill = CreateImage("Fill", panel.rectTransform, PanelFill);
+            Inset(fill.rectTransform, BorderThickness);
 
-            // Separate from Subtitle on purpose. Subtitle carries the lobby code and is rewritten
-            // on every refresh tick, so a transient message shown there would be erased within half
-            // a second — too fast to read.
-            CreateText("Status", panel.rectTransform, "", 22f,
-                new Vector2(0f, -136f), new Vector2(560f, 34f));
+            var title = CreateText("Title", panel.rectTransform, "Your Lobby", 42f,
+                new Vector2(0f, TitleY), new Vector2(ContentWidth, TitleHeight));
+            title.color = TitleInk;
 
-            // Members: a VerticalLayoutGroup fed at runtime by cloning MemberRow. Letting Unity
-            // lay the rows out is the whole point — the code-built version hand-computed row Y
-            // positions and got them wrong every time a font size changed.
-            var members = new GameObject("Members", typeof(RectTransform), typeof(VerticalLayoutGroup));
-            members.transform.SetParent(panel.transform, worldPositionStays: false);
-            var membersRect = members.GetComponent<RectTransform>();
-            Anchor(membersRect, new Vector2(0f, -170f), new Vector2(560f, 260f));
-            var layout = members.GetComponent<VerticalLayoutGroup>();
-            layout.spacing = 6f;
-            layout.childControlHeight = false;
-            layout.childForceExpandHeight = false;
-            layout.childAlignment = TextAnchor.UpperCenter;
+            var subtitle = CreateText("Subtitle", panel.rectTransform, "Code: ABC123", 24f,
+                new Vector2(0f, SubtitleY), new Vector2(ContentWidth, SubtitleHeight));
+            subtitle.color = SubtitleInk;
 
-            // MemberRow is a template: the runtime clones it and leaves the original inactive.
-            var row = CreateImage("MemberRow", membersRect, new Color(1f, 1f, 1f, 0.05f));
-            Anchor(row.rectTransform, Vector2.zero, new Vector2(540f, 44f));
-            var rowName = CreateText("Name", row.rectTransform, "Player", 26f, Vector2.zero, new Vector2(380f, 44f));
-            rowName.alignment = TextAlignmentOptions.MidlineLeft;
-            Anchor(rowName.rectTransform, new Vector2(-70f, 0f), new Vector2(380f, 44f));
-            var rowReady = CreateText("Ready", row.rectTransform, "", 24f, Vector2.zero, new Vector2(140f, 44f));
-            rowReady.alignment = TextAlignmentOptions.MidlineRight;
-            Anchor(rowReady.rectTransform, new Vector2(190f, 0f), new Vector2(140f, 44f));
-            row.gameObject.SetActive(false);
+            CreateRule("HeaderRule", panel.rectTransform, HeaderRuleY);
 
-            var buttons = new GameObject("Buttons", typeof(RectTransform), typeof(VerticalLayoutGroup));
-            buttons.transform.SetParent(panel.transform, worldPositionStays: false);
-            var buttonsRect = buttons.GetComponent<RectTransform>();
-            Anchor(buttonsRect, new Vector2(0f, -450f), new Vector2(560f, 410f));
-            var buttonLayout = buttons.GetComponent<VerticalLayoutGroup>();
-            buttonLayout.spacing = 8f;
-            buttonLayout.childControlHeight = false;
-            buttonLayout.childForceExpandHeight = false;
-            buttonLayout.childAlignment = TextAnchor.UpperCenter;
+            CreateMembers(panel.rectTransform);
 
-            // Placeholders, for seeing the column's shape in the editor only. The runtime clears
-            // this container and fills it with clones of the game's own button, because Megabonk's
-            // Window registry collects MyButton components and a plain uGUI Button is invisible to
-            // it — see docs/ui/02-prefab-handover.md.
-            foreach (var name in new[] { "Ready", "Start", "CopyCode", "JoinCode", "Leave" })
-            {
-                CreateButton(name, buttonsRect);
-            }
+            // Below the list and directly above the buttons, because every message it carries is
+            // the result of pressing one of them ("Lobby code copied", "Clipboard is empty").
+            //
+            // Separate from Subtitle on purpose, wherever it sits: Subtitle carries the lobby code
+            // and is rewritten on every refresh tick, so a transient message shown there would be
+            // erased within half a second — too fast to read.
+            var status = CreateText("Status", panel.rectTransform, "", 22f,
+                new Vector2(0f, StatusY), new Vector2(ContentWidth, StatusHeight));
+            status.color = StatusInk;
+
+            CreateRule("FooterRule", panel.rectTransform, FooterRuleY);
+
+            CreateButtons(panel.rectTransform);
 
             Directory.CreateDirectory("Assets/Prefabs");
             PrefabUtility.SaveAsPrefabAsset(root, PrefabPath);
             Object.DestroyImmediate(root);
             AssetDatabase.Refresh();
 
-            Debug.Log($"[MT] Wrote {PrefabPath}. Style it, then run MegabonkTogether/Build UI Bundle.");
-            Selection.activeObject = AssetDatabase.LoadAssetAtPath<GameObject>(PrefabPath);
+            Debug.Log($"[MT] Wrote {PrefabPath}. Run MegabonkTogether/Build UI Bundle, then rebuild the plugin.");
+
+            if (!Application.isBatchMode)
+            {
+                Selection.activeObject = AssetDatabase.LoadAssetAtPath<GameObject>(PrefabPath);
+            }
+        }
+
+        /// <summary>
+        /// The member list: a framed well with a VerticalLayoutGroup, fed at runtime by cloning
+        /// MemberRow. Letting Unity lay the rows out is the whole point of the prefab — the
+        /// code-built version hand-computed row Y positions from a pitch constant and got them
+        /// wrong every time a font size changed.
+        /// </summary>
+        private static void CreateMembers(RectTransform panel)
+        {
+            var members = CreateImage("Members", panel, MembersWell);
+            var membersRect = members.rectTransform;
+            Anchor(membersRect, new Vector2(0f, MembersY), new Vector2(MembersWidth, MembersHeight));
+
+            var layout = members.gameObject.AddComponent<VerticalLayoutGroup>();
+            layout.padding = new RectOffset((int)WellPadding, (int)WellPadding, (int)WellPadding, (int)WellPadding);
+            layout.spacing = MemberRowSpacing;
+            layout.childAlignment = TextAnchor.UpperCenter;
+
+            // Rows are stretched to the well's inner width and keep their own height. Set all four
+            // explicitly rather than inheriting whatever the component's defaults are this Unity
+            // version — the flags that matter here are not the ones that matter for the buttons.
+            layout.childControlWidth = true;
+            layout.childForceExpandWidth = true;
+            layout.childControlHeight = false;
+            layout.childForceExpandHeight = false;
+
+            // MemberRow is a template: the runtime clones it and leaves the original inactive.
+            var row = CreateImage("MemberRow", membersRect, MemberRowFill);
+            Anchor(row.rectTransform, Vector2.zero, new Vector2(MembersWidth - (2f * WellPadding), MemberRowHeight));
+
+            // Anchored to the row's own edges rather than offset from its centre, so the columns
+            // stay where they belong if the well is ever made wider.
+            var rowName = CreateText("Name", row.rectTransform, "Player", 24f, Vector2.zero, Vector2.zero);
+            rowName.alignment = TextAlignmentOptions.MidlineLeft;
+            rowName.color = Color.white;
+            EdgeAnchor(rowName.rectTransform, left: 14f, right: 150f);
+
+            var rowReady = CreateText("Ready", row.rectTransform, "READY", 22f, Vector2.zero, Vector2.zero);
+            rowReady.alignment = TextAlignmentOptions.MidlineRight;
+            rowReady.color = new Color(0.55f, 0.95f, 0.55f);
+            EdgeAnchor(rowReady.rectTransform, left: MembersWidth - (2f * WellPadding) - 144f, right: 14f);
+
+            row.gameObject.SetActive(false);
+        }
+
+        /// <summary>
+        /// The button column. Its children are placeholders and are destroyed at runtime: Megabonk's
+        /// <c>Window</c> registry collects <c>MyButton</c> components and cannot see a plain uGUI
+        /// Button, so the runtime clears this container and fills it with clones of the game's own
+        /// button. Style the container; styling the placeholders changes nothing in game.
+        /// </summary>
+        private static void CreateButtons(RectTransform panel)
+        {
+            var buttons = new GameObject("Buttons", typeof(RectTransform), typeof(VerticalLayoutGroup));
+            buttons.transform.SetParent(panel, worldPositionStays: false);
+            Anchor(buttons.GetComponent<RectTransform>(), new Vector2(0f, ButtonsY), new Vector2(ContentWidth, ButtonColumnHeight));
+
+            var layout = buttons.GetComponent<VerticalLayoutGroup>();
+            layout.spacing = ButtonSpacing;
+            layout.childAlignment = TextAnchor.UpperCenter;
+
+            // Width must stay uncontrolled. A Megabonk button sizes itself from its label —
+            // ButtonTextWrapper writes rect.sizeDelta from the text's size plus padding — so a
+            // layout group that also drives width would be fighting the game for it every time a
+            // label changed. Centred varying widths is the game's own look, not a defect.
+            layout.childControlWidth = false;
+            layout.childForceExpandWidth = false;
+            layout.childControlHeight = false;
+            layout.childForceExpandHeight = false;
+
+            foreach (var name in new[] { "Ready", "Start", "CopyCode", "JoinCode", "Leave" })
+            {
+                CreatePlaceholderButton(name, buttons.GetComponent<RectTransform>());
+            }
         }
 
         private static Image CreateImage(string name, RectTransform parent, Color colour)
@@ -121,6 +268,13 @@ namespace MegabonkTogether.UiAuthoring
             return image;
         }
 
+        /// <summary>A hairline divider, full content width, centred at the given offset.</summary>
+        private static void CreateRule(string name, RectTransform parent, float y)
+        {
+            var rule = CreateImage(name, parent, Rule);
+            Anchor(rule.rectTransform, new Vector2(0f, y), new Vector2(RuleWidth, 2f));
+        }
+
         private static TextMeshProUGUI CreateText(
             string name, RectTransform parent, string text, float size, Vector2 position, Vector2 sizeDelta)
         {
@@ -130,16 +284,22 @@ namespace MegabonkTogether.UiAuthoring
             tmp.text = text;
             tmp.fontSize = size;
             tmp.alignment = TextAlignmentOptions.Center;
+
+            // The bundle ships no font — the runtime re-points every TMP component at the game's own
+            // font after instantiating. So the editor preview's glyph widths are not the ones that
+            // will be drawn, and every text box here is deliberately wider than it looks like it
+            // needs to be. Do not tighten them against the preview.
             Anchor(tmp.rectTransform, position, sizeDelta);
             return tmp;
         }
 
-        private static void CreateButton(string name, RectTransform parent)
+        private static void CreatePlaceholderButton(string name, RectTransform parent)
         {
-            var image = CreateImage(name, parent, new Color(1f, 1f, 1f, 0.12f));
+            var image = CreateImage(name, parent, PlaceholderButton);
             image.gameObject.AddComponent<Button>();
-            Anchor(image.rectTransform, Vector2.zero, new Vector2(ButtonWidth, ButtonHeight));
-            var label = CreateText("Label", image.rectTransform, name, 30f, Vector2.zero, new Vector2(ButtonWidth, ButtonHeight));
+            Anchor(image.rectTransform, Vector2.zero, new Vector2(PlaceholderButtonWidth, PlaceholderButtonHeight));
+            var label = CreateText("Label", image.rectTransform, name, 30f, Vector2.zero,
+                new Vector2(PlaceholderButtonWidth, PlaceholderButtonHeight));
             Stretch(label.rectTransform);
         }
 
@@ -149,6 +309,28 @@ namespace MegabonkTogether.UiAuthoring
             rect.anchorMax = Vector2.one;
             rect.offsetMin = Vector2.zero;
             rect.offsetMax = Vector2.zero;
+        }
+
+        /// <summary>Stretched to the parent and pulled in by <paramref name="amount"/> on all sides.</summary>
+        private static void Inset(RectTransform rect, float amount)
+        {
+            rect.anchorMin = Vector2.zero;
+            rect.anchorMax = Vector2.one;
+            rect.offsetMin = new Vector2(amount, amount);
+            rect.offsetMax = new Vector2(-amount, -amount);
+        }
+
+        /// <summary>
+        /// Stretched to the parent vertically and pinned to both of its horizontal edges, so the
+        /// object keeps its margins whatever the parent's width becomes.
+        /// </summary>
+        private static void EdgeAnchor(RectTransform rect, float left, float right)
+        {
+            rect.anchorMin = new Vector2(0f, 0f);
+            rect.anchorMax = new Vector2(1f, 1f);
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.offsetMin = new Vector2(left, 0f);
+            rect.offsetMax = new Vector2(-right, 0f);
         }
 
         private static void Centre(RectTransform rect, Vector2 size)
@@ -167,6 +349,18 @@ namespace MegabonkTogether.UiAuthoring
             rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(0.5f, 1f);
             rect.anchoredPosition = position;
             rect.sizeDelta = size;
+        }
+
+        private static Color Hex(string hex, float alpha = 1f)
+        {
+            if (!ColorUtility.TryParseHtmlString(hex, out var colour))
+            {
+                Debug.LogError($"[MT] Bad colour literal '{hex}'.");
+                return Color.magenta;
+            }
+
+            colour.a = alpha;
+            return colour;
         }
     }
 }

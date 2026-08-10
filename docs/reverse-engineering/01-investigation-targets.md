@@ -700,8 +700,9 @@ Q4 is the one that can hurt players. The mod deliberately blocks Steam writes du
 Introducing a second managed Steamworks wrapper is exactly the kind of change that could route
 around a suppression patch. **Verify before shipping.**
 
-Q1 determines whether calling `SteamAPI.RunCallbacks()` ourselves (as Multibonk does every
-frame from `LobbyManager.Update()`) double-fires the game's own callbacks.
+Q1 determined whether a second managed Steamworks wrapper, pumping `SteamAPI.RunCallbacks()`
+itself, would interfere with the game's own callbacks. **Answered — see below. It would, and
+worse than the question assumed.**
 
 ### Finding — buildid 21750826, partial — and Q4 is already a "no"
 
@@ -839,11 +840,33 @@ path the mod did not think to patch.
 a ban risk, but it will broadcast netplay state to friends as if it were a normal run. Worth a
 decision rather than an oversight.
 
-**Q1 — NEEDS GHIDRA.** `SteamAPI.Init()` / `SteamAPI.RunCallbacks()` exist on the wrapper's
-`public static class SteamAPI` (`:620882`), but the dump cannot show the game's call sites.
-Read `SteamAchievementsManager.Init` (VA 0x1803EB8C0) and `SteamStatsManager.Init`
-(VA 0x1803EE690) to find who drives them, and locate the `RunCallbacks` pump before adding a
-second one — Multibonk's per-frame pump would double-fire.
+**Q1 — ANSWERED (CONFIRMED), and the answer changed the migration's architecture.** The pump is
+`SteamManager.Update` (VA `0x18052B310`). Three decompiles, all in `megabonk-re/decompiled/`:
+
+```
+SteamManager.Update           -> SteamAPI.RunCallbacks() every frame, gated on the static byte
+                                 at statics+0 — the same one SteamManager.IsInitialized returns
+SteamAPI.RunCallbacks         -> CallbackDispatcher.RunFrame(false)
+CallbackDispatcher.RunFrame   -> SteamAPI_GetHSteamPipe, then
+                                 SteamAPI_ManualDispatch_GetNextCallback / FreeLastCallback
+                                 / GetAPICallResult
+```
+
+**Double-firing was the wrong worry.** Manual dispatch is a *consuming* queue over the process's
+single pipe: whichever managed dispatcher pulls a callback gets it and the other never sees it. A
+second managed Steamworks.NET would therefore **steal** the game's own achievement, stats and
+leaderboard results — intermittently, silently, and in both directions.
+
+Two useful consequences beyond the migration:
+
+- `SteamManager.IsInitialized()` (VA `0x18052ABB0`) returns exactly the byte the pump is gated on,
+  so it means "Steam is up **and** being serviced". That is the correct guard for any Steam call,
+  and `Services/SteamService.cs` uses it.
+- `SteamManager.steamId` is a public static the game already resolves, so the local SteamID costs
+  no Steam call at all.
+
+Recorded with the decision it drove in
+[`../steamworks/00-migration-plan.md`](../steamworks/00-migration-plan.md), Gotcha 1.
 
 **Q3 — NOT ANSWERED; do not read the greps as a yes.** `ISteamNetworkingSockets` (47 hits) and
 `SteamMatchmaking` (141 hits) both appear, but **that is the wrapper's complete API surface,

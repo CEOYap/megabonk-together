@@ -7,8 +7,8 @@ editor preview would have shown in a second.
 
 This replaces that with prefabs authored in Unity, shipped inside the plugin DLL.
 
-**Status:** `LobbyPanel` is prefab-driven. The bundle is built, committed and embedded. The
-prefab is still scaffold styling — correct structure, placeholder colours.
+**Status:** `LobbyPanel` is prefab-driven. The bundle is built, committed and embedded, and the
+prefab is styled.
 
 ## The version trap
 
@@ -27,13 +27,25 @@ head -c 200 "$MegabonkPath/Megabonk_Data/globalgamemanagers" | strings | head -3
 
 ## Workflow
 
-1. Open `unity-ui/` in Unity Hub with 2023.2.22f1.
-2. **MegabonkTogether → Scaffold Lobby Panel Prefab** — writes `Assets/Prefabs/LobbyPanel.prefab`
-   with the exact hierarchy the runtime binds to. One time only; it prompts before overwriting.
-3. Style it. Move, resize, recolour, add decoration freely.
-4. **MegabonkTogether → Build UI Bundle** (`Ctrl+Shift+B`) — writes
-   `src/plugin/Resources/megabonktogether.ui` directly. No copy step.
-5. `dotnet build MegabonkTogether.sln -c Debug`.
+The generator is the prefab's source of truth. Edit
+`unity-ui/Assets/Editor/ScaffoldLobbyPanel.cs`, regenerate, rebuild the bundle:
+
+```powershell
+$u = "C:\Program Files\Unity\Hub\Editor\2023.2.22f1\Editor\Unity.exe"
+foreach ($m in "ScaffoldLobbyPanel.Scaffold", "BuildUiBundle.Build", "VerifyUiBundle.Verify") {
+    Start-Process $u -Wait -PassThru -ArgumentList `
+        "-batchmode","-quit","-nographics","-projectPath","unity-ui",`
+        "-executeMethod","MegabonkTogether.UiAuthoring.$m","-logFile","$env:TEMP\mt-$m.log"
+}
+```
+
+Then `dotnet build MegabonkTogether.sln -c Debug` to embed it.
+
+Editing the prefab by hand in the editor also works — open `unity-ui/` in Unity Hub with
+2023.2.22f1, style it, `Ctrl+Shift+B` — but **fold the result back into the generator**, because
+the next regeneration discards it and nothing warns you. That is why the styling lives in the
+generator at all: this panel has only ever been driven headlessly, and hand-authored colours
+would have been silently lost the first time somebody ran the scaffold.
 
 The built bundle **is committed**. It is our own asset, it is small, and CI cannot build the
 plugin without it.
@@ -47,14 +59,17 @@ than a written-out list to reproduce by hand.
 ```
 LobbyPanel                 RectTransform, CanvasGroup   (root, full-screen)
 ├── Blocker                Image                        full-screen scrim
-└── Panel                  Image                        the card itself
+└── Panel                  Image                        the card's border
+    ├── Fill               Image                        decoration: interior, inset 3px
     ├── Title              TextMeshProUGUI
     ├── Subtitle           TextMeshProUGUI              lobby code
-    ├── Status             TextMeshProUGUI              transient messages
-    ├── Members            VerticalLayoutGroup
+    ├── HeaderRule         Image                        decoration
+    ├── Members            Image + VerticalLayoutGroup  the list well
     │   └── MemberRow      Image                        template, starts inactive
     │       ├── Name       TextMeshProUGUI
     │       └── Ready      TextMeshProUGUI
+    ├── Status             TextMeshProUGUI              transient messages
+    ├── FooterRule         Image                        decoration
     └── Buttons            VerticalLayoutGroup          children replaced at runtime
         ├── Ready          Image + Button               placeholder
         │   └── Label      TextMeshProUGUI
@@ -64,8 +79,14 @@ LobbyPanel                 RectTransform, CanvasGroup   (root, full-screen)
         └── Leave          (same shape)                 placeholder
 ```
 
+`Fill`, `HeaderRule` and `FooterRule` are decoration — the runtime never looks for them. `Panel`
+is the border and `Fill` the interior because a child cannot draw behind its parent, so a framed
+card needs the frame on the outside; the reward is a two-tone border that follows the card if it
+is resized, with no sprite and no texture in the bundle.
+
 `Status` is separate from `Subtitle` because `Subtitle` is rewritten on every refresh tick, so a
-message shown there would be erased within half a second.
+message shown there would be erased within half a second. It sits below the member list and
+directly above the buttons, since every message it carries is the result of pressing one.
 
 **The buttons under `Buttons` are placeholders and get destroyed at runtime.** They exist so the
 column's shape is visible in the editor. Megabonk's `Window` registry collects `MyButton`
@@ -76,10 +97,30 @@ placeholder buttons themselves changes nothing in game.
 Free to change without touching code: every position, size, colour, sprite, font size, anchor,
 and any purely decorative object you add.
 
+**Two colours in the prefab are overwritten at runtime and are editor previews only:** the member
+row's `Name` (tinted for the local player) and `Ready` (green) labels, both recoloured in
+`LobbyPanel.CreateMemberRow`.
+
 `Members` and `Buttons` are layout groups on purpose. The code-built panel hand-computed row
 positions from a button-height constant, and got it wrong twice — once by assuming 48px buttons
 where the game uses 70px, and once by spacing rows tighter than their own height. A layout group
 cannot make either mistake.
+
+**`Buttons` must leave width uncontrolled** (`childControlWidth` and `childForceExpandWidth` both
+false). A Megabonk button sizes itself from its label — `ButtonTextWrapper.Refresh` writes
+`rect.sizeDelta` from the text's size plus `paddingX`/`paddingY` — so a layout group that also
+drove width would fight the game for it on every label change. Buttons of varying width, centred,
+is the game's own look. `Members` is the opposite case and drives width, so rows fill the well
+whatever it is set to.
+
+The button column reserves **410px**, which is measured rather than chosen: four real cloned
+buttons plus spacing just fill it, and four is the true worst case because Copy Code and Join
+From Clipboard are mutually exclusive. Nothing clips a fifth — it would simply draw past the
+bottom of the card.
+
+The members well reserves six rows permanently, even with two filled. The alternative is a button
+column that moves under the cursor as people join, and empty rows inside a framed well read as
+free slots rather than as the void the unstyled panel showed there.
 
 ## Fonts are not in the bundle
 

@@ -3,8 +3,10 @@
 Moving from LiteNetLib + NAT punchthrough + self-hosted rendezvous to
 [`Steamworks.NET`](https://github.com/rlabrecque/Steamworks.NET) `ISteamNetworkingSockets`.
 
-Reference implementation to read (not to copy):
-[`Vanlichtinstein1945/Multibonk`](https://github.com/Vanlichtinstein1945/Multibonk).
+Reference the [Steamworks.NET](https://github.com/rlabrecque/Steamworks.NET) source and the
+[official Steamworks documentation](https://steamworks.github.io/) directly. Where this document
+says "another implementation for this game", that is a deliberate anonymisation — do not name a
+mod or its author here or in a commit.
 
 ---
 
@@ -70,7 +72,11 @@ this project.
   `steam_api64.dll` talks to the Proton-side Steam client — and is probably *more* reliable
   than the current NAT-punch path. But it must be tested; see `PROTON_SETUP.md` and commits
   `9384f93`, `ff42005`.
-- **Two managed Steamworks wrappers in one process.** See [Gotcha 1](#gotcha-1).
+- **No callback registry of our own.** Phase 2 took the game's own Steamworks.NET rather than
+  shipping a second managed wrapper, because two wrappers over one manual-dispatch pipe would
+  consume each other's callbacks. Everything later phases would have taken from a `Callback<T>`
+  has to be polled or routed through a config-value function pointer instead. See
+  [Gotcha 1](#gotcha-1).
 
 ### What it does **not** change
 
@@ -331,27 +337,48 @@ Two acceptable outcomes for the branch itself, either is fine:
 What is **not** acceptable is carrying it across the seam unexamined, because after Phase 1 the
 call sites no longer show the id-space split that makes the hazard visible.
 
-### Phase 2 — Steam plumbing (no transport change yet)
-- Reference `Steamworks.NET`. See [Gotcha 1](#gotcha-1) for which copy.
-- Verify Steam is already initialised by the game; **do not** call `SteamAPI.Init()`.
-  **Confirmed 2026-08-07, with a caveat that nearly cost a phase.** The assumption holds *only when
-  the game is launched through Steam* — `[Message:     Unity] Steam initialized`. Launched by
-  running `Megabonk.exe` directly, the same build logs
-  `[Error  :     Unity] [Steamworks.NET] SteamAPI_Init() failed` and runs with Steam down, while
-  netplay continues to work perfectly because nothing in the mod touches Steam today. So the failure
-  is invisible until the first Steam call, which is this phase. **Check for the `Steam initialized`
-  line before drawing any conclusion from a Steam-related test**, and note that
-  [`../netplay/05-local-testing.md`](../netplay/05-local-testing.md)'s two-instance harness runs its
-  second copy direct-from-exe by necessity — that instance has no Steam and cannot validate this
-  phase.
-- Call `SteamNetworkingUtils.InitRelayNetworkAccess()` at plugin startup.
-- Add a debug command that prints `SteamUser.GetSteamID()` and SDR relay status.
-- **Exit criteria:** the mod loads, Steam calls succeed, achievements/leaderboards still
-  behave exactly as before (they are patched in `Patches/SteamAchievementsManager.cs`,
+### Phase 2 — Steam plumbing (no transport change yet) — **BUILT, NOT YET PLAYTESTED**
+- ~~Reference `Steamworks.NET`.~~ The game's own
+  `BepInEx/interop/com.rlabrecque.steamworks.net.dll`, not a copy we ship. See
+  [Gotcha 1](#gotcha-1) — the recommendation there was reversed on decompiled evidence.
+- ~~Verify Steam is already initialised by the game; **do not** call `SteamAPI.Init()`.~~ Done,
+  and the check is now made at runtime rather than by reading the log. `SteamManager.IsInitialized`
+  returns the same static byte `SteamManager.Update` tests before pumping callbacks, so it means
+  Steam is up *and* being serviced. `ISteamService` gates every call on it.
+
+  The caveat that nearly cost a phase still stands and is now handled rather than remembered: the
+  assumption holds *only when the game is launched through Steam* — `[Message: Unity] Steam
+  initialized`. Launched by running `Megabonk.exe` directly, the same build logs
+  `[Error : Unity] [Steamworks.NET] SteamAPI_Init() failed` and runs with Steam down.
+  [`../netplay/05-local-testing.md`](../netplay/05-local-testing.md)'s two-instance harness runs
+  its second copy direct-from-exe by necessity, so **that instance has no Steam and cannot
+  validate this phase**. It now logs that it is in that state instead of failing.
+- ~~Call `SteamNetworkingUtils.InitRelayNetworkAccess()` at plugin startup.~~ Done — but **not at
+  plugin startup, because that is impossible**. `SteamManager` initialises from a
+  `RuntimeInitializeOnLoadMethod(AfterSceneLoad)`, which runs after BepInEx loads plugins; at
+  `Plugin.Load` time Steam's interface pointers are still null and calling through one is a native
+  access violation. `Scripts/SteamStatusTicker.cs` retries at 1 Hz until the gate opens, then
+  stops. `InitAuthentication` is requested in the same place, per [6a](#gotcha-6a).
+- ~~Add a debug command that prints `SteamUser.GetSteamID()` and SDR relay status.~~ There is no
+  console in this mod, so it is a `Diagnostics.LogSteamStatus` config toggle printing every 10s,
+  matching `LogAllocationRate` and `LogBandwidth`. It names which half of SDR is missing, which
+  separates "still measuring pings" from "cannot reach a relay at all".
+- **Exit criteria, none of them met yet:** the mod loads, Steam calls succeed, and
+  achievements/leaderboards still behave exactly as before (patched in
   `Patches/SteamStatsManager.cs`, `Patches/LeaderBoards.cs`).
 
 This phase is where an IL2CPP/Steamworks conflict will surface. Do not proceed until the game
-is demonstrably stable with the reference added.
+is demonstrably stable.
+
+**The one thing to watch first.** `GetRelayNetworkStatus` and `GetAuthenticationStatus` both take
+an `out` struct and have no overload that does not. Both structs carry a managed `byte[]` for
+their debug message, so Il2CppInterop generates them as `ValueType`-derived proxy classes rather
+than blittable structs, and an `out` parameter of one is a shape this project has never exercised.
+If it is wrong it will be wrong *natively* — a crash with no managed stack trace, not the
+exception `SteamService` catches. The readiness gate deliberately reads the **return value**
+instead of `pDetails.m_eAvail`, which Steam documents as the same value, so that a bad read of the
+struct degrades the diagnostics rather than the decision. If it does crash, the fallback is direct
+P/Invoke to the flat C API for these two calls only — see option (c) in [Gotcha 1](#gotcha-1).
 
 ### Phase 3 — `SteamLobbyService`
 - Create/join lobbies via `SteamMatchmaking`.
@@ -445,27 +472,114 @@ Consequences:
 
 - **Never call `SteamAPI.Init()`.** Steam is already up. A second init is undefined behaviour
   at best.
-- **You have two options for the managed wrapper,** and neither is free:
+- **Three options for the managed wrapper.** The original recommendation here was (a). **It was
+  reversed at Phase 2 on decompiled evidence, and (b) was taken.**
 
-  **(a) Ship your own managed `Steamworks.NET.dll`** — what Multibonk does (its `.csproj`
-  references `Megabonk/Mods/Steamworks.NET.dll`). It P/Invokes the same native
-  `steam_api64.dll`, so it works. But you now have two managed callback registries over one
-  native dispatch. Multibonk calls `SteamAPI.RunCallbacks()` every frame from
-  `LobbyManager.Update()`; since the game pumps callbacks too, **verify this does not
-  double-fire the game's own Steam callbacks** — particularly around achievements, which the
-  mod is supposed to suppress during netplay.
+  **(a) Ship your own managed `Steamworks.NET.dll`.** It P/Invokes the same native
+  `steam_api64.dll`, so it works, and it is the conventional approach — but it means two managed
+  callback registries over one native dispatch. This was written up as "verify it does not
+  double-fire the game's own callbacks". **Double-firing is not the failure mode.** Three
+  decompiles:
 
-  **(b) Use the game's IL2CPP assembly via interop.** No second registry, but you are pinned
-  to whatever Steamworks.NET version shipped with the game, and IL2CPP-interop'd generic
-  `Callback<T>` is awkward to work with.
+  ```
+  SteamManager.Update           -> SteamAPI.RunCallbacks() every frame, gated on the same
+                                   static byte SteamManager.IsInitialized returns
+  SteamAPI.RunCallbacks         -> CallbackDispatcher.RunFrame(false)
+  CallbackDispatcher.RunFrame   -> SteamAPI_GetHSteamPipe, then
+                                   SteamAPI_ManualDispatch_GetNextCallback / FreeLastCallback
+                                   / GetAPICallResult
+  ```
+
+  Manual dispatch is a **consuming** queue on the process's single pipe. A second managed
+  Steamworks.NET brings its own `CallbackDispatcher` over that same pipe, and the two would take
+  each other's callbacks — the game intermittently losing its own achievement and leaderboard
+  results, non-deterministically, with nothing in any log to say so. That is worse than
+  double-firing and far harder to catch in a playtest, because the symptom is an achievement that
+  sometimes does not unlock.
+
+  **(b) Use the game's IL2CPP assembly via interop. ← taken.** One registry, pumped by the game.
+  Nothing to ship, no redistribution question, and no possible version skew against the
+  `steam_api64.dll` sitting next to it. The cost is real and is written up under "what (b) costs"
+  below.
 
   **(c) Direct P/Invoke to the flat C API** (`SteamAPI_ISteamNetworkingSockets_*`) with
-  `SteamAPI_ManualDispatch_*` for callbacks. Most work, cleanest isolation, no registry
-  conflict at all.
+  `SteamAPI_ManualDispatch_*` for callbacks. Most work, cleanest isolation, no registry conflict.
+  Still the fallback for anything (b) cannot express, and it composes with (b) — a P/Invoke for
+  one call does not create a second registry.
 
-  Recommendation: start with **(a)** because it is the known-working path in this exact game,
-  and instrument the achievement suppression patches to confirm nothing double-fires. Fall
-  back to **(c)** if it does.
+#### What (b) costs
+
+**We have no callback registry of our own, and cannot get one without becoming (a).** Everything
+later phases would have taken from a `Callback<T>` has to arrive another way:
+
+| Wanted | Phase | Route without a registry |
+|---|---|---|
+| `SteamRelayNetworkStatus_t`, `SteamNetAuthenticationStatus_t` | 2 | Poll `GetRelayNetworkStatus` / `GetAuthenticationStatus`. **Done** — the callbacks were never needed. |
+| `LobbyCreated_t`, `LobbyEnter_t` and other call results | 3 | Poll `SteamUtils.IsAPICallCompleted` then `GetAPICallResult`. |
+| `LobbyDataUpdate_t` | 3 | Poll `GetLobbyMemberData`. The lobby panel already refreshes twice a second, so there is no new timer. |
+| `GameLobbyJoinRequested_t` (friends-list "Join Game") | 3 | **No polling equivalent.** This one genuinely needs a callback, and is the first place (c) will be required. |
+| `SteamNetConnectionStatusChangedCallback_t` | 4 | `SteamNetworkingUtils.SetConfigValue` with `Callback_ConnectionStatusChanged` and a function pointer — the documented registry-free route, and it takes `IntPtr`s, which marshal cleanly. |
+
+None of that is free, but it is all cheaper than a class of bug that only shows up as somebody's
+achievement quietly not unlocking.
+
+#### Why the polling route is the recommendation, not the consolation prize
+
+**IL2CPP is ahead-of-time compiled, and a generic only exists for the type arguments the game
+itself used.** From `dump.cs`, the complete list of concrete instantiations:
+
+| Generic | Instantiated for | Also present |
+|---|---|---|
+| `Callback<T>` | `GameOverlayActivated_t`, `PersonaStateChange_t`, `UserStatsReceived_t` | `__Il2CppFullySharedGenericType` |
+| `CallResult<T>` | `LeaderboardFindResult_t`, `LeaderboardScoreUploaded_t`, `LeaderboardScoresDownloaded_t` | `__Il2CppFullySharedGenericType` |
+
+Those six are exactly what the game's own overlay, persona, stats and leaderboard code uses.
+**Every type this migration needs — `SteamNetConnectionStatusChangedCallback_t`,
+`LobbyDataUpdate_t`, `GameLobbyJoinRequested_t`, `LobbyCreated_t`, `LobbyEnter_t`,
+`LobbyMatchList_t`, `SteamRelayNetworkStatus_t` — has no concrete instantiation.**
+
+The full-generic-sharing fallback is compiled in, so a novel instantiation is not proven
+impossible; it would run through the shared path with a boxed representation, and Il2CppInterop
+would have to build the generic instance and marshal a delegate on top of that. Nobody has tried
+it. Treat it as UNVERIFIED and unlikely to be worth the attempt, rather than as a closed door.
+
+> **A correction, because the wrong version of this test was written down here.** An earlier draft
+> proposed settling it with `Callback<PersonaStateChange_t>.Create`. That is one of the three the
+> game already instantiates, so it would have succeeded and proved nothing. **Any test must use a
+> type the game never instantiates** — `LobbyDataUpdate_t` is the natural choice.
+
+Mod S proves nothing either way: it ships its own managed wrapper, where `Callback<T>` is ordinary
+C# and AOT instantiation does not apply. See
+[`03-observed-steam-usage.md`](03-observed-steam-usage.md).
+
+#### Phase 3 does not need generics at all
+
+Every call the lobby flow needs exists non-generically in the game's assembly:
+
+```csharp
+SteamAPICall_t CreateLobby(ELobbyType, int cMaxMembers);
+SteamAPICall_t JoinLobby(CSteamID);
+bool  IsAPICallCompleted(SteamAPICall_t, out bool pbFailed);          // SteamUtils
+bool  GetAPICallResult(SteamAPICall_t, IntPtr pCallback, int cubCallback,
+                       int iCallbackExpected, out bool pbFailed);      // SteamUtils
+int      GetNumLobbyMembers(CSteamID);
+CSteamID GetLobbyMemberByIndex(CSteamID, int);
+string   GetLobbyMemberData(CSteamID, CSteamID, string pchKey);
+void     SetLobbyMemberData(CSteamID, string pchKey, string pchValue);
+```
+
+`GetAPICallResult` takes an `IntPtr` and a size, so the result lands in a buffer **we** allocate
+with `Marshal.AllocHGlobal` and read at known offsets. That is strictly safer than the proxy
+structs, not a workaround for them — it is the same class of call that already crashed us, done
+the way that cannot crash, because no `ValueType`-derived proxy is involved and we own the memory.
+Field offsets come from `dump.cs`; `k_iCallback` for each type is in the dump as a constant.
+
+**One thing to check early rather than assume:** `GetLobbyMemberData` passes a `string` *into* the
+boundary. Ordinary game methods take strings fine throughout this codebase, but `AssetBundle`'s
+did not — it marshalled through `Il2CppSystem.ReadOnlySpan<char>.GetPinnableReference`, which is
+unbound here (see [`../ui/01-ui-asset-bundle.md`](../ui/01-ui-asset-bundle.md)). Steamworks.NET
+marshals through its own `InteropHelp` UTF-8 handle instead, so it should be fine — but one
+`SetLobbyData` round trip proves it in a minute and is worth doing before the flow is built on it.
 
 ### 2. Call `InitRelayNetworkAccess()`
 
@@ -474,7 +588,7 @@ SteamNetworkingUtils.InitRelayNetworkAccess();
 ```
 
 Call it at plugin startup, well before the first `ConnectP2P`. It begins fetching the SDR
-network configuration and authentication ticket. Multibonk does not call it, which costs a
+network configuration and authentication ticket. Another implementation for this game does not call it, which costs a
 multi-second stall on the first connection.
 
 **Calling it is not enough — poll the result.** A shipping Steamworks implementation for this
@@ -502,7 +616,7 @@ traffic on its own lane so it cannot block gameplay events.
 
 ### 5. Marshalling and allocation on the send path
 
-Multibonk's send path pins a `byte[]` per message:
+One implementation for this game pins a `byte[]` per message on its send path:
 
 ```csharp
 var handle = GCHandle.Alloc(buf, GCHandleType.Pinned);
@@ -523,7 +637,7 @@ means connections never establish; missing the receive poll means messages queue
 `CreatePollGroup` / `SetConnectionPollGroup` / `ReceiveMessagesOnPollGroup` / `DestroyPollGroup`
 drains every peer in one call rather than looping `ReceiveMessagesOnConnection` per connection.
 At 6 players that is one interop call per frame instead of five, on a path that already
-dominates the receive cost. Mod S uses all four; Multibonk does not, which is one reason its
+dominates the receive cost. Mod S uses all four; the other implementation does not, which is one reason its
 send/receive path should not be copied. The message identifies its sender via
 `SteamNetworkingMessage_t.m_identityPeer` / `m_conn`, so nothing is lost by not knowing which
 connection you polled.

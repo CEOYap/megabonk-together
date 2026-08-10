@@ -145,6 +145,17 @@
 			<HintPath>$(AssemblyPath)/Coffee.UIParticle.dll</HintPath>
 			<Private>false</Private>
 		</Reference>
+		<!--
+			Steamworks.NET, as the game already ships it. Not our own managed copy: the game pumps
+			Steamworks.NET's CallbackDispatcher every frame over the process's single manual-dispatch
+			pipe, and manual dispatch consumes each callback, so a second managed wrapper would take
+			the game's own callbacks off the queue rather than merely duplicating them. Reasoning and
+			evidence: docs/steamworks/00-migration-plan.md, Gotcha 1.
+		-->
+		<Reference Include="com.rlabrecque.steamworks.net">
+			<HintPath>$(AssemblyPath)/com.rlabrecque.steamworks.net.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
 	</ItemGroup>
 
 	<!-- Skip PostBuild copy when running in CI (GitHub Actions or other CI systems setting CI env var) -->

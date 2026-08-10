@@ -23,15 +23,24 @@ character selection.
 
 ## Open, small
 
-- **The member row's READY column has never been seen.** The log proves readiness state is set;
-  no screenshot has caught a row while ready. Check the right-hand column turns green.
-- **The prefab is scaffold styling** — correct structure, placeholder colours. Purely editor
-  work now: open `unity-ui/`, style, run **Build UI Bundle**, rebuild the plugin. No launch cycle
-  needed to see layout.
+- ~~**The member row's READY column has never been seen.**~~ **Seen, and correct.** Screenshots
+  of a two-player lobby show the green `READY` on both rows, and the second shows the host's
+  column empty with `START` greyed while the client stays ready. The readiness display and the
+  Start gate are both confirmed visually now, not just in the log.
+- ~~**The prefab is scaffold styling.**~~ **Styled.** The styling lives in
+  `unity-ui/Assets/Editor/ScaffoldLobbyPanel.cs` rather than in the prefab file — see the
+  workflow in [`01-ui-asset-bundle.md`](01-ui-asset-bundle.md). Unverified in game.
+- **The Ready button's re-fit is unverified.** Those same screenshots caught a real defect: the
+  button reads `NOT READY` at the width computed for `READY`, so the text spills past both ends
+  of the background. Fixed by calling `ButtonTextWrapper.Refresh` after writing a new label,
+  which is what sizes a Megabonk button. Not yet run in game.
 - **Controller navigation is untested.** The panel is a real `Window` with its buttons in
   `allButtons`, so it should work, but nobody has tried a pad.
 - **Escape may now close the panel** via the game's own `Window.Close()`. Untested, and probably
   desirable.
+- **A member list beyond two rows has never been drawn.** Two players is the testing maximum, so
+  it will stay that way. The well reserves six rows and the layout group places them, which is
+  the whole reason neither is hand-computed any more.
 
 ## The next phase: Steamworks Phase 2
 
