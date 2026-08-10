@@ -51,6 +51,7 @@ namespace MegabonkTogether.Scripts
         private SteamLobbySelfTest steamLobbySelfTest;
         private SteamLobbyPresenceService steamLobbyPresenceService;
         private SteamInviteService steamInviteService;
+        private SteamPersonaService steamPersonaService;
 
         private float pollAccumulator;
         private float lobbyPollAccumulator;
@@ -71,6 +72,7 @@ namespace MegabonkTogether.Scripts
             steamLobbySelfTest = Plugin.Services.GetService<SteamLobbySelfTest>();
             steamLobbyPresenceService = Plugin.Services.GetService<SteamLobbyPresenceService>();
             steamInviteService = Plugin.Services.GetService<SteamInviteService>();
+            steamPersonaService = Plugin.Services.GetService<SteamPersonaService>();
         }
 
         public void Update()
@@ -231,6 +233,11 @@ namespace MegabonkTogether.Scripts
                 case SteamReadiness.Ready:
                     // SteamService logs the arrival line itself; nothing to add.
                     settled = true;
+
+                    // Steam is up, so the player's own persona name is readable now. Adopting it
+                    // here rather than at plugin load because before this point there is no Steam
+                    // to ask.
+                    steamPersonaService?.ApplyLocalPersonaName();
                     return;
 
                 case SteamReadiness.Failed:

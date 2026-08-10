@@ -26,6 +26,7 @@ namespace MegabonkTogether.Services
 
         private SteamCallback personaCallback;
         private bool registered;
+        private bool appliedLocalName;
 
         /// <summary>
         /// The display name for a SteamID, or empty if it is not known yet.
@@ -79,6 +80,41 @@ namespace MegabonkTogether.Services
             }
 
             return "";
+        }
+
+        /// <summary>
+        /// Adopts the player's Steam name as the name this mod shows and sends, once per launch.
+        ///
+        /// <para>Set on <c>ModConfig.PlayerName</c> rather than plumbed separately, because that
+        /// one value already feeds everything that needs it: the local row the lobby panel
+        /// synthesizes, the <c>Player</c> record sent to peers, and the name box in the netplay
+        /// menu. Anything narrower would leave one of the three still showing whatever was typed
+        /// months ago.</para>
+        ///
+        /// <para>Once, and only before the player has had a chance to change it — if they edit the
+        /// name afterwards, that is theirs to keep and this does not run again.</para>
+        /// </summary>
+        public void ApplyLocalPersonaName()
+        {
+            if (appliedLocalName || !steamService.IsAvailable)
+            {
+                return;
+            }
+
+            appliedLocalName = true;
+
+            var persona = GetName(steamService.LocalSteamId);
+            if (string.IsNullOrWhiteSpace(persona)
+                || persona == Configuration.ModConfig.PlayerName.Value)
+            {
+                return;
+            }
+
+            var previous = Configuration.ModConfig.PlayerName.Value;
+            Configuration.ModConfig.PlayerName.Value = persona;
+            Configuration.ModConfig.Save();
+
+            Plugin.Log.LogInfo($"[steam] Using the Steam name '{persona}' (was '{previous}').");
         }
 
         private void EnsureRegistered()
