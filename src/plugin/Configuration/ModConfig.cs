@@ -101,11 +101,12 @@ namespace MegabonkTogether.Configuration
                 "Diagnostics",
                 "LogUnityStackTraces",
                 false,
-                "Re-enable Unity's script stack traces, so errors in LogOutput.log say where they " +
-                "came from. The game ships with them off, which is why a NullReferenceException " +
-                "there is a bare one-line message. Off by default because it changes logging for " +
-                "the whole game, not just the mod. Turn it on for one run when chasing an " +
-                "unattributed error, then turn it off."
+                "Re-enable Unity's script stack traces. Note that BepInEx's own LogOutput.log " +
+                "records the exception message and discards the stack trace regardless of this " +
+                "setting - read Unity's player log instead, at " +
+                @"%USERPROFILE%\AppData\LocalLow\Ved\Megabonk\Player.log, which keeps " +
+                "the full trace. Off by default because it changes logging for the whole game, " +
+                "not just the mod."
             );
             EncounterInputGraceSeconds = config.Bind(
                 "Gameplay",

@@ -12,8 +12,16 @@ namespace MegabonkTogether.Helpers
     /// Unity emits — <c>UnityLogListening = true</c>, disk log level <c>All</c> — so the trace is
     /// not being filtered by us, it is never being produced.</para>
     ///
+    /// <para><b>This is not where you read the trace.</b> BepInEx's <c>LogOutput.log</c> records
+    /// Unity's exception message and discards the <c>stackTrace</c> argument that comes with it, so
+    /// turning this on changes nothing you can see there. Unity's own player log keeps the whole
+    /// thing: <c>%USERPROFILE%\AppData\LocalLow\Ved\Megabonk\Player.log</c>. That file is the
+    /// first place to look for anything logged as <c>[Error : Unity]</c> — see
+    /// <c>docs/ui/04-custom-button-null-background.md</c>, which was diagnosed from it after this
+    /// toggle alone proved useless.</para>
+    ///
     /// <para>Off by default, because this changes logging for the whole game and not just for the
-    /// mod. Turn it on for one run when an unattributed Unity error needs a name.</para>
+    /// mod.</para>
     /// </summary>
     public static class UnityDiagnostics
     {
