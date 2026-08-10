@@ -226,6 +226,7 @@ namespace MegabonkTogether
             // game's own callback dispatcher will accept it. Registered here with everything else
             // because it still has to exist in the IL2CPP domain before it can be constructed.
             ClassInjector.RegisterTypeInIl2Cpp<Services.SteamCallResult>();
+            ClassInjector.RegisterTypeInIl2Cpp<Services.SteamCallback>();
             ClassInjector.RegisterTypeInIl2Cpp<InteractableReviver>();
             ClassInjector.RegisterTypeInIl2Cpp<NotificationQueueManager>();
 
