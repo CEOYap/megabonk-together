@@ -403,8 +403,8 @@ Steam lobbies, discovery by code, the protocol gate, and invites all work:
 | `SetRichPresence` connect string | done, verified (Join Game appears) |
 | Host name as lobby data | done |
 | Both players in one Steam lobby | done — host creates, client follows by room code |
-| Roster and readiness from Steam member data | done, **unverified** |
-| Retire tags 73 and 74 | done in the sense meant — stop sending when Steam can answer; numbers stay burned |
+| Roster and readiness from Steam member data | **tried and reverted** — see below |
+| Retire tags 73 and 74 | **not done, and blocked until Phase 4** |
 | Persona names | done, **unverified** — cache plus `PersonaStateChange_t` |
 | Player count and mode as lobby data | **not done** — no lobby browser needs them yet |
 | `LobbyDataUpdate_t` | **not needed** — the panel already refreshes twice a second, and member data is read on that tick |
@@ -424,12 +424,39 @@ LiteNetLib peers reach each other at all, and it relays when they cannot. Nothin
 replaces that. **This criterion belongs to Phase 4**, and carrying it here makes Phase 3 look
 permanently unfinished for a reason that has nothing to do with lobbies.
 
+#### Retiring tags 73 and 74 was attempted and reverted. Do not retry it this way
+
+Readiness was moved onto Steam lobby member data, with a guard: use Steam only when the Steam
+lobby's member count equals the replicated roster's, and fall back to the messages otherwise. It
+was playtested and broke readiness outright — a client pressing Ready did nothing the host could
+see.
+
+**The guard was evaluated independently on each machine.** Those two membership sets are filled by
+different mechanisms at different moments — a host sitting alone has an empty roster and one Steam
+member — so the two ends could land on different answers. A client on the Steam path wrote its
+readiness into member data and sent nothing; a host on the message path read a set nobody had
+written. Neither end could tell. The same comparison could flip between calls on one machine as the
+roster filled, so even the client's own label sometimes did not move.
+
+**The lesson is not "write a better guard".** Any rule derived separately on each machine can
+disagree, and readiness is a correctness property — the Start button is gated on it, and the
+failure mode is a host starting a run with somebody who never readied. There is no safe way to run
+two readiness mechanisms side by side while the roster and the Steam lobby are separate sets.
+
+So this waits for Phase 4, when the Steam lobby *is* the session and there is one membership set to
+consult. At that point member data is the only mechanism and there is nothing to switch between.
+
 What remains genuinely open:
 
 1. `character` / `skinType` / `hat` as member data, alongside `ready`. Same shape, same mechanism;
    they are simply not moved yet.
 2. Player count and mode as lobby data, when something wants a browser.
 3. `mt_mm_code` disappears when the Steam lobby *is* the session, which is Phase 4's business.
+4. **`ModConfig.PlayerName` is slated for removal in Phase 5.** The Steam persona is already
+   adopted onto it at startup, so the config entry is a vestige — it exists for the name box in the
+   netplay menu and for instances with no Steam. Removing it means deciding what a non-Steam
+   instance is called, which matters because the two-instance test harness runs its second copy
+   without Steam.
 
 - ~~Handle `GameLobbyJoinRequested_t` (friends-list "Join Game")~~ and `LobbyDataUpdate_t`.
 - Filter the lobby list by protocol version — this is [P1-3](../netplay/01-critical-fixes.md#p1-3)
