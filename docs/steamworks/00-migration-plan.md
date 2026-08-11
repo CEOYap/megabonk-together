@@ -525,6 +525,12 @@ numbers burned, exactly as tags 1, 65 and 66 were left when their stamped replac
   LiteNetLib, verified under 3% simulated packet loss.
 
 ### Phase 5 — Decommission
+- **Drop `NetworkMenuTab` so TOGETHER! goes straight to the lobby.** Planned separately, with the
+  parts that are not UI — session setup, the connect coroutine, the connecting state — needing a
+  home first: [`../ui/05-drop-the-netplay-menu.md`](../ui/05-drop-the-netplay-menu.md).
+- **Drop `ModConfig.PlayerName`.** The Steam persona is adopted onto it at startup already, so it
+  is a vestige — but something has to decide what an instance with no Steam is called, and the
+  two-instance test harness runs its second copy that way.
 - Delete `WebsocketClientService.cs`, `src/server/`, the NAT-punch path, and the relay
   fallback.
 - Remove the `LiteNetLib` package reference.
