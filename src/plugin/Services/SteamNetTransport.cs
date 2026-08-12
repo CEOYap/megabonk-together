@@ -62,6 +62,15 @@ namespace MegabonkTogether.Services
 
         private const int SendFailureLogIntervalMs = 1000;
 
+        /// <summary>
+        /// The largest payload Steam will carry on a single unreliable datagram. Above this it
+        /// fragments <b>unreliably</b>, so losing any one fragment discards the whole message —
+        /// which is worse than the unreliable channel's normal failure mode, because a stream that
+        /// expects the next tick to supersede a loss instead loses every tick that is oversized.
+        /// The LiteNetLib path has the same cliff at its own MTU and handles it the same way.
+        /// </summary>
+        private const int MaxUnreliableBytes = 1200;
+
         private bool? isHost;
         private SteamNetTransportState state = SteamNetTransportState.Idle;
         private string statusDetail = string.Empty;
@@ -670,6 +679,14 @@ namespace MegabonkTogether.Services
                 return false;
             }
 
+            // Promoted, not truncated and not dropped. An unreliable payload past the single-datagram
+            // limit fragments unreliably, so one lost fragment discards all of it — an outcome the
+            // caller did not ask for and cannot see. Reliable fragments properly up to 512 KB. The
+            // LiteNetLib transport promotes at its own MTU for the same reason.
+            var effective = delivery == NetDelivery.Unreliable && payload.Length > MaxUnreliableBytes
+                ? NetDelivery.ReliableOrdered
+                : delivery;
+
             EResult result;
             try
             {
@@ -680,13 +697,14 @@ namespace MegabonkTogether.Services
                         new HSteamNetConnection(peerHandle),
                         sendScratchPin.AddrOfPinnedObject(),
                         (uint)payload.Length,
-                        ToSteamFlags(delivery),
+                        ToSteamFlags(effective),
                         out long _);
                 }
                 else
                 {
-                    // Over the scratch buffer. Reliable fragments up to 512 KB, so this can still
-                    // go — it just costs a one-off pin, which at this size is the least of it.
+                    // Over the scratch buffer, which is already far past the unreliable limit, so
+                    // this is reliable by construction. Costs a one-off pin, which at this size is
+                    // the least of it.
                     var pin = GCHandle.Alloc(payload, GCHandleType.Pinned);
                     try
                     {
@@ -777,15 +795,28 @@ namespace MegabonkTogether.Services
             peerHandlesByConnectionId.Remove(connectionId);
         }
 
+        /// <summary>
+        /// Drops whichever connection id pointed at this peer handle. The id is found first and
+        /// removed after: mutating a dictionary mid-enumeration happens to survive when the loop
+        /// exits immediately, and relying on that is the kind of thing that stops being true when
+        /// somebody adds a line below it.
+        /// </summary>
         private void ForgetPeerHandle(uint peerHandle)
         {
+            uint? found = null;
+
             foreach (var (connectionId, handle) in peerHandlesByConnectionId)
             {
                 if (handle == peerHandle)
                 {
-                    peerHandlesByConnectionId.Remove(connectionId);
-                    return;
+                    found = connectionId;
+                    break;
                 }
+            }
+
+            if (found.HasValue)
+            {
+                peerHandlesByConnectionId.Remove(found.Value);
             }
         }
 
@@ -818,6 +849,11 @@ namespace MegabonkTogether.Services
             peerHandlesByConnectionId.Remove(connectionId);
         }
 
+        /// <summary>
+        /// <para>The pinned scratch buffer is deliberately <b>not</b> freed here. A session can be
+        /// started again in the same process, the buffer is one 64 KB allocation, and freeing a
+        /// pinned handle that a send is still inside is a far worse failure than holding it.</para>
+        /// </summary>
         public void Shutdown()
         {
             if (state == SteamNetTransportState.Idle && statusCallback == null)
@@ -825,9 +861,23 @@ namespace MegabonkTogether.Services
                 return;
             }
 
+            // A connection that never reached Connected is not in peerSteamIds — ConnectP2P handed
+            // back a handle and the status callback never followed. Closing it first, because the
+            // loop below cannot see it and it would otherwise outlive the session.
+            if (hostConnection != HSteamNetConnection.Invalid
+                && !peerSteamIds.ContainsKey(hostConnection.m_HSteamNetConnection))
+            {
+                CloseRaw(hostConnection.m_HSteamNetConnection, SteamNetEndReason.SessionClosed,
+                    "session ended", linger: false);
+            }
+
+            // Linger off here, unlike an individual disconnect: the session is over, nothing queued
+            // is worth waiting for, and holding sockets open past teardown is how the next session
+            // inherits a handle. A client's host connection is one of these entries, so closing it
+            // separately afterwards would be closing it twice.
             foreach (var handle in peerSteamIds.Keys)
             {
-                CloseRaw(handle, SteamNetEndReason.SessionClosed, "session ended");
+                CloseRaw(handle, SteamNetEndReason.SessionClosed, "session ended", linger: false);
             }
 
             peerSteamIds.Clear();
@@ -835,11 +885,6 @@ namespace MegabonkTogether.Services
 
             try
             {
-                if (hostConnection != HSteamNetConnection.Invalid)
-                {
-                    SteamNetworkingSockets.CloseConnection(hostConnection, SteamNetEndReason.SessionClosed, "session ended", false);
-                }
-
                 if (pollGroup != HSteamNetPollGroup.Invalid)
                 {
                     SteamNetworkingSockets.DestroyPollGroup(pollGroup);
@@ -868,11 +913,6 @@ namespace MegabonkTogether.Services
             Plugin.Log.LogInfo("[steam-net] Shut down.");
         }
 
-        /// <summary>
-        /// <para>The pinned scratch buffer is deliberately <b>not</b> freed here. A session can be
-        /// started again in the same process, the buffer is one 64 KB allocation, and freeing a
-        /// pinned handle that a send is still inside is a far worse failure than holding it.</para>
-        /// </summary>
         private void UnregisterStatusCallback()
         {
             if (statusCallback == null)
@@ -892,14 +932,16 @@ namespace MegabonkTogether.Services
             statusCallback = null;
         }
 
-        private void CloseRaw(uint peerHandle, int endReason, string debugText)
+        /// <summary>
+        /// <paramref name="linger"/> lets anything already queued leave before the connection goes.
+        /// On for an individual close, off for session teardown — see <see cref="Shutdown"/>.
+        /// </summary>
+        private void CloseRaw(uint peerHandle, int endReason, string debugText, bool linger = true)
         {
             try
             {
-                // Linger on, so anything already queued gets a chance to leave before the socket
-                // goes. Teardown of the whole session is the one place that does not linger.
                 SteamNetworkingSockets.CloseConnection(
-                    new HSteamNetConnection(peerHandle), endReason, debugText ?? string.Empty, true);
+                    new HSteamNetConnection(peerHandle), endReason, debugText ?? string.Empty, linger);
             }
             catch (Exception ex)
             {
