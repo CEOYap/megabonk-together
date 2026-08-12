@@ -39,6 +39,7 @@ namespace MegabonkTogether.Scripts
         private bool isGameStarted = false;
 
         private IUdpClientService udpClientService;
+        private IStateBroadcastService stateBroadcastService;
         private ISynchronizationService synchronizationService;
         private IWebsocketClientService websocketClientService;
         private IPlayerManagerService playerManagerService;
@@ -75,7 +76,7 @@ namespace MegabonkTogether.Scripts
         {
             try
             {
-                if (udpClientService == null || synchronizationService == null) return;
+                if (udpClientService == null || stateBroadcastService == null || synchronizationService == null) return;
 
                 if (hasFoundMatch == null) return;
 
@@ -108,25 +109,25 @@ namespace MegabonkTogether.Scripts
                     if (lobbyUpdateAccumulator >= lobbyUpdatetickInterval)
                     {
                         lobbyUpdateAccumulator -= lobbyUpdatetickInterval;
-                        udpClientService.Update();
+                        stateBroadcastService.Update();
                     }
 
                     if (isHost && enemyUpdateAccumulator >= enemyUpdatetickInterval)
                     {
                         enemyUpdateAccumulator -= enemyUpdatetickInterval;
-                        udpClientService.UpdateEnemies();
+                        stateBroadcastService.UpdateEnemies();
                     }
 
                     if (isHost && projectileUpdateAccumulator >= projectileUpdatetickInterval)
                     {
                         projectileUpdateAccumulator -= projectileUpdatetickInterval;
-                        udpClientService.UpdateProjectiles();
+                        stateBroadcastService.UpdateProjectiles();
                     }
 
                     if (isHost && tumbleWeedUpdateAccumulator >= tumbleWeedUpdatetickInterval)
                     {
                         tumbleWeedUpdateAccumulator -= tumbleWeedUpdatetickInterval;
-                        udpClientService.UpdateTumbleWeeds();
+                        stateBroadcastService.UpdateTumbleWeeds();
                     }
                 }
             }
@@ -226,6 +227,22 @@ namespace MegabonkTogether.Scripts
                 udpClientService = null;
             }
 
+            // Separate from the transport's reset, and deliberately not folded into it: the stream
+            // pacing is per session but has nothing to do with the socket, and the transport no
+            // longer owns it.
+            try
+            {
+                stateBroadcastService?.Reset();
+            }
+            catch (System.Exception ex)
+            {
+                Plugin.Log.LogWarning($"Error resetting state broadcast: {ex}");
+            }
+            finally
+            {
+                stateBroadcastService = null;
+            }
+
             try
             {
                 synchronizationService?.Reset();
@@ -280,6 +297,7 @@ namespace MegabonkTogether.Scripts
             if (success)
             {
                 udpClientService = Plugin.Services.GetRequiredService<IUdpClientService>();
+                stateBroadcastService = Plugin.Services.GetRequiredService<IStateBroadcastService>();
                 synchronizationService = Plugin.Services.GetRequiredService<ISynchronizationService>();
                 if (Plugin.Instance.Mode.Mode == Common.Models.NetworkModeType.Random)
                 {

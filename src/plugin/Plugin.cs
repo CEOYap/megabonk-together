@@ -256,6 +256,10 @@ namespace MegabonkTogether
                 // The receive path's other half. Both transports deserialize into this, which is
                 // what makes a second one able to do anything with what it receives.
                 services.AddSingleton<INetMessageRouter, NetMessageRouter>();
+
+                // The send path's other half: the per-tick streams, which read game state and know
+                // nothing about what carries them.
+                services.AddSingleton<IStateBroadcastService, StateBroadcastService>();
                 services.AddSingleton<IPlayerManagerService, PlayerManagerService>();
                 services.AddSingleton<IEnemyManagerService, EnemyManagerService>();
                 services.AddSingleton<IProjectileManagerService, ProjectileManagerService>();

@@ -136,6 +136,7 @@ namespace MegabonkTogether.Services
     internal class SynchronizationService : ISynchronizationService
     {
         private readonly IUdpClientService udpClientService;
+        private readonly IStateBroadcastService stateBroadcastService;
         private readonly IPlayerManagerService playerManagerService;
         private readonly IProjectileManagerService projectileManagerService;
         private readonly IEnemyManagerService enemyManagerService;
@@ -186,6 +187,7 @@ namespace MegabonkTogether.Services
             IEnemyManagerService enemyManagerService,
             ManualLogSource logger,
             IUdpClientService udpClientService,
+            IStateBroadcastService stateBroadcastService,
             IProjectileManagerService projectileManagerService,
             IPickupManagerService pickupManagerService,
             IChestManagerService chestManagerService,
@@ -275,6 +277,7 @@ namespace MegabonkTogether.Services
 
             cancellationToken = cancellationTokenSource.Token;
             this.udpClientService = udpClientService;
+            this.stateBroadcastService = stateBroadcastService;
         }
 
         public bool IsLoading()
@@ -4151,7 +4154,7 @@ namespace MegabonkTogether.Services
 
         private void OnReceivedGameOver(GameOver over)
         {
-            udpClientService.GameOver();
+            stateBroadcastService.GameOver();
             TransitionToState(GameEvent.GameOver);
         }
 
