@@ -128,6 +128,7 @@ namespace MegabonkTogether.Services
         private GCHandle sendScratchPin;
 
         private long nextSendFailureLogTick;
+        private long nextNotRunningLogTick;
         private int suppressedSendFailures;
 
         /// <summary>
@@ -1365,7 +1366,7 @@ namespace MegabonkTogether.Services
                 return false;
             }
 
-            return state == SteamNetTransportState.Running;
+            return EnsureRunning();
         }
 
         private bool EnsureIsClient()
@@ -1376,7 +1377,32 @@ namespace MegabonkTogether.Services
                 return false;
             }
 
-            return state == SteamNetTransportState.Running;
+            return EnsureRunning();
+        }
+
+        /// <summary>
+        /// <para><b>Says so when it refuses.</b> This used to return the check's result and nothing
+        /// else, so every send made while the transport was not Running vanished without a word —
+        /// no failure, no warning, no counter. That is the worst shape a send path can have, and it
+        /// cost a playtest: both ends were transmitting into silence and neither log could say
+        /// whether the messages left.</para>
+        /// </summary>
+        private bool EnsureRunning()
+        {
+            if (state == SteamNetTransportState.Running)
+            {
+                return true;
+            }
+
+            var now = Environment.TickCount64;
+            if (now >= nextNotRunningLogTick)
+            {
+                nextNotRunningLogTick = now + SendFailureLogIntervalMs;
+                Plugin.Log.LogWarning(
+                    $"[steam-net] Dropping sends: the transport is {state}, not Running.");
+            }
+
+            return false;
         }
 
         private bool Fail(string detail)

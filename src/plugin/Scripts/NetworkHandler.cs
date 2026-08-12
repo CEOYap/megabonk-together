@@ -40,6 +40,7 @@ namespace MegabonkTogether.Scripts
 
         private IUdpClientService udpClientService;
         private IStateBroadcastService stateBroadcastService;
+        private ISteamNetTransport steamNetTransport;
         private ISynchronizationService synchronizationService;
         private IWebsocketClientService websocketClientService;
         private IPlayerManagerService playerManagerService;
@@ -110,6 +111,18 @@ namespace MegabonkTogether.Scripts
                 if (!hasFoundMatch.HasValue && !hasFoundMatch.Value || synchronizationService.IsLoadingNextLevel()) return;
 
                 udpClientService.Poll();
+
+                // The Steam transport's receive pump belongs here, with the netplay loop, and not
+                // only on SteamTicker. SteamTicker is the Steam *lobby* ticker: it is fine for the
+                // menu, but a session that has loaded into a run depends on it for every inbound
+                // message, and the first in-game test of the Steam path stalled with both ends
+                // sending and neither receiving - a symmetry that points at the pump rather than
+                // the wire. Polling twice a frame is harmless; the second call finds an empty queue.
+                if (ModConfig.UseSteamTransport.Value)
+                {
+                    steamNetTransport ??= Plugin.Services.GetService<ISteamNetTransport>();
+                    steamNetTransport?.Poll();
+                }
 
                 if (GameManager.Instance == null || GameManager.Instance.player == null || GameManager.Instance.player.inventory == null) return;
 
