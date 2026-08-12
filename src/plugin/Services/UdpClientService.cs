@@ -262,7 +262,13 @@ namespace MegabonkTogether.Services
                             || Plugin.Instance.Mode.Mode == NetworkModeType.Friendlies && Plugin.Instance.Mode.Role == Role.Host
                     };
 
-                    SendToHost(introduced);
+                    // Explicit, and this is the last caller that was not. The implicit default is
+                    // ReliableSequenced — a channel that guarantees only the newest packet — which
+                    // is the wrong guarantee for a one-shot handshake and has no Steam equivalent
+                    // at all. For a message sent exactly once the two channels behave identically
+                    // on LiteNetLib, so naming the one that was always meant costs nothing here and
+                    // stops Phase 4 having to invent a translation for a semantic nobody wanted.
+                    SendToHost(introduced, NetDelivery.ReliableOrdered);
                 }
             };
 
