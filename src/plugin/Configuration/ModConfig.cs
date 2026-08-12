@@ -21,6 +21,7 @@ namespace MegabonkTogether.Configuration
         public static ConfigEntry<bool> LogBandwidth { get; private set; }
         public static ConfigEntry<bool> LogSteamStatus { get; private set; }
         public static ConfigEntry<bool> SteamLobbySelfTest { get; private set; }
+        public static ConfigEntry<bool> SteamNetSelfTest { get; private set; }
         public static ConfigEntry<bool> LogUnityStackTraces { get; private set; }
 
         public static void Initialize(ConfigFile config)
@@ -96,6 +97,15 @@ namespace MegabonkTogether.Configuration
                 "member data, then leave it, and log what happened. Off by default. This exists " +
                 "to prove the Steamworks migration's lobby primitives on a real install; it " +
                 "changes nothing about how you play and needs only one player."
+            );
+            SteamNetSelfTest = config.Bind(
+                "Diagnostics",
+                "SteamNetSelfTest",
+                false,
+                "Once per launch, open a Steam peer-to-peer listen socket, hold it for a couple of " +
+                "seconds, then close it, and log what happened. Off by default. Steam has no " +
+                "loopback so this cannot test an actual connection - it tests everything that has " +
+                "to work before one is attempted, and needs only one player."
             );
             LogUnityStackTraces = config.Bind(
                 "Diagnostics",

@@ -271,6 +271,14 @@ namespace MegabonkTogether
                 services.AddSingleton<ITrackerService, TrackerService>();
                 services.AddSingleton<ISteamService, SteamService>();
                 services.AddSingleton<ISteamLobbyService, SteamLobbyService>();
+
+                // Registered under its own interface, not under INetTransport. Both transports
+                // exist in this build, and which one carries a session is a decision that has not
+                // been made yet — INetTransport still resolves to the LiteNetLib one, so nothing in
+                // gameplay reaches this. Pointing INetTransport here is Phase 4's wiring step and
+                // wants the session lifecycle moved first.
+                services.AddSingleton<ISteamNetTransport, SteamNetTransport>();
+                services.AddSingleton<SteamNetSelfTest>();
                 services.AddSingleton<SteamLobbySelfTest>();
                 services.AddSingleton<SteamLobbyPresenceService>();
                 services.AddSingleton<SteamInviteService>();

@@ -49,6 +49,7 @@ namespace MegabonkTogether.Scripts
         private ISteamService steamService;
         private ISteamLobbyService steamLobbyService;
         private SteamLobbySelfTest steamLobbySelfTest;
+        private SteamNetSelfTest steamNetSelfTest;
         private SteamLobbyPresenceService steamLobbyPresenceService;
         private SteamInviteService steamInviteService;
         private SteamPersonaService steamPersonaService;
@@ -70,6 +71,7 @@ namespace MegabonkTogether.Scripts
             steamService = Plugin.Services.GetService<ISteamService>();
             steamLobbyService = Plugin.Services.GetService<ISteamLobbyService>();
             steamLobbySelfTest = Plugin.Services.GetService<SteamLobbySelfTest>();
+            steamNetSelfTest = Plugin.Services.GetService<SteamNetSelfTest>();
             steamLobbyPresenceService = Plugin.Services.GetService<SteamLobbyPresenceService>();
             steamInviteService = Plugin.Services.GetService<SteamInviteService>();
             steamPersonaService = Plugin.Services.GetService<SteamPersonaService>();
@@ -104,6 +106,14 @@ namespace MegabonkTogether.Scripts
             }
 
             PollLobby(delta);
+
+            // Every frame while it runs, and off an accumulator would not do: the test counts
+            // frames held and polls the transport on each one, which is the cadence a real session
+            // uses. It latches itself finished after a couple of seconds.
+            if (ModConfig.SteamNetSelfTest.Value && steamNetSelfTest is { IsFinished: false })
+            {
+                steamNetSelfTest.Advance();
+            }
 
             if (!ModConfig.LogSteamStatus.Value)
             {
