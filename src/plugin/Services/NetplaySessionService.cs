@@ -1,4 +1,4 @@
-using MegabonkTogether.Common.Models;
+﻿using MegabonkTogether.Common.Models;
 using MegabonkTogether.Configuration;
 using MegabonkTogether.Helpers;
 using System;
@@ -14,8 +14,15 @@ namespace MegabonkTogether.Services
     /// which screen they put back on failure. Here there is one, because the difference was never
     /// about connecting — it was about who was showing it.</para>
     /// </summary>
-    internal class NetplaySessionService : INetplaySessionService
+    internal class NetplaySessionService(ISteamLobbyService steamLobbyService) : INetplaySessionService
     {
+        /// <summary>
+        /// How long to wait for Steam to create or join a lobby. Steam's own calls are usually
+        /// sub-second; this is generous because the alternative to waiting is a lobby panel with no
+        /// lobby behind it.
+        /// </summary>
+        private const float SteamLobbyWaitSeconds = 20f;
+
         /// <summary>
         /// How long to wait for the matchmaker before giving up. Carried over unchanged from the
         /// menu's coroutines, where both used 30.
@@ -52,7 +59,7 @@ namespace MegabonkTogether.Services
             Plugin.Instance.Mode.Mode = NetworkModeType.Friendlies;
             Plugin.Instance.Mode.Role = Role.Host;
 
-            Start(WatchFriendlies());
+            Start(ModConfig.UseSteamTransport.Value ? WatchSteamHost() : WatchFriendlies());
         }
 
         public void Join(string code)
@@ -73,11 +80,21 @@ namespace MegabonkTogether.Services
             Plugin.Instance.Mode.Role = Role.Client;
             Plugin.Instance.Mode.RoomCode = normalised;
 
-            Start(WatchFriendlies());
+            Start(ModConfig.UseSteamTransport.Value ? WatchSteamJoin(normalised) : WatchFriendlies());
         }
 
         public void Quickplay()
         {
+            if (ModConfig.UseSteamTransport.Value)
+            {
+                // Quickplay needs a pool of strangers to match against, which on Steam means a
+                // lobby browser filtered on the protocol version. That exists as a plan and not as
+                // code, and silently falling back to the matchmaker would put this player on a
+                // transport the setting says they are not using.
+                Fail("Quickplay is not available on the Steam transport yet. Host or join by code.");
+                return;
+            }
+
             if (!BeginAttempt("Connecting..."))
             {
                 return;
@@ -110,6 +127,14 @@ namespace MegabonkTogether.Services
                 Plugin.Log.LogWarning($"[session] ResetNetworking threw during cancel: {ex.GetType().Name}: {ex.Message}");
             }
 
+            // Leaving the lobby is what ends a Steam session, not a separate teardown call: the
+            // session service watches lobby membership and shuts the transport down when it goes.
+            // One thing ends the session rather than two that could disagree about whether it has.
+            if (ModConfig.UseSteamTransport.Value)
+            {
+                steamLobbyService.LeaveLobby();
+            }
+
             SetState(NetplayConnectState.Idle, "");
         }
 
@@ -126,7 +151,14 @@ namespace MegabonkTogether.Services
             }
 
             SetState(NetplayConnectState.Connecting, message);
-            Plugin.Instance.NetworkHandler.HandleNetworking();
+
+            // The Steam path has no matchmaker to reach, and starting the websocket anyway would
+            // hand this player a room on a server whose session they are never going to join.
+            if (!ModConfig.UseSteamTransport.Value)
+            {
+                Plugin.Instance.NetworkHandler.HandleNetworking();
+            }
+
             return true;
         }
 
@@ -198,6 +230,69 @@ namespace MegabonkTogether.Services
             }
 
             SetState(NetplayConnectState.Ready, "");
+        }
+
+        /// <summary>
+        /// Hosting on Steam: create the lobby, then let the lobby panel take over. The socket is not
+        /// opened here — <see cref="ISteamNetSessionService"/> does that the moment it sees a lobby
+        /// we own, and publishes readiness only once it has succeeded.
+        /// </summary>
+        private IEnumerator WatchSteamHost()
+        {
+            steamLobbyService.CreateLobby(maxMembers: 6);
+
+            yield return AwaitSteamLobby();
+
+            if (steamLobbyService.State != SteamLobbyState.InLobby)
+            {
+                FailAndReset($"Could not create a Steam lobby: {steamLobbyService.DescribeStatus()}");
+                yield break;
+            }
+
+            PlaySelectSfx();
+
+            // The lobby panel reads the room code off Mode, so the Steam lobby's own code goes here
+            // and the panel needs no knowledge of which transport produced it.
+            Plugin.Instance.Mode.RoomCode = steamLobbyService.LobbyCode;
+
+            Plugin.Instance.NetworkHandler.BeginSteamSession(isHost: true);
+            SetState(NetplayConnectState.Ready, "");
+        }
+
+        /// <summary>
+        /// Joining on Steam: find and enter the lobby by its code. Connecting to the host is not
+        /// done here — the session service waits until the host publishes that its socket is open,
+        /// because connecting before that fails in a way that reads like a NAT problem.
+        /// </summary>
+        private IEnumerator WatchSteamJoin(string code)
+        {
+            steamLobbyService.JoinByCode(code);
+
+            yield return AwaitSteamLobby();
+
+            if (steamLobbyService.State != SteamLobbyState.InLobby)
+            {
+                FailAndReset($"Could not join room {code}: {steamLobbyService.DescribeStatus()}");
+                yield break;
+            }
+
+            PlaySelectSfx();
+
+            Plugin.Instance.NetworkHandler.BeginSteamSession(isHost: false);
+            SetState(NetplayConnectState.Ready, "");
+        }
+
+        /// <summary>Waits for a create or join to settle, either way.</summary>
+        private IEnumerator AwaitSteamLobby()
+        {
+            var elapsed = 0f;
+            while (elapsed < SteamLobbyWaitSeconds
+                && steamLobbyService.State != SteamLobbyState.InLobby
+                && steamLobbyService.State != SteamLobbyState.Failed)
+            {
+                yield return new WaitForSeconds(0.1f);
+                elapsed += 0.1f;
+            }
         }
 
         private IEnumerator WatchQuickplay()

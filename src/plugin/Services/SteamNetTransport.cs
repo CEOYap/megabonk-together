@@ -181,6 +181,12 @@ namespace MegabonkTogether.Services
             }
 
             state = SteamNetTransportState.Running;
+
+            // Seeds the roster with ourselves. On the rendezvous path HandleMatch does this for
+            // every peer at once out of MatchInfo; here there is no such message, so each side adds
+            // itself and learns the others from their introductions.
+            SeedLocalPlayer(isLocalHost: true);
+
             Plugin.Log.LogInfo($"[steam-net] Listening on virtual port {VirtualPort}.");
             return true;
         }
@@ -226,6 +232,8 @@ namespace MegabonkTogether.Services
             }
 
             state = SteamNetTransportState.Starting;
+            SeedLocalPlayer(isLocalHost: false);
+
             Plugin.Log.LogInfo($"[steam-net] Connecting to host {hostSteamId}.");
             return true;
         }
@@ -731,8 +739,17 @@ namespace MegabonkTogether.Services
 
             AssignConnectionId(peerHandle, introduced.ConnectionId);
 
+            // Added, not just renamed. On the rendezvous path every peer is already in the roster
+            // by the time it introduces itself, because MatchInfo listed them all up front. Here the
+            // introduction is the first this side has heard of them, so a GetPlayer-and-rename would
+            // silently do nothing and the peer would never exist.
             var player = playerManagerService.GetPlayer(introduced.ConnectionId);
-            if (player != null)
+            if (player == null)
+            {
+                playerManagerService.AddPlayer(
+                    introduced.ConnectionId, introduced.IsHost, isSelf: false, introduced.Name);
+            }
+            else
             {
                 player.Name = introduced.Name;
                 playerManagerService.UpdatePlayer(player);
@@ -811,6 +828,21 @@ namespace MegabonkTogether.Services
                 var runConfig = WindowManager.activeWindow.GetComponentInChildren<MapSelectionUi>().runConfig;
                 MapController.StartNewMap(runConfig);
             }
+        }
+
+        /// <summary>
+        /// Puts the local player in the roster under the connection id derived from our own SteamID,
+        /// so that everything indexing players by connection id has us before any peer arrives.
+        /// </summary>
+        private void SeedLocalPlayer(bool isLocalHost)
+        {
+            if (playerManagerService.GetPlayer(selfConnectionId) != null)
+            {
+                return;
+            }
+
+            playerManagerService.AddPlayer(
+                selfConnectionId, isLocalHost, isSelf: true, Configuration.ModConfig.PlayerName.Value);
         }
 
         /// <summary>Host only. Whether every introduced peer has chosen a character.</summary>

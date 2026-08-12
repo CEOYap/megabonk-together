@@ -251,7 +251,18 @@ namespace MegabonkTogether
                 // This forwarding is what lets a service depend on the transport contract rather
                 // than on the LiteNetLib session that happens to provide it today; Phase 4 changes
                 // which implementation sits behind it and no consumer notices.
-                services.AddSingleton<INetTransport>(sp => sp.GetRequiredService<IUdpClientService>());
+                // Which transport carries a session, decided once at startup. Resolved through a
+                // factory rather than registered directly so that both implementations exist in the
+                // build and only one is ever wired to gameplay — the migration plan's "both
+                // transports ship in one build during testing".
+                //
+                // Read once because this is a singleton, which is the behaviour we want: a session
+                // cannot change transport halfway through, and a flag flipped mid-run would
+                // otherwise do exactly that.
+                services.AddSingleton<INetTransport>(sp =>
+                    Configuration.ModConfig.UseSteamTransport.Value
+                        ? sp.GetRequiredService<ISteamNetTransport>()
+                        : sp.GetRequiredService<IUdpClientService>());
 
                 // The receive path's other half. Both transports deserialize into this, which is
                 // what makes a second one able to do anything with what it receives.
@@ -286,6 +297,7 @@ namespace MegabonkTogether
                 // gameplay reaches this. Pointing INetTransport here is Phase 4's wiring step and
                 // wants the session lifecycle moved first.
                 services.AddSingleton<ISteamNetTransport, SteamNetTransport>();
+                services.AddSingleton<ISteamNetSessionService, SteamNetSessionService>();
                 services.AddSingleton<SteamNetSelfTest>();
                 services.AddSingleton<SteamLobbySelfTest>();
                 services.AddSingleton<SteamLobbyPresenceService>();

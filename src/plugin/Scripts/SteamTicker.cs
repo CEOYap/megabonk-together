@@ -1,4 +1,4 @@
-using MegabonkTogether.Configuration;
+﻿using MegabonkTogether.Configuration;
 using MegabonkTogether.Services;
 using Microsoft.Extensions.DependencyInjection;
 using UnityEngine;
@@ -50,6 +50,8 @@ namespace MegabonkTogether.Scripts
         private ISteamLobbyService steamLobbyService;
         private SteamLobbySelfTest steamLobbySelfTest;
         private SteamNetSelfTest steamNetSelfTest;
+        private ISteamNetSessionService steamNetSessionService;
+        private ISteamNetTransport steamNetTransport;
         private SteamLobbyPresenceService steamLobbyPresenceService;
         private SteamInviteService steamInviteService;
         private SteamPersonaService steamPersonaService;
@@ -72,6 +74,8 @@ namespace MegabonkTogether.Scripts
             steamLobbyService = Plugin.Services.GetService<ISteamLobbyService>();
             steamLobbySelfTest = Plugin.Services.GetService<SteamLobbySelfTest>();
             steamNetSelfTest = Plugin.Services.GetService<SteamNetSelfTest>();
+            steamNetSessionService = Plugin.Services.GetService<ISteamNetSessionService>();
+            steamNetTransport = Plugin.Services.GetService<ISteamNetTransport>();
             steamLobbyPresenceService = Plugin.Services.GetService<SteamLobbyPresenceService>();
             steamInviteService = Plugin.Services.GetService<SteamInviteService>();
             steamPersonaService = Plugin.Services.GetService<SteamPersonaService>();
@@ -106,6 +110,21 @@ namespace MegabonkTogether.Scripts
             }
 
             PollLobby(delta);
+
+            // Every frame, both of them, and neither off an accumulator.
+            //
+            // The transport's Poll is the receive pump: messages queue in Steam's buffers until it
+            // runs, so a slower cadence would not save work, it would only add latency and let the
+            // queue grow. The session service is gated on lobby data that can change on any tick,
+            // and it returns immediately once the session is live.
+            //
+            // Both are no-ops with the flag off — the session service sees no lobby and the
+            // transport is Idle — so a matchmaker session pays two branches per frame.
+            if (ModConfig.UseSteamTransport.Value)
+            {
+                steamNetSessionService?.Poll();
+                steamNetTransport?.Poll();
+            }
 
             // Every frame while it runs, and off an accumulator would not do: the test counts
             // frames held and polls the transport on each one, which is the cadence a real session

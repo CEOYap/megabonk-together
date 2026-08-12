@@ -67,6 +67,33 @@ namespace MegabonkTogether.Scripts
             isGameStarted = false;
         }
 
+        /// <summary>
+        /// The Steam transport's equivalent of <see cref="OnMatchFound"/>: brings the per-frame
+        /// loops up for a session that has no matchmaker behind it.
+        ///
+        /// <para>Separate from <c>OnMatchFound</c> rather than folded into it because the two learn
+        /// the same fact from different places and at different moments. A matchmaker session is
+        /// told its role by the server in <c>MatchInfo</c>; a Steam session reads it off lobby
+        /// ownership, which Steam already arbitrates. Sharing an entry point would mean one of them
+        /// inferring a role it was never given.</para>
+        /// </summary>
+        public void BeginSteamSession(bool isHost)
+        {
+            hasFoundMatch = true;
+            this.isHost = isHost;
+
+            udpClientService = Plugin.Services.GetRequiredService<IUdpClientService>();
+            stateBroadcastService = Plugin.Services.GetRequiredService<IStateBroadcastService>();
+            synchronizationService = Plugin.Services.GetRequiredService<ISynchronizationService>();
+
+            // Still told, even though it carries nothing here. SynchronizationService asks the
+            // LiteNetLib service for IsHost in a couple of places that have not moved to
+            // INetTransport yet, and a null there reads as "role undecided".
+            udpClientService.UpdateMode(isHost);
+
+            Plugin.Log.LogInfo($"[steam-session] Netplay loops started as {(isHost ? "HOST" : "CLIENT")}.");
+        }
+
         private void OnGameStarted()
         {
             isGameStarted = true;

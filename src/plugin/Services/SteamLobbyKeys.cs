@@ -26,6 +26,26 @@ namespace MegabonkTogether.Services
         public const string MemberReady = "ready";
 
         /// <summary>
+        /// Set to <c>"1"</c> by the host once its listen socket is open and it can accept peers.
+        ///
+        /// <para><b>This is what stops the two ends deciding independently when to connect.</b> Only
+        /// the lobby owner may write lobby data, so there is exactly one writer and one moment; a
+        /// client does not guess whether the host is listening yet, it is told. Connecting before
+        /// the socket exists fails in a way that looks like a NAT problem, and both ends retrying on
+        /// their own schedule is precisely the shape that broke Steam-backed readiness.</para>
+        /// </summary>
+        public const string ServerReady = "mt_ready";
+
+        /// <summary>
+        /// The run seed, published by the host so every peer generates the same world.
+        ///
+        /// <para>On the rendezvous path this arrives inside <c>MatchInfo</c>. With the Steam lobby
+        /// as the session there is no such message, and the seed has to come from the one place both
+        /// ends already agree on.</para>
+        /// </summary>
+        public const string Seed = "mt_seed";
+
+        /// <summary>
         /// The WebSocket matchmaker's join code, carried inside the Steam lobby.
         ///
         /// <para>Distinct from <see cref="Code"/>, which is the Steam lobby's own. This one exists

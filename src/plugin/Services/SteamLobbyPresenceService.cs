@@ -1,4 +1,4 @@
-namespace MegabonkTogether.Services
+﻿namespace MegabonkTogether.Services
 {
     /// <summary>
     /// Keeps a Steam lobby alive alongside the matchmaker lobby, so there is something for Steam's
@@ -37,6 +37,15 @@ namespace MegabonkTogether.Services
             // No Steam, no bridge, and no complaint: an instance launched outside Steam is a
             // supported way to run and simply has no invite button.
             if (!steamService.IsAvailable)
+            {
+                return;
+            }
+
+            // With the Steam transport carrying the session there is nothing to bridge: the Steam
+            // lobby is not standing in for a matchmaker room, it *is* the room, and it is created
+            // and joined by the session path rather than here. Left running, this would publish a
+            // matchmaker code that does not exist and leave lobbies it did not create.
+            if (Configuration.ModConfig.UseSteamTransport.Value)
             {
                 return;
             }
