@@ -583,21 +583,34 @@ not.
 7. Then, and only then, retire tags 73/74 — `LobbyDataUpdate_t` is reachable through
    `SteamCallback`, and at that point the Steam lobby is the one membership set.
 
-#### The playtest this branch is waiting on
+#### The playtest — done, PASSED
 
-Three unverified changes are now stacked on the LiteNetLib path, and none of them is Steam:
-the readiness revert carried over from Phase 3, the receive-switch extraction, and the stream
-extraction. Each is independently revertable, but they want one two-player session before anything
-else lands on top:
+**Two players over the internet, 2026-08-12.** Three unverified changes were stacked on the
+LiteNetLib path — the readiness revert carried over from Phase 3, the receive-switch extraction and
+the stream extraction — and all three are now verified together.
 
-| Check | What it exercises |
+| Check | Evidence |
 |---|---|
-| Join, both names appear | `Introduced` both directions — a peer-scoped case that stayed in the transport |
-| Press Ready on both, Start ungreys | the readiness revert, still unverified from Phase 3 |
-| Character select, run starts | `SelectedCharacter` on the host arm, and `AreAllPeersReady` |
-| **Enemies move on the client** | `OnLobbyUpdate`'s two trailing calls — dropped in a first draft of the router, and the failure mode is silent |
-| Chest, weapon, item pickup | the `SendToAllClientsExcept` forwards that moved to the router |
-| Host quits mid-run | `PlayerDisconnected` and the return to the menu |
+| Join, both peers introduced | client `Connected to host`; both connection ids present in the host's roster |
+| **Readiness — the outstanding Phase 3 item** | `[readiness] Round 1 open over 2 participant(s)` → `1137855259 ready (1/2)` → `712709437 ready (2/2)` |
+| Run starts, six levels completed | client `Received RunStarted message`, host released barrier rounds 1–6 |
+| **Enemies stream to the client** | `LobbyUpdates(enemies)` at 31–39/s throughout — the silent failure a first draft of the router would have caused did not occur |
+| **Every message type routed** | **zero** `Unknown message type received` on either side, across the whole session. All 95 moved cases are wired |
+| Stream pacing unchanged | `PlayersStateUpdate` 60.0/s at 98 B/send — exactly the derived figure; `LobbyUpdates(players)` 5.0/s, the 5 Hz heartbeat |
+| Bandwidth | 16–19 KB/s host egress at two players, in line with the Phase 0 baseline |
+| Latency | `peer 712709437 rtt 62 ms` |
+
+**Three pre-existing faults surfaced, none of them from this branch or from Steam.**
+
+1. **`WindowManagerPatches.Update_Postix` throws every frame in the pre-run menus** — 3798 times in
+   this session, stopping when the run started. `WindowManager.activeWindow as CharacterMenu`
+   returns null and is dereferenced immediately; `WindowManager.cs` was last touched 2026-07-31 and
+   is untouched by this branch. It is the `as` versus `TryCast<T>()` rule, and it costs real frame
+   time in the lobby. Its own branch off `main`.
+2. **`TumbleWeedInterpolator` calls `GetComponent` on a destroyed object** — five times on the
+   client, with the host logging the matching `TumbleWeed not found in SpawnedObjectManagerService
+   when processing OnTumbleWeedDespawned`. A despawn race, not a routing fault.
+3. The custom-button NREs, already recorded in [`../ui/04-custom-button-null-background.md`](../ui/04-custom-button-null-background.md).
 
 ### Phase 5 — Decommission
 - **Drop `NetworkMenuTab` so TOGETHER! goes straight to the lobby.** Planned separately, with the
