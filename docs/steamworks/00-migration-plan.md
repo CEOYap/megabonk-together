@@ -531,6 +531,31 @@ The transport itself exists: `Services/SteamNetTransport.cs` behind
 | **Exit criterion: a full run on Steam sockets, under 3% loss** | **not met — the Steam path has never carried a byte between two machines** |
 | **Inherited from Phase 3: find *and join* without the rendezvous server** | built, unverified |
 
+#### Confirmed in game, 2026-08-12
+
+The full connection handshake, over the internet, two machines:
+
+```
+[steam-net] Connection 513257305 to 76561198042727765 is now …_Connecting.
+[steam-net] Accepted a connection from 76561198042727765.
+[steam-net] …_FindingRoute.  →  …_Connected.
+[steam-net] Connected to 76561198042727765.
+[steam-net] Suneo introduced as connection 82462037 (host: False).
+```
+
+That closes the last thing the single-player self-test could not reach: **the status callback fires
+under the right callback id**, `ConnectP2P` works against the game's own interop assembly, SDR
+routes, and the introduction handshake completes with the derived connection id accepted. Both
+players saw each other in the lobby and reached character selection.
+
+**Still unrun on Steam sockets:** everything past Start — the run itself, the per-tick streams, the
+readiness barriers, disconnects mid-run.
+
+**One known gap, deliberately left.** `MapController` locks the matchmaker lobby at Start so nobody
+joins between pressing it and the run loading. There is no matchmaker here, and the Steam
+equivalent — `SetLobbyJoinable(false)` — is not exposed by `ISteamLobbyService`, so the run starts
+unlocked and a player could in principle join in that window.
+
 #### How to test the Steam path
 
 **Both players must set `Network/UseSteamTransport = true`.** A Steam host and a matchmaker client
