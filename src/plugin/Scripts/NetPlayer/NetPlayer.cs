@@ -201,9 +201,16 @@ namespace MegabonkTogether.Scripts.NetPlayer
         /// </summary>
         public ECharacter BuiltAs { get; private set; }
 
+        /// <summary>The skin this avatar was built with, so a later change can be noticed.</summary>
+        public string BuiltWithSkin { get; private set; } = "";
+
+        /// <summary>The hat currently on this avatar. Set by whoever applies it.</summary>
+        public uint BuiltWithHat { get; set; }
+
         public void Initialize(ECharacter eCharacter, uint connectionId, string skin)
         {
             BuiltAs = eCharacter;
+            BuiltWithSkin = skin ?? "";
 
             Plugin.Log.LogInfo($"Initializing NetPlayer for character {eCharacter} with ConnectionId {connectionId} and skin {skin}");
             this.connectionId = connectionId;

@@ -5041,9 +5041,20 @@ namespace MegabonkTogether.Services
 
         public void OnHatChanged(EHat eHat)
         {
+            var localPlayer = playerManagerService.GetLocalPlayer();
+            if (localPlayer == null)
+            {
+                return;
+            }
+
+            // Recorded as well as announced. The event tells peers who are listening now; the record
+            // tells everyone who builds this avatar later, which is every level transition.
+            localPlayer.Hat = (uint)eHat;
+            playerManagerService.UpdatePlayer(localPlayer);
+
             IGameNetworkMessage message = new HatChanged
             {
-                OwnerId = playerManagerService.GetLocalPlayer().ConnectionId,
+                OwnerId = localPlayer.ConnectionId,
                 EHat = (int)eHat
             };
 
@@ -5065,6 +5076,15 @@ namespace MegabonkTogether.Services
             {
                 logger.LogWarning("NetPlayer not found in PlayerManagerService when processing OnReceivedHatChanged.");
                 return;
+            }
+
+            // Mirrored onto the record for the same reason the sender does it: a rebuild of this
+            // avatar later reads the record, not the event that has already gone by.
+            var owner = playerManagerService.GetPlayer(changed.OwnerId);
+            if (owner != null)
+            {
+                owner.Hat = (uint)changed.EHat;
+                playerManagerService.UpdatePlayer(owner);
             }
 
             var hatData = DataManager.Instance.GetHat((EHat)changed.EHat);

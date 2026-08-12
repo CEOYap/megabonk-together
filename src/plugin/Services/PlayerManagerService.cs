@@ -1,4 +1,5 @@
 ﻿using Assets.Scripts.Inventory__Items__Pickups;
+using Assets.Scripts._Data.Hats;
 using Assets.Scripts.Inventory__Items__Pickups.AbilitiesPassive.Implementations;
 using Assets.Scripts.Inventory__Items__Pickups.Items.ItemImplementations;
 using Assets.Scripts.Inventory__Items__Pickups.Weapons;
@@ -512,14 +513,21 @@ namespace MegabonkTogether.Services
                         {
                             logger.LogInfo($"Re-initializing NetPlayer {connectionId}: it has no model.");
                             existing.Initialize(wanted, connectionId, known.Skin);
+                            ApplyHat(existing, known);
                         }
-                        else if (existing.BuiltAs != wanted)
+                        else if (existing.BuiltAs != wanted || existing.BuiltWithSkin != known.Skin)
                         {
                             logger.LogInfo(
-                                $"Rebuilding NetPlayer {connectionId}: built as {existing.BuiltAs}, "
-                                + $"the roster now says {wanted}.");
+                                $"Rebuilding NetPlayer {connectionId}: built as {existing.BuiltAs}/"
+                                + $"'{existing.BuiltWithSkin}', the roster now says {wanted}/'{known.Skin}'.");
                             existing.Destroy();
                             existing.Initialize(wanted, connectionId, known.Skin);
+                            ApplyHat(existing, known);
+                        }
+                        else if (existing.BuiltWithHat != known.Hat)
+                        {
+                            // A hat does not need the model rebuilt, only re-parented.
+                            ApplyHat(existing, known);
                         }
                     }
 
@@ -567,9 +575,50 @@ namespace MegabonkTogether.Services
             }
 
             netPlayer.Initialize((ECharacter)player.Character, connectionId, player.Skin);
+            ApplyHat(netPlayer, player);
             logger.LogInfo($"Spawned NetPlayer for {connectionId}.");
 
             return netPlayer;
+        }
+
+        /// <summary>
+        /// Puts the roster's hat on an avatar, and records what was put there.
+        ///
+        /// <para>Read from the record rather than waited for as an event: <c>HatChanged</c> only
+        /// fires when someone changes hat, so an avatar built afterwards — on join, or on every
+        /// level transition — would never hear about a hat chosen before it existed.</para>
+        /// </summary>
+        private void ApplyHat(NetPlayer netPlayer, Player player)
+        {
+            if (netPlayer == null || netPlayer.Model == null)
+            {
+                return;
+            }
+
+            netPlayer.BuiltWithHat = player.Hat;
+
+            if (player.Hat == 0)
+            {
+                return;
+            }
+
+            try
+            {
+                var hatData = DataManager.Instance.GetHat((EHat)player.Hat);
+                if (hatData != null)
+                {
+                    using (Plugin.SuppressOutbound())
+                    {
+                        netPlayer.SetHat(hatData);
+                    }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                // Cosmetic. A hat that will not attach must not take the avatar down with it — the
+                // ordering mistake StartGame already made once with the minimap arrow.
+                logger.LogWarning($"Could not put hat {player.Hat} on {player.ConnectionId}: {ex.Message}");
+            }
         }
 
         public IEnumerable<NetPlayer> GetAllSpawnedNetPlayers()
