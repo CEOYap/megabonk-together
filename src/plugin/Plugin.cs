@@ -252,6 +252,10 @@ namespace MegabonkTogether
                 // than on the LiteNetLib session that happens to provide it today; Phase 4 changes
                 // which implementation sits behind it and no consumer notices.
                 services.AddSingleton<INetTransport>(sp => sp.GetRequiredService<IUdpClientService>());
+
+                // The receive path's other half. Both transports deserialize into this, which is
+                // what makes a second one able to do anything with what it receives.
+                services.AddSingleton<INetMessageRouter, NetMessageRouter>();
                 services.AddSingleton<IPlayerManagerService, PlayerManagerService>();
                 services.AddSingleton<IEnemyManagerService, EnemyManagerService>();
                 services.AddSingleton<IProjectileManagerService, ProjectileManagerService>();
