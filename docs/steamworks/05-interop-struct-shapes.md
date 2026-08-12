@@ -127,15 +127,48 @@ in front of the arithmetic that could be wrong, so if the base is off they will 
 payload that fails the check is logged once and dropped rather than acted on — a connection that
 never establishes is a bug report; a connection acted on from garbage is a crash.
 
-## Two things to do before trusting any of this in a session
+## What has actually been run
 
-1. **Probe the identity layout with `GetIdentity`.** It fills a `SteamNetworkingIdentity` with our
-   own identity and returns a bool — no connection, no peer, nothing to go wrong. Compare
-   `GetSteamID64()` against `SteamManager.steamId`. If those match, the 136-byte layout round-trips
-   through native code and `ConnectP2P` is standing on proven ground. If they do not, stop.
-2. **The offsets above are UNVERIFIED until a real connection changes state.** The sentinels make a
-   wrong answer loud instead of silent, which is the most that can be arranged without two
-   machines.
+**CONFIRMED in game on buildid 21750826, 2026-08-12**, by `SteamNetSelfTest` in a single-player
+session:
+
+```
+[steam-net] Self-test: bringing the transport up as a host.
+[steam-net] Identity layout verified: Steam filled in 76561198045461149, which matches the game's own SteamID.
+[steam-net] Listening on virtual port 0.
+[steam-net] Self-test: Running, hosting, 0 peer(s).
+[steam-net] Shut down.
+[steam-net] Self-test finished: PASSED
+```
+
+**The first line of that is the one that matters, and it closes the question this document opened.**
+`GetIdentity` filled a `SteamNetworkingIdentity` through native code and it read back as the SteamID
+the game already knew. The 136-byte layout round-trips, so passing that struct to `ConnectP2P` is
+standing on measured ground rather than on a metadata argument. The audit table above is no longer
+the only evidence for it.
+
+Three more things came up with it and are also confirmed:
+
+- `CreateListenSocketP2P` and `CreatePollGroup` bind through the game's own interop assembly with a
+  zero-length `Il2CppStructArray` for options.
+- `CallbackDispatcher.Register` accepts a `SteamCallback` carrying
+  `SteamNetConnectionStatusChangedCallback_t` — the first use of that mechanism for a type in the
+  sockets callback range.
+- Teardown releases the connection, poll group and listen socket without crashing, and adds nothing
+  to Steam's own `ErrorLog.log`, which came out byte-identical to the run before the self-test
+  existed.
+
+## What is still unverified, and needs two machines
+
+1. **The callback registering is not the callback firing.** Nothing connected, so
+   `SteamNetConnectionStatusChangedCallback_t` has never been delivered. If the callback id derived
+   from the type's attribute is wrong, the symptom is silence — a connection that hangs in
+   `Connecting` forever with nothing in the log.
+2. **The offsets above have never been read from a real payload.** The identity sentinels sit in
+   front of the arithmetic so a wrong base is loud rather than silent, which is the most that can be
+   arranged without a peer.
+3. **The receive path and the delivery mapping are entirely untouched.** Steam has no loopback, so
+   one player cannot send a byte to themselves.
 
 ## What this does not change
 

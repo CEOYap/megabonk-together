@@ -512,16 +512,17 @@ numbers burned, exactly as tags 1, 65 and 66 were left when their stamped replac
 - **Exit criteria:** players can find and join a lobby without the rendezvous server. The old
   transport still carries gameplay traffic.
 
-### Phase 4 — `SteamNetTransport` — **TRANSPORT BUILT, NOT WIRED, NOTHING RUN**
+### Phase 4 — `SteamNetTransport` — **BUILT AND SETUP-PROVEN, NOT WIRED, NO PEER YET**
 
 The transport itself exists: `Services/SteamNetTransport.cs` behind
 `Services/ISteamNetTransport.cs`, with the marshalling it needs in `Services/SteamNetLayout.cs`.
 
 | Item | State |
 |---|---|
-| `CreateListenSocketP2P` + poll group on the host | built |
-| `ConnectP2P` on clients | built |
-| `SteamNetConnectionStatusChangedCallback_t` → `PeerConnected` / `PeerDisconnected` | built, via `SteamCallback` |
+| Identity layout round-trips through native code | **verified in game** — `GetIdentity` returned our own SteamID |
+| `CreateListenSocketP2P` + poll group on the host | **verified in game** — opens, listens, tears down clean |
+| `ConnectP2P` on clients | built; its struct is now proven, the call is not |
+| `SteamNetConnectionStatusChangedCallback_t` → `PeerConnected` / `PeerDisconnected` | built and **registers**; has never **fired** — no peer has connected |
 | Send methods, throttled `EResult` logging, one reused pinned buffer | built |
 | `ReceiveMessagesOnPollGroup` from `Update`, capped drain, `Release` in a `finally` | built |
 | `NetDelivery` → Steam send flags | built; `ReliableSequenced` retired rather than translated |
@@ -551,9 +552,11 @@ not.
 
 **What is left, in order:**
 
-1. Run `Diagnostics/SteamNetSelfTest` once. It proves the identity layout against `GetIdentity`,
-   which is what `ConnectP2P` stands on, plus socket, poll group, callback registration and
-   teardown. One player, a few seconds.
+1. ~~Run `Diagnostics/SteamNetSelfTest` once.~~ **Done, PASSED, 2026-08-12.** The identity layout is
+   confirmed against `GetIdentity`, and the socket, poll group, callback registration and teardown
+   all came up. See [`05-interop-struct-shapes.md`](05-interop-struct-shapes.md) for the log and for
+   the three things that are still open — chiefly that a callback which *registers* is not a
+   callback that *fires*, and only a peer can settle that.
 2. Move the session lifecycle. `UdpClientService` owns matchmaking handshake, NAT introduction,
    relay fallback and the per-tick send loop alongside the transport, and `NetworkHandler` calls
    `Update`/`UpdateEnemies`/`UpdateProjectiles` on it — none of which is transport. Until that is
