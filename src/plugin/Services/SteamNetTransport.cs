@@ -38,6 +38,7 @@ namespace MegabonkTogether.Services
     /// </summary>
     internal class SteamNetTransport(
         ISteamService steamService,
+        ISteamLobbyService steamLobbyService,
         IPlayerManagerService playerManagerService) : ISteamNetTransport
     {
         /// <summary>
@@ -870,6 +871,35 @@ namespace MegabonkTogether.Services
 
             playerManagerService.AddPlayer(
                 selfConnectionId, isLocalHost, isSelf: true, Configuration.ModConfig.PlayerName.Value);
+        }
+
+        /// <summary>
+        /// Whether everyone in the Steam lobby has connected and introduced themselves.
+        ///
+        /// <para><b>Counted against the lobby, not against the roster.</b> The roster is built
+        /// <i>from</i> introductions, so comparing the two would compare a set with itself and
+        /// always agree. The Steam lobby is the one membership set both ends already share — which
+        /// is the whole reason the migration waited for it — so it is what "everyone" means
+        /// here.</para>
+        /// </summary>
+        public bool HasAllPeersConnected()
+        {
+            if (state != SteamNetTransportState.Running)
+            {
+                return false;
+            }
+
+            var members = steamLobbyService.GetMembers().Count;
+            if (members <= 1)
+            {
+                // Alone in the lobby. True for a host who has not been joined yet — there is nobody
+                // outstanding — and the caller's own readiness rules decide whether that is enough
+                // to start.
+                return true;
+            }
+
+            // Everyone but us.
+            return peerIntroductions.Count >= members - 1;
         }
 
         /// <summary>Host only. Whether every introduced peer has chosen a character.</summary>

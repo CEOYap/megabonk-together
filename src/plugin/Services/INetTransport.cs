@@ -1,4 +1,4 @@
-using MegabonkTogether.Common.Messages;
+﻿using MegabonkTogether.Common.Messages;
 
 namespace MegabonkTogether.Services
 {
@@ -92,5 +92,15 @@ namespace MegabonkTogether.Services
 
         /// <summary>Null until the session's role has been decided.</summary>
         bool? IsHost();
+
+        /// <summary>
+        /// Whether every peer this session expects is connected and has introduced itself.
+        ///
+        /// <para>On the contract rather than on one implementation because gameplay gates readiness
+        /// on it, and a gate that only one transport can answer is a gate that silently fails on the
+        /// other — which is exactly what happened when a Steam session asked the LiteNetLib service
+        /// and got its idle answer.</para>
+        /// </summary>
+        bool HasAllPeersConnected();
     }
 }

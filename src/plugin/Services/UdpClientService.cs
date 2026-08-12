@@ -56,7 +56,6 @@ namespace MegabonkTogether.Services
         public void Poll();
 
         public Task<bool> HandleMatch(MatchInfo matchInfo, uint selfConnectionId, string rdvServerHost, uint rdvServerPort, bool enabledSharedExperience);
-        public bool HasAllPeersConnected();
 
         public void Reset();
 

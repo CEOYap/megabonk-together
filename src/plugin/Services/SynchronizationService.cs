@@ -135,7 +135,11 @@ namespace MegabonkTogether.Services
     }
     internal class SynchronizationService : ISynchronizationService
     {
-        private readonly IUdpClientService udpClientService;
+        // The seam, not the LiteNetLib implementation. Injecting the concrete service meant every
+        // send here reached LiteNetLib regardless of which transport the session was actually
+        // running on, so a Steam session's character confirm was answered with "Not connected to
+        // host" by a transport that was never started.
+        private readonly INetTransport udpClientService;
         private readonly IStateBroadcastService stateBroadcastService;
         private readonly IPlayerManagerService playerManagerService;
         private readonly IProjectileManagerService projectileManagerService;
@@ -186,7 +190,7 @@ namespace MegabonkTogether.Services
             IPlayerManagerService playerManagerService,
             IEnemyManagerService enemyManagerService,
             ManualLogSource logger,
-            IUdpClientService udpClientService,
+            INetTransport udpClientService,
             IStateBroadcastService stateBroadcastService,
             IProjectileManagerService projectileManagerService,
             IPickupManagerService pickupManagerService,
