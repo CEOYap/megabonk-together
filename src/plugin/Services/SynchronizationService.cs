@@ -1079,6 +1079,10 @@ namespace MegabonkTogether.Services
 
             var connectionId = localPlayer.ConnectionId;
 
+            // Zero means "nothing reported yet for this routine". Round ids are never zero while a
+            // round is open, so this cannot accidentally match one.
+            uint reportedRoundId = 0;
+
             for (var attempt = 1; attempt <= ReadyRetryAttempts; attempt++)
             {
                 if (generation != readyGeneration || currentState != State.Ready)
@@ -1108,6 +1112,7 @@ namespace MegabonkTogether.Services
                     };
 
                     udpClientService.SendToHost(message, NetDelivery.ReliableOrdered);
+                    reportedRoundId = readinessService.RoundId;
 
                     if (attempt == 1)
                     {
@@ -1154,9 +1159,26 @@ namespace MegabonkTogether.Services
                     // player broadcast, so a reference captured earlier can be stale. Checked inside
                     // the wait, not only after it — acknowledgement usually arrives well within the
                     // interval, and stopping promptly keeps a redundant re-report off the wire.
+                    // The acknowledgement must be for the round this routine is reporting, not
+                    // merely "IsReady is true and some stamp exists". Those two facts can come from
+                    // different rounds, and on a level transition they routinely do: IsReady is a
+                    // replicated field the host's full player record overwrites, so it can still
+                    // carry the previous round's answer while the stamp is already the new round's.
+                    //
+                    // That combination made this exit believe the host had acknowledged a report
+                    // the routine had not even sent yet - silently, since this was the one exit
+                    // with no log - and the client then never reported for the new round at all.
+                    // Requiring a report for the current round first makes a stale flag unable to
+                    // satisfy it. Defect C again, in the last place that trusted the flag alone.
                     var acknowledged = playerManagerService.GetPlayer(connectionId);
-                    if (acknowledged != null && acknowledged.IsReady && readinessService.HasStamp)
+                    if (acknowledged != null
+                        && acknowledged.IsReady
+                        && readinessService.HasStamp
+                        && reportedRoundId == readinessService.RoundId)
                     {
+                        logger.LogInfo(
+                            $"[readiness] The host acknowledged round {readinessService.RoundId}; " +
+                            "stopping the report routine.");
                         yield break;
                     }
                 }
