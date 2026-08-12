@@ -490,6 +490,17 @@ namespace MegabonkTogether.Services
         {
             if (spawnedPlayers.TryGetValue(connectionId, out var existing) && existing != null)
             {
+                // Present but bodiless. Initialize can fail to build the model when the avatar is
+                // created during a level load — which on-demand spawning makes routine — and a
+                // NetPlayer with no model is permanently invisible with nothing to recover it.
+                // Re-initialising is the recovery, and it is safe because Initialize is what builds
+                // the model in the first place.
+                if (existing.Model == null && players.TryGetValue(connectionId, out var known))
+                {
+                    logger.LogInfo($"Re-initializing NetPlayer {connectionId}: it has no model.");
+                    existing.Initialize((ECharacter)known.Character, connectionId, known.Skin);
+                }
+
                 return existing;
             }
 

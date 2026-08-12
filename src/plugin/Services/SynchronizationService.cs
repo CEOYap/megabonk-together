@@ -707,8 +707,27 @@ namespace MegabonkTogether.Services
             foreach (var netPlayer in allNetPlayers)
             {
                 Plugin.Instance.NetPlayersDisplayer.AddPlayer(netPlayer);
-                var spawnedPlayer = playerManagerService.GetNetPlayerByNetplayId(netPlayer.ConnectionId);
+                var spawnedPlayer = playerManagerService.EnsureNetPlayerSpawned(netPlayer.ConnectionId);
                 var playerColor = Plugin.Instance.NetPlayersDisplayer.GetPlayerColor(netPlayer.ConnectionId);
+
+                // Both null checks are load-bearing, and this line is why StartGame threw.
+                //
+                // An avatar can now exist before its model does: a position update arriving during
+                // a level load creates the NetPlayer, and Initialize cannot always build the model
+                // that early. Dereferencing Model here took the whole of StartGame down — and
+                // because StartGame is called from WaitForLobbyReady, the coroutine died before it
+                // hid "Waiting for other players", unpaused time, or cleared its own handle. One
+                // NullReferenceException, three symptoms, none of which named it.
+                //
+                // Losing a minimap arrow is a cosmetic failure. Losing StartGame is the run.
+                if (spawnedPlayer == null || spawnedPlayer.Model == null)
+                {
+                    logger.LogWarning(
+                        $"[netplayer] {netPlayer.ConnectionId} has no model yet; skipping its minimap "
+                        + "arrow. The avatar itself is unaffected.");
+                    continue;
+                }
+
                 minimapCamera.AddArrow(spawnedPlayer.Model.transform, playerColor);
             }
 
