@@ -64,6 +64,30 @@ That is not a reason to delay the button fix — it is needed long before Phase 
 share regardless. But whoever does the button fix should know that most of the file they are
 editing is scheduled for deletion, and not spend care on it accordingly.
 
+## Two constraints found when trying to do the panel work first
+
+Both were found by looking rather than by building, and both say the same thing: the panel
+additions depend on TOGETHER! opening the panel, not the other way round.
+
+**Quickplay, Join From Clipboard and a connecting window are unreachable until then.** The panel is
+only ever created *after* a session exists — `ShowLobbyPanel` runs when hosting connects or a match
+is found — so it is always shown in-lobby. `SetButtonVisible(joinFromClipboardButton, !inLobby)`
+anticipated a not-in-lobby state that nothing produces, which is also why
+`LobbyPanel.OnJoinRequested` being unassigned has never been noticed. Adding Quickplay next to it
+adds a second button nobody can reach, and a connecting window has nothing to report on because the
+panel never starts a connection.
+
+**Netplay Options does not fit in the button column.** It reserves 520 units for five buttons at
+about 96 each, and five is already the worst case — Invite, Copy Code, Ready, Start, Leave Lobby.
+A sixth needs about 616, which puts the card near 1050 against a 1080 reference. So Netplay Options
+has to be a **sub-view** that replaces the member list and column with the two toggles and a Back
+button, the way the menu does it today, rather than another entry in the column. That is prefab
+work plus a view-state in `LobbyPanel`, not a button.
+
+**The order that works:** switch `NetworkMenuTab` onto `INetplaySessionService` first, so the
+extraction stops being dead code and the connecting window has one owner; then TOGETHER! opens the
+panel; then Quickplay, Join and the options sub-view have somewhere to live and something to say.
+
 ## Order
 
 The session-setup extraction is worth doing **before** the deletion and on its own. It is the only
