@@ -1215,14 +1215,25 @@ namespace MegabonkTogether.Services
         public IReadOnlyList<uint> GetPeerHandles() => new List<uint>(peerSteamIds.Keys);
 
         /// <summary>
-        /// <b>Always -1 on this transport.</b> <c>GetConnectionRealTimeStatus</c> is the only source
-        /// of ping and it takes a <c>SteamNetConnectionRealTimeStatus_t</c> by reference, whose
-        /// IL2CPP layout carries an <c>Il2CppStructArray</c> where native has 64 inline bytes — the
-        /// shape that has crashed this project twice. The route back is direct P/Invoke to the flat
-        /// C API, which creates no second callback registry; see
-        /// <c>docs/steamworks/05-interop-struct-shapes.md</c>.
+        /// Round-trip time to a peer, or -1 when it is not known.
+        ///
+        /// <para>Read through <see cref="SteamNetNative"/> rather than the interop assembly.
+        /// <c>GetConnectionRealTimeStatus</c>'s IL2CPP signature takes a struct by reference whose
+        /// layout carries an <c>Il2CppStructArray</c> where native has 64 inline bytes — the shape
+        /// that has crashed this project twice — so the only safe way to ask is with our own
+        /// blittable declaration. That is sound here specifically because
+        /// <c>ISteamNetworkingSockets</c> has no callbacks of its own, so a direct call adds no
+        /// second dispatcher; see <c>docs/steamworks/05-interop-struct-shapes.md</c>.</para>
         /// </summary>
-        public int GetLatency(uint connectionId) => -1;
+        public int GetLatency(uint connectionId)
+        {
+            if (!peerHandlesByConnectionId.TryGetValue(connectionId, out var peerHandle))
+            {
+                return -1;
+            }
+
+            return SteamNetNative.TryGetPing(peerHandle);
+        }
 
         // ---------------------------------------------------------------- teardown
 

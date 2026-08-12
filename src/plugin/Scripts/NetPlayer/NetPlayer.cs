@@ -280,9 +280,23 @@ namespace MegabonkTogether.Scripts.NetPlayer
             CreateNameplate();
         }
 
+        /// <summary>
+        /// <para><b>Nothing may escape here.</b> This runs inside a Unity callback, so an exception
+        /// crosses the IL2CPP trampoline and is swallowed by Il2CppInterop under its own log tag —
+        /// which is how a level transition produced an unbroken wall of NullReferenceException with
+        /// nothing naming the mod. Teardown is also the least useful place to fail: whatever went
+        /// wrong, the object is going away regardless.</para>
+        /// </summary>
         private void OnDestroy()
         {
-            Destroy();
+            try
+            {
+                Destroy();
+            }
+            catch (System.Exception ex)
+            {
+                Plugin.Log.LogWarning($"[netplayer] Teardown of {connectionId} threw and was contained: {ex.Message}");
+            }
         }
 
         internal void Destroy()
@@ -307,15 +321,18 @@ namespace MegabonkTogether.Scripts.NetPlayer
                 GameObject.Destroy(interpolator);
             }
 
-            foreach (var constantAttack in constantAttacks.Values)
+            if (constantAttacks != null)
             {
-                if (constantAttack != null)
+                foreach (var constantAttack in constantAttacks.Values)
                 {
-                    GameObject.Destroy(constantAttack.gameObject);
+                    if (constantAttack != null)
+                    {
+                        GameObject.Destroy(constantAttack.gameObject);
+                    }
                 }
-            }
 
-            constantAttacks.Clear();
+                constantAttacks.Clear();
+            }
 
             if (StealWeaponWui != null)
             {
@@ -327,9 +344,16 @@ namespace MegabonkTogether.Scripts.NetPlayer
                 GameObject.Destroy(ReturnWeaponWui.gameObject);
             }
 
-            inventory.Cleanup(); //Cleanup is important to prevent interference with local player
+            // Null-checked, and this is the line that was throwing. An avatar can be destroyed
+            // before Initialize has given it an inventory - a scene load takes every NetPlayer with
+            // it, including one created moments earlier by an inbound position update - and the
+            // Cleanup that matters is on instances that got far enough to have one.
+            inventory?.Cleanup(); //Cleanup is important to prevent interference with local player
 
-            GameObject.Destroy(this.Model);
+            if (this.Model != null)
+            {
+                GameObject.Destroy(this.Model);
+            }
         }
 
         private bool DoesWeaponNeedConstantAttack(WeaponData weaponData)
