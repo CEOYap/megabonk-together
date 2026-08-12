@@ -557,22 +557,47 @@ not.
    all came up. See [`05-interop-struct-shapes.md`](05-interop-struct-shapes.md) for the log and for
    the three things that are still open — chiefly that a callback which *registers* is not a
    callback that *fires*, and only a peer can settle that.
-2. Move the session lifecycle. `UdpClientService` owns matchmaking handshake, NAT introduction,
-   relay fallback and the per-tick send loop alongside the transport, and `NetworkHandler` calls
-   `Update`/`UpdateEnemies`/`UpdateProjectiles` on it — none of which is transport. Until that is
-   split, `INetTransport` cannot be pointed at the Steam implementation without taking the send
-   loop with it.
-3. Decide who assigns connection ids once the Steam lobby is the session. Today the rendezvous
+2. ~~Move the session lifecycle out of `UdpClientService`.~~ **Done, in two commits.** The receive
+   switch is `Services/NetMessageRouter.cs` and the per-tick streams are
+   `Services/StateBroadcastService.cs`; `UdpClientService` went from 2241 lines and eight
+   dependencies to 1263 and two. Both are behaviour-preserving by construction and **neither has
+   been run** — see the playtest note below.
+
+   What was left behind in the transport is the answer to "what is actually transport-specific":
+   eight receive cases whose handling depends on *which peer a message arrived on* rather than on
+   its contents, plus matchmaking handshake, NAT introduction and relay fallback.
+3. Give `SteamNetTransport` the peer half. It raises `MessageReceived` and nothing consumes it yet.
+   It needs to route into `INetMessageRouter` and to handle those same eight peer-scoped cases —
+   which means its own introduction map, keyed by `HSteamNetConnection`.
+4. Decide who assigns connection ids once the Steam lobby is the session. Today the rendezvous
    server does. The transport deliberately does not guess: it keys peers by
    `HSteamNetConnection` — the direct analogue of `NetPeer.Id` — and takes the game's connection id
    from the introduction handshake through `AssignConnectionId`, exactly as `gamePeersIntroduced`
    does today. **Whatever replaces the server must not be derived independently on each machine**;
    that is the mistake the readiness revert was paid for.
-4. Gate `AcceptConnection` on Steam lobby membership, and close with
+5. Point `INetTransport` at it behind the config flag. Only after 3 and 4 — the registration is one
+   line and is the last step, not the first.
+6. Gate `AcceptConnection` on Steam lobby membership, and close with
    `SteamNetEndReason.ProtocolMismatch` on a version mismatch. The reasons are reserved; nothing
    uses them.
-5. Then, and only then, retire tags 73/74 — `LobbyDataUpdate_t` is reachable through
+7. Then, and only then, retire tags 73/74 — `LobbyDataUpdate_t` is reachable through
    `SteamCallback`, and at that point the Steam lobby is the one membership set.
+
+#### The playtest this branch is waiting on
+
+Three unverified changes are now stacked on the LiteNetLib path, and none of them is Steam:
+the readiness revert carried over from Phase 3, the receive-switch extraction, and the stream
+extraction. Each is independently revertable, but they want one two-player session before anything
+else lands on top:
+
+| Check | What it exercises |
+|---|---|
+| Join, both names appear | `Introduced` both directions — a peer-scoped case that stayed in the transport |
+| Press Ready on both, Start ungreys | the readiness revert, still unverified from Phase 3 |
+| Character select, run starts | `SelectedCharacter` on the host arm, and `AreAllPeersReady` |
+| **Enemies move on the client** | `OnLobbyUpdate`'s two trailing calls — dropped in a first draft of the router, and the failure mode is silent |
+| Chest, weapon, item pickup | the `SendToAllClientsExcept` forwards that moved to the router |
+| Host quits mid-run | `PlayerDisconnected` and the return to the menu |
 
 ### Phase 5 — Decommission
 - **Drop `NetworkMenuTab` so TOGETHER! goes straight to the lobby.** Planned separately, with the
