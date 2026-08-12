@@ -488,25 +488,40 @@ namespace MegabonkTogether.Services
         /// </summary>
         public NetPlayer EnsureNetPlayerSpawned(uint connectionId)
         {
-            if (spawnedPlayers.TryGetValue(connectionId, out var existing) && existing != null)
+            if (spawnedPlayers.TryGetValue(connectionId, out var existing))
             {
-                // Present but bodiless. Initialize can fail to build the model when the avatar is
-                // created during a level load — which on-demand spawning makes routine — and a
-                // NetPlayer with no model is permanently invisible with nothing to recover it.
-                // Re-initialising is the recovery, and it is safe because Initialize is what builds
-                // the model in the first place.
-                if (existing.Model == null && players.TryGetValue(connectionId, out var known))
+                // Unity's == is overloaded: a *destroyed* object compares equal to null while the
+                // managed reference is still perfectly alive. That distinction is the whole bug
+                // this branch exists to handle, and getting it wrong is what made a peer invisible
+                // for an entire run.
+                if (existing != null)
                 {
-                    logger.LogInfo($"Re-initializing NetPlayer {connectionId}: it has no model.");
-                    existing.Initialize((ECharacter)known.Character, connectionId, known.Skin);
+                    // Present but bodiless. Initialize can fail to build the model when the avatar
+                    // is created during a level load — which on-demand spawning makes routine — and
+                    // a NetPlayer with no model is invisible with nothing to recover it.
+                    if (existing.Model == null && players.TryGetValue(connectionId, out var known))
+                    {
+                        logger.LogInfo($"Re-initializing NetPlayer {connectionId}: it has no model.");
+                        existing.Initialize((ECharacter)known.Character, connectionId, known.Skin);
+                    }
+
+                    return existing;
                 }
 
-                return existing;
+                // Destroyed by a scene load, but still keyed here. The entry must go before a
+                // replacement can take its place: TryAdd would fail against it, and the "lost a
+                // race" branch below would then destroy the healthy new avatar and hand back the
+                // corpse — every frame, forever. That is precisely what happened, and why one
+                // player could see the other and not the reverse.
+                logger.LogInfo($"Replacing NetPlayer {connectionId}: the previous one was destroyed.");
+                spawnedPlayers.TryRemove(connectionId, out _);
             }
 
             var local = GetLocalPlayer();
             if (local != null && local.ConnectionId == connectionId)
             {
+                // The local player has no avatar by design; asking is a caller's mistake, not an
+                // error, but it must be distinguishable from the miss below.
                 return null;
             }
 
@@ -514,6 +529,7 @@ namespace MegabonkTogether.Services
             // player who has genuinely left is not worth a warning on a per-frame path.
             if (!players.TryGetValue(connectionId, out var player))
             {
+                ReportMissingPlayer(connectionId);
                 return null;
             }
 
@@ -524,8 +540,12 @@ namespace MegabonkTogether.Services
             {
                 // Lost a race with another caller this frame. Theirs is the one in the map, so this
                 // one is destroyed rather than leaked as an orphan that receives nothing.
+                //
+                // Only reachable as a genuine race now. It used to be reachable against a destroyed
+                // entry too, which turned this from a tie-breaker into a permanent trap.
                 UnityEngine.Object.Destroy(go);
-                return spawnedPlayers.TryGetValue(connectionId, out var winner) ? winner : null;
+                logger.LogInfo($"Discarded a duplicate NetPlayer for {connectionId}; another call won.");
+                return spawnedPlayers.TryGetValue(connectionId, out var winner) && winner != null ? winner : null;
             }
 
             netPlayer.Initialize((ECharacter)player.Character, connectionId, player.Skin);

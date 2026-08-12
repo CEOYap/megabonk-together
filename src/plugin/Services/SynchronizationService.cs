@@ -720,11 +720,24 @@ namespace MegabonkTogether.Services
                 // NullReferenceException, three symptoms, none of which named it.
                 //
                 // Losing a minimap arrow is a cosmetic failure. Losing StartGame is the run.
-                if (spawnedPlayer == null || spawnedPlayer.Model == null)
+                // Split, because one message for two causes cost a playtest. "No avatar at all"
+                // and "an avatar with no model" are different failures with different fixes, and
+                // the single warning that covered both sent the last investigation at the wrong
+                // one.
+                if (spawnedPlayer == null)
                 {
                     logger.LogWarning(
-                        $"[netplayer] {netPlayer.ConnectionId} has no model yet; skipping its minimap "
-                        + "arrow. The avatar itself is unaffected.");
+                        $"[netplayer] {netPlayer.ConnectionId} is in the roster but has no avatar, so "
+                        + "it gets no minimap arrow. EnsureNetPlayerSpawned refused to build one — "
+                        + "look for its reason above this line.");
+                    continue;
+                }
+
+                if (spawnedPlayer.Model == null)
+                {
+                    logger.LogWarning(
+                        $"[netplayer] {netPlayer.ConnectionId} has an avatar but no model, so it gets "
+                        + "no minimap arrow and will be invisible. Initialize did not build one.");
                     continue;
                 }
 
