@@ -58,6 +58,7 @@ namespace MegabonkTogether.Services
     internal class SteamNetSessionService(
         ISteamLobbyService steamLobbyService,
         ISteamNetTransport transport,
+        ISteamService steamService,
         IPlayerManagerService playerManagerService) : ISteamNetSessionService
     {
         private const string ServerReadyValue = "1";
@@ -73,6 +74,9 @@ namespace MegabonkTogether.Services
         private bool attempted;
 
         private bool seedApplied;
+
+        private const int WaitLogIntervalMs = 1000;
+        private long nextWaitLogTick;
 
         public void Poll()
         {
@@ -106,8 +110,22 @@ namespace MegabonkTogether.Services
         {
             if (!attempted)
             {
-                attempted = true;
                 State = SteamSessionState.Waiting;
+
+                // Checked here rather than left to StartHost, because the two failures are not the
+                // same kind. SDR relay access takes a few seconds to come up after launch, and
+                // pressing Host in those first seconds is completely ordinary - so "not ready yet"
+                // must be waited out, not latched. The first internet test of this path failed
+                // exactly here: readiness was "Working, relay attempting", the attempt was marked
+                // as made, State went to Failed, and Poll then returned early forever. The host sat
+                // with no socket, never published readiness, and the client waited on a flag that
+                // was never coming.
+                if (!IsSteamReady())
+                {
+                    return;
+                }
+
+                attempted = true;
 
                 if (!transport.StartHost())
                 {
@@ -144,10 +162,16 @@ namespace MegabonkTogether.Services
 
             State = SteamSessionState.Waiting;
 
+            if (!IsSteamReady())
+            {
+                return;
+            }
+
             // The gate. Until the owner says its socket is open, connecting is a failure that looks
             // like a network fault, so this simply waits — there is no timer here on purpose.
             if (steamLobbyService.GetLobbyData(SteamLobbyKeys.ServerReady) != ServerReadyValue)
             {
+                LogWaitingThrottled("the host has not opened its socket yet");
                 return;
             }
 
@@ -178,6 +202,45 @@ namespace MegabonkTogether.Services
 
             State = SteamSessionState.Live;
             Plugin.Log.LogInfo($"[steam-session] Connecting to lobby owner {ownerSteamId}.");
+        }
+
+        /// <summary>
+        /// Whether Steam's own prerequisites are up. Transient by nature — this is false for the
+        /// first few seconds of every launch — so callers wait rather than fail.
+        /// </summary>
+        private bool IsSteamReady()
+        {
+            var readiness = steamService.Readiness;
+
+            if (readiness == SteamReadiness.Ready)
+            {
+                return true;
+            }
+
+            if (readiness == SteamReadiness.Failed || readiness == SteamReadiness.Unavailable)
+            {
+                Fail($"Steam is not usable: {steamService.DescribeStatus()}");
+                return false;
+            }
+
+            LogWaitingThrottled($"Steam is still coming up ({readiness})");
+            return false;
+        }
+
+        /// <summary>
+        /// Says what is being waited for, once a second. Silence is what made the first failure of
+        /// this path unreadable: both ends were waiting on each other and neither said so.
+        /// </summary>
+        private void LogWaitingThrottled(string reason)
+        {
+            var now = System.Environment.TickCount64;
+            if (now < nextWaitLogTick)
+            {
+                return;
+            }
+
+            nextWaitLogTick = now + WaitLogIntervalMs;
+            Plugin.Log.LogInfo($"[steam-session] Waiting: {reason}.");
         }
 
         /// <summary>

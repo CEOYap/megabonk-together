@@ -211,6 +211,27 @@ namespace MegabonkTogether.Scripts
             Plugin.Instance.Mode = new();
             isHost = false;
 
+            // Leaving the Steam lobby is part of ending a Steam session, and this is the single
+            // path every teardown funnels through — cancel, failure, and backing out of the lobby
+            // panel all reach here.
+            //
+            // It became load-bearing when the invite flow stopped leaving the lobby it joined: a
+            // player who backed out was still a member of a lobby nothing would release, so the
+            // next invite was refused with "Refusing to join a lobby while InLobby" and they were
+            // stuck until they restarted the game. Guarded, because on the matchmaker path the
+            // Steam lobby belongs to the presence bridge and is not ours to close.
+            if (ModConfig.UseSteamTransport.Value)
+            {
+                try
+                {
+                    Plugin.Services.GetRequiredService<ISteamLobbyService>().LeaveLobby();
+                }
+                catch (System.Exception ex)
+                {
+                    Plugin.Log.LogWarning($"[steam-session] Leaving the Steam lobby threw: {ex.Message}");
+                }
+            }
+
             // FIX P0-5: clear the match flag on teardown. HasNetplaySessionInitialized() reads
             // this, and ~40 patch sites gate on it — SaveManager most importantly. It was
             // previously only reset in HandleNetworking(), i.e. when STARTING a session, so after

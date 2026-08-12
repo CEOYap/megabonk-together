@@ -14,7 +14,9 @@ namespace MegabonkTogether.Services
     /// which screen they put back on failure. Here there is one, because the difference was never
     /// about connecting — it was about who was showing it.</para>
     /// </summary>
-    internal class NetplaySessionService(ISteamLobbyService steamLobbyService) : INetplaySessionService
+    internal class NetplaySessionService(
+        ISteamLobbyService steamLobbyService,
+        ISteamNetSessionService steamNetSessionService) : INetplaySessionService
     {
         /// <summary>
         /// How long to wait for Steam to create or join a lobby. Steam's own calls are usually
@@ -22,6 +24,13 @@ namespace MegabonkTogether.Services
         /// lobby behind it.
         /// </summary>
         private const float SteamLobbyWaitSeconds = 20f;
+
+        /// <summary>
+        /// How long to wait for the sockets after the lobby exists. Generous because Steam's relay
+        /// access can still be coming up when a player presses Host seconds after launch, and that
+        /// wait is ordinary rather than a fault.
+        /// </summary>
+        private const float SteamSessionWaitSeconds = 30f;
 
         /// <summary>
         /// How long to wait for the matchmaker before giving up. Carried over unchanged from the
@@ -255,6 +264,18 @@ namespace MegabonkTogether.Services
             // and the panel needs no knowledge of which transport produced it.
             Plugin.Instance.Mode.RoomCode = steamLobbyService.LobbyCode;
 
+            // The lobby existing is not the session existing. Starting the netplay loops before the
+            // listen socket is open produced a host with no transport and an empty roster, which
+            // the lobby panel reported as "Cannot toggle readiness: no local player" and which a
+            // client could wait on forever.
+            yield return AwaitSteamSession();
+
+            if (steamNetSessionService.State != SteamSessionState.Live)
+            {
+                FailAndReset(SteamSessionFailure("Could not start hosting"));
+                yield break;
+            }
+
             Plugin.Instance.NetworkHandler.BeginSteamSession(isHost: true);
             SetState(NetplayConnectState.Ready, "");
         }
@@ -285,9 +306,40 @@ namespace MegabonkTogether.Services
 
             PlaySelectSfx();
 
+            yield return AwaitSteamSession();
+
+            if (steamNetSessionService.State != SteamSessionState.Live)
+            {
+                FailAndReset(SteamSessionFailure($"Could not join room {code}"));
+                yield break;
+            }
+
             Plugin.Instance.NetworkHandler.BeginSteamSession(isHost: false);
             SetState(NetplayConnectState.Ready, "");
         }
+
+        /// <summary>Waits for the sockets, which the session service brings up on its own tick.</summary>
+        private IEnumerator AwaitSteamSession()
+        {
+            var elapsed = 0f;
+            while (elapsed < SteamSessionWaitSeconds
+                && steamNetSessionService.State != SteamSessionState.Live
+                && steamNetSessionService.State != SteamSessionState.Failed)
+            {
+                yield return new WaitForSeconds(0.1f);
+                elapsed += 0.1f;
+            }
+        }
+
+        /// <summary>
+        /// A failure message that says what actually went wrong rather than "timed out". The
+        /// session service records the detail; a bare timeout reads as a network fault even when
+        /// the cause was Steam still starting.
+        /// </summary>
+        private string SteamSessionFailure(string prefix) =>
+            string.IsNullOrEmpty(steamNetSessionService.StatusMessage)
+                ? $"{prefix}: timed out waiting for Steam."
+                : $"{prefix}: {steamNetSessionService.StatusMessage}";
 
         /// <summary>Waits for a create or join to settle, either way.</summary>
         private IEnumerator AwaitSteamLobby()
