@@ -266,9 +266,16 @@ namespace MegabonkTogether.Services
         /// </summary>
         private IEnumerator WatchSteamJoin(string code)
         {
-            steamLobbyService.JoinByCode(code);
+            // Accepting an invite already put us in the lobby, and searching for it again would
+            // leave and re-enter the session we are trying to join.
+            var alreadyHere = steamLobbyService.State == SteamLobbyState.InLobby
+                && string.Equals(steamLobbyService.LobbyCode, code, StringComparison.OrdinalIgnoreCase);
 
-            yield return AwaitSteamLobby();
+            if (!alreadyHere)
+            {
+                steamLobbyService.JoinByCode(code);
+                yield return AwaitSteamLobby();
+            }
 
             if (steamLobbyService.State != SteamLobbyState.InLobby)
             {

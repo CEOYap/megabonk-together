@@ -1,4 +1,4 @@
-using Il2CppInterop.Runtime;
+﻿using Il2CppInterop.Runtime;
 using Steamworks;
 using System;
 using System.Runtime.InteropServices;
@@ -170,6 +170,23 @@ namespace MegabonkTogether.Services
                 // message is the useful one.
                 Plugin.Log.LogWarning(
                     $"[steam-invite] Could not join the invited lobby: {steamLobbyService.DescribeStatus()}");
+                return;
+            }
+
+            // With the Steam transport carrying the session, being in this lobby IS the join, and
+            // leaving would end the session we just joined - the session service watches lobby
+            // membership and shuts the transport down when it goes. That is exactly what happened
+            // on the first internet test: joined, connected, left, shut down, all in one tick.
+            //
+            // In the bridge world the opposite is true: the Steam lobby is only a signpost holding a
+            // matchmaker code, and staying in it would leave a second advertisement of the session
+            // lying around.
+            if (Configuration.ModConfig.UseSteamTransport.Value)
+            {
+                PendingJoinCode = steamLobbyService.LobbyCode;
+                Plugin.Log.LogInfo(
+                    $"[steam-invite] Staying in lobby {steamLobbyService.LobbyId} as room "
+                    + $"{PendingJoinCode}; the Steam lobby is the session.");
                 return;
             }
 

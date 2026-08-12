@@ -1,4 +1,4 @@
-using MegabonkTogether.Common;
+﻿using MegabonkTogether.Common;
 
 namespace MegabonkTogether.Services
 {
@@ -159,8 +159,16 @@ namespace MegabonkTogether.Services
                 return;
             }
 
+            // Gated on the seed, not merely followed by it. The host publishes the seed before it
+            // publishes readiness, so by the time this gate opens the seed is there; if it somehow
+            // is not, waiting one more tick costs nothing and connecting anyway would build a
+            // different world from the host's.
+            if (!ApplySeed())
+            {
+                return;
+            }
+
             attempted = true;
-            ApplySeed();
 
             if (!transport.ConnectToHost(ownerSteamId))
             {
@@ -180,6 +188,22 @@ namespace MegabonkTogether.Services
         {
             var seed = playerManagerService.GetSeed();
 
+            // Generated here, because on this path nothing else does. The rendezvous server picks
+            // the seed and ships it in MatchInfo; with the Steam lobby as the session there is no
+            // server and no such message, so a host that did not generate one would publish 0 and
+            // every run would use the same world — which the first internet test did, and logged as
+            // "Seed 0 taken from the lobby".
+            //
+            // Mixed from the clock and the lobby id rather than taken from either: two lobbies
+            // created in the same tick would otherwise share a seed, and the id alone is stable for
+            // the life of a lobby that can host several runs.
+            if (seed == 0)
+            {
+                seed = (int)((((ulong)System.DateTime.UtcNow.Ticks) ^ steamLobbyService.LobbyId) & 0x7FFFFFFFUL);
+                playerManagerService.SetSeed(seed);
+                Plugin.Log.LogInfo($"[steam-session] Generated seed {seed} for this session.");
+            }
+
             if (!steamLobbyService.SetLobbyData(SteamLobbyKeys.Seed, seed.ToString()))
             {
                 Plugin.Log.LogError(
@@ -194,25 +218,27 @@ namespace MegabonkTogether.Services
         /// after: world generation is downstream of this, and a client that connected first could
         /// start building a world from a seed it has not read yet.
         /// </summary>
-        private void ApplySeed()
+        private bool ApplySeed()
         {
             if (seedApplied)
             {
-                return;
+                return true;
             }
 
+            // Zero is rejected rather than accepted, because it is what an unset seed looks like
+            // and it is indistinguishable from a host that has not published yet.
             var published = steamLobbyService.GetLobbyData(SteamLobbyKeys.Seed);
-            if (!int.TryParse(published, out var seed))
+            if (!int.TryParse(published, out var seed) || seed == 0)
             {
-                Plugin.Log.LogError(
-                    $"[steam-session] The lobby published no usable seed ('{published}'), so this "
-                    + "client would generate a different world from its host.");
-                return;
+                Plugin.Log.LogWarning(
+                    $"[steam-session] Waiting for the host's seed (lobby says '{published}').");
+                return false;
             }
 
             seedApplied = true;
             playerManagerService.SetSeed(seed);
             Plugin.Log.LogInfo($"[steam-session] Seed {seed} taken from the lobby.");
+            return true;
         }
 
         public void Reset()
