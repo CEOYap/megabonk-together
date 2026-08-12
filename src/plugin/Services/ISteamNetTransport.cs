@@ -1,4 +1,4 @@
-using MegabonkTogether.Common.Messages;
+﻿using MegabonkTogether.Common.Messages;
 using System;
 using System.Collections.Generic;
 
@@ -25,16 +25,16 @@ namespace MegabonkTogether.Services
     ///
     /// <para><b>Two id spaces, exactly as the LiteNetLib side has.</b> A <i>peer handle</i> is the
     /// raw <c>HSteamNetConnection</c>, and it is the direct analogue of LiteNetLib's
-    /// <c>NetPeer.Id</c>: assigned by the transport, meaningful only locally, and the thing a
-    /// received message arrives tagged with. A <i>connection id</i> is the game's own <c>uint</c>,
-    /// the one that appears in message bodies, and the transport does not learn it until the peer
-    /// introduces itself — which is why <see cref="AssignConnectionId"/> exists and is called by
-    /// the session layer rather than discovered here. Keeping the two apart is the same discipline
+    /// <c>NetPeer.Id</c>: assigned by Steam, meaningful only locally, and the thing a received
+    /// message arrives tagged with. A <i>connection id</i> is the game's own <c>uint</c>, the one
+    /// that appears in message bodies, and the transport does not learn it until the peer
+    /// introduces itself. Keeping the two apart is the same discipline
     /// <see cref="INetTransport"/> imposes on its own signatures.</para>
     ///
-    /// <para><b>Nothing here starts a session.</b> Deciding who hosts, finding the host's SteamID
-    /// and running the handshake belong to the session layer; this owns sockets, connection state
-    /// and bytes.</para>
+    /// <para><b>The introduction handshake lives here</b>, alongside the connection lifecycle it is
+    /// part of, exactly as it does on the LiteNetLib side. What does <i>not</i> live here is
+    /// deciding who hosts and finding the host's SteamID — that is the session layer's, and nothing
+    /// in this interface starts a session on its own.</para>
     /// </summary>
     public interface ISteamNetTransport : INetTransport
     {
@@ -60,8 +60,10 @@ namespace MegabonkTogether.Services
         void Poll();
 
         /// <summary>
-        /// Ties a peer handle to the game connection id that peer just introduced itself with.
-        /// Until this is called, sends addressed by connection id cannot reach that peer.
+        /// Ties a peer handle to the game connection id that peer introduced itself with. The
+        /// introduction handler calls this; until it has, sends addressed by connection id cannot
+        /// reach that peer. Exposed because a session layer that assigns ids some other way will
+        /// need it.
         /// </summary>
         void AssignConnectionId(uint peerHandle, uint connectionId);
 
@@ -70,6 +72,15 @@ namespace MegabonkTogether.Services
 
         /// <summary>The SteamID behind a peer handle, or 0.</summary>
         ulong GetPeerSteamId(uint peerHandle);
+
+        /// <summary>
+        /// Host only. Whether every <b>introduced</b> peer has chosen a character — a peer that has
+        /// connected but not yet said who it is does not count, in either direction.
+        /// </summary>
+        bool AreAllPeersReady();
+
+        /// <summary>Host only. How many introduced peers have chosen. Zero on a client.</summary>
+        int GetCurrentReadyPeersCount();
 
         /// <summary>Peer handles currently connected.</summary>
         IReadOnlyList<uint> GetPeerHandles();
@@ -88,13 +99,6 @@ namespace MegabonkTogether.Services
 
         /// <summary>A peer's connection ended. Second argument is a description, not a code.</summary>
         event Action<uint, string> PeerDisconnected;
-
-        /// <summary>
-        /// A message arrived, tagged with the peer handle it came from. The handle plays the part
-        /// <c>NetPeer.Id</c> plays on the LiteNetLib receive path, so the existing dispatch maps
-        /// across unchanged.
-        /// </summary>
-        event Action<IGameNetworkMessage, uint> MessageReceived;
 
         string DescribeStatus();
     }

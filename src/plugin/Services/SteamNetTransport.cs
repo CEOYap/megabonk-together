@@ -1,7 +1,11 @@
+﻿using Assets.Scripts.Inventory__Items__Pickups.Items;
+using Assets.Scripts.Managers;
 using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using MegabonkTogether.Common.Messages;
+using MegabonkTogether.Common.Messages.GameNetworkMessages;
 using MemoryPack;
+using Microsoft.Extensions.DependencyInjection;
 using Steamworks;
 using System;
 using System.Collections.Generic;
@@ -32,8 +36,16 @@ namespace MegabonkTogether.Services
     /// config-value function pointer the migration plan proposed is not needed, and polling
     /// <c>GetAPICallResult</c> — which loses to that pump silently — is not used anywhere here.</para>
     /// </summary>
-    internal class SteamNetTransport(ISteamService steamService) : ISteamNetTransport
+    internal class SteamNetTransport(
+        ISteamService steamService,
+        IPlayerManagerService playerManagerService) : ISteamNetTransport
     {
+        /// <summary>
+        /// Everything received that is not about the connection. Resolved lazily rather than
+        /// injected — see <see cref="HandleRawMessage"/>.
+        /// </summary>
+        private INetMessageRouter netMessageRouter;
+
         /// <summary>
         /// An application-level port, not a UDP one. It only has to match between host and client;
         /// 0 is what a shipping implementation for this game uses and there is no reason to differ.
@@ -94,6 +106,20 @@ namespace MegabonkTogether.Services
         /// <summary>Game connection id → peer handle. Populated by the introduction handshake.</summary>
         private readonly Dictionary<uint, uint> peerHandlesByConnectionId = [];
 
+        /// <summary>
+        /// Peer handle → what that peer told us about itself. The Steam equivalent of
+        /// <c>gamePeersIntroduced</c>, and deliberately the same shape: a peer is *connected* as
+        /// soon as Steam says so, and *introduced* only once it has sent its own details.
+        /// </summary>
+        private readonly Dictionary<uint, PeerIntroduction> peerIntroductions = [];
+
+        /// <summary>
+        /// Our own connection id, derived from our SteamID rather than assigned. Set when a session
+        /// starts. See <see cref="Common.SteamConnectionId"/> for why deriving it is not the
+        /// independent-decision mistake it superficially resembles.
+        /// </summary>
+        private uint selfConnectionId;
+
         private Il2CppStructArray<IntPtr> receiveBuffer;
         private Il2CppStructArray<SteamNetworkingConfigValue_t> noOptions;
 
@@ -114,7 +140,6 @@ namespace MegabonkTogether.Services
 
         public event Action<uint, ulong> PeerConnected;
         public event Action<uint, string> PeerDisconnected;
-        public event Action<IGameNetworkMessage, uint> MessageReceived;
 
         public bool? IsHost() => isHost;
 
@@ -235,6 +260,12 @@ namespace MegabonkTogether.Services
             if (!SteamNetLayout.ProbeIdentityLayout(steamService.LocalSteamId))
             {
                 return Fail("The Steam identity layout could not be verified on this install.");
+            }
+
+            selfConnectionId = Common.SteamConnectionId.FromSteamId(steamService.LocalSteamId);
+            if (selfConnectionId == 0U)
+            {
+                return Fail($"SteamID {steamService.LocalSteamId} has no usable account id.");
             }
 
             try
@@ -381,13 +412,29 @@ namespace MegabonkTogether.Services
 
             Plugin.Log.LogInfo($"[steam-net] Connected to {change.RemoteSteamId}.");
             PeerConnected?.Invoke(change.Connection, change.RemoteSteamId);
+
+            // The client speaks first, as it does on the rendezvous path. Reliable and ordered
+            // because it is a one-shot that everything else is gated behind: until the host has
+            // this, it cannot address us by connection id at all.
+            if (isHost == false)
+            {
+                SendToHost(new Introduced
+                {
+                    ConnectionId = selfConnectionId,
+                    Name = Configuration.ModConfig.PlayerName.Value,
+                    IsHost = false,
+                }, NetDelivery.ReliableOrdered);
+            }
         }
 
         private void OnConnectionEnded(SteamConnectionStatusChange change)
         {
             var description = SteamNetLayout.DescribeEndReason(change.EndReason);
 
+            peerIntroductions.TryGetValue(change.Connection, out var introduction);
+
             peerSteamIds.Remove(change.Connection);
+            peerIntroductions.Remove(change.Connection);
             ForgetPeerHandle(change.Connection);
 
             if (isHost == false && change.Connection == hostConnection.m_HSteamNetConnection)
@@ -400,6 +447,58 @@ namespace MegabonkTogether.Services
 
             Plugin.Log.LogInfo($"[steam-net] Connection to {change.RemoteSteamId} ended: {description}.");
             PeerDisconnected?.Invoke(change.Connection, description);
+
+            // A peer that never introduced itself has no connection id, so nothing downstream knows
+            // it existed and there is nothing to announce or to end the session over.
+            if (introduction == null)
+            {
+                return;
+            }
+
+            // Losing the host ends the session, and something has to say so — otherwise a client
+            // whose host quit sits in a run that no longer exists, receiving nothing, with no
+            // indication anything is wrong. The rendezvous transport does this in
+            // HandleDisconnectedPeer; it is not optional and it has no equivalent anywhere else in
+            // the Steam path.
+            if (introduction.IsHost)
+            {
+                Plugin.StartNotification(
+                    ("MegabonkTogether", "HostDisconnected"),
+                    ("MegabonkTogether", "HostDisconnected_Description"),
+                    [introduction.Name],
+                    AudioManager.Instance.uiAbort,
+                    item: EItem.BobDead);
+
+                Plugin.GoToMainMenu();
+                return;
+            }
+
+            // The host is the authority on who is in the session, so it tells the others. A client
+            // does not: it has no standing to report a third party, and everyone else is being told
+            // by the host anyway.
+            if (isHost == true)
+            {
+                var departure = new PlayerDisconnected { ConnectionId = introduction.ConnectionId };
+                EventManager.OnPlayerDisconnected(departure);
+                SendToAllClients(departure, NetDelivery.ReliableOrdered);
+            }
+
+            // Everyone has gone and there is a run in progress. Mirrors the rendezvous transport's
+            // AllPlayerDisconnected path: a session of one is over regardless of which side is left.
+            if (peerIntroductions.Count == 0
+                && (Plugin.Instance.Mode.Mode == Common.Models.NetworkModeType.Random
+                    || Plugin.Instance.Mode.Mode == Common.Models.NetworkModeType.Friendlies
+                        && GameManager.Instance?.player != null))
+            {
+                Plugin.StartNotification(
+                    ("MegabonkTogether", "AllPlayerDisconnected"),
+                    ("MegabonkTogether", "AllPlayerDisconnected_Description"),
+                    [introduction.Name],
+                    AudioManager.Instance.uiAbort,
+                    item: EItem.BobDead);
+
+                Plugin.GoToMainMenu();
+            }
         }
 
         // ---------------------------------------------------------------- receive
@@ -549,7 +648,207 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            MessageReceived?.Invoke(deserialized, message.m_conn.m_HSteamNetConnection);
+            var peerHandle = message.m_conn.m_HSteamNetConnection;
+
+            if (TryHandlePeerScopedMessage(deserialized, peerHandle))
+            {
+                return;
+            }
+
+            // Resolved once, on first use. Constructor injection would be a cycle: the router needs
+            // INetTransport, and this is one.
+            netMessageRouter ??= Plugin.Services.GetService<INetMessageRouter>();
+
+            if (!netMessageRouter.Route(deserialized, isHost == true))
+            {
+                Plugin.Log.LogWarning($"[steam-net] Unknown message type received. message={deserialized}");
+            }
+        }
+
+        /// <summary>
+        /// The Steam counterpart of <c>UdpClientService.TryHandlePeerScopedMessage</c>: the messages
+        /// whose meaning depends on which peer they arrived on. Returns true when handled.
+        ///
+        /// <para><b>Three cases rather than the LiteNetLib side's eight</b>, and the missing five are
+        /// all relay. There is no relay peer here — SDR is the relay, and it is invisible above the
+        /// socket — so every branch that existed to tell a relayed peer from a direct one is simply
+        /// absent rather than ported and left dead.</para>
+        ///
+        /// <para><b>The host does not handle <c>PlayerDisconnected</c>.</b> On the rendezvous path
+        /// that message is how a host learns about a relayed peer leaving, because no socket event
+        /// fires for one. Here every departure arrives as a connection-status callback, so a
+        /// <c>PlayerDisconnected</c> reaching a host would be a client asserting something about a
+        /// third party — which it has no authority to do.</para>
+        /// </summary>
+        private bool TryHandlePeerScopedMessage(IGameNetworkMessage message, uint peerHandle)
+        {
+            switch (message)
+            {
+                case Introduced introduced:
+                    OnIntroduced(introduced, peerHandle);
+                    return true;
+
+                case PlayerDisconnected playerDisconnected when isHost == false:
+                    OnPeerReportedDisconnected(playerDisconnected);
+                    return true;
+
+                case SelectedCharacter selectedCharacter when isHost == true:
+                    OnSelectedCharacter(selectedCharacter, peerHandle);
+                    return true;
+
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>
+        /// A peer said who it is. This is where a connection handle acquires a game connection id,
+        /// and until it does, nothing addressed by connection id can reach that peer.
+        /// </summary>
+        private void OnIntroduced(Introduced introduced, uint peerHandle)
+        {
+            // The id the peer claims must be the one its SteamID derives to. Both ends compute it
+            // from the same immutable input, so a mismatch is not a disagreement to reconcile — it
+            // is a peer on a different derivation or an outright forgery, and either way indexing
+            // it under an id of its choosing would let it impersonate somebody.
+            var steamId = GetPeerSteamId(peerHandle);
+            var expected = Common.SteamConnectionId.FromSteamId(steamId);
+
+            if (expected == 0U || introduced.ConnectionId != expected)
+            {
+                Plugin.Log.LogError(
+                    $"[steam-net] {steamId} introduced itself as connection {introduced.ConnectionId} "
+                    + $"but its SteamID derives to {expected}. Refusing the connection.");
+                CloseRaw(peerHandle, SteamNetEndReason.ProtocolMismatch, "connection id mismatch");
+                return;
+            }
+
+            if (!peerIntroductions.TryAdd(peerHandle, new PeerIntroduction(introduced.Name, introduced.ConnectionId, introduced.IsHost)))
+            {
+                Plugin.Log.LogWarning($"[steam-net] Duplicate introduction from {steamId}, ignoring.");
+                return;
+            }
+
+            AssignConnectionId(peerHandle, introduced.ConnectionId);
+
+            var player = playerManagerService.GetPlayer(introduced.ConnectionId);
+            if (player != null)
+            {
+                player.Name = introduced.Name;
+                playerManagerService.UpdatePlayer(player);
+            }
+
+            Plugin.Log.LogInfo(
+                $"[steam-net] {introduced.Name} introduced as connection {introduced.ConnectionId} "
+                + $"(host: {introduced.IsHost}).");
+
+            if (isHost != true)
+            {
+                return;
+            }
+
+            if (Plugin.Instance.Mode.Mode == Common.Models.NetworkModeType.Friendlies)
+            {
+                Plugin.StartNotification(
+                    ("MegabonkTogether", "FriendliesClientJoinSuccess"),
+                    ("MegabonkTogether", "FriendliesClientJoinSuccessDesc"),
+                    [introduced.Name]);
+            }
+
+            // The host answers with its own details, exactly as the rendezvous path does. Addressed
+            // by connection id, which the AssignConnectionId above has just made resolvable.
+            SendToClient(introduced.ConnectionId, new Introduced
+            {
+                ConnectionId = selfConnectionId,
+                Name = Configuration.ModConfig.PlayerName.Value,
+                IsHost = true,
+            });
+        }
+
+        /// <summary>
+        /// A client was told by the host that another client left.
+        ///
+        /// <para><b>This is only ever about a third party</b>, which is why it does nothing but
+        /// republish. On the rendezvous path the same message could also mean "the host is gone",
+        /// because a relayed peer's departure produced no socket event and had to be announced. Here
+        /// losing the host is a connection-status callback on our own connection — see
+        /// <see cref="OnConnectionEnded"/> — so there is no case to disambiguate.</para>
+        /// </summary>
+        private void OnPeerReportedDisconnected(PlayerDisconnected playerDisconnected)
+        {
+            EventManager.OnPlayerDisconnected(playerDisconnected);
+        }
+
+        /// <summary>
+        /// Host only. Records that a peer has chosen, forwards the choice, and starts the run once
+        /// everyone has.
+        /// </summary>
+        private void OnSelectedCharacter(SelectedCharacter selectedCharacter, uint peerHandle)
+        {
+            if (peerIntroductions.TryGetValue(peerHandle, out var introduction))
+            {
+                introduction.HasSelected = true;
+            }
+
+            // Applied to the replicated record rather than republished through EventManager: the
+            // RunStatistics sent later reads this field, and an event-only update would miss it.
+            var player = playerManagerService.GetPlayer(selectedCharacter.ConnectionId);
+            if (player == null)
+            {
+                Plugin.Log.LogWarning(
+                    $"[steam-net] SelectedCharacter for unknown connection {selectedCharacter.ConnectionId}.");
+                return;
+            }
+
+            player.Character = selectedCharacter.Character;
+            player.Skin = selectedCharacter.Skin;
+            playerManagerService.UpdatePlayer(player);
+
+            SendToAllClientsExcept(selectedCharacter.ConnectionId, selectedCharacter);
+
+            if (AreAllPeersReady() && playerManagerService.HasSelectedCharacter() && Plugin.Instance.IS_HOST_READY)
+            {
+                var runConfig = WindowManager.activeWindow.GetComponentInChildren<MapSelectionUi>().runConfig;
+                MapController.StartNewMap(runConfig);
+            }
+        }
+
+        /// <summary>Host only. Whether every introduced peer has chosen a character.</summary>
+        public bool AreAllPeersReady()
+        {
+            if (isHost != true)
+            {
+                return false;
+            }
+
+            foreach (var (_, introduction) in peerIntroductions)
+            {
+                if (!introduction.HasSelected)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        public int GetCurrentReadyPeersCount()
+        {
+            if (isHost != true)
+            {
+                return 0;
+            }
+
+            var count = 0;
+            foreach (var (_, introduction) in peerIntroductions)
+            {
+                if (introduction.HasSelected)
+                {
+                    count++;
+                }
+            }
+
+            return count;
         }
 
         // ---------------------------------------------------------------- send
@@ -882,6 +1181,8 @@ namespace MegabonkTogether.Services
 
             peerSteamIds.Clear();
             peerHandlesByConnectionId.Clear();
+            peerIntroductions.Clear();
+            selfConnectionId = 0U;
 
             try
             {
