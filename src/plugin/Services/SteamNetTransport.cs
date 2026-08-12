@@ -347,10 +347,34 @@ namespace MegabonkTogether.Services
                 return;
             }
 
+            // Logged for every transition, because a connection that stalls says nothing otherwise
+            // and there are only a handful of these per session. The first internet test of this
+            // path died in a state this switch handled wrongly, and the log gave no hint which.
+            Plugin.Log.LogInfo(
+                $"[steam-net] Connection {change.Connection} to {change.RemoteSteamId} is now "
+                + $"{change.State}.");
+
             switch (change.State)
             {
                 case ESteamNetworkingConnectionState.k_ESteamNetworkingConnectionState_Connecting:
-                    OnIncomingConnection(change);
+                    // Only a host accepts. A client sees this same state for its <b>own outgoing</b>
+                    // connection a moment after ConnectP2P — it is progress, not a request, and
+                    // there is nothing to accept.
+                    //
+                    // Treating it as one is what broke the third internet test: the client reached
+                    // Connecting, fell into the host's accept path, failed the "am I hosting" guard
+                    // and closed the connection it had just opened. The host never saw an attempt at
+                    // all, because SDR had not finished the rendezvous before the client hung up.
+                    if (isHost == true)
+                    {
+                        OnIncomingConnection(change);
+                    }
+
+                    break;
+
+                case ESteamNetworkingConnectionState.k_ESteamNetworkingConnectionState_FindingRoute:
+                    // SDR working out how to reach the peer. Normal progress on both sides, and
+                    // nothing to do but wait.
                     break;
 
                 case ESteamNetworkingConnectionState.k_ESteamNetworkingConnectionState_Connected:
@@ -370,9 +394,12 @@ namespace MegabonkTogether.Services
         /// </summary>
         private void OnIncomingConnection(SteamConnectionStatusChange change)
         {
-            if (isHost != true || state != SteamNetTransportState.Running)
+            if (state != SteamNetTransportState.Running)
             {
-                CloseRaw(change.Connection, SteamNetEndReason.SessionClosed, "not hosting");
+                Plugin.Log.LogWarning(
+                    $"[steam-net] Refusing a connection from {change.RemoteSteamId}: the listen "
+                    + $"socket is {state}, not Running.");
+                CloseRaw(change.Connection, SteamNetEndReason.SessionClosed, "not listening");
                 return;
             }
 
