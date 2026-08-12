@@ -906,6 +906,12 @@ namespace MegabonkTogether.Services
             {
                 case GameEvent.Ready:
                     CoroutineRunner.Instance.Stop(readyRetryRoutine);
+
+                    // Logged because its absence is a diagnosis. Every other line in the readiness
+                    // report path is inside this routine, so if the round stalls and this line is
+                    // not in the log, the routine never started and the state machine is where to
+                    // look — not the wire.
+                    logger.LogInfo($"[readiness] Starting the report routine (generation {readyGeneration + 1}).");
                     readyRetryRoutine = CoroutineRunner.Instance.Run(ClientReadyRoutine(++readyGeneration));
                     break;
                 case GameEvent.Start:
@@ -1031,6 +1037,15 @@ namespace MegabonkTogether.Services
             {
                 if (generation != readyGeneration || currentState != State.Ready)
                 {
+                    // Both exits are legitimate and both used to be silent, which is why a stalled
+                    // round could not be told apart from a report that was sent and lost. A
+                    // superseded generation means a newer round replaced this one; a state that is
+                    // no longer Ready means the session moved on beneath it.
+                    logger.LogInfo(
+                        $"[readiness] Stopping the report routine before attempt {attempt}: " +
+                        (generation != readyGeneration
+                            ? $"generation {generation} superseded by {readyGeneration}."
+                            : $"state is {currentState}, not Ready."));
                     yield break;
                 }
 
@@ -1047,6 +1062,13 @@ namespace MegabonkTogether.Services
                     };
 
                     udpClientService.SendToHost(message, NetDelivery.ReliableOrdered);
+
+                    if (attempt == 1)
+                    {
+                        logger.LogInfo(
+                            $"[readiness] Reported ready for round {readinessService.RoundId} " +
+                            $"(session {readinessService.SessionId}).");
+                    }
 
                     if (attempt > 1)
                     {
@@ -1074,6 +1096,11 @@ namespace MegabonkTogether.Services
 
                     if (generation != readyGeneration || currentState != State.Ready)
                     {
+                        logger.LogInfo(
+                            $"[readiness] Stopping the report routine while waiting on attempt {attempt}: " +
+                            (generation != readyGeneration
+                                ? $"generation {generation} superseded by {readyGeneration}."
+                                : $"state is {currentState}, not Ready."));
                         yield break;
                     }
 
