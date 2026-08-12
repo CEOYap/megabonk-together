@@ -1,7 +1,7 @@
 # Planned: TOGETHER! goes straight to the lobby
 
-**Status: intended for Phase 5. Not started. Written down so the size of it is known before it is
-begun.**
+**Status: Phase 5. The session-setup extraction is done and landed; everything else is planned.
+Written down so the size of it is known before it is begun — see "The order to do it in".**
 
 Today, pressing **TOGETHER!** opens `NetworkMenuTab` — a name box, Netplay Options, and a
 Random / Friendlies choice, and behind Friendlies another screen with Host, a room-code box and
@@ -84,13 +84,34 @@ has to be a **sub-view** that replaces the member list and column with the two t
 button, the way the menu does it today, rather than another entry in the column. That is prefab
 work plus a view-state in `LobbyPanel`, not a button.
 
-**The order that works:** switch `NetworkMenuTab` onto `INetplaySessionService` first, so the
-extraction stops being dead code and the connecting window has one owner; then TOGETHER! opens the
-panel; then Quickplay, Join and the options sub-view have somewhere to live and something to say.
+## The order to do it in
 
-## Order
+The session-setup extraction is **already done** — `INetplaySessionService` and
+`NetplaySessionService` exist and are registered. Nothing calls them yet, deliberately: it was
+landed on its own so it changed no behaviour. Everything below is Phase 5.
 
-The session-setup extraction is worth doing **before** the deletion and on its own. It is the only
-part with real behaviour in it, it is what makes the invite path stop reaching into a menu, and it
-can be verified with the menu still in place — which means the risky change and the mechanical
-change do not land together.
+**1. Put `NetworkMenuTab` onto `INetplaySessionService`.** Its Host, Join and Random handlers call
+the service, and its screens reflect the service's state and message instead of driving their own
+coroutines. Until this happens there are two implementations of session setup — the service and the
+menu's own copy — which is exactly the drift the service was extracted to prevent.
+
+Do this first because it is the only step verifiable with the menu still in place, and because it
+gives the connecting window a single owner before anything depends on one.
+
+**2. TOGETHER! opens the lobby panel, always hosting.** `PlayTogetherButton.OpenNetworkTab` becomes
+"open the panel"; `SteamTicker`'s invite check and `WindowManager`'s teardown follow. This is the
+step that makes `NetworkMenuTab` unreachable, and it takes Netplay Options offline with it unless
+step 4 lands alongside.
+
+**3. Quickplay and Join From Clipboard on the panel, and the connecting window.** All three need
+step 2 first — see the constraints above. `LobbyPanel.OnJoinRequested` needs assigning as part of
+this; it is currently inert. The connecting window can be `LoadingModal.Show`, driven off
+`INetplaySessionService.StateChanged`, with `Cancel()` behind its Stop button.
+
+**4. Netplay Options as a panel sub-view.** Independent of the others and doable at any point: the
+two toggles and a Back button, replacing the member list and column rather than adding to it.
+
+**5. Delete `NetworkMenuTab`, `ModConfig.PlayerName`, and the name box with it.**
+
+Steps 2 and 3 want a two-player playtest between them and step 5, because that is the point at
+which the only route into a session is the new one.
