@@ -1935,6 +1935,10 @@ namespace MegabonkTogether.Services
 
         private void OnReceivedSelectedCharacter(SelectedCharacter character)
         {
+            logger.LogInfo(
+                $"[netplayer] {character.ConnectionId} selected character {character.Character}, " +
+                $"skin '{character.Skin}'.");
+
             var localPlayer = playerManagerService.GetLocalPlayer();
             if (localPlayer.ConnectionId == character.ConnectionId)
             {

@@ -499,10 +499,28 @@ namespace MegabonkTogether.Services
                     // Present but bodiless. Initialize can fail to build the model when the avatar
                     // is created during a level load — which on-demand spawning makes routine — and
                     // a NetPlayer with no model is invisible with nothing to recover it.
-                    if (existing.Model == null && players.TryGetValue(connectionId, out var known))
+                    if (players.TryGetValue(connectionId, out var known))
                     {
-                        logger.LogInfo($"Re-initializing NetPlayer {connectionId}: it has no model.");
-                        existing.Initialize((ECharacter)known.Character, connectionId, known.Skin);
+                        var wanted = (ECharacter)known.Character;
+
+                        // Two reasons to rebuild, and the second is why players appeared as the
+                        // wrong character. An avatar is built from whatever the roster held at the
+                        // time, and on this path that can be before SelectedCharacter has arrived —
+                        // so it gets the default, and nothing afterwards ever reconsidered it. The
+                        // record is the truth; the model is a cache of it.
+                        if (existing.Model == null)
+                        {
+                            logger.LogInfo($"Re-initializing NetPlayer {connectionId}: it has no model.");
+                            existing.Initialize(wanted, connectionId, known.Skin);
+                        }
+                        else if (existing.BuiltAs != wanted)
+                        {
+                            logger.LogInfo(
+                                $"Rebuilding NetPlayer {connectionId}: built as {existing.BuiltAs}, "
+                                + $"the roster now says {wanted}.");
+                            existing.Destroy();
+                            existing.Initialize(wanted, connectionId, known.Skin);
+                        }
                     }
 
                     return existing;

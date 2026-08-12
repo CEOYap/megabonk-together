@@ -194,8 +194,17 @@ namespace MegabonkTogether.Scripts.NetPlayer
         }
 
 
+        /// <summary>
+        /// What this avatar was actually built as. Kept so a late <c>SelectedCharacter</c> can be
+        /// noticed: the record's character and the model's can disagree, and only this says which
+        /// one is on screen.
+        /// </summary>
+        public ECharacter BuiltAs { get; private set; }
+
         public void Initialize(ECharacter eCharacter, uint connectionId, string skin)
         {
+            BuiltAs = eCharacter;
+
             Plugin.Log.LogInfo($"Initializing NetPlayer for character {eCharacter} with ConnectionId {connectionId} and skin {skin}");
             this.connectionId = connectionId;
 

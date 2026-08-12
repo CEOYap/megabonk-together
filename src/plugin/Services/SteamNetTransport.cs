@@ -850,6 +850,13 @@ namespace MegabonkTogether.Services
             player.Skin = selectedCharacter.Skin;
             playerManagerService.UpdatePlayer(player);
 
+            // One line per peer per session. Its absence is the diagnosis if a player still shows
+            // as the wrong character: the roster never learned what they picked, and the avatar was
+            // built from a default nobody chose.
+            Plugin.Log.LogInfo(
+                $"[steam-net] {selectedCharacter.ConnectionId} selected character "
+                + $"{selectedCharacter.Character}, skin '{selectedCharacter.Skin}'.");
+
             SendToAllClientsExcept(selectedCharacter.ConnectionId, selectedCharacter);
 
             if (AreAllPeersReady() && playerManagerService.HasSelectedCharacter() && Plugin.Instance.IS_HOST_READY)
