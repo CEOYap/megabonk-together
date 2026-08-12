@@ -316,7 +316,21 @@ namespace MegabonkTogether.Services
                 return readinessService.AreAllParticipantsReady() && udpClientService.HasAllPeersConnected();
             }
 
-            return playerManagerService.GetAllPlayers().All(p => p.IsReady) && udpClientService.HasAllPeersConnected();
+            // A client cannot be ready for a round it has not been told about, and HasStamp is the
+            // only thing that says whether it has. CloseRound clears it at PortalOpened and the
+            // host's round-start restores it — so this is false for exactly the window between
+            // levels in which the replicated IsReady flags still carry the *previous* round's
+            // answer.
+            //
+            // Without it the client read those stale flags, decided the lobby was ready the instant
+            // it reached the portal on the new level, started the game, and moved to State.Started —
+            // which then made its own report routine bail, because that routine only runs while the
+            // state is Ready. The host waited on a report nobody was going to send. This is defect C
+            // reaching the one branch the comment above did not cover: the host stopped trusting
+            // these flags, and the client never did.
+            return readinessService.HasStamp
+                && playerManagerService.GetAllPlayers().All(p => p.IsReady)
+                && udpClientService.HasAllPeersConnected();
         }
 
         public bool? IsServerMode()
