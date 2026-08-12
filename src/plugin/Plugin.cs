@@ -154,6 +154,9 @@ namespace MegabonkTogether
             Log.LogInfo($"Plugin {MyPluginInfo.PLUGIN_GUID} is loaded!");
 
             ModConfig.Initialize(Config);
+
+            // Early, so anything that goes wrong during our own startup is attributable too.
+            Helpers.UnityDiagnostics.EnableStackTraces();
             Log.LogInfo($"Player name set to: {ModConfig.PlayerName.Value}");
 
             // Diagnostic, delete once the client-side exception storm is attributed. Called here
@@ -217,7 +220,13 @@ namespace MegabonkTogether
             ClassInjector.RegisterTypeInIl2Cpp<TargetSwitcher>();
             ClassInjector.RegisterTypeInIl2Cpp<TargetSwitcherManager>();
             ClassInjector.RegisterTypeInIl2Cpp<EnemyInterpolatorManager>();
-            ClassInjector.RegisterTypeInIl2Cpp<SteamStatusTicker>();
+            ClassInjector.RegisterTypeInIl2Cpp<SteamTicker>();
+
+            // Not a MonoBehaviour: this one derives from Steamworks' abstract CallResult so the
+            // game's own callback dispatcher will accept it. Registered here with everything else
+            // because it still has to exist in the IL2CPP domain before it can be constructed.
+            ClassInjector.RegisterTypeInIl2Cpp<Services.SteamCallResult>();
+            ClassInjector.RegisterTypeInIl2Cpp<Services.SteamCallback>();
             ClassInjector.RegisterTypeInIl2Cpp<InteractableReviver>();
             ClassInjector.RegisterTypeInIl2Cpp<NotificationQueueManager>();
 
@@ -261,6 +270,12 @@ namespace MegabonkTogether
                 services.AddSingleton<IUiAssetService, UiAssetService>();
                 services.AddSingleton<ITrackerService, TrackerService>();
                 services.AddSingleton<ISteamService, SteamService>();
+                services.AddSingleton<ISteamLobbyService, SteamLobbyService>();
+                services.AddSingleton<SteamLobbySelfTest>();
+                services.AddSingleton<SteamLobbyPresenceService>();
+                services.AddSingleton<SteamInviteService>();
+                services.AddSingleton<SteamPersonaService>();
+                services.AddSingleton<INetplaySessionService, NetplaySessionService>();
             });
 
             Host = builder.Build();
@@ -350,9 +365,9 @@ namespace MegabonkTogether
             // this method directly: the game's SteamManager initialises after the first scene
             // loads, which is after BepInEx loads plugins, so there is nothing to call yet. The
             // ticker retries at 1 Hz until Steam exists, then stops.
-            var goSteamStatusTicker = new GameObject("SteamStatusTicker");
-            GameObject.DontDestroyOnLoad(goSteamStatusTicker);
-            goSteamStatusTicker.AddComponent<SteamStatusTicker>();
+            var goSteamTicker = new GameObject("SteamTicker");
+            GameObject.DontDestroyOnLoad(goSteamTicker);
+            goSteamTicker.AddComponent<SteamTicker>();
         }
 
         public void AddPrefab(GameObject prefab)

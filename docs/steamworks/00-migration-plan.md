@@ -380,10 +380,85 @@ instead of `pDetails.m_eAvail`, which Steam documents as the same value, so that
 struct degrades the diagnostics rather than the decision. If it does crash, the fallback is direct
 P/Invoke to the flat C API for these two calls only — see option (c) in [Gotcha 1](#gotcha-1).
 
-### Phase 3 — `SteamLobbyService`
-- Create/join lobbies via `SteamMatchmaking`.
-- Publish `Protocol.Version`, host name, player count, and mode as lobby data.
-- Handle `GameLobbyJoinRequested_t` (friends-list "Join Game") and `LobbyDataUpdate_t`.
+### Phase 3 — `SteamLobbyService` — **PARTLY DONE. Read the exit criterion before believing otherwise.**
+
+**Verified over the internet with two accounts, both directions, zero mod errors on either side.**
+Steam lobbies, discovery by code, the protocol gate, and invites all work:
+
+```
+[steam-invite] A friend invited us to lobby 109775241659443022.
+[steam-lobby]  Joined lobby ..., code ULZVEZ, owner False, 2 member(s), protocol 1.
+[steam-invite] Invite resolved to room code IFN1OZ.
+[steam-invite] Opening the netplay menu to act on an invite.
+[steam-invite] Joining room IFN1OZ from an invite.
+```
+
+| Item | State |
+|---|---|
+| Create/join lobbies via `SteamMatchmaking` | done, verified |
+| `Protocol.cs` re-created, published and filtered on | done, verified — a joiner reads `protocol 1` back |
+| Lobby list search by code, filtered on version | done, verified |
+| `GameLobbyJoinRequested_t` | done, verified — invites accepted mid-session |
+| `+connect_lobby` launch invites | done, verified |
+| `SetRichPresence` connect string | done, verified (Join Game appears) |
+| Host name as lobby data | done |
+| Both players in one Steam lobby | done — host creates, client follows by room code |
+| Roster and readiness from Steam member data | **tried and reverted** — see below |
+| Retire tags 73 and 74 | **not done, and blocked until Phase 4** |
+| Persona names | done, **unverified** — cache plus `PersonaStateChange_t` |
+| Player count and mode as lobby data | **not done** — no lobby browser needs them yet |
+| `LobbyDataUpdate_t` | **not needed** — the panel already refreshes twice a second, and member data is read on that tick |
+| **Exit criterion: find and join a lobby without the rendezvous server** | **NOT MET, and cannot be met before Phase 4** |
+
+**What actually shipped is a bridge, not the replacement.** The Steam lobby carries the WebSocket
+matchmaker's room code as lobby data (`mt_mm_code`); discovery and invites are Steam's, and the
+session itself is still matched and carried by the rendezvous server exactly as before. That was
+deliberate — it makes invites work without touching the transport — but it means Phase 3's own
+exit criterion is unmet and the server cannot be decommissioned yet.
+
+**Why the exit criterion cannot be met in Phase 3, and should be moved.** It reads "players can
+find and join a lobby without the rendezvous server", with the old transport still carrying
+gameplay. Finding is done — Steam does discovery, codes and invites. *Joining* is not, and cannot
+be: the rendezvous server is not only a matchmaker, it performs the NAT introduction that lets two
+LiteNetLib peers reach each other at all, and it relays when they cannot. Nothing short of SDR
+replaces that. **This criterion belongs to Phase 4**, and carrying it here makes Phase 3 look
+permanently unfinished for a reason that has nothing to do with lobbies.
+
+#### Retiring tags 73 and 74 was attempted and reverted. Do not retry it this way
+
+Readiness was moved onto Steam lobby member data, with a guard: use Steam only when the Steam
+lobby's member count equals the replicated roster's, and fall back to the messages otherwise. It
+was playtested and broke readiness outright — a client pressing Ready did nothing the host could
+see.
+
+**The guard was evaluated independently on each machine.** Those two membership sets are filled by
+different mechanisms at different moments — a host sitting alone has an empty roster and one Steam
+member — so the two ends could land on different answers. A client on the Steam path wrote its
+readiness into member data and sent nothing; a host on the message path read a set nobody had
+written. Neither end could tell. The same comparison could flip between calls on one machine as the
+roster filled, so even the client's own label sometimes did not move.
+
+**The lesson is not "write a better guard".** Any rule derived separately on each machine can
+disagree, and readiness is a correctness property — the Start button is gated on it, and the
+failure mode is a host starting a run with somebody who never readied. There is no safe way to run
+two readiness mechanisms side by side while the roster and the Steam lobby are separate sets.
+
+So this waits for Phase 4, when the Steam lobby *is* the session and there is one membership set to
+consult. At that point member data is the only mechanism and there is nothing to switch between.
+
+What remains genuinely open:
+
+1. `character` / `skinType` / `hat` as member data, alongside `ready`. Same shape, same mechanism;
+   they are simply not moved yet.
+2. Player count and mode as lobby data, when something wants a browser.
+3. `mt_mm_code` disappears when the Steam lobby *is* the session, which is Phase 4's business.
+4. **`ModConfig.PlayerName` is slated for removal in Phase 5.** The Steam persona is already
+   adopted onto it at startup, so the config entry is a vestige — it exists for the name box in the
+   netplay menu and for instances with no Steam. Removing it means deciding what a non-Steam
+   instance is called, which matters because the two-instance test harness runs its second copy
+   without Steam.
+
+- ~~Handle `GameLobbyJoinRequested_t` (friends-list "Join Game")~~ and `LobbyDataUpdate_t`.
 - Filter the lobby list by protocol version — this is [P1-3](../netplay/01-critical-fixes.md#p1-3)
   in its final form, and the **only** form of it that works. Three carried-over decisions:
   - `src/common/Protocol.cs` was written and then reverted with the failed LiteNetLib attempt.
@@ -450,6 +525,12 @@ numbers burned, exactly as tags 1, 65 and 66 were left when their stamped replac
   LiteNetLib, verified under 3% simulated packet loss.
 
 ### Phase 5 — Decommission
+- **Drop `NetworkMenuTab` so TOGETHER! goes straight to the lobby.** Planned separately, with the
+  parts that are not UI — session setup, the connect coroutine, the connecting state — needing a
+  home first: [`../ui/05-drop-the-netplay-menu.md`](../ui/05-drop-the-netplay-menu.md).
+- **Drop `ModConfig.PlayerName`.** The Steam persona is adopted onto it at startup already, so it
+  is a vestige — but something has to decide what an instance with no Steam is called, and the
+  two-instance test harness runs its second copy that way.
 - Delete `WebsocketClientService.cs`, `src/server/`, the NAT-punch path, and the relay
   fallback.
 - Remove the `LiteNetLib` package reference.
@@ -514,8 +595,8 @@ later phases would have taken from a `Callback<T>` has to arrive another way:
 
 | Wanted | Phase | Route without a registry |
 |---|---|---|
-| `SteamRelayNetworkStatus_t`, `SteamNetAuthenticationStatus_t` | 2 | Poll `GetRelayNetworkStatus` / `GetAuthenticationStatus`. **Done** — the callbacks were never needed. |
-| `LobbyCreated_t`, `LobbyEnter_t` and other call results | 3 | Poll `SteamUtils.IsAPICallCompleted` then `GetAPICallResult`. |
+| `SteamRelayNetworkStatus_t`, `SteamNetAuthenticationStatus_t` | 2 | Poll `GetRelayNetworkStatus` / `GetAuthenticationStatus`. **Done and verified** — the callbacks were never needed. |
+| `LobbyCreated_t`, `LobbyEnter_t` and other call results | 3 | Poll `SteamUtils.IsAPICallCompleted` then `GetAPICallResult`. **Verified in game** — see below. |
 | `LobbyDataUpdate_t` | 3 | Poll `GetLobbyMemberData`. The lobby panel already refreshes twice a second, so there is no new timer. |
 | `GameLobbyJoinRequested_t` (friends-list "Join Game") | 3 | **No polling equivalent.** This one genuinely needs a callback, and is the first place (c) will be required. |
 | `SteamNetConnectionStatusChangedCallback_t` | 4 | `SteamNetworkingUtils.SetConfigValue` with `Callback_ConnectionStatusChanged` and a function pointer — the documented registry-free route, and it takes `IntPtr`s, which marshal cleanly. |
@@ -552,7 +633,126 @@ Mod S proves nothing either way: it ships its own managed wrapper, where `Callba
 C# and AOT instantiation does not apply. See
 [`03-observed-steam-usage.md`](03-observed-steam-usage.md).
 
-#### Phase 3 does not need generics at all
+#### Phase 3 does not need generics at all — CONFIRMED in game
+
+**Proved on buildid 21750826, 2026-08-10**, by `SteamLobbySelfTest` in a single-player run:
+
+```
+[steam-lobby] Self-test: strings round-trip correctly.
+[steam-lobby] CreateLobby requested, max 6.
+[steam-lobby] Lobby 109775241643755414 created, owner True, 1 member(s).
+[steam-lobby] Self-test: lobby data write True, read '1', compatible True.
+                         Member data write True, read '1'. Members: 1.
+[steam-lobby] Self-test finished: PASSED
+```
+
+Two things that were open are now closed:
+
+1. **Strings marshal correctly** across the boundary into Steamworks calls. The `AssetBundle`
+   failure was specific to `ReadOnlySpan<char>.GetPinnableReference`; Steamworks.NET's own UTF-8
+   handle is unaffected.
+2. ~~**The game's callback pump does not invalidate a polled call result.**~~ **Wrong — retracted.**
+   The claim was made off one passing run and the run after it disproved the reasoning behind it.
+
+### RESOLVED: register a CallResult with the game's dispatcher
+
+**The race is over, and the answer generalises.** Rather than compete with the game's callback pump
+for our own results, we register with it. `SteamCallResult` derives from Steamworks' **non-generic**
+abstract `CallResult`, is injected with `ClassInjector`, and is handed to
+`CallbackDispatcher.Register`. `RunFrame` then retrieves each completed call, looks the handle up in
+`m_registeredCallResults`, and invokes our instance. It cannot lose the race because it *is* the
+race.
+
+Verified in game, buildid 21750826:
+
+```
+[steam-lobby] CreateLobby requested, max 6.
+[steam-lobby] Result delivered by the game's dispatcher.
+[steam-lobby] Lobby 109775241651088375 created, code R9XUW7, owner True, 1 member(s).
+[steam-lobby] Code R9XUW7 resolved to lobby 109775241651088375.
+[steam-lobby] Self-test finished: PASSED
+```
+
+Three things that were open are now closed:
+
+1. **`ClassInjector` handles an abstract IL2CPP base.** All three abstract slots are filled and the
+   dispatcher accepts the injected type. The existing precedent (`CustomButton : MyButtonNormal`)
+   was a concrete base; this is a stronger case and it works.
+2. **The lobby-list search works**, filtered on code *and* protocol version.
+3. **Steam does return a lobby to a machine already in it.** That was recorded as unresolvable
+   single-player; it is now simply answered, which is why the self-test could pass alone.
+
+**Polling is kept alongside it, and both paths fire in practice.** In the same run, the first
+create was delivered by the dispatcher and a second create was picked up by the poll — our ticker
+updates before the game's `SteamManager`, so on the frame a result lands the poll can legitimately
+get there first. They race each other harmlessly and converge on one `ApplyResult`; whoever is
+second finds nothing pending. Do not "simplify" this by deleting the poll without re-reading the
+history above: the poll alone is what produced `InvalidHandle`.
+
+#### The same trick unlocks plain callbacks, which is the bigger prize
+
+`Callback`'s non-generic base has exactly the same shape — abstract, no type parameter, result as a
+raw `IntPtr`:
+
+```csharp
+public abstract class Callback {
+    public   abstract bool get_IsGameServer();
+    internal abstract Type GetCallbackType();
+    internal abstract void OnRunCallback(IntPtr pvParam);
+    internal abstract void SetUnregistered();
+}
+```
+
+So the three callbacks the migration had written off as unreachable are very likely reachable the
+same way: **`GameLobbyJoinRequested_t`** (accepting an invite while the game is already running —
+the one gap in invites), **`LobbyDataUpdate_t`** (per-member readiness without polling), and
+**`SteamNetConnectionStatusChangedCallback_t`** (Phase 4's connection lifecycle, which was going to
+need a config-value function pointer).
+
+That removes the last structural blocker in the migration. It is *likely*, not proven — `Callback`
+has a fourth abstract member and is registered through a different overload — but the shape is
+identical and the hard part is done.
+
+### Historic: the pump race, and correcting the claim above
+
+A second run, identical but for the lobby type, failed at the same point:
+
+```
+[steam-lobby] CreateLobby requested, max 6.
+[steam-lobby] IsAPICallCompleted reported an IO failure.
+```
+
+`IsAPICallCompleted` returned *completed* with its failure flag set, which is what a handle that
+no longer exists looks like. The reasoning that produced the retracted claim — "fifteen pump
+cycles elapsed and the result survived, so the mechanisms must be independent" — was the wrong
+inference from a single success. **One run cannot establish the absence of a race; it can only
+fail to observe it.** The likelier explanation of the first run is that the completion happened to
+land in a frame where our poll ran before the game's pump did.
+
+So the honest state is:
+
+- **Polling `GetAPICallResult` works when we reach the result first.** Verified — a lobby was
+  created, written to and read back.
+- **The game's pump can reach it first, and then the result is gone.** Observed once.
+
+Two changes follow. The failure path now reports `GetAPICallFailureReason`, so
+`k_ESteamAPICallFailureInvalidHandle` can be distinguished from an ordinary network failure rather
+than guessed at — the next run says which this is. And the service is polled **every frame while a
+call is in flight** rather than at 4 Hz, so we look in the first frame the result exists.
+
+**That narrows the window; it does not close it.** It relies on our `Update` running before the
+game's `SteamManager.Update`, which is true in practice — our GameObject is created in
+`Plugin.Load`, long before the game's — but Unity does not guarantee ordering between two
+default-priority scripts. If `InvalidHandle` survives this change, the answer is not a faster
+poll: it is to stop depending on the shared pipe at all, and the options there are direct
+P/Invoke with our own `HSteamPipe`, or injecting a `CallResult` subclass into the game's own
+dispatcher.
+
+Both of the other findings from the first run stand, and neither is affected by the race:
+
+- **Strings marshal correctly** into Steamworks calls.
+- **Lobby data, member data and the member list all work**, including `Protocol.IsCompatible`
+  against a version written and read back.
 
 Every call the lobby flow needs exists non-generically in the game's assembly:
 

@@ -1,5 +1,7 @@
+using Il2CppInterop.Runtime;
 using Steamworks;
 using System;
+using System.Runtime.InteropServices;
 
 namespace MegabonkTogether.Services
 {
@@ -16,10 +18,22 @@ namespace MegabonkTogether.Services
     /// take each other's callbacks, so the game would intermittently lose its own achievement and
     /// leaderboard results. Both facts are decompiled, not assumed.</para>
     ///
-    /// <para>The cost of that choice is that we have no callback registry of our own, so anything
-    /// later phases need from a callback has to arrive another way — polling, or a config-value
-    /// function pointer. That is written up in the migration plan; it is a real constraint, and it
-    /// is still cheaper than breaking the game's Steam integration.</para>
+    /// <para>Status arrives through <see cref="SteamCallback"/> — our own <c>Callback</c> injected
+    /// into the game's dispatcher — rather than by asking for it.</para>
+    ///
+    /// <para><b>Nothing here calls a Steamworks method that takes a struct by reference, and that
+    /// is a hard rule rather than a preference.</b> <c>GetRelayNetworkStatus</c> and
+    /// <c>GetAuthenticationStatus</c> both do, and both are gone. That shape has produced a fatal
+    /// <c>AccessViolationException</c> twice on this project: first reading a field off the struct
+    /// they fill, then — after that was removed and the call looked safe — merely passing it, on
+    /// another player's machine, where the IL2CPP exception it raised took Il2CppInterop's own
+    /// exception formatter down with it. It had run fine here dozens of times. The lesson is that
+    /// "it works on this install" is not evidence about this shape at all.</para>
+    ///
+    /// <para>The callbacks deliver the same information as a raw pointer to the native struct,
+    /// which <c>Marshal</c> reads at fixed offsets — no struct crosses the boundary. Authentication
+    /// is additionally re-read through <c>InitAuthentication</c>, which returns the availability
+    /// directly and takes nothing by reference.</para>
     /// </summary>
     internal class SteamService : ISteamService
     {
@@ -31,6 +45,27 @@ namespace MegabonkTogether.Services
         private bool relayAccessRequested;
 
         private bool loggedReady;
+        private bool registeredCallbacks;
+
+        /// <summary>
+        /// Held for as long as they are registered. The dispatcher keeps a reference on the IL2CPP
+        /// side, and letting the managed wrapper go while that is true is how a callback becomes a
+        /// crash later.
+        /// </summary>
+        private SteamCallback relayStatusCallback;
+        private SteamCallback authStatusCallback;
+
+        // Both status structs put m_eAvail first, and the native payload a callback delivers has
+        // the same layout there as the managed declaration. SteamRelayNetworkStatus_t carries three
+        // more fields we can read for free now that we have the raw pointer.
+        private const int AvailOffset = 0;
+        private const int PingMeasurementInProgressOffset = 4;
+        private const int AvailNetworkConfigOffset = 8;
+        private const int AvailAnyRelayOffset = 12;
+
+        private ESteamNetworkingAvailability networkConfigAvailability = ESteamNetworkingAvailability.k_ESteamNetworkingAvailability_NeverTried;
+        private ESteamNetworkingAvailability anyRelayAvailability = ESteamNetworkingAvailability.k_ESteamNetworkingAvailability_NeverTried;
+        private bool pingMeasurementInProgress;
 
         private ESteamNetworkingAvailability relayAvailability = ESteamNetworkingAvailability.k_ESteamNetworkingAvailability_NeverTried;
         private ESteamNetworkingAvailability authAvailability = ESteamNetworkingAvailability.k_ESteamNetworkingAvailability_NeverTried;
@@ -135,10 +170,14 @@ namespace MegabonkTogether.Services
                 return;
             }
 
+            // Registered *before* asking, deliberately. These callbacks report transitions, so
+            // subscribing after kicking the process off can miss the one that says it finished.
+            RegisterStatusCallbacks();
+
             try
             {
                 // Begins fetching the SDR network configuration and measuring pings to the relay
-                // PoPs. Asynchronous: this returns immediately and Poll watches for the result.
+                // PoPs. Asynchronous: this returns immediately and the callbacks report progress.
                 // Skipping it does not break connecting, it just moves the multi-second wait to the
                 // first connection attempt, where it looks like a hang.
                 SteamNetworkingUtils.InitRelayNetworkAccess();
@@ -171,31 +210,24 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            try
+            // Nothing is fetched here any more. Status arrives through the two registered
+            // callbacks; see the class remarks for why polling it was removed outright.
+            //
+            // Authentication is the one exception, and only because it can be re-read without a
+            // by-ref struct: InitAuthentication returns the current availability and is documented
+            // as safe to call repeatedly. It is how we notice authentication coming up if its
+            // callback never arrives.
+            if (authAvailability != ESteamNetworkingAvailability.k_ESteamNetworkingAvailability_Current)
             {
-                // Discard both out parameters. They are safe to *pass* and fatal to *read*.
-                //
-                // Neither has an overload without the parameter, so it has to be supplied. But the
-                // struct Il2CppInterop hands back does not own valid memory: reading a single field
-                // off it — `m_bPingMeasurementInProgress` — took the game down with
-                // `AccessViolationException: Attempted to read or write protected memory`, in a
-                // build where the two calls themselves had already succeeded and logged. Both
-                // structs carry a managed byte[] for their debug message, so the proxy is a
-                // ValueType-derived class rather than a blittable struct, and what comes back is a
-                // wrapper around a pointer that is no longer ours.
-                //
-                // The return value is fine, and Steam documents it as the same value the struct
-                // carries in m_eAvail — so nothing is lost for the gate. A shipping Steamworks
-                // implementation for this game does exactly this: `out var _`, decide on the return
-                // value, and get the *contents* of the status from a Callback<T> instead, where the
-                // dispatcher constructs the struct properly.
-                relayAvailability = SteamNetworkingUtils.GetRelayNetworkStatus(out _);
-                authAvailability = SteamNetworkingSockets.GetAuthenticationStatus(out _);
-            }
-            catch (Exception ex)
-            {
-                Disable("GetRelayNetworkStatus/GetAuthenticationStatus", ex);
-                return;
+                try
+                {
+                    authAvailability = SteamNetworkingSockets.InitAuthentication();
+                }
+                catch (Exception ex)
+                {
+                    Disable("InitAuthentication", ex);
+                    return;
+                }
             }
 
             // Logged once on arrival rather than on a timer. This is the line that answers "did
@@ -205,6 +237,63 @@ namespace MegabonkTogether.Services
                 loggedReady = true;
                 Plugin.Log.LogInfo($"[steam] {DescribeStatus()}");
             }
+        }
+
+        /// <summary>
+        /// Subscribes to the two status callbacks. Once, and latched before the attempt so a
+        /// failure is one log line rather than one per tick.
+        /// </summary>
+        private void RegisterStatusCallbacks()
+        {
+            if (registeredCallbacks)
+            {
+                return;
+            }
+
+            registeredCallbacks = true;
+
+            try
+            {
+                relayStatusCallback = new SteamCallback
+                {
+                    CallbackType = Il2CppType.Of<SteamRelayNetworkStatus_t>(),
+                    Handler = OnRelayNetworkStatus,
+                };
+                CallbackDispatcher.Register(relayStatusCallback);
+
+                authStatusCallback = new SteamCallback
+                {
+                    CallbackType = Il2CppType.Of<SteamNetAuthenticationStatus_t>(),
+                    Handler = OnAuthenticationStatus,
+                };
+                CallbackDispatcher.Register(authStatusCallback);
+            }
+            catch (Exception ex)
+            {
+                relayStatusCallback = null;
+                authStatusCallback = null;
+                Plugin.Log.LogWarning(
+                    $"[steam] Could not register for Steam's status callbacks, so relay readiness "
+                    + $"will not be reported: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// <para>The raw payload is the native <c>SteamRelayNetworkStatus_t</c>. Reading it with
+        /// <c>Marshal</c> at fixed offsets is the whole point — it is the same information the
+        /// by-ref accessor returned, obtained without a struct crossing the interop boundary.</para>
+        /// </summary>
+        private void OnRelayNetworkStatus(IntPtr payload)
+        {
+            relayAvailability = (ESteamNetworkingAvailability)Marshal.ReadInt32(payload, AvailOffset);
+            pingMeasurementInProgress = Marshal.ReadInt32(payload, PingMeasurementInProgressOffset) != 0;
+            networkConfigAvailability = (ESteamNetworkingAvailability)Marshal.ReadInt32(payload, AvailNetworkConfigOffset);
+            anyRelayAvailability = (ESteamNetworkingAvailability)Marshal.ReadInt32(payload, AvailAnyRelayOffset);
+        }
+
+        private void OnAuthenticationStatus(IntPtr payload)
+        {
+            authAvailability = (ESteamNetworkingAvailability)Marshal.ReadInt32(payload, AvailOffset);
         }
 
         public string DescribeStatus()
@@ -219,11 +308,11 @@ namespace MegabonkTogether.Services
                 return "Steam is not initialised. Launched outside Steam? Netplay does not need it yet.";
             }
 
-            // No sub-availabilities and no m_debugMsg: they live in the details struct, and that
-            // struct cannot be read. Getting them needs a Callback<SteamRelayNetworkStatus_t>,
-            // which Phase 3 has to settle anyway.
             return $"SteamID {LocalSteamId}, readiness {Readiness}, "
-                + $"relay {Describe(relayAvailability)}, auth {Describe(authAvailability)}.";
+                + $"relay {Describe(relayAvailability)}, auth {Describe(authAvailability)}, "
+                + $"network config {Describe(networkConfigAvailability)}, "
+                + $"any relay {Describe(anyRelayAvailability)}"
+                + (pingMeasurementInProgress ? ", still measuring pings." : ".");
         }
 
         /// <summary>

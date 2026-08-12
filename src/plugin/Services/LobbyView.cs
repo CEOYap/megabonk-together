@@ -74,6 +74,22 @@ namespace MegabonkTogether.Services
         void ResetReadyState();
 
         /// <summary>
+        /// Whether there is a Steam lobby to invite friends to. False for a client, false without
+        /// Steam, and false until the Steam lobby has finished being created — so the button that
+        /// binds to this hides rather than failing when pressed.
+        /// </summary>
+        bool CanInvite { get; }
+
+        /// <summary>
+        /// Opens Steam's invite dialog for this lobby. No-op unless <see cref="CanInvite"/>.
+        ///
+        /// <para>Everything after the click belongs to Steam: the friend list, the invite, and the
+        /// accept. What comes back to us is a <c>+connect_lobby</c> launch argument if the friend's
+        /// game was closed — see <c>Helpers/LaunchArguments.cs</c>.</para>
+        /// </summary>
+        void InviteFriends();
+
+        /// <summary>
         /// Host only. Ends the lobby and tells every peer to advance to character selection.
         /// No-op unless <see cref="AreAllMembersReady"/>.
         /// </summary>
@@ -85,8 +101,46 @@ namespace MegabonkTogether.Services
 
     internal class LobbyViewService(
         IPlayerManagerService playerManagerService,
-        INetTransport netTransport) : ILobbyViewService
+        INetTransport netTransport,
+        ISteamLobbyService steamLobbyService,
+        ISteamService steamService,
+        SteamPersonaService steamPersonaService) : ILobbyViewService
     {
+        // A Steam-backed roster and readiness lived here and have been removed. Both ends decided
+        // independently whether to use it, by comparing the Steam lobby's member count against the
+        // replicated roster's — and those two sets are populated by different mechanisms at
+        // different times, so the ends could disagree. A client on the Steam path wrote its
+        // readiness to member data and sent nothing; a host on the message path read a set nobody
+        // had written. The press went somewhere the host never looked, and neither side could tell.
+        //
+        // The fix is not a better guard. Any rule derived separately on each machine can disagree,
+        // and readiness is a correctness property — the Start gate is built on it. Readiness stays
+        // on the messages until the Steam lobby *is* the session and there is only one membership
+        // set to consult, which is Phase 4's business.
+        //
+        // Kept from that work, because neither depends on the switch: both players still join one
+        // Steam lobby, and Steam persona names still reach the panel — the name is adopted onto
+        // ModConfig.PlayerName, so the message path shows it too.
+
+        /// <summary>
+        /// Invite is answered here rather than in the panel so the panel never learns that Steam
+        /// exists. That was the point of putting a view model in front of it: the lobby panel's
+        /// design note said Phase 3 should be able to add invite "without touching the panel", and
+        /// the panel's side of this is one button bound to two members.
+        /// </summary>
+        public bool CanInvite =>
+            IsLocalPlayerHost && steamLobbyService.State == SteamLobbyState.InLobby;
+
+        public void InviteFriends()
+        {
+            if (!CanInvite)
+            {
+                return;
+            }
+
+            steamLobbyService.OpenInviteOverlay();
+        }
+
         /// <summary>
         /// The authoritative lobby-ready set on the host, and the host's last broadcast as mirrored
         /// on a client. Keyed by game connection id.

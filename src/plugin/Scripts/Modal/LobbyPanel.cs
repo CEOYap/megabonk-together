@@ -91,6 +91,10 @@ namespace MegabonkTogether.Scripts.Modal
 
         private readonly List<GameObject> memberRows = [];
 
+        /// <summary>Latched: the column's size does not change while the panel is open.</summary>
+        private bool warnedAboutButtonOverflow;
+
+        private CustomButton inviteButton;
         private CustomButton copyCodeButton;
         private CustomButton joinFromClipboardButton;
         private CustomButton leaveLobbyButton;
@@ -356,6 +360,12 @@ namespace MegabonkTogether.Scripts.Modal
                 Destroy(buttonContainer.GetChild(i).gameObject);
             }
 
+            // Invite sits above Copy Code: it is the friendlier of the two ways to bring someone
+            // in, and the one a player reaches for first. It hides entirely without a Steam lobby
+            // to invite to — on a client, or when the game was launched outside Steam — rather than
+            // greying out, because there is no action behind it to explain.
+            inviteButton = CreateButton("InviteButton", "Invite", OnInviteClicked);
+
             // Copy and Join-from-clipboard are mutually exclusive — you either have a lobby or you
             // do not — so hiding one must not leave a gap. The layout group closes it for free,
             // which the hand-placed version could not do.
@@ -395,6 +405,7 @@ namespace MegabonkTogether.Scripts.Modal
 
             // Hide rather than grey out, so the panel never offers an action that cannot work.
             var inLobby = lobbyViewService.IsInLobby;
+            SetButtonVisible(inviteButton, inLobby && lobbyViewService.CanInvite);
             SetButtonVisible(copyCodeButton, inLobby && !string.IsNullOrEmpty(code));
             SetButtonVisible(leaveLobbyButton, inLobby);
             SetButtonVisible(joinFromClipboardButton, !inLobby);
@@ -425,6 +436,69 @@ namespace MegabonkTogether.Scripts.Modal
             // Last, after every show/hide above. The registry is a snapshot, so a button that was
             // just hidden would otherwise stay focusable.
             lobbyWindow?.FindAllButtonsInWindow();
+
+            WarnIfButtonColumnOverflows();
+        }
+
+        /// <summary>
+        /// Warns once if the visible buttons need more room than the prefab reserved for them.
+        ///
+        /// <para><b>Nothing clips an overflowing layout group.</b> A button that does not fit is
+        /// still drawn, just past the bottom edge of the card, so the defect is invisible from the
+        /// code and from the log and shows up only when somebody screenshots it. That has now
+        /// happened twice: once when the column was sized for 44-unit buttons and the real ones
+        /// were 96, and again when Invite became a fifth button in a column reserved for four and
+        /// pushed Leave Lobby off the card.</para>
+        ///
+        /// <para>Measured from the real cloned buttons rather than from a constant, because the
+        /// constant is exactly the thing that keeps being wrong.</para>
+        /// </summary>
+        private void WarnIfButtonColumnOverflows()
+        {
+            if (warnedAboutButtonOverflow || buttonContainer == null)
+            {
+                return;
+            }
+
+            var container = buttonContainer as RectTransform;
+            var layout = buttonContainer.GetComponent<VerticalLayoutGroup>();
+            if (container == null || layout == null)
+            {
+                return;
+            }
+
+            var needed = 0f;
+            var visible = 0;
+            for (var i = 0; i < buttonContainer.childCount; i++)
+            {
+                var child = buttonContainer.GetChild(i);
+                if (!child.gameObject.activeSelf || child is not RectTransform childRect)
+                {
+                    continue;
+                }
+
+                needed += childRect.rect.height;
+                visible++;
+            }
+
+            if (visible == 0)
+            {
+                return;
+            }
+
+            needed += layout.spacing * (visible - 1) + layout.padding.top + layout.padding.bottom;
+
+            if (needed <= container.rect.height)
+            {
+                return;
+            }
+
+            warnedAboutButtonOverflow = true;
+            Plugin.Log.LogWarning(
+                $"[lobby] The button column needs {needed:F0} units for {visible} buttons but the "
+                + $"prefab reserves {container.rect.height:F0}. The last one is drawing past the "
+                + "bottom of the card. Raise ButtonColumnHeight in unity-ui's ScaffoldLobbyPanel "
+                + "and rebuild the bundle.");
         }
 
         /// <summary>
@@ -489,6 +563,16 @@ namespace MegabonkTogether.Scripts.Modal
 
             statusTextField.text = text;
             statusClearAt = string.IsNullOrEmpty(text) ? 0f : Time.unscaledTime + StatusHoldSeconds;
+        }
+
+        private void OnInviteClicked()
+        {
+            PlaySelectSfx();
+
+            // No status message on success: what follows is Steam's overlay taking over the
+            // screen, which is its own feedback. A failure here would mean the button should not
+            // have been visible, and Refresh will hide it on the next tick.
+            lobbyViewService?.InviteFriends();
         }
 
         private void OnCopyCodeClicked()

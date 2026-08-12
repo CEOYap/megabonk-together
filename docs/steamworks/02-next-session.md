@@ -1,100 +1,101 @@
-# Handover: after Phase 2
+# Handover: after Phase 2 and most of Phase 3
 
-Written at the close of the branch that styled the lobby panel and built Steamworks Phase 2.
-Nothing on this branch has been run in game.
+Written at the close of the branch that built Steam lobbies, discovery and invites. Unusually for
+this project, **most of it is verified in game** — over the internet, with two Steam accounts,
+both directions, zero mod errors on either side.
 
 ## Read these first
 
-1. [`00-migration-plan.md`](00-migration-plan.md) — Phase 2's entry, and **Gotcha 1**, whose
-   recommendation this branch reversed.
-2. [`01-api-mapping.md`](01-api-mapping.md) — for Phase 4, unchanged except for anonymisation.
-3. [`../ui/03-next-session.md`](../ui/03-next-session.md) — the lobby panel's remaining items.
+1. [`00-migration-plan.md`](00-migration-plan.md) — Phase 3's table of what is done and what is
+   not, and **Gotcha 1**, whose recommendation this work reversed.
+2. [`03-observed-steam-usage.md`](03-observed-steam-usage.md) — how a shipping implementation for
+   this game does the same things, and the two places copying it would hurt.
 
-## State
+## What works, and is proven
 
-Branch `claude/ui-style-and-steam-phase2`, off `main` after PR #7 merged. Builds clean both
-ways: against the install's interop assemblies, and against `stripped-libs/` with `MegabonkPath`
-unset, which is what CI does.
-
-| Change | Verified how far |
+| | |
 |---|---|
-| Ready button re-fits when its label changes | compiles against the real interop assemblies |
-| Lobby panel prefab styled | bundle builds, `VERIFY OK`, prefab loads with 2 root children |
-| Steamworks referenced from the game's own assembly | compiles both ways |
-| `ISteamService` brings up SDR relay + authentication | compiles |
+| SDR relay + authentication come up | `readiness Ready, relay available, auth available` |
+| Create / join / leave a Steam lobby | verified |
+| Lobby data, member data, member list | verified |
+| Protocol version published, filtered on, and checked on entry | verified — a joiner reads `protocol 1` back |
+| Join by six-character code, strangers included | verified |
+| Steam invites, accepted with the game **closed** | verified |
+| Steam invites, accepted with the game **running** | verified |
+| Accepting an invite joins the room | verified |
 
-## What to check, in this order
+## The two mechanisms this branch discovered
 
-**1. The game still works at all.** Phase 2's actual exit criterion is that adding Steamworks
-changes nothing. Launch **through Steam** — the Steam calls do nothing otherwise — get to the
-menu, play a normal singleplayer run, and confirm achievements and stats behave. The mod blocks
-Steam writes during netplay on purpose (`Patches/SteamStatsManager.cs`, `Patches/LeaderBoards.cs`);
-a run that uploads a netplay score is the worst regression available here.
+Both were unblockers, and both are load-bearing for Phase 4. Neither is obvious.
 
-**2. `[steam]` in the log.** Expect one line naming the SteamID and `readiness Ready` within a few
-seconds of the menu. `Diagnostics.LogSteamStatus = true` repeats it every 10s with which half of
-SDR is up.
+**Injected `CallResult` and `Callback`.** `CallResult<T>` and `Callback<T>` have concrete IL2CPP
+instantiations only for the six type arguments the game itself used, and none is a lobby or
+networking type — IL2CPP is ahead-of-time compiled. The **non-generic** bases are abstract, take no
+type parameter, and hand their payload over as a raw `IntPtr`. `ClassInjector` can derive from them,
+and the game's own dispatcher accepts the result. `SteamCallResult` and `SteamCallback`.
 
-**3. ~~The riskiest single thing on this branch.~~ It already happened, and it is fixed.** The
-first build of this crashed on reaching the main menu:
+One difference between them that will silently break things if forgotten: `GetCallbackType()` is
+inert on a `CallResult` (looked up by call handle) and **load-bearing** on a `Callback` (looked up
+by callback id, derived from the `[CallbackIdentity(N)]` attribute on the type you return).
 
-```
-Fatal error. System.AccessViolationException: Attempted to read or write protected memory.
-   at Steamworks.SteamRelayNetworkStatus_t.get_m_bPingMeasurementInProgress()
-```
+**Never pass a struct by reference to Steamworks.** `GetRelayNetworkStatus` and
+`GetAuthenticationStatus` both do. That shape caused a fatal `AccessViolationException` twice: once
+reading a field off the struct, and once — after that was "fixed" — merely passing it, on a
+different machine, having run fine here dozens of times. Both calls are gone; status arrives by
+callback and is read from the native payload with `Marshal`. **"It works on this install" is not
+evidence about this shape.**
 
-The `out` structs on `GetRelayNetworkStatus` and `GetAuthenticationStatus` are **safe to pass and
-fatal to read** — both carry a managed `byte[]`, so the proxy is a `ValueType`-derived class
-wrapping a pointer that is not ours. Everything else in the path was fine: the log carried
-`[steam] Relay access and authentication requested; SteamID …`, so the gate, both `Init` calls and
-the SteamID read all work.
+## What Phase 3 still owes
 
-Both are now `out _`, deciding on the return value, which Steam documents as the same value the
-struct carries in `m_eAvail`. This is the same shape a shipping implementation for this game uses
-— see [`03-observed-steam-usage.md`](03-observed-steam-usage.md).
+**Phase 3's own exit criterion is not met.** What shipped is a bridge: the Steam lobby carries the
+WebSocket matchmaker's room code as `mt_mm_code`, and the session is still matched and carried by
+the rendezvous server. Invites and discovery are Steam's; the session is not.
 
-The cost is that the readout can no longer say *which* half of SDR is missing. Getting that back
-needs a `Callback<SteamRelayNetworkStatus_t>`, which is the open question below.
+Both players are now **in** the host's Steam lobby — host creates and publishes, client follows by
+the room code — so the membership retiring tags 73 and 74 depends on exists. Nothing reads it yet.
 
-**~~The open question, and it is the pivot of Phase 3.~~ Answered from the dump, and it is no
-longer a pivot.** IL2CPP is ahead-of-time compiled, so a generic exists only for the type
-arguments the game itself used: `Callback<T>` for `GameOverlayActivated_t`, `PersonaStateChange_t`
-and `UserStatsReceived_t`, `CallResult<T>` for the three leaderboard types. Nothing this migration
-needs has a concrete instantiation.
+### Retiring tags 73 and 74: what actually blocks it
 
-So **Phase 3 is designed on the non-generic API** — `IsAPICallCompleted` / `GetAPICallResult` into
-a buffer we allocate ourselves, and `GetLobbyMemberData` polling. Details and the exact call list
-are in [`00-migration-plan.md`](00-migration-plan.md) under *Phase 3 does not need generics at
-all*. That route is safer than the proxy structs, not a fallback from them.
+Worth reading before starting, because the obvious approach does not work and the reason is not
+obvious.
 
-**4. The lobby panel, with two players.** The styling and the Ready button's re-fit both need
-eyes. Specifically: does `NOT READY` now sit inside its button, and does the card read as one
-piece rather than as a list floating above some buttons.
+**The roster is keyed by `ConnectionId`; Steam member data is keyed by SteamID, and there is no
+mapping between them.** `Player` cannot carry a SteamID — it is serialized inside `LobbyUpdates`,
+union tag 0, and MemoryPack is positional, so widening it corrupts sessions between builds. So
+readiness cannot simply be re-pointed at member data while the roster stays as it is. The panel's
+member list has to come from the Steam lobby too, which is what
+[`../ui/00-lobby-panel.md`](../ui/00-lobby-panel.md) always intended. `LobbyMemberView.ConnectionId`
+is used in exactly one place — a GameObject name — so the panel itself is not the obstacle.
 
-## What Phase 2 hands Phase 3
+**Three things are:**
 
-**There is no callback registry, and there cannot be one without undoing Gotcha 1.** This is the
-single fact that shapes the rest of the migration. The table in
-[`00-migration-plan.md`](00-migration-plan.md) under *What (b) costs* lists the route for each
-callback the later phases wanted. Three of the four are polling, and the lobby panel already
-refreshes twice a second, so most of it costs nothing new.
+1. **The Start gate would be computed over a different set than the session.** `AreAllMembersReady`
+   decides whether the host may start, and a client that failed to reach the Steam lobby — host
+   without Steam, a search that found nothing — would be invisible to it. The host could start with
+   somebody not ready, silently. Any implementation needs an explicit guard that the Steam lobby's
+   membership matches the matchmaker roster, and must fall back to the tag path when it does not.
+2. **Names.** A roster from Steam needs persona names, and `GetFriendPersonaName` returns nothing
+   useful for a non-friend until their info has been requested and a `PersonaStateChange_t` has come
+   back. That is a cache and another callback, not a getter — the implementation for this game
+   described in [`03-observed-steam-usage.md`](03-observed-steam-usage.md) has a whole class for it.
+3. **"Delete 73 and 74" should mean "stop sending them when the Steam path is active"**, not remove
+   them. The fallback in (1) needs them, and they are permanently burned in the union either way.
 
-The exception is `GameLobbyJoinRequested_t` — friends-list "Join Game". It has no polling
-equivalent and is the first place direct P/Invoke will be needed. Worth knowing before Phase 3
-starts rather than discovering it three days in.
+None of this is hard; all of it is easy to get subtly wrong, and it changes the most-verified thing
+on this branch. **Do it as its own change, with the two-account test available**, rather than
+tacking it onto something else.
 
-## Two things this branch did not do
+## Two things deliberately parked
 
-**`SteamRichPresenceManager` is still unpatched.** Recorded in
-[`../reverse-engineering/01-investigation-targets.md`](../reverse-engineering/01-investigation-targets.md)
-as a decision rather than an oversight: it will broadcast netplay state to friends as though it
-were a normal run. Phase 3 sets rich presence deliberately, so that is the moment to settle it.
+**The button crash.** Every mod-made button throws a `NullReferenceException` on hover or click,
+including the main menu's own. Pre-existing, unrelated, diagnosed in full, and left for its own
+branch: [`../ui/04-custom-button-null-background.md`](../ui/04-custom-button-null-background.md).
 
-**The named reference mod is gone from `docs/steamworks/` only.** It still appears in
-`docs/AUDIT_optimized-netplay.md`, `docs/netplay/00-fork-comparison.md`,
-`docs/netplay/04-performance-and-gc.md`, `docs/reverse-engineering/00-decompilation-guide.md`.
-The fork-comparison document's whole subject is naming forks, so scrubbing it is a judgement call
-somebody should make on purpose rather than a sweep.
+**Read Unity's player log, not just BepInEx's.** `LogOutput.log` records an exception's message and
+discards its stack trace; `%USERPROFILE%\AppData\LocalLow\Ved\Megabonk\Player.log` keeps the whole
+thing. And grepping `Error  :MegabonkTogether` hides every exception thrown inside a Unity callback,
+because Unity logs those under its own tag — count `[Error  :     Unity]` too. Both cost this branch
+real time.
 
 ## Standing constraints
 

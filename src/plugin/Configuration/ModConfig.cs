@@ -1,4 +1,4 @@
-using BepInEx.Configuration;
+﻿using BepInEx.Configuration;
 
 namespace MegabonkTogether.Configuration
 {
@@ -20,6 +20,8 @@ namespace MegabonkTogether.Configuration
         public static ConfigEntry<bool> LogAllocationRate { get; private set; }
         public static ConfigEntry<bool> LogBandwidth { get; private set; }
         public static ConfigEntry<bool> LogSteamStatus { get; private set; }
+        public static ConfigEntry<bool> SteamLobbySelfTest { get; private set; }
+        public static ConfigEntry<bool> LogUnityStackTraces { get; private set; }
 
         public static void Initialize(ConfigFile config)
         {
@@ -85,6 +87,26 @@ namespace MegabonkTogether.Configuration
                 "every 10 seconds. Off by default. Turn it on when a Steam connection problem " +
                 "needs to be told apart from a network one. Note that an instance launched " +
                 "outside Steam has no Steam at all, which this will say."
+            );
+            SteamLobbySelfTest = config.Bind(
+                "Diagnostics",
+                "SteamLobbySelfTest",
+                false,
+                "Once per launch, create a private Steam lobby, write and read back lobby and " +
+                "member data, then leave it, and log what happened. Off by default. This exists " +
+                "to prove the Steamworks migration's lobby primitives on a real install; it " +
+                "changes nothing about how you play and needs only one player."
+            );
+            LogUnityStackTraces = config.Bind(
+                "Diagnostics",
+                "LogUnityStackTraces",
+                false,
+                "Re-enable Unity's script stack traces. Note that BepInEx's own LogOutput.log " +
+                "records the exception message and discards the stack trace regardless of this " +
+                "setting - read Unity's player log instead, at " +
+                @"%USERPROFILE%\AppData\LocalLow\Ved\Megabonk\Player.log, which keeps " +
+                "the full trace. Off by default because it changes logging for the whole game, " +
+                "not just the mod."
             );
             EncounterInputGraceSeconds = config.Bind(
                 "Gameplay",

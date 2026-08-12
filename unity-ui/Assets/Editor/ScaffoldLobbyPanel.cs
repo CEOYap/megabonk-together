@@ -58,7 +58,7 @@ namespace MegabonkTogether.UiAuthoring
         // The card. Top-anchored children measure downward from its top edge, so every offset below
         // reads in the order the panel is drawn.
         private const float PanelWidth = 620f;
-        private const float PanelHeight = 900f;
+        private const float PanelHeight = 950f;
 
         /// <summary>Thickness of the border, drawn by insetting <c>Fill</c> inside <c>Panel</c>.</summary>
         private const float BorderThickness = 3f;
@@ -67,14 +67,18 @@ namespace MegabonkTogether.UiAuthoring
         private const float RuleWidth = 540f;
 
         /// <summary>
-        /// Room for the button column. <b>410 is measured, not chosen</b>: the runtime replaces the
-        /// placeholders with clones of the game's PLAY button, whose real height is well above the
-        /// 44 an earlier version assumed, and four of them plus spacing just fill this. At most four
-        /// are ever visible at once — Copy Code and Join From Clipboard are mutually exclusive — so
-        /// this is the true worst case. Shrinking it draws buttons past the bottom of the card;
-        /// nothing clips them.
+        /// Room for the button column, for the worst case of <b>five</b> visible buttons: Invite,
+        /// Copy Code, Ready, Start and Leave Lobby. Join From Clipboard cannot be visible with Copy
+        /// Code — you either have a lobby or you do not — so five is the true maximum.
+        ///
+        /// <para>The height is measured rather than chosen. A real cloned button is about 96 units
+        /// tall, which is where 5 x 96 + 4 x 8 of spacing comes from. <b>This constant has now been
+        /// wrong three times</b>: 44 when the buttons were assumed small, then 410 when a fifth
+        /// button was added without revisiting it and Leave Lobby drew off the bottom of the card.
+        /// Nothing clips an overflow, so it is invisible until somebody screenshots it — which is
+        /// why <c>LobbyPanel</c> now measures the built column and warns.</para>
         /// </summary>
-        private const float ButtonColumnHeight = 410f;
+        private const float ButtonColumnHeight = 520f;
 
         private const float ButtonSpacing = 8f;
 
@@ -90,24 +94,24 @@ namespace MegabonkTogether.UiAuthoring
         // the cursor as people join, and empty rows inside a framed well read as free slots rather
         // than as a void — which is what the unstyled panel's blank middle looked like.
         private const int MaxMembers = 6;
-        private const float MemberRowHeight = 40f;
-        private const float MemberRowSpacing = 5f;
-        private const float WellPadding = 8f;
+        private const float MemberRowHeight = 34f;
+        private const float MemberRowSpacing = 4f;
+        private const float WellPadding = 6f;
         private const float MembersWidth = ContentWidth - 4f;
 
         private const float MembersHeight =
             (MaxMembers * MemberRowHeight) + ((MaxMembers - 1) * MemberRowSpacing) + (2f * WellPadding);
 
-        private const float TitleY = -24f;
-        private const float TitleHeight = 52f;
-        private const float SubtitleY = -80f;
-        private const float SubtitleHeight = 30f;
-        private const float HeaderRuleY = -118f;
-        private const float MembersY = -128f;
+        private const float TitleY = -20f;
+        private const float TitleHeight = 46f;
+        private const float SubtitleY = -70f;
+        private const float SubtitleHeight = 28f;
+        private const float HeaderRuleY = -104f;
+        private const float MembersY = -114f;
         private const float StatusY = MembersY - MembersHeight - 8f;
-        private const float StatusHeight = 28f;
+        private const float StatusHeight = 26f;
         private const float FooterRuleY = StatusY - StatusHeight - 8f;
-        private const float ButtonsY = FooterRuleY - 12f;
+        private const float ButtonsY = FooterRuleY - 10f;
 
         #endregion
 
@@ -145,7 +149,7 @@ namespace MegabonkTogether.UiAuthoring
             var fill = CreateImage("Fill", panel.rectTransform, PanelFill);
             Inset(fill.rectTransform, BorderThickness);
 
-            var title = CreateText("Title", panel.rectTransform, "Your Lobby", 42f,
+            var title = CreateText("Title", panel.rectTransform, "Your Lobby", 40f,
                 new Vector2(0f, TitleY), new Vector2(ContentWidth, TitleHeight));
             title.color = TitleInk;
 

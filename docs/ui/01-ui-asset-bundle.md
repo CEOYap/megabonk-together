@@ -113,10 +113,17 @@ drove width would fight the game for it on every label change. Buttons of varyin
 is the game's own look. `Members` is the opposite case and drives width, so rows fill the well
 whatever it is set to.
 
-The button column reserves **410px**, which is measured rather than chosen: four real cloned
-buttons plus spacing just fill it, and four is the true worst case because Copy Code and Join
-From Clipboard are mutually exclusive. Nothing clips a fifth — it would simply draw past the
-bottom of the card.
+The button column reserves **520px** for a worst case of **five** visible buttons — Invite, Copy
+Code, Ready, Start, Leave Lobby. Copy Code and Join From Clipboard cannot both be visible, so five
+is the true maximum. A real cloned button is about 96 units tall, which is where 5x96 plus 4x8 of
+spacing comes from.
+
+**This constant has been wrong three times.** 44 when the buttons were assumed small; 410 when it
+was measured for four; and 410 again when Invite became a fifth and pushed Leave Lobby off the
+bottom of the card. Nothing clips an overflowing layout group — the button is still drawn, just
+outside the card — so it is invisible from the code and from the log, and it has only ever been
+caught by looking at a screenshot. `LobbyPanel.WarnIfButtonColumnOverflows` now measures the real
+buttons at runtime and logs when they do not fit, so the next time this is wrong it says so.
 
 The members well reserves six rows permanently, even with two filled. The alternative is a button
 column that moves under the cursor as people join, and empty rows inside a framed well read as
