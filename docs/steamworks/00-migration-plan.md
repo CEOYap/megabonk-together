@@ -566,21 +566,36 @@ not.
    What was left behind in the transport is the answer to "what is actually transport-specific":
    eight receive cases whose handling depends on *which peer a message arrived on* rather than on
    its contents, plus matchmaking handshake, NAT introduction and relay fallback.
-3. Give `SteamNetTransport` the peer half. It raises `MessageReceived` and nothing consumes it yet.
-   It needs to route into `INetMessageRouter` and to handle those same eight peer-scoped cases —
-   which means its own introduction map, keyed by `HSteamNetConnection`.
-4. Decide who assigns connection ids once the Steam lobby is the session. Today the rendezvous
-   server does. The transport deliberately does not guess: it keys peers by
-   `HSteamNetConnection` — the direct analogue of `NetPeer.Id` — and takes the game's connection id
-   from the introduction handshake through `AssignConnectionId`, exactly as `gamePeersIntroduced`
-   does today. **Whatever replaces the server must not be derived independently on each machine**;
-   that is the mistake the readiness revert was paid for.
-5. Point `INetTransport` at it behind the config flag. Only after 3 and 4 — the registration is one
-   line and is the last step, not the first.
-6. Gate `AcceptConnection` on Steam lobby membership, and close with
+3. ~~Give `SteamNetTransport` the peer half.~~ **Done.** It routes through `INetMessageRouter` and
+   handles three peer-scoped cases itself — `Introduced` both ways, `PlayerDisconnected` on a
+   client, `SelectedCharacter` on the host. The other five the LiteNetLib side carries are all
+   relay, and SDR is invisible above the socket, so they are absent rather than ported and left
+   dead.
+4. ~~Decide who assigns connection ids.~~ **Done** — `src/common/SteamConnectionId.cs`. A peer's
+   connection id **is its Steam account id**, the low 32 bits of the SteamID64. Valve packs the
+   account id there with instance, type and universe above it, so two accounts differ in the low
+   word exactly when they differ at all: collisions are impossible by construction rather than
+   merely unlikely, which is why this beats hashing a SteamID into 32 bits.
+
+   **This is not the mistake the readiness revert was paid for**, and the distinction is worth
+   holding onto. That failure was a *guard* evaluated separately on each machine over two
+   membership sets filled by different mechanisms at different moments, so the two ends could reach
+   different answers. This is a pure function of one immutable input both ends already hold. The
+   rule is "never let two machines **decide** independently", not "never compute anything locally".
+
+   The claimed id is checked against the sender's own SteamID on arrival, so a peer cannot index
+   itself under somebody else's id.
+5. **Start a Steam session.** The last structural piece and the only one left. Nothing calls
+   `StartHost` or `ConnectToHost` outside the self-test, because deciding who hosts and finding the
+   host's SteamID is `NetplaySessionService`/`WebsocketClientService` territory and still goes
+   through the rendezvous server. The Steam lobby already knows its owner —
+   `ISteamLobbyService.OwnerSteamId` — so the input exists; what does not exist is the path from
+   "player pressed Host" to `StartHost()`.
+6. Point `INetTransport` at it behind the config flag. One line, and last.
+7. Gate `AcceptConnection` on Steam lobby membership, and close with
    `SteamNetEndReason.ProtocolMismatch` on a version mismatch. The reasons are reserved; nothing
    uses them.
-7. Then, and only then, retire tags 73/74 — `LobbyDataUpdate_t` is reachable through
+8. Then, and only then, retire tags 73/74 — `LobbyDataUpdate_t` is reachable through
    `SteamCallback`, and at that point the Steam lobby is the one membership set.
 
 #### The playtest — done, PASSED
