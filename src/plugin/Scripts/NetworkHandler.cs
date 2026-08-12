@@ -41,6 +41,7 @@ namespace MegabonkTogether.Scripts
         private IUdpClientService udpClientService;
         private IStateBroadcastService stateBroadcastService;
         private ISteamNetTransport steamNetTransport;
+        private INetTransport netTransport;
         private ISynchronizationService synchronizationService;
         private IWebsocketClientService websocketClientService;
         private IPlayerManagerService playerManagerService;
@@ -127,7 +128,13 @@ namespace MegabonkTogether.Scripts
                 if (GameManager.Instance == null || GameManager.Instance.player == null || GameManager.Instance.player.inventory == null) return;
 
                 Services.AllocationDiagnostics.Sample(ModConfig.LogAllocationRate.Value);
-                Services.BandwidthDiagnostics.Sample(ModConfig.LogBandwidth.Value, udpClientService, playerManagerService);
+                // The active transport, whichever it is — a diagnostic that reads the wrong one
+                // reports on a socket nobody is using.
+                // The active transport, whichever it is — a diagnostic that reads the wrong one
+                // reports on a socket nobody is using. Cached, never resolved per frame.
+                netTransport ??= Plugin.Services.GetRequiredService<INetTransport>();
+                Services.BandwidthDiagnostics.Sample(
+                    ModConfig.LogBandwidth.Value, netTransport, playerManagerService);
 
                 lobbyUpdateAccumulator += Time.deltaTime;
 
