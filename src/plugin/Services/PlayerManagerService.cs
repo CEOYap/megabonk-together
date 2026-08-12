@@ -36,6 +36,9 @@ namespace MegabonkTogether.Services
 
         public void SpawnPlayers();
 
+        /// <summary>Gives a known peer an avatar if it lacks one. Idempotent, main thread only.</summary>
+        public NetPlayer EnsureNetPlayerSpawned(uint connectionId);
+
         public NetPlayer GetRandomNetPlayer();
         public void AddProjectileToSpawn(uint connectionId);
         public void AddGetNetplayerPosition(uint connectionId);
@@ -462,21 +465,62 @@ namespace MegabonkTogether.Services
 
         public void SpawnPlayers()
         {
-            if (spawnedPlayers.Count > 0)
+            foreach (var other in GetAllPlayersExceptLocal())
             {
-                logger.LogWarning("Players have already been spawned.");
-                return;
+                EnsureNetPlayerSpawned(other.ConnectionId);
+            }
+        }
+
+        /// <summary>
+        /// Gives a known peer an avatar if it does not have one, and returns it. Idempotent.
+        ///
+        /// <para><b>Why creation is per-player and on demand rather than one batch.</b> Avatars are
+        /// cleared by <see cref="ResetForNextLevel"/> and were only ever recreated by
+        /// <see cref="SpawnPlayers"/>, which runs once, from the <c>GameEvent.Start</c> path, behind
+        /// the lobby-ready barrier. So anything that delayed that barrier left the peer with no
+        /// avatar <i>for the rest of the run</i>: every position update for them hit "NetPlayer not
+        /// found", was logged, and was dropped — hundreds of times, with the player simply invisible
+        /// and unrecoverable. A peer becoming known is the only precondition creation actually has,
+        /// and it is the precondition this checks.</para>
+        ///
+        /// <para>Main thread only: it creates a <c>GameObject</c>. Both transports' receive paths
+        /// dispatch from <c>Update</c>, so every caller already satisfies that.</para>
+        /// </summary>
+        public NetPlayer EnsureNetPlayerSpawned(uint connectionId)
+        {
+            if (spawnedPlayers.TryGetValue(connectionId, out var existing) && existing != null)
+            {
+                return existing;
             }
 
-            var others = GetAllPlayersExceptLocal();
-
-            foreach (var other in others)
+            var local = GetLocalPlayer();
+            if (local != null && local.ConnectionId == connectionId)
             {
-                var go = new GameObject($"NetPlayer-{other.ConnectionId}");
-                var player = go.AddComponent<NetPlayer>();
-                spawnedPlayers.TryAdd(other.ConnectionId, player);
-                player.Initialize((ECharacter)other.Character, other.ConnectionId, other.Skin);
+                return null;
             }
+
+            // Deliberately not GetPlayer: that reports a miss, throttled, and a spawn request for a
+            // player who has genuinely left is not worth a warning on a per-frame path.
+            if (!players.TryGetValue(connectionId, out var player))
+            {
+                return null;
+            }
+
+            var go = new GameObject($"NetPlayer-{connectionId}");
+            var netPlayer = go.AddComponent<NetPlayer>();
+
+            if (!spawnedPlayers.TryAdd(connectionId, netPlayer))
+            {
+                // Lost a race with another caller this frame. Theirs is the one in the map, so this
+                // one is destroyed rather than leaked as an orphan that receives nothing.
+                UnityEngine.Object.Destroy(go);
+                return spawnedPlayers.TryGetValue(connectionId, out var winner) ? winner : null;
+            }
+
+            netPlayer.Initialize((ECharacter)player.Character, connectionId, player.Skin);
+            logger.LogInfo($"Spawned NetPlayer for {connectionId}.");
+
+            return netPlayer;
         }
 
         public IEnumerable<NetPlayer> GetAllSpawnedNetPlayers()

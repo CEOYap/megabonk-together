@@ -405,11 +405,18 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            var netplayer = playerManagerService.GetNetPlayerByNetplayId(playerUpdate.ConnectionId);
+            // Spawned here if missing rather than reported and dropped. An update arriving for a
+            // player with no avatar used to mean the avatar was never coming: the only thing that
+            // created one ran once, behind the lobby-ready barrier, so a peer that missed that
+            // moment stayed invisible for the whole run while this logged the same line every tick.
+            // Receiving position updates for someone is proof they exist and are in the session,
+            // which is the only precondition creating their avatar has.
+            var netplayer = playerManagerService.EnsureNetPlayerSpawned(playerUpdate.ConnectionId);
 
             if (netplayer == null)
             {
-                logger.LogWarning($"NetPlayer not found for ConnectionId: {playerUpdate.ConnectionId}");
+                // Genuinely unknown - left, or never joined. GetPlayer's own throttled report covers
+                // it; repeating it here at 60 Hz is what buried the last log.
                 return;
             }
 
