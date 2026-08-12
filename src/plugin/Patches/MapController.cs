@@ -16,7 +16,9 @@ namespace MegabonkTogether.Patches
     internal static class MapControllerPatches
     {
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
-        private static readonly IUdpClientService udpClientService = Plugin.Services.GetService<IUdpClientService>();
+        // The seam: this gates starting a run on every peer having chosen, and the transport that
+        // is not carrying the session answers "yes" from an empty peer set.
+        private static readonly INetTransport udpClientService = Plugin.Services.GetService<INetTransport>();
         private static readonly IWebsocketClientService websocketClientService = Plugin.Services.GetService<IWebsocketClientService>();
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
 

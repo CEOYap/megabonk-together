@@ -1,4 +1,4 @@
-using Assets.Scripts._Data.Tomes;
+﻿using Assets.Scripts._Data.Tomes;
 using MegabonkTogether.Common.Models;
 using MegabonkTogether.Helpers;
 using MegabonkTogether.Services;
@@ -40,11 +40,12 @@ namespace MegabonkTogether.Scripts.NetPlayer
         private const float BORDER_THICKNESS = 3f;
         private const float BAR_LATENCY_GAP_RATIO = 0.04f;
 
-        private IUdpClientService udpClientService;
+        // The seam: latency comes from whichever transport is carrying the session.
+        private INetTransport udpClientService;
 
         protected void Awake()
         {
-            udpClientService = Plugin.Services.GetService<IUdpClientService>();
+            udpClientService = Plugin.Services.GetService<INetTransport>();
         }
 
         public void Initialize(Player player, RawImage iconTemplate, Transform parent, float cardHeight)

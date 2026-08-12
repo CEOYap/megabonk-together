@@ -60,10 +60,7 @@ namespace MegabonkTogether.Services
         public void Reset();
 
         public int GetNetPeerCount();
-        public bool AreAllPeersReady();
-        public int GetCurrentReadyPeersCount();
         public void UpdateMode(bool isHost);
-        public bool IsHandlingConnection();
         public void CancelAnyNatIntroduction();
         public bool HasHandledHost();
         public void ResetHandledHost();

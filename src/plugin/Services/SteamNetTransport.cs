@@ -910,6 +910,13 @@ namespace MegabonkTogether.Services
             return peerIntroductions.Count >= members - 1;
         }
 
+        /// <summary>
+        /// True between ConnectP2P and the connection reaching Connected. There is no NAT
+        /// introduction phase here — SDR does that invisibly — so this is simply "the socket is not
+        /// carrying traffic yet", which is the same question the caller is asking.
+        /// </summary>
+        public bool IsHandlingConnection() => state == SteamNetTransportState.Starting;
+
         /// <summary>Host only. Whether every introduced peer has chosen a character.</summary>
         public bool AreAllPeersReady()
         {
