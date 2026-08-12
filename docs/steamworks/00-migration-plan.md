@@ -512,17 +512,64 @@ numbers burned, exactly as tags 1, 65 and 66 were left when their stamped replac
 - **Exit criteria:** players can find and join a lobby without the rendezvous server. The old
   transport still carries gameplay traffic.
 
-### Phase 4 — `SteamNetTransport`
-- `CreateListenSocketP2P` on the host; `ConnectP2P` on clients.
-- Handle `SteamNetConnectionStatusChangedCallback_t` for the connection lifecycle, mapping to
-  `PeerConnected` / `PeerDisconnected`.
-- Implement the send methods per [`01-api-mapping.md`](01-api-mapping.md).
-- Poll with `ReceiveMessagesOnConnection` from `Update`.
-- Map `NetDelivery` → Steam send flags. **This is the step where the reliability map must not
-  drift.**
-- Put it behind a config flag so both transports can ship in one build during testing.
-- **Exit criteria:** a full run completes on Steam sockets with the same behaviour as
-  LiteNetLib, verified under 3% simulated packet loss.
+### Phase 4 — `SteamNetTransport` — **TRANSPORT BUILT, NOT WIRED, NOTHING RUN**
+
+The transport itself exists: `Services/SteamNetTransport.cs` behind
+`Services/ISteamNetTransport.cs`, with the marshalling it needs in `Services/SteamNetLayout.cs`.
+
+| Item | State |
+|---|---|
+| `CreateListenSocketP2P` + poll group on the host | built |
+| `ConnectP2P` on clients | built |
+| `SteamNetConnectionStatusChangedCallback_t` → `PeerConnected` / `PeerDisconnected` | built, via `SteamCallback` |
+| Send methods, throttled `EResult` logging, one reused pinned buffer | built |
+| `ReceiveMessagesOnPollGroup` from `Update`, capped drain, `Release` in a `finally` | built |
+| `NetDelivery` → Steam send flags | built; `ReliableSequenced` retired rather than translated |
+| Behind a config flag so both transports ship in one build | **`ISteamNetTransport` is registered separately; `INetTransport` still resolves to LiteNetLib** |
+| **Exit criterion: a full run on Steam sockets, under 3% loss** | **not met — nothing has run** |
+| **Inherited from Phase 3: find *and join* without the rendezvous server** | **not met** |
+
+**The struct-by-reference rule had to be understood before any of this could be written**, because
+`ConnectP2P` takes one and a client cannot avoid it. The audit is
+[`05-interop-struct-shapes.md`](05-interop-struct-shapes.md) and it is the document to read before
+touching this code. Summary: the rule is a safe over-approximation of *"no struct whose IL2CPP
+layout differs from its native layout"*, the difference being an `Il2CppStructArray` field where
+native has inline bytes. `SteamNetworkingIdentity` has none and is safe;
+`SteamNetConnectionInfo_t`, `SteamNetConnectionRealTimeStatus_t` and both status structs do and are
+not.
+
+**Two consequences worth knowing before planning around them:**
+
+- **`GetLatency` returns -1 on this transport.** `GetConnectionRealTimeStatus` is the only source
+  of ping and its struct is one of the unsafe ones, so the lobby panel's `rtt` goes blank and the
+  packet-loss readout Phase 0 was told to wait for does not arrive after all. The route back is
+  direct P/Invoke to the flat C API, which composes with the current approach and creates no second
+  callback registry — deliberately not taken yet.
+- **The connection-status payload is read at hand-derived native offsets**, validated on every
+  payload by two identity sentinels sitting in front of the arithmetic. UNVERIFIED until a real
+  connection changes state.
+
+**What is left, in order:**
+
+1. Run `Diagnostics/SteamNetSelfTest` once. It proves the identity layout against `GetIdentity`,
+   which is what `ConnectP2P` stands on, plus socket, poll group, callback registration and
+   teardown. One player, a few seconds.
+2. Move the session lifecycle. `UdpClientService` owns matchmaking handshake, NAT introduction,
+   relay fallback and the per-tick send loop alongside the transport, and `NetworkHandler` calls
+   `Update`/`UpdateEnemies`/`UpdateProjectiles` on it — none of which is transport. Until that is
+   split, `INetTransport` cannot be pointed at the Steam implementation without taking the send
+   loop with it.
+3. Decide who assigns connection ids once the Steam lobby is the session. Today the rendezvous
+   server does. The transport deliberately does not guess: it keys peers by
+   `HSteamNetConnection` — the direct analogue of `NetPeer.Id` — and takes the game's connection id
+   from the introduction handshake through `AssignConnectionId`, exactly as `gamePeersIntroduced`
+   does today. **Whatever replaces the server must not be derived independently on each machine**;
+   that is the mistake the readiness revert was paid for.
+4. Gate `AcceptConnection` on Steam lobby membership, and close with
+   `SteamNetEndReason.ProtocolMismatch` on a version mismatch. The reasons are reserved; nothing
+   uses them.
+5. Then, and only then, retire tags 73/74 — `LobbyDataUpdate_t` is reachable through
+   `SteamCallback`, and at that point the Steam lobby is the one membership set.
 
 ### Phase 5 — Decommission
 - **Drop `NetworkMenuTab` so TOGETHER! goes straight to the lobby.** Planned separately, with the
@@ -599,7 +646,7 @@ later phases would have taken from a `Callback<T>` has to arrive another way:
 | `LobbyCreated_t`, `LobbyEnter_t` and other call results | 3 | Poll `SteamUtils.IsAPICallCompleted` then `GetAPICallResult`. **Verified in game** — see below. |
 | `LobbyDataUpdate_t` | 3 | Poll `GetLobbyMemberData`. The lobby panel already refreshes twice a second, so there is no new timer. |
 | `GameLobbyJoinRequested_t` (friends-list "Join Game") | 3 | **No polling equivalent.** This one genuinely needs a callback, and is the first place (c) will be required. |
-| `SteamNetConnectionStatusChangedCallback_t` | 4 | `SteamNetworkingUtils.SetConfigValue` with `Callback_ConnectionStatusChanged` and a function pointer — the documented registry-free route, and it takes `IntPtr`s, which marshal cleanly. |
+| `SteamNetConnectionStatusChangedCallback_t` | 4 | ~~`SteamNetworkingUtils.SetConfigValue` with a function pointer.~~ **Not needed.** `SteamCallback` carries it, same as the two status types. |
 
 None of that is free, but it is all cheaper than a class of bug that only shows up as somebody's
 achievement quietly not unlocking.
