@@ -527,8 +527,31 @@ The transport itself exists: `Services/SteamNetTransport.cs` behind
 | `ReceiveMessagesOnPollGroup` from `Update`, capped drain, `Release` in a `finally` | built |
 | `NetDelivery` → Steam send flags | built; `ReliableSequenced` retired rather than translated |
 | Behind a config flag so both transports ship in one build | **`ISteamNetTransport` is registered separately; `INetTransport` still resolves to LiteNetLib** |
-| **Exit criterion: a full run on Steam sockets, under 3% loss** | **not met — nothing has run** |
-| **Inherited from Phase 3: find *and join* without the rendezvous server** | **not met** |
+| Session start, host and client, off the Steam lobby | built behind `Network/UseSteamTransport`; **never run** |
+| **Exit criterion: a full run on Steam sockets, under 3% loss** | **not met — the Steam path has never carried a byte between two machines** |
+| **Inherited from Phase 3: find *and join* without the rendezvous server** | built, unverified |
+
+#### How to test the Steam path
+
+**Both players must set `Network/UseSteamTransport = true`.** A Steam host and a matchmaker client
+cannot see each other at all — there is no negotiation and no fallback, deliberately, because a
+silent fallback would put a player on a transport their config says they are not using.
+
+Edit the config with the game closed; BepInEx rewrites it on exit. Then host on one machine, read
+the room code off the lobby panel, and join with it on the other. What to watch for, in order:
+
+```
+[steam-session] Hosting; the lobby has been told the socket is open.
+[steam-net] Accepted a connection from <steamid>.
+[steam-net] <name> introduced as connection <id> (host: False).
+[steam-session] Seed <n> taken from the lobby.        (client)
+[steam-net] Connected to <steamid>.                    (client)
+```
+
+A client that sits at `Waiting` forever means the host never published `mt_ready` — check the host's
+log for a listen-socket failure. A connection that reaches `Connecting` and stops means the
+status callback is registered under the wrong id, which is the one thing the single-player self-test
+could not prove.
 
 **The struct-by-reference rule had to be understood before any of this could be written**, because
 `ConnectP2P` takes one and a client cannot avoid it. The audit is
@@ -585,13 +608,22 @@ not.
 
    The claimed id is checked against the sender's own SteamID on arrival, so a peer cannot index
    itself under somebody else's id.
-5. **Start a Steam session.** The last structural piece and the only one left. Nothing calls
-   `StartHost` or `ConnectToHost` outside the self-test, because deciding who hosts and finding the
-   host's SteamID is `NetplaySessionService`/`WebsocketClientService` territory and still goes
-   through the rendezvous server. The Steam lobby already knows its owner —
-   `ISteamLobbyService.OwnerSteamId` — so the input exists; what does not exist is the path from
-   "player pressed Host" to `StartHost()`.
-6. Point `INetTransport` at it behind the config flag. One line, and last.
+5. ~~Start a Steam session.~~ **Done** — `Services/SteamNetSessionService.cs`, behind
+   `Network/UseSteamTransport`. Hosting creates a Steam lobby instead of a matchmaker room, joining
+   enters one by code, and `INetTransport` resolves to `SteamNetTransport`.
+
+   **The handshake is one-way through lobby data, and that is the part to preserve.** The host
+   opens its listen socket first and only then publishes `mt_ready`; a client connects only after
+   reading it, and to `GetLobbyOwner` rather than to anyone's opinion of who the host is. Steam
+   permits only the owner to write lobby data, so there is one writer and one moment. **The
+   alternative — each side retrying on its own timer against its own idea of whether the other was
+   up — is the shape that broke Steam-backed readiness.** A shipping implementation for this game
+   arrived at the same design independently.
+
+   The seed travels the same way, and the client reads it *before* connecting, because world
+   generation is downstream of it.
+6. ~~Point `INetTransport` at it behind the config flag.~~ **Done**, as a factory that reads the
+   flag once at startup — so a session cannot change transport halfway through.
 7. Gate `AcceptConnection` on Steam lobby membership, and close with
    `SteamNetEndReason.ProtocolMismatch` on a version mismatch. The reasons are reserved; nothing
    uses them.
