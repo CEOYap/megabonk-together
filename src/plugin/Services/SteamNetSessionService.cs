@@ -136,7 +136,7 @@ namespace MegabonkTogether.Services
                 // Published only now, after the socket is actually open. Announcing readiness first
                 // and opening second would invite exactly the connection failures this flag exists
                 // to prevent.
-                PublishSeed();
+                PublishSessionSettings();
 
                 if (!steamLobbyService.SetLobbyData(SteamLobbyKeys.ServerReady, ServerReadyValue))
                 {
@@ -187,7 +187,7 @@ namespace MegabonkTogether.Services
             // publishes readiness, so by the time this gate opens the seed is there; if it somehow
             // is not, waiting one more tick costs nothing and connecting anyway would build a
             // different world from the host's.
-            if (!ApplySeed())
+            if (!ApplySessionSettings())
             {
                 return;
             }
@@ -247,7 +247,7 @@ namespace MegabonkTogether.Services
         /// Publishes the seed the host has already given the player manager, so every peer generates
         /// the same world.
         /// </summary>
-        private void PublishSeed()
+        private void PublishSessionSettings()
         {
             var seed = playerManagerService.GetSeed();
 
@@ -274,6 +274,24 @@ namespace MegabonkTogether.Services
                     + "different world, so this is a desync waiting to happen rather than a cosmetic "
                     + "failure.");
             }
+
+            // The host's setting decides the run, so it is recorded on Mode here as well as
+            // published — on the rendezvous path HandleMatch does both from MatchInfo, and the
+            // Steam path reached the game with Mode.EnabledSharedExperience never set at all, which
+            // GameBalanceService reads as "not shared".
+            var sharedExperience = Configuration.ModConfig.EnabledSharedExperience.Value;
+            Plugin.Instance.Mode.EnabledSharedExperience = sharedExperience;
+
+            if (!steamLobbyService.SetLobbyData(SteamLobbyKeys.SharedExperience, sharedExperience ? "1" : "0"))
+            {
+                Plugin.Log.LogError(
+                    "[steam-session] Could not publish the Shared Experience setting, so clients "
+                    + "would play under different XP rules from the host.");
+            }
+
+            Plugin.Log.LogInfo(
+                $"[steam-session] Session settings published: seed {seed}, shared experience "
+                + $"{(sharedExperience ? "on" : "off")}.");
         }
 
         /// <summary>
@@ -281,7 +299,7 @@ namespace MegabonkTogether.Services
         /// after: world generation is downstream of this, and a client that connected first could
         /// start building a world from a seed it has not read yet.
         /// </summary>
-        private bool ApplySeed()
+        private bool ApplySessionSettings()
         {
             if (seedApplied)
             {
@@ -300,7 +318,15 @@ namespace MegabonkTogether.Services
 
             seedApplied = true;
             playerManagerService.SetSeed(seed);
-            Plugin.Log.LogInfo($"[steam-session] Seed {seed} taken from the lobby.");
+
+            // Taken from the host, never from this client's own config. Two players reading their
+            // own setting is how one run ends up with two sets of XP rules.
+            var sharedExperience = steamLobbyService.GetLobbyData(SteamLobbyKeys.SharedExperience) == "1";
+            Plugin.Instance.Mode.EnabledSharedExperience = sharedExperience;
+
+            Plugin.Log.LogInfo(
+                $"[steam-session] Session settings taken from the lobby: seed {seed}, shared "
+                + $"experience {(sharedExperience ? "on" : "off")}.");
             return true;
         }
 

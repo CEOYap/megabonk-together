@@ -1,4 +1,4 @@
-namespace MegabonkTogether.Services
+﻿namespace MegabonkTogether.Services
 {
     /// <summary>
     /// The keys this mod hangs off a Steam lobby.
@@ -35,6 +35,16 @@ namespace MegabonkTogether.Services
         /// their own schedule is precisely the shape that broke Steam-backed readiness.</para>
         /// </summary>
         public const string ServerReady = "mt_ready";
+
+        /// <summary>
+        /// Whether the host has Shared Experience on, published so every peer applies the same
+        /// rules.
+        ///
+        /// <para>It is the <b>host's</b> setting, not each player's, exactly as on the rendezvous
+        /// path where it rides in <c>MatchInfo</c>. A client reading its own config instead would
+        /// give two players different XP rules in one run and call it a preference.</para>
+        /// </summary>
+        public const string SharedExperience = "mt_sharedxp";
 
         /// <summary>
         /// The run seed, published by the host so every peer generates the same world.
