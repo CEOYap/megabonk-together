@@ -47,6 +47,23 @@
         public const string SharedExperience = "mt_sharedxp";
 
         /// <summary>
+        /// Set to <see cref="TransportSteam"/> by a host carrying the session over Steam sockets.
+        ///
+        /// <para><b>Not a version gate — a configuration one.</b> Two peers can be on the same build
+        /// and the same protocol and still be unable to play together, because
+        /// <c>Network/UseSteamTransport</c> is per-install and there is deliberately no negotiation
+        /// or fallback. Without this key a matchmaker-mode client joins, finds no room code, and
+        /// leaves blaming the host's build — which is the opposite of what is wrong.</para>
+        ///
+        /// <para>Absent means the bridge world: a Steam lobby standing in for a matchmaker room.
+        /// Old builds publish nothing here and are read correctly as exactly that.</para>
+        /// </summary>
+        public const string Transport = "mt_transport";
+
+        /// <summary>The value <see cref="Transport"/> carries for a Steam-socket session.</summary>
+        public const string TransportSteam = "steam";
+
+        /// <summary>
         /// The run seed, published by the host so every peer generates the same world.
         ///
         /// <para>On the rendezvous path this arrives inside <c>MatchInfo</c>. With the Steam lobby

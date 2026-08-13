@@ -190,11 +190,31 @@ namespace MegabonkTogether.Services
                 return;
             }
 
+            // Read before leaving: once we are out of the lobby its data is no longer ours to read,
+            // and the transport marker is what distinguishes the two reasons a room code can be
+            // missing.
+            var hostTransport = steamLobbyService.GetLobbyData(SteamLobbyKeys.Transport);
+
             PendingJoinCode = steamLobbyService.GetLobbyData(SteamLobbyKeys.MatchmakerCode);
             steamLobbyService.LeaveLobby();
 
             if (string.IsNullOrEmpty(PendingJoinCode))
             {
+                // Two different failures used to share one message, and it named the wrong one. A
+                // host on the Steam transport publishes no matchmaker code because there is no
+                // matchmaker — nothing is wrong with their build, the two installs simply disagree
+                // about which transport they are on, and that is a setting the player can change.
+                if (hostTransport == SteamLobbyKeys.TransportSteam)
+                {
+                    Plugin.Log.LogWarning(
+                        "[steam-invite] This lobby runs on the Steam transport and this install does "
+                        + "not. Set Network/UseSteamTransport = true in "
+                        + "BepInEx/config/MegabonkTogether.cfg, with the game closed, and accept the "
+                        + "invite again. There is deliberately no automatic fallback: joining on the "
+                        + "other transport would silently put you in a session nobody else is in.");
+                    return;
+                }
+
                 Plugin.Log.LogWarning(
                     "[steam-invite] The invited lobby published no room code. The host is probably "
                     + "running a build from before invites existed.");

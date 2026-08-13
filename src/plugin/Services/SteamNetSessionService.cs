@@ -279,6 +279,15 @@ namespace MegabonkTogether.Services
             // published — on the rendezvous path HandleMatch does both from MatchInfo, and the
             // Steam path reached the game with Mode.EnabledSharedExperience never set at all, which
             // GameBalanceService reads as "not shared".
+            // Published before readiness, like everything else here, so a client that is about to
+            // be told the socket is open can already tell what kind of session this is.
+            if (!steamLobbyService.SetLobbyData(SteamLobbyKeys.Transport, SteamLobbyKeys.TransportSteam))
+            {
+                Plugin.Log.LogWarning(
+                    "[steam-session] Could not publish the transport marker; a friend whose "
+                    + "UseSteamTransport is off will get a confusing failure rather than a clear one.");
+            }
+
             var sharedExperience = Configuration.ModConfig.EnabledSharedExperience.Value;
             Plugin.Instance.Mode.EnabledSharedExperience = sharedExperience;
 
