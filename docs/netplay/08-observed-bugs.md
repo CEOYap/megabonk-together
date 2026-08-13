@@ -587,11 +587,48 @@ replicated as start/stop and *both* peers run their own `OnTriggerEnter` / `OnTr
 peers reach the completion through the game's own path — and both count it. The counter agrees
 because the mechanism is different, not because the shrine is special.
 
-**LIKELY rather than CONFIRMED, and the gap is one lookup.** The shortcut is confirmed by reading the
-code above. What is *not* confirmed is that the game's tally is incremented inside `Interact` rather
-than by something else observing the object's destruction — no counter method has been decompiled.
-`dump.cs` (buildid 21750826) for whatever backs the interactable tally settles it, and would also say
-which of the two fixes below is available.
+### What the decompile actually found — and it corrects the paragraph above
+
+**The tally is not incremented anywhere on the chest's own interaction path.** Three functions
+decompiled (cached in `megabonk-re/decompiled/`, buildid 21750826):
+
+| Function | VA | What it calls |
+|---|---|---|
+| `InteractableChest$$Interact` | `0x180452FB0` | `EncounterWindows.AddEncounter`, `ChestUtility.ChestTypeToEncounter`, a localised string and a text popup |
+| `InteractableChest$$OpenChestImplementation` | `0x180453990` | `ChestUtility.OpenChestNoAnimation`, `EncounterWindows.AddEncounter` |
+| `InteractableChest$$OnChestWindowClose` | `0x1804532B0` | `MoneyUtility.GetChestPrice`, `PlayerInventory.ChangeGold`, `Instantiate`, `Destroy` |
+
+**No counter, no stat call, on any of the three** — including the one that actually consumes the
+chest. So the guess above ("the game increments its own run tally inside `Interact`") is wrong in its
+specifics, and saying so is the point of this section: the shortcut in
+`OnReceivedInteractableUsed` is real, but it is not skipping an increment that lives in `Interact`,
+because there is not one.
+
+**Two candidates remain, and both are an xref away.**
+
+1. **`InteractableChest.A_ChestOpened`** — a `public static Action` at field offset `0x8`
+   (`dump.cs:370556`). Something subscribes and tallies. If this is the mechanism, the mod's
+   `DestroyImmediate` shortcut never raises it and the divergence follows immediately.
+2. **`RunStats.AddValue(EMyStat stat, int value)`** — `RunStats` is a static class and
+   `EMyStat.chestsOpened = 3`, `potsBroken = 13`, `shrineCharge = 16` exist. Someone calls it with
+   those.
+
+**Why the next step is an xref and not another decompile.** Subscriptions (`+=`) and calls live in
+*bodies*, and `dump.cs` lists only declarations — so grepping it cannot find the caller. The lookup
+is a cross-reference search in Ghidra on `A_ChestOpened`'s field address and on `RunStats$$AddValue`,
+which is a different operation from `decompile_headless.py` and has not been done here.
+
+**What the answer changes.** If the tally is raised by `A_ChestOpened` or an equivalent per-type
+event, the fix is to make the remote peer run the real interaction instead of destroying the object —
+and the reason that was not done originally (side effects the receiver must not run twice) becomes
+the actual design question. If instead the tally is derived by counting objects still in the scene,
+then `DestroyImmediate` *would* have counted it, the counters should already agree, and the cause is
+something else entirely — which would make this entry's whole premise wrong rather than merely
+imprecise.
+
+**The charge-shrine exception survives either answer**, and is the strongest evidence available:
+whatever the mechanism is, both peers reach it for charge shrines because both run their own
+`OnTriggerEnter` / `OnTriggerExit`, and only for charge shrines does the counter agree.
 
 **Fix shape, not chosen.** Either replay the real interaction on the remote peer instead of
 destroying the object — correct, and the reason it was not done that way originally is presumably
