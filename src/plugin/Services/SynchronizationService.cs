@@ -166,6 +166,13 @@ namespace MegabonkTogether.Services
         /// <summary>Invalidates a retry routine left over from a previous round. See <see cref="ClientReadyRoutine"/>.</summary>
         private int readyGeneration;
 
+        /// <summary>
+        /// The round the host has actually acknowledged this client for, or 0. Distinct from the
+        /// replicated <c>IsReady</c> flag, which is a 5 Hz snapshot of the host's view and can still
+        /// describe the previous round at the moment a new one opens.
+        /// </summary>
+        private uint acknowledgedRoundId;
+
         /// <summary>Lobby-ready defect A. See <see cref="ClientReadyRoutine"/>.</summary>
         private const float ReadyRetrySeconds = 2f;
 
@@ -328,7 +335,18 @@ namespace MegabonkTogether.Services
             // state is Ready. The host waited on a report nobody was going to send. This is defect C
             // reaching the one branch the comment above did not cover: the host stopped trusting
             // these flags, and the client never did.
+            // Requiring the host to have acknowledged *this* round, not merely that the flags look
+            // ready. HasStamp alone was not enough: it becomes true the instant the round is
+            // adopted, and the replicated IsReady flags are a 5 Hz snapshot that can still be
+            // carrying the previous round's answer at that moment. The client then started
+            // immediately, moved to State.Started, and its own report routine bailed - which is the
+            // stall that survived the last fix.
+            //
+            // The acknowledgement is the one fact that cannot predate the round: it is set only
+            // after this client reported for the round currently open and saw the host agree. The
+            // flag check stays, because it is what says every *other* peer is ready too.
             return readinessService.HasStamp
+                && acknowledgedRoundId == readinessService.RoundId
                 && playerManagerService.GetAllPlayers().All(p => p.IsReady)
                 && udpClientService.HasAllPeersConnected();
         }
@@ -1083,6 +1101,10 @@ namespace MegabonkTogether.Services
             // round is open, so this cannot accidentally match one.
             uint reportedRoundId = 0;
 
+            // A new routine means a new round to be acknowledged for; the previous round's
+            // acknowledgement must not carry over into this one.
+            acknowledgedRoundId = 0;
+
             for (var attempt = 1; attempt <= ReadyRetryAttempts; attempt++)
             {
                 if (generation != readyGeneration || currentState != State.Ready)
@@ -1176,6 +1198,7 @@ namespace MegabonkTogether.Services
                         && readinessService.HasStamp
                         && reportedRoundId == readinessService.RoundId)
                     {
+                        acknowledgedRoundId = readinessService.RoundId;
                         logger.LogInfo(
                             $"[readiness] The host acknowledged round {readinessService.RoundId}; " +
                             "stopping the report routine.");
