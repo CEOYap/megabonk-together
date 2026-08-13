@@ -11,7 +11,9 @@ cited line. **LIKELY** — strong inference from structure, failing path not obs
 
 OB-1..OB-4 come from the 2026-08-06 session (two players, direct P2P). OB-5..OB-9 come from the
 **2026-08-07** sessions — two players over the internet at ~61 ms rtt, running the round-identity
-build with `WriteUnityLog = true` on both peers.
+build with `WriteUnityLog = true` on both peers. OB-11 comes from the **2026-08-13** Steam-transport
+sessions and is transport-independent — it is host authority working as designed, with a consequence
+nobody chose.
 
 ---
 
@@ -470,6 +472,60 @@ paths, which is a far better starting point than reading every call site.
 
 **Do not silence it.** A guard firing 1,841 times is information; the fix is upstream of the guard.
 
+
+---
+
+<a name="ob-11"></a>
+## OB-11 — Minibosses always spawn near the host — LIKELY
+
+**Reported:** minibosses appear next to the host rather than somewhere between the players. A client
+playing away from the host sees them arrive on top of their teammate, never near themselves.
+
+**Why this is structural rather than a bug in a line somewhere.** The mod does not choose spawn
+positions and never has. It observes them:
+
+```csharp
+// Patches/Enemies/EnemyManager.cs — SpawnEnemy_Postfix
+var isServer = synchronizationService.IsServerMode() ?? false;
+if (isServer)
+{
+    synchronizationService.OnSpawnedEnemy(__result, enemyData.enemyName, pos, /* … */);
+}
+```
+
+`pos` is whatever the game's own spawner computed, on the host, a moment earlier — and it is
+replicated verbatim. `SpawnBoss_Prefix` suppresses the client's own spawning entirely, so the client
+contributes nothing to the decision.
+
+**The game is a single-player game and its spawner knows about one player: `GameManager.Instance.player`.**
+On the host that is the host. So every spawn ring, every "just outside the camera" offset and every
+distance check is measured from the host's position, and the result is faithfully sent to everyone.
+Host-authoritative spawning is correct; host-*centred* spawning is the accident that comes with it.
+
+**Status is LIKELY, not CONFIRMED, and the gap is specific.** What is confirmed by reading the code
+is that the mod supplies no position and replicates the host's. What is *not* confirmed is that the
+game's spawner derives its position from `GameManager.Instance.player` — no spawn-position method has
+been decompiled. **One decompile settles it:** `EnemyManager$$SpawnEnemy`'s callers, or whatever
+computes `pos` before it, from `megabonk-re/build-21750826/dump.cs`. Until then this is an inference
+from structure, however strong.
+
+**Whether it is worth fixing is a design question, not a defect.** Three shapes, in increasing cost:
+
+1. **Leave it.** Minibosses are an event both players can walk to. This is the current behaviour and
+   it is not broken, only unfair to whoever is not hosting.
+2. **Pick a player per spawn, then offset from them.** The host already has every peer's position in
+   the replicated roster, so choosing a random living player and translating the game's chosen
+   position relative to that player is arithmetic the host can do in `SpawnEnemy_Postfix` — but the
+   enemy has already been created at `pos` by then, so it would have to be moved, and anything the
+   game cached from its original transform in `Awake` would be stale. That hazard is real here: see
+   the `SpawnedObject` clone-inactive-then-position note in
+   [`SynchronizationService`](../../src/plugin/Services/SynchronizationService.cs), which exists
+   because a component cached a prefab transform in `Awake`.
+3. **Patch the position source.** Correct, and requires the decompile above first.
+
+**Do not "fix" this by spawning on each peer independently.** Two peers running their own spawner
+would produce two different minibosses with different ids, which is the desync this architecture
+exists to prevent — and the same reasoning that makes `SpawnBoss_Prefix` suppress the client.
 
 ---
 
