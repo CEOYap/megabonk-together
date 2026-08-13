@@ -897,6 +897,16 @@ namespace MegabonkTogether.Scripts
         {
             AudioManager.Instance.PlaySfx(AudioManager.Instance.uiSelect.sounds[0]);
 
+            // Refused rather than quietly matched on the other transport. Quickplay needs a pool of
+            // strangers, which on Steam means a lobby browser that does not exist yet — and running
+            // the matchmaker while INetTransport points at Steam is the exact combination that
+            // produced a session where every send was refused.
+            if (Configuration.ModConfig.UseSteamTransport.Value)
+            {
+                SetStatusText("Quickplay is not available on the Steam transport yet. Host or join by code.");
+                return;
+            }
+
             Plugin.Instance.Mode.Mode = NetworkModeType.Random;
 
             UpdateModalContents(false);
@@ -927,6 +937,13 @@ namespace MegabonkTogether.Scripts
             UpdateFriendliesUI(false);
 
             ShowLoader("Connecting...");
+
+            if (Configuration.ModConfig.UseSteamTransport.Value)
+            {
+                SessionService.Host();
+                connectionCoroutine = CoroutineRunner.Instance.Run(HandleSteamFriendlies());
+                return;
+            }
 
             Plugin.Instance.NetworkHandler.HandleNetworking();
             connectionCoroutine = CoroutineRunner.Instance.Run(HandleFriendlies());
@@ -961,8 +978,74 @@ namespace MegabonkTogether.Scripts
 
             ShowLoader("Joining room...");
 
+            if (Configuration.ModConfig.UseSteamTransport.Value)
+            {
+                SessionService.Join(code);
+                connectionCoroutine = CoroutineRunner.Instance.Run(HandleSteamFriendlies());
+                return;
+            }
+
             Plugin.Instance.NetworkHandler.HandleNetworking();
             connectionCoroutine = CoroutineRunner.Instance.Run(HandleFriendlies());
+        }
+
+        /// <summary>
+        /// The session service, which until now was registered and called by nothing.
+        ///
+        /// <para><b>This is the seam that made the Steam transport unreachable.</b> The Steam
+        /// session start was built onto <c>INetplaySessionService</c> because that is where the
+        /// session lifecycle is supposed to live — but nothing called it, so with the transport flag
+        /// on the menu still ran the matchmaker flow while gameplay sends went to a Steam transport
+        /// that had never been started. Every send was refused, which broke readiness, and no Steam
+        /// lobby was ever created, which hid the invite button.</para>
+        ///
+        /// <para>Only the Steam paths route through it for now. Moving the matchmaker paths over is
+        /// step 1 of <c>docs/ui/05-drop-the-netplay-menu.md</c> and wants its own change.</para>
+        /// </summary>
+        private static Services.INetplaySessionService SessionService =>
+            Plugin.Services.GetRequiredService<Services.INetplaySessionService>();
+
+        /// <summary>
+        /// Drives the loader and the lobby hand-off for a Steam session. Mirrors
+        /// <see cref="HandleFriendlies"/>'s outcomes, but watches the session service's state rather
+        /// than the matchmaker's, because on this path there is no matchmaker to watch.
+        /// </summary>
+        private IEnumerator HandleSteamFriendlies()
+        {
+            while (SessionService.IsBusy || SessionService.State == Services.NetplayConnectState.Idle)
+            {
+                yield return new WaitForSeconds(0.1f);
+            }
+
+            if (SessionService.State != Services.NetplayConnectState.Ready)
+            {
+                HideLoader();
+                SetStatusText(SessionService.StatusMessage);
+                stopButton.gameObject.SetActive(false);
+                yield return new WaitForSeconds(4f);
+                UpdateFriendliesUI(true);
+                SetStatusText("");
+                yield break;
+            }
+
+            AudioManager.Instance.PlaySfx(AudioManager.Instance.purchaseSfx.sounds[0]);
+            HideLoader();
+            SetStatusText("Joined!");
+            stopButton.gameObject.SetActive(false);
+
+            if (Plugin.Instance.NetworkHandler.IsHost)
+            {
+                Plugin.StartNotification(("MegabonkTogether", "FriendliesHostSuccess"), ("MegabonkTogether", "FriendliesHostSuccessDesc"), []);
+            }
+            else
+            {
+                Plugin.StartNotification(("MegabonkTogether", "FriendliesClientSuccess"), ("MegabonkTogether", "FriendliesClientSuccessDesc"), [""]);
+            }
+
+            yield return new WaitForSeconds(1f);
+            CloseModal();
+
+            ShowLobbyPanel();
         }
 
         private void OnFriendliesBackClicked()

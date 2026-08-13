@@ -1,4 +1,4 @@
-using MegabonkTogether.Common.Messages;
+﻿using MegabonkTogether.Common.Messages;
 
 namespace MegabonkTogether.Services
 {
@@ -92,5 +92,33 @@ namespace MegabonkTogether.Services
 
         /// <summary>Null until the session's role has been decided.</summary>
         bool? IsHost();
+
+        /// <summary>
+        /// Host only. Whether every connected peer has chosen a character. False on a client.
+        ///
+        /// <para>On the contract because the map-confirm gate reads it, and a gate that only one
+        /// transport can answer is a gate that silently passes on the other.</para>
+        /// </summary>
+        bool AreAllPeersReady();
+
+        /// <summary>Host only. How many connected peers have chosen. Zero on a client.</summary>
+        int GetCurrentReadyPeersCount();
+
+        /// <summary>
+        /// Whether a connection attempt is still in flight. True while a transport is establishing
+        /// itself — NAT introduction on one, a socket that has not reached Connected on the other —
+        /// and false once a session is carrying traffic.
+        /// </summary>
+        bool IsHandlingConnection();
+
+        /// <summary>
+        /// Whether every peer this session expects is connected and has introduced itself.
+        ///
+        /// <para>On the contract rather than on one implementation because gameplay gates readiness
+        /// on it, and a gate that only one transport can answer is a gate that silently fails on the
+        /// other — which is exactly what happened when a Steam session asked the LiteNetLib service
+        /// and got its idle answer.</para>
+        /// </summary>
+        bool HasAllPeersConnected();
     }
 }

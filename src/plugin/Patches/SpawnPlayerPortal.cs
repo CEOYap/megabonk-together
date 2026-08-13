@@ -32,14 +32,25 @@ namespace MegabonkTogether.Patches
                 return;
             }
 
-            if (!synchronizationService.IsLobbyReady())
-            {
-                MyTime.Pause();
+            // Deliberately NOT gated on IsLobbyReady(). Every level transition opens a new
+            // readiness round, and this is the only thing that raises GameEvent.Ready — which is
+            // what starts the client's report routine for that round.
+            //
+            // The gate made that unreachable on the second level. IsLobbyReady() still reflected
+            // the round that had just been satisfied: nothing on a client clears it between levels,
+            // so it read true, the coroutine never ran, GameEvent.Ready was never raised, and the
+            // client never reported for the new round. The host then waited on a report that had no
+            // code path left to produce it, and hung at "Waiting for other players" forever while
+            // the client played on. The client's log said it all by omission — "Waiting for lobby
+            // to be ready" appeared once, for level one, and never again.
+            //
+            // Running it unconditionally is cheap when the lobby really is ready: the coroutine's
+            // own loop is the check, and it falls straight through to Start and unpauses.
+            MyTime.Pause();
 
-                if (WaitForLobbyCoroutine == null)
-                {
-                    WaitForLobbyCoroutine = CoroutineRunner.Instance.Run(WaitForLobbyReady());
-                }
+            if (WaitForLobbyCoroutine == null)
+            {
+                WaitForLobbyCoroutine = CoroutineRunner.Instance.Run(WaitForLobbyReady());
             }
 
         }

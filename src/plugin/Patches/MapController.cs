@@ -16,7 +16,9 @@ namespace MegabonkTogether.Patches
     internal static class MapControllerPatches
     {
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
-        private static readonly IUdpClientService udpClientService = Plugin.Services.GetService<IUdpClientService>();
+        // The seam: this gates starting a run on every peer having chosen, and the transport that
+        // is not carrying the session answers "yes" from an empty peer set.
+        private static readonly INetTransport udpClientService = Plugin.Services.GetService<INetTransport>();
         private static readonly IWebsocketClientService websocketClientService = Plugin.Services.GetService<IWebsocketClientService>();
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
 
@@ -73,6 +75,22 @@ namespace MegabonkTogether.Patches
 
         private static IEnumerator NotifyServerAndStartGame(RunConfig runConfig)
         {
+            // There is no server to notify on the Steam path, and asking anyway is what produced
+            // "Failed to lock lobby" at the end of an otherwise working session: SendGameStarting
+            // is a round trip to the matchmaker, and a Steam session never connected to one.
+            //
+            // Locking exists so nobody joins between the host pressing Start and the run loading.
+            // The Steam equivalent is SetLobbyJoinable(false), which ISteamLobbyService does not
+            // expose yet - so this is a real if narrow gap rather than a clean no-op, and it is
+            // recorded as such in docs/steamworks/00-migration-plan.md rather than left silent.
+            if (Configuration.ModConfig.UseSteamTransport.Value)
+            {
+                Plugin.Instance.IS_HOST_READY = false;
+                MapController.StartNewMap(runConfig);
+                isWaitingForServerResponse = false;
+                yield break;
+            }
+
             Plugin.Instance.ShowModal("Locking lobby...");
 
             var task = websocketClientService.SendGameStarting();
@@ -137,7 +155,14 @@ namespace MegabonkTogether.Patches
             var stageIndex = newRunConfig.mapData.stages.IndexOf(newRunConfig.stageData);
             var characters = allPlayers.Select(p => ((ECharacter)p.Character).ToString()).ToList();
 
-            _ = websocketClientService.SendRunStatistics(playerCount, mapName, stageIndex + 1, characters);
+            // Skipped rather than left to fail. This is fire-and-forget telemetry to the
+            // matchmaker, so on the Steam path it would not break the run - it would throw inside a
+            // discarded Task and surface later as an unobserved exception, which is a worse way to
+            // learn about it than not sending.
+            if (!Configuration.ModConfig.UseSteamTransport.Value)
+            {
+                _ = websocketClientService.SendRunStatistics(playerCount, mapName, stageIndex + 1, characters);
+            }
         }
 
         /// <summary>

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Linq;
 using System.Threading;
@@ -76,7 +76,13 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>Called once per frame from the network tick, same shape as the allocation sampler.</summary>
-        internal static void Sample(bool configEnabled, IUdpClientService udpClientService, IPlayerManagerService playerManagerService)
+        /// <summary>
+        /// Takes the seam, not the LiteNetLib implementation. It used to take IUdpClientService, so
+        /// on a Steam session it asked a transport that was never started and every peer's rtt read
+        /// -1 - the same defect that had SynchronizationService sending gameplay to the wrong
+        /// transport, in the one place left holding the concrete type.
+        /// </summary>
+        internal static void Sample(bool configEnabled, INetTransport udpClientService, IPlayerManagerService playerManagerService)
         {
             if (!configEnabled)
             {
@@ -114,7 +120,7 @@ namespace MegabonkTogether.Services
             Report(elapsed, udpClientService, playerManagerService);
         }
 
-        private static void Report(float elapsed, IUdpClientService udpClientService, IPlayerManagerService playerManagerService)
+        private static void Report(float elapsed, INetTransport udpClientService, IPlayerManagerService playerManagerService)
         {
             // Snapshot and reset per window. Reads and the zeroing are not atomic together, so a send
             // landing mid-report can be counted in either window — acceptable for a rate estimate,
@@ -165,7 +171,7 @@ namespace MegabonkTogether.Services
         /// Latency and loss per peer. LiteNetLib already runs with <c>EnableStatistics = true</c>
         /// (UdpClientService.cs:129), so this costs nothing extra to read.
         /// </summary>
-        private static void ReportLinkQuality(IUdpClientService udpClientService, IPlayerManagerService playerManagerService)
+        private static void ReportLinkQuality(INetTransport udpClientService, IPlayerManagerService playerManagerService)
         {
             foreach (var player in playerManagerService.GetAllPlayers())
             {

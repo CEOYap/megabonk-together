@@ -1,4 +1,4 @@
-using Il2CppInterop.Runtime;
+﻿using Il2CppInterop.Runtime;
 using Steamworks;
 using System;
 using System.Runtime.InteropServices;
@@ -173,11 +173,48 @@ namespace MegabonkTogether.Services
                 return;
             }
 
+            // With the Steam transport carrying the session, being in this lobby IS the join, and
+            // leaving would end the session we just joined - the session service watches lobby
+            // membership and shuts the transport down when it goes. That is exactly what happened
+            // on the first internet test: joined, connected, left, shut down, all in one tick.
+            //
+            // In the bridge world the opposite is true: the Steam lobby is only a signpost holding a
+            // matchmaker code, and staying in it would leave a second advertisement of the session
+            // lying around.
+            if (Configuration.ModConfig.UseSteamTransport.Value)
+            {
+                PendingJoinCode = steamLobbyService.LobbyCode;
+                Plugin.Log.LogInfo(
+                    $"[steam-invite] Staying in lobby {steamLobbyService.LobbyId} as room "
+                    + $"{PendingJoinCode}; the Steam lobby is the session.");
+                return;
+            }
+
+            // Read before leaving: once we are out of the lobby its data is no longer ours to read,
+            // and the transport marker is what distinguishes the two reasons a room code can be
+            // missing.
+            var hostTransport = steamLobbyService.GetLobbyData(SteamLobbyKeys.Transport);
+
             PendingJoinCode = steamLobbyService.GetLobbyData(SteamLobbyKeys.MatchmakerCode);
             steamLobbyService.LeaveLobby();
 
             if (string.IsNullOrEmpty(PendingJoinCode))
             {
+                // Two different failures used to share one message, and it named the wrong one. A
+                // host on the Steam transport publishes no matchmaker code because there is no
+                // matchmaker — nothing is wrong with their build, the two installs simply disagree
+                // about which transport they are on, and that is a setting the player can change.
+                if (hostTransport == SteamLobbyKeys.TransportSteam)
+                {
+                    Plugin.Log.LogWarning(
+                        "[steam-invite] This lobby runs on the Steam transport and this install does "
+                        + "not. Set Network/UseSteamTransport = true in "
+                        + "BepInEx/config/MegabonkTogether.cfg, with the game closed, and accept the "
+                        + "invite again. There is deliberately no automatic fallback: joining on the "
+                        + "other transport would silently put you in a session nobody else is in.");
+                    return;
+                }
+
                 Plugin.Log.LogWarning(
                     "[steam-invite] The invited lobby published no room code. The host is probably "
                     + "running a build from before invites existed.");

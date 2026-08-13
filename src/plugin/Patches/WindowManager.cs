@@ -23,7 +23,12 @@ namespace MegabonkTogether.Patches
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
         private static readonly IAutoUpdaterService autoUpdaterService = Plugin.Services.GetService<IAutoUpdaterService>();
-        private static readonly IUdpClientService udpClientService = Plugin.Services.GetService<IUdpClientService>();
+        // The seam, not the LiteNetLib implementation. This gate asks whether every peer has
+        // chosen a character before the host may confirm a map; against a transport that is not
+        // carrying the session those answers are "yes" and "zero", because its peer set is empty.
+        // So on a Steam session the gate passed unconditionally — it was not blocking anything, it
+        // was not checking anything.
+        private static readonly INetTransport udpClientService = Plugin.Services.GetService<INetTransport>();
         private static bool hasShownUpdateModal = false;
         private static GameObject friendliesInfoDisplay;
         private static GameObject readyStatusDisplay;

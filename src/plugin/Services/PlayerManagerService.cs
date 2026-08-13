@@ -1,4 +1,5 @@
 ﻿using Assets.Scripts.Inventory__Items__Pickups;
+using Assets.Scripts._Data.Hats;
 using Assets.Scripts.Inventory__Items__Pickups.AbilitiesPassive.Implementations;
 using Assets.Scripts.Inventory__Items__Pickups.Items.ItemImplementations;
 using Assets.Scripts.Inventory__Items__Pickups.Weapons;
@@ -35,6 +36,9 @@ namespace MegabonkTogether.Services
         public Player? GetLocalPlayer();
 
         public void SpawnPlayers();
+
+        /// <summary>Gives a known peer an avatar if it lacks one. Idempotent, main thread only.</summary>
+        public NetPlayer EnsureNetPlayerSpawned(uint connectionId);
 
         public NetPlayer GetRandomNetPlayer();
         public void AddProjectileToSpawn(uint connectionId);
@@ -462,20 +466,158 @@ namespace MegabonkTogether.Services
 
         public void SpawnPlayers()
         {
-            if (spawnedPlayers.Count > 0)
+            foreach (var other in GetAllPlayersExceptLocal())
             {
-                logger.LogWarning("Players have already been spawned.");
+                EnsureNetPlayerSpawned(other.ConnectionId);
+            }
+        }
+
+        /// <summary>
+        /// Gives a known peer an avatar if it does not have one, and returns it. Idempotent.
+        ///
+        /// <para><b>Why creation is per-player and on demand rather than one batch.</b> Avatars are
+        /// cleared by <see cref="ResetForNextLevel"/> and were only ever recreated by
+        /// <see cref="SpawnPlayers"/>, which runs once, from the <c>GameEvent.Start</c> path, behind
+        /// the lobby-ready barrier. So anything that delayed that barrier left the peer with no
+        /// avatar <i>for the rest of the run</i>: every position update for them hit "NetPlayer not
+        /// found", was logged, and was dropped — hundreds of times, with the player simply invisible
+        /// and unrecoverable. A peer becoming known is the only precondition creation actually has,
+        /// and it is the precondition this checks.</para>
+        ///
+        /// <para>Main thread only: it creates a <c>GameObject</c>. Both transports' receive paths
+        /// dispatch from <c>Update</c>, so every caller already satisfies that.</para>
+        /// </summary>
+        public NetPlayer EnsureNetPlayerSpawned(uint connectionId)
+        {
+            if (spawnedPlayers.TryGetValue(connectionId, out var existing))
+            {
+                // Unity's == is overloaded: a *destroyed* object compares equal to null while the
+                // managed reference is still perfectly alive. That distinction is the whole bug
+                // this branch exists to handle, and getting it wrong is what made a peer invisible
+                // for an entire run.
+                if (existing != null)
+                {
+                    // Present but bodiless. Initialize can fail to build the model when the avatar
+                    // is created during a level load — which on-demand spawning makes routine — and
+                    // a NetPlayer with no model is invisible with nothing to recover it.
+                    if (players.TryGetValue(connectionId, out var known))
+                    {
+                        var wanted = (ECharacter)known.Character;
+
+                        // Two reasons to rebuild, and the second is why players appeared as the
+                        // wrong character. An avatar is built from whatever the roster held at the
+                        // time, and on this path that can be before SelectedCharacter has arrived —
+                        // so it gets the default, and nothing afterwards ever reconsidered it. The
+                        // record is the truth; the model is a cache of it.
+                        if (existing.Model == null)
+                        {
+                            logger.LogInfo($"Re-initializing NetPlayer {connectionId}: it has no model.");
+                            existing.Initialize(wanted, connectionId, known.Skin);
+                            ApplyHat(existing, known);
+                        }
+                        else if (existing.BuiltAs != wanted || existing.BuiltWithSkin != known.Skin)
+                        {
+                            logger.LogInfo(
+                                $"Rebuilding NetPlayer {connectionId}: built as {existing.BuiltAs}/"
+                                + $"'{existing.BuiltWithSkin}', the roster now says {wanted}/'{known.Skin}'.");
+                            existing.Destroy();
+                            existing.Initialize(wanted, connectionId, known.Skin);
+                            ApplyHat(existing, known);
+                        }
+                        else if (existing.BuiltWithHat != known.Hat)
+                        {
+                            // A hat does not need the model rebuilt, only re-parented.
+                            ApplyHat(existing, known);
+                        }
+                    }
+
+                    return existing;
+                }
+
+                // Destroyed by a scene load, but still keyed here. The entry must go before a
+                // replacement can take its place: TryAdd would fail against it, and the "lost a
+                // race" branch below would then destroy the healthy new avatar and hand back the
+                // corpse — every frame, forever. That is precisely what happened, and why one
+                // player could see the other and not the reverse.
+                logger.LogInfo($"Replacing NetPlayer {connectionId}: the previous one was destroyed.");
+                spawnedPlayers.TryRemove(connectionId, out _);
+            }
+
+            var local = GetLocalPlayer();
+            if (local != null && local.ConnectionId == connectionId)
+            {
+                // The local player has no avatar by design; asking is a caller's mistake, not an
+                // error, but it must be distinguishable from the miss below.
+                return null;
+            }
+
+            // Deliberately not GetPlayer: that reports a miss, throttled, and a spawn request for a
+            // player who has genuinely left is not worth a warning on a per-frame path.
+            if (!players.TryGetValue(connectionId, out var player))
+            {
+                ReportMissingPlayer(connectionId);
+                return null;
+            }
+
+            var go = new GameObject($"NetPlayer-{connectionId}");
+            var netPlayer = go.AddComponent<NetPlayer>();
+
+            if (!spawnedPlayers.TryAdd(connectionId, netPlayer))
+            {
+                // Lost a race with another caller this frame. Theirs is the one in the map, so this
+                // one is destroyed rather than leaked as an orphan that receives nothing.
+                //
+                // Only reachable as a genuine race now. It used to be reachable against a destroyed
+                // entry too, which turned this from a tie-breaker into a permanent trap.
+                UnityEngine.Object.Destroy(go);
+                logger.LogInfo($"Discarded a duplicate NetPlayer for {connectionId}; another call won.");
+                return spawnedPlayers.TryGetValue(connectionId, out var winner) && winner != null ? winner : null;
+            }
+
+            netPlayer.Initialize((ECharacter)player.Character, connectionId, player.Skin);
+            ApplyHat(netPlayer, player);
+            logger.LogInfo($"Spawned NetPlayer for {connectionId}.");
+
+            return netPlayer;
+        }
+
+        /// <summary>
+        /// Puts the roster's hat on an avatar, and records what was put there.
+        ///
+        /// <para>Read from the record rather than waited for as an event: <c>HatChanged</c> only
+        /// fires when someone changes hat, so an avatar built afterwards — on join, or on every
+        /// level transition — would never hear about a hat chosen before it existed.</para>
+        /// </summary>
+        private void ApplyHat(NetPlayer netPlayer, Player player)
+        {
+            if (netPlayer == null || netPlayer.Model == null)
+            {
                 return;
             }
 
-            var others = GetAllPlayersExceptLocal();
+            netPlayer.BuiltWithHat = player.Hat;
 
-            foreach (var other in others)
+            if (player.Hat == 0)
             {
-                var go = new GameObject($"NetPlayer-{other.ConnectionId}");
-                var player = go.AddComponent<NetPlayer>();
-                spawnedPlayers.TryAdd(other.ConnectionId, player);
-                player.Initialize((ECharacter)other.Character, other.ConnectionId, other.Skin);
+                return;
+            }
+
+            try
+            {
+                var hatData = DataManager.Instance.GetHat((EHat)player.Hat);
+                if (hatData != null)
+                {
+                    using (Plugin.SuppressOutbound())
+                    {
+                        netPlayer.SetHat(hatData);
+                    }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                // Cosmetic. A hat that will not attach must not take the avatar down with it — the
+                // ordering mistake StartGame already made once with the minimap arrow.
+                logger.LogWarning($"Could not put hat {player.Hat} on {player.ConnectionId}: {ex.Message}");
             }
         }
 

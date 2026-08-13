@@ -337,7 +337,7 @@ Two acceptable outcomes for the branch itself, either is fine:
 What is **not** acceptable is carrying it across the seam unexamined, because after Phase 1 the
 call sites no longer show the id-space split that makes the hazard visible.
 
-### Phase 2 — Steam plumbing (no transport change yet) — **BUILT, NOT YET PLAYTESTED**
+### Phase 2 — Steam plumbing (no transport change yet) — **DONE, verified in game**
 - ~~Reference `Steamworks.NET`.~~ The game's own
   `BepInEx/interop/com.rlabrecque.steamworks.net.dll`, not a copy we ship. See
   [Gotcha 1](#gotcha-1) — the recommendation there was reversed on decompiled evidence.
@@ -380,7 +380,7 @@ instead of `pDetails.m_eAvail`, which Steam documents as the same value, so that
 struct degrades the diagnostics rather than the decision. If it does crash, the fallback is direct
 P/Invoke to the flat C API for these two calls only — see option (c) in [Gotcha 1](#gotcha-1).
 
-### Phase 3 — `SteamLobbyService` — **PARTLY DONE. Read the exit criterion before believing otherwise.**
+### Phase 3 — `SteamLobbyService` — **DONE.** Its exit criterion was moved to Phase 4 and is now met there
 
 **Verified over the internet with two accounts, both directions, zero mod errors on either side.**
 Steam lobbies, discovery by code, the protocol gate, and invites all work:
@@ -512,17 +512,263 @@ numbers burned, exactly as tags 1, 65 and 66 were left when their stamped replac
 - **Exit criteria:** players can find and join a lobby without the rendezvous server. The old
   transport still carries gameplay traffic.
 
-### Phase 4 — `SteamNetTransport`
-- `CreateListenSocketP2P` on the host; `ConnectP2P` on clients.
-- Handle `SteamNetConnectionStatusChangedCallback_t` for the connection lifecycle, mapping to
-  `PeerConnected` / `PeerDisconnected`.
-- Implement the send methods per [`01-api-mapping.md`](01-api-mapping.md).
-- Poll with `ReceiveMessagesOnConnection` from `Update`.
-- Map `NetDelivery` → Steam send flags. **This is the step where the reliability map must not
-  drift.**
-- Put it behind a config flag so both transports can ship in one build during testing.
-- **Exit criteria:** a full run completes on Steam sockets with the same behaviour as
-  LiteNetLib, verified under 3% simulated packet loss.
+### Phase 4 — `SteamNetTransport` — **PLAYABLE. ONE EXIT CRITERION OUTSTANDING.**
+
+A full co-op run works over Steam sockets: lobby, invite, join, character select, a run, level
+transitions, and the shared mechanics. The rendezvous server carries none of it. What is not done is
+the *loss* half of the exit criterion, and one open bug.
+
+`Services/SteamNetTransport.cs` behind `Services/ISteamNetTransport.cs`, marshalling in
+`Services/SteamNetLayout.cs` and `Services/SteamNetNative.cs`, session start in
+`Services/SteamNetSessionService.cs`, behind `Network/UseSteamTransport` (off by default).
+
+#### Verified in game, two machines over the internet
+
+| Item | Evidence |
+|---|---|
+| Identity layout round-trips through native code | `GetIdentity` returned our own SteamID |
+| `CreateListenSocketP2P` + poll group | opens, listens, tears down clean |
+| `ConnectP2P`, and SDR routing between two machines | `Connecting → FindingRoute → Connected` on both ends |
+| `SteamNetConnectionStatusChangedCallback_t` | **fires**, under the right callback id — the thing no single-player test could reach |
+| Introduction handshake, connection ids derived from the SteamID | `<name> introduced as connection <id>` |
+| Session handshake through lobby data — `mt_ready`, seed, shared experience | client reads what the host published |
+| Send and receive under real gameplay | 16–19 KB/s at two players, streams at expected rates |
+| `GetLatency` via direct P/Invoke | a real rtt, per peer, in `[bw]` and on the lobby card |
+| A full level, and level transitions | readiness barrier completes on both sides |
+| Enemies, shrines, chests, XP, characters, skins, hats, visibility | all in sync |
+| **Phase 3's inherited criterion: find *and join* without the rendezvous server** | **met** |
+
+#### Not met, and not a formality
+
+| Item | State |
+|---|---|
+| **Exit criterion: a full run under 3% simulated packet loss** | **not met.** Every session so far has been on a healthy link |
+| Reward window (charge-shrine encounter barrier) occasionally desyncs | **open**, see below |
+| The run starts without locking the lobby | `SetLobbyJoinable(false)` is not exposed by `ISteamLobbyService`, so a player could join between Start and the map loading |
+| Quickplay on the Steam transport | refused deliberately — it needs a lobby browser, and silently using the other transport would contradict the setting |
+| Six-player behaviour | accepted as untestable in Phase 0; two players remains the maximum |
+
+**The loss criterion is where the reliability map actually gets tested.** `ReliableUnordered`
+degrades to reliable-ordered on Steam, unreliable sends above ~1200 bytes fragment unreliably, and
+the promotion threshold that exists to prevent that has never been exercised. A clean link hides all
+three. `clumsy` at 3% on one end is the test, and the standing rule is that netcode bugs are mostly
+invisible at 0% loss.
+
+#### The open bug
+
+The reward window after a charge shrine finishes charging is occasionally out of sync between peers.
+Not diagnosed: the two logs available were from different sessions. The encounter barrier already
+logs enough to name it from a **matched pair** — host `[barrier] Report from … accepted` /
+`Released round N`, client `[barrier] Applied release for round N`, and the
+`Dropping a stale barrier report` line when the two ends disagree about which round is open. Three
+shapes to tell apart: a peer that never reported, a report dropped as stale, and a release the
+client never applied.
+
+`74a0e40` added the charger-set contents to the charge-*shrine* logging, which is a different
+mechanism from the reward window and does not bear on this.
+
+#### Five instances of one mistake, worth reading before adding a consumer
+
+Phase 1 moved gameplay behind `INetTransport` by changing the *method signatures*. Consumers that
+kept the *implementation type* kept compiling, because until this branch there was only one
+implementation and the two were the same object. Every one of them broke the moment a second
+transport existed, and each failed differently:
+
+| Consumer | Symptom |
+|---|---|
+| `SynchronizationService` | every gameplay send went to LiteNetLib; "Not connected to host" |
+| `BandwidthDiagnostics` | `rtt -1` — the P/Invoke never ran |
+| `NetPlayerCard` | latency label hidden entirely |
+| `WindowManager` | map-confirm gate passed unconditionally against an empty peer set |
+| `MapController` | same, gating the start of a run |
+
+The grep is `IUdpClientService` outside `UdpClientService.cs`. It is now down to four legitimate
+uses — the registration, the transport-selection factory, `NetworkHandler` for
+`Poll`/`Reset`/`UpdateMode`, and `WebsocketClientService` for `HandleMatch` — so a sixth should
+stand out.
+
+#### Defect C, four times, and the rule that ends it
+
+The level transition failed four times, each fix narrower than the last, all one misunderstanding:
+
+1. The portal's wait never ran on a second level, so `GameEvent.Ready` was never raised.
+2. `IsLobbyReady()`'s client branch read replicated `IsReady` flags that still described the previous
+   round.
+3. The report routine's acknowledgement check combined a stale flag with a fresh stamp and concluded
+   it had been acknowledged for a report it had not sent.
+4. Requiring a stamp was not enough: the stamp becomes true the instant a round is adopted, while the
+   flags are a 5 Hz snapshot that can still predate it.
+
+> **A replicated field is a snapshot. Any check combining one with round-scoped state must prove both
+> describe the same round.** Stamp presence is not that proof; an acknowledgement is, because it is
+> the only signal causally downstream of the round opening.
+
+#### Release consequences, not yet done
+
+`Protocol.Version` is **2** — `Player` gained a `Hat` field and MemoryPack serializes positionally.
+A v1 peer would misread every field after it, so v1 and v2 lobbies refuse each other. That is
+correct, and it means:
+
+- `CHANGELOG.toml` and `README.md` need a **loud** entry: to a player this looks like "I cannot join
+  my friend any more" with no in-game explanation.
+- The csproj `<Version>` is still 5.1.0. This cannot ship as a silent patch release.
+#### What `HandleMatch` and `MatchInfo` did, and where each part lives now
+
+`HandleMatch` is the rendezvous path's session setup and the Steam path never calls it, so every
+side effect it had needed an owner. Audited field by field against `MatchInfo`:
+
+| Carried by the matchmaker | Steam equivalent | State |
+|---|---|---|
+| `Seed` | lobby data `mt_seed`, generated by the host | done |
+| `EnabledSharedExperience` | lobby data `mt_sharedxp`, the **host's** setting | done |
+| `Peers[].ConnectionId` | derived from the SteamID — `Common/SteamConnectionId.cs` | done |
+| `Peers[].IsHost` | Steam lobby ownership, plus `Introduced.IsHost` | done |
+| `Peers[].Name` | `Introduced.Name` | done |
+| `Peers[].HostConnectionId` | — | **unused**: its only reader is a WebSocket `HostDisconnected` handler |
+| roster seeding (`AddPlayer` for every peer up front) | each side adds itself at session start and adds peers as they introduce | done |
+| `selfConnectionId` | derived, same as above | done |
+| `expectedPeerCount` | Steam lobby member count, via `HasAllPeersConnected` | done |
+| `hasHandledHost`, NAT introduce token, `rdvServerHost/Port` | — | LiteNetLib-only; SDR replaces them |
+
+**One timing difference worth knowing rather than fixing.** The matchmaker hands over a complete
+roster before anyone connects; on Steam the roster fills as peers introduce themselves. Both are
+complete before a run starts, but code that assumes "everyone is in the roster the moment the
+session exists" is true on one path and not the other.
+
+#### How to test the Steam path
+
+**Both players must set `Network/UseSteamTransport = true`.** A Steam host and a matchmaker client
+cannot see each other at all — there is no negotiation and no fallback, deliberately, because a
+silent fallback would put a player on a transport their config says they are not using.
+
+Edit the config with the game closed; BepInEx rewrites it on exit. Then host on one machine, read
+the room code off the lobby panel, and join with it on the other. What to watch for, in order:
+
+```
+[steam-session] Hosting; the lobby has been told the socket is open.
+[steam-net] Accepted a connection from <steamid>.
+[steam-net] <name> introduced as connection <id> (host: False).
+[steam-session] Seed <n> taken from the lobby.        (client)
+[steam-net] Connected to <steamid>.                    (client)
+```
+
+A client that sits at `Waiting` forever means the host never published `mt_ready` — check the host's
+log for a listen-socket failure, and remember that SDR relay access takes a few seconds after launch,
+so the session service waits rather than failing.
+
+~~A connection that reaches `Connecting` and stops means the status callback is registered under the
+wrong id.~~ **Settled:** the callback fires under the right id, verified on two machines. A
+connection that now stops at `Connecting` is a genuine SDR or firewall problem, not a binding one.
+
+**A joiner that leaves immediately and reports no room code** has `UseSteamTransport` off while the
+host has it on. The lobby publishes `mt_transport` so the log says exactly that; there is no
+negotiation and no fallback by design.
+
+**The struct-by-reference rule had to be understood before any of this could be written**, because
+`ConnectP2P` takes one and a client cannot avoid it. The audit is
+[`05-interop-struct-shapes.md`](05-interop-struct-shapes.md) and it is the document to read before
+touching this code. Summary: the rule is a safe over-approximation of *"no struct whose IL2CPP
+layout differs from its native layout"*, the difference being an `Il2CppStructArray` field where
+native has inline bytes. `SteamNetworkingIdentity` has none and is safe;
+`SteamNetConnectionInfo_t`, `SteamNetConnectionRealTimeStatus_t` and both status structs do and are
+not.
+
+**Two consequences worth knowing before planning around them:**
+
+- **`GetLatency` returns -1 on this transport.** `GetConnectionRealTimeStatus` is the only source
+  of ping and its struct is one of the unsafe ones, so the lobby panel's `rtt` goes blank and the
+  packet-loss readout Phase 0 was told to wait for does not arrive after all. The route back is
+  direct P/Invoke to the flat C API, which composes with the current approach and creates no second
+  callback registry — deliberately not taken yet.
+- **The connection-status payload is read at hand-derived native offsets**, validated on every
+  payload by two identity sentinels sitting in front of the arithmetic. UNVERIFIED until a real
+  connection changes state.
+
+**What is left, in order:**
+
+1. ~~Run `Diagnostics/SteamNetSelfTest` once.~~ **Done, PASSED, 2026-08-12.** The identity layout is
+   confirmed against `GetIdentity`, and the socket, poll group, callback registration and teardown
+   all came up. See [`05-interop-struct-shapes.md`](05-interop-struct-shapes.md) for the log and for
+   the three things that are still open — chiefly that a callback which *registers* is not a
+   callback that *fires*, and only a peer can settle that.
+2. ~~Move the session lifecycle out of `UdpClientService`.~~ **Done, in two commits.** The receive
+   switch is `Services/NetMessageRouter.cs` and the per-tick streams are
+   `Services/StateBroadcastService.cs`; `UdpClientService` went from 2241 lines and eight
+   dependencies to 1263 and two. Both are behaviour-preserving by construction and **neither has
+   been run** — see the playtest note below.
+
+   What was left behind in the transport is the answer to "what is actually transport-specific":
+   eight receive cases whose handling depends on *which peer a message arrived on* rather than on
+   its contents, plus matchmaking handshake, NAT introduction and relay fallback.
+3. ~~Give `SteamNetTransport` the peer half.~~ **Done.** It routes through `INetMessageRouter` and
+   handles three peer-scoped cases itself — `Introduced` both ways, `PlayerDisconnected` on a
+   client, `SelectedCharacter` on the host. The other five the LiteNetLib side carries are all
+   relay, and SDR is invisible above the socket, so they are absent rather than ported and left
+   dead.
+4. ~~Decide who assigns connection ids.~~ **Done** — `src/common/SteamConnectionId.cs`. A peer's
+   connection id **is its Steam account id**, the low 32 bits of the SteamID64. Valve packs the
+   account id there with instance, type and universe above it, so two accounts differ in the low
+   word exactly when they differ at all: collisions are impossible by construction rather than
+   merely unlikely, which is why this beats hashing a SteamID into 32 bits.
+
+   **This is not the mistake the readiness revert was paid for**, and the distinction is worth
+   holding onto. That failure was a *guard* evaluated separately on each machine over two
+   membership sets filled by different mechanisms at different moments, so the two ends could reach
+   different answers. This is a pure function of one immutable input both ends already hold. The
+   rule is "never let two machines **decide** independently", not "never compute anything locally".
+
+   The claimed id is checked against the sender's own SteamID on arrival, so a peer cannot index
+   itself under somebody else's id.
+5. ~~Start a Steam session.~~ **Done** — `Services/SteamNetSessionService.cs`, behind
+   `Network/UseSteamTransport`. Hosting creates a Steam lobby instead of a matchmaker room, joining
+   enters one by code, and `INetTransport` resolves to `SteamNetTransport`.
+
+   **The handshake is one-way through lobby data, and that is the part to preserve.** The host
+   opens its listen socket first and only then publishes `mt_ready`; a client connects only after
+   reading it, and to `GetLobbyOwner` rather than to anyone's opinion of who the host is. Steam
+   permits only the owner to write lobby data, so there is one writer and one moment. **The
+   alternative — each side retrying on its own timer against its own idea of whether the other was
+   up — is the shape that broke Steam-backed readiness.** A shipping implementation for this game
+   arrived at the same design independently.
+
+   The seed travels the same way, and the client reads it *before* connecting, because world
+   generation is downstream of it.
+6. ~~Point `INetTransport` at it behind the config flag.~~ **Done**, as a factory that reads the
+   flag once at startup — so a session cannot change transport halfway through.
+7. Gate `AcceptConnection` on Steam lobby membership, and close with
+   `SteamNetEndReason.ProtocolMismatch` on a version mismatch. The reasons are reserved; nothing
+   uses them.
+8. Then, and only then, retire tags 73/74 — `LobbyDataUpdate_t` is reachable through
+   `SteamCallback`, and at that point the Steam lobby is the one membership set.
+
+#### The playtest — done, PASSED
+
+**Two players over the internet, 2026-08-12.** Three unverified changes were stacked on the
+LiteNetLib path — the readiness revert carried over from Phase 3, the receive-switch extraction and
+the stream extraction — and all three are now verified together.
+
+| Check | Evidence |
+|---|---|
+| Join, both peers introduced | client `Connected to host`; both connection ids present in the host's roster |
+| **Readiness — the outstanding Phase 3 item** | `[readiness] Round 1 open over 2 participant(s)` → `1137855259 ready (1/2)` → `712709437 ready (2/2)` |
+| Run starts, six levels completed | client `Received RunStarted message`, host released barrier rounds 1–6 |
+| **Enemies stream to the client** | `LobbyUpdates(enemies)` at 31–39/s throughout — the silent failure a first draft of the router would have caused did not occur |
+| **Every message type routed** | **zero** `Unknown message type received` on either side, across the whole session. All 95 moved cases are wired |
+| Stream pacing unchanged | `PlayersStateUpdate` 60.0/s at 98 B/send — exactly the derived figure; `LobbyUpdates(players)` 5.0/s, the 5 Hz heartbeat |
+| Bandwidth | 16–19 KB/s host egress at two players, in line with the Phase 0 baseline |
+| Latency | `peer 712709437 rtt 62 ms` |
+
+**Three pre-existing faults surfaced, none of them from this branch or from Steam.**
+
+1. **`WindowManagerPatches.Update_Postix` throws every frame in the pre-run menus** — 3798 times in
+   this session, stopping when the run started. `WindowManager.activeWindow as CharacterMenu`
+   returns null and is dereferenced immediately; `WindowManager.cs` was last touched 2026-07-31 and
+   is untouched by this branch. It is the `as` versus `TryCast<T>()` rule, and it costs real frame
+   time in the lobby. Its own branch off `main`.
+2. **`TumbleWeedInterpolator` calls `GetComponent` on a destroyed object** — five times on the
+   client, with the host logging the matching `TumbleWeed not found in SpawnedObjectManagerService
+   when processing OnTumbleWeedDespawned`. A despawn race, not a routing fault.
+3. The custom-button NREs, already recorded in [`../ui/04-custom-button-null-background.md`](../ui/04-custom-button-null-background.md).
 
 ### Phase 5 — Decommission
 - **Drop `NetworkMenuTab` so TOGETHER! goes straight to the lobby.** Planned separately, with the
@@ -599,7 +845,7 @@ later phases would have taken from a `Callback<T>` has to arrive another way:
 | `LobbyCreated_t`, `LobbyEnter_t` and other call results | 3 | Poll `SteamUtils.IsAPICallCompleted` then `GetAPICallResult`. **Verified in game** — see below. |
 | `LobbyDataUpdate_t` | 3 | Poll `GetLobbyMemberData`. The lobby panel already refreshes twice a second, so there is no new timer. |
 | `GameLobbyJoinRequested_t` (friends-list "Join Game") | 3 | **No polling equivalent.** This one genuinely needs a callback, and is the first place (c) will be required. |
-| `SteamNetConnectionStatusChangedCallback_t` | 4 | `SteamNetworkingUtils.SetConfigValue` with `Callback_ConnectionStatusChanged` and a function pointer — the documented registry-free route, and it takes `IntPtr`s, which marshal cleanly. |
+| `SteamNetConnectionStatusChangedCallback_t` | 4 | ~~`SteamNetworkingUtils.SetConfigValue` with a function pointer.~~ **Not needed.** `SteamCallback` carries it, same as the two status types. |
 
 None of that is free, but it is all cheaper than a class of bug that only shows up as somebody's
 achievement quietly not unlocking.

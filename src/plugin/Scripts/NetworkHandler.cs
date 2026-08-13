@@ -39,6 +39,9 @@ namespace MegabonkTogether.Scripts
         private bool isGameStarted = false;
 
         private IUdpClientService udpClientService;
+        private IStateBroadcastService stateBroadcastService;
+        private ISteamNetTransport steamNetTransport;
+        private INetTransport netTransport;
         private ISynchronizationService synchronizationService;
         private IWebsocketClientService websocketClientService;
         private IPlayerManagerService playerManagerService;
@@ -66,6 +69,33 @@ namespace MegabonkTogether.Scripts
             isGameStarted = false;
         }
 
+        /// <summary>
+        /// The Steam transport's equivalent of <see cref="OnMatchFound"/>: brings the per-frame
+        /// loops up for a session that has no matchmaker behind it.
+        ///
+        /// <para>Separate from <c>OnMatchFound</c> rather than folded into it because the two learn
+        /// the same fact from different places and at different moments. A matchmaker session is
+        /// told its role by the server in <c>MatchInfo</c>; a Steam session reads it off lobby
+        /// ownership, which Steam already arbitrates. Sharing an entry point would mean one of them
+        /// inferring a role it was never given.</para>
+        /// </summary>
+        public void BeginSteamSession(bool isHost)
+        {
+            hasFoundMatch = true;
+            this.isHost = isHost;
+
+            udpClientService = Plugin.Services.GetRequiredService<IUdpClientService>();
+            stateBroadcastService = Plugin.Services.GetRequiredService<IStateBroadcastService>();
+            synchronizationService = Plugin.Services.GetRequiredService<ISynchronizationService>();
+
+            // Still told, even though it carries nothing here. SynchronizationService asks the
+            // LiteNetLib service for IsHost in a couple of places that have not moved to
+            // INetTransport yet, and a null there reads as "role undecided".
+            udpClientService.UpdateMode(isHost);
+
+            Plugin.Log.LogInfo($"[steam-session] Netplay loops started as {(isHost ? "HOST" : "CLIENT")}.");
+        }
+
         private void OnGameStarted()
         {
             isGameStarted = true;
@@ -75,7 +105,7 @@ namespace MegabonkTogether.Scripts
         {
             try
             {
-                if (udpClientService == null || synchronizationService == null) return;
+                if (udpClientService == null || stateBroadcastService == null || synchronizationService == null) return;
 
                 if (hasFoundMatch == null) return;
 
@@ -83,10 +113,28 @@ namespace MegabonkTogether.Scripts
 
                 udpClientService.Poll();
 
+                // The Steam transport's receive pump belongs here, with the netplay loop, and not
+                // only on SteamTicker. SteamTicker is the Steam *lobby* ticker: it is fine for the
+                // menu, but a session that has loaded into a run depends on it for every inbound
+                // message, and the first in-game test of the Steam path stalled with both ends
+                // sending and neither receiving - a symmetry that points at the pump rather than
+                // the wire. Polling twice a frame is harmless; the second call finds an empty queue.
+                if (ModConfig.UseSteamTransport.Value)
+                {
+                    steamNetTransport ??= Plugin.Services.GetService<ISteamNetTransport>();
+                    steamNetTransport?.Poll();
+                }
+
                 if (GameManager.Instance == null || GameManager.Instance.player == null || GameManager.Instance.player.inventory == null) return;
 
                 Services.AllocationDiagnostics.Sample(ModConfig.LogAllocationRate.Value);
-                Services.BandwidthDiagnostics.Sample(ModConfig.LogBandwidth.Value, udpClientService, playerManagerService);
+                // The active transport, whichever it is — a diagnostic that reads the wrong one
+                // reports on a socket nobody is using.
+                // The active transport, whichever it is — a diagnostic that reads the wrong one
+                // reports on a socket nobody is using. Cached, never resolved per frame.
+                netTransport ??= Plugin.Services.GetRequiredService<INetTransport>();
+                Services.BandwidthDiagnostics.Sample(
+                    ModConfig.LogBandwidth.Value, netTransport, playerManagerService);
 
                 lobbyUpdateAccumulator += Time.deltaTime;
 
@@ -108,25 +156,25 @@ namespace MegabonkTogether.Scripts
                     if (lobbyUpdateAccumulator >= lobbyUpdatetickInterval)
                     {
                         lobbyUpdateAccumulator -= lobbyUpdatetickInterval;
-                        udpClientService.Update();
+                        stateBroadcastService.Update();
                     }
 
                     if (isHost && enemyUpdateAccumulator >= enemyUpdatetickInterval)
                     {
                         enemyUpdateAccumulator -= enemyUpdatetickInterval;
-                        udpClientService.UpdateEnemies();
+                        stateBroadcastService.UpdateEnemies();
                     }
 
                     if (isHost && projectileUpdateAccumulator >= projectileUpdatetickInterval)
                     {
                         projectileUpdateAccumulator -= projectileUpdatetickInterval;
-                        udpClientService.UpdateProjectiles();
+                        stateBroadcastService.UpdateProjectiles();
                     }
 
                     if (isHost && tumbleWeedUpdateAccumulator >= tumbleWeedUpdatetickInterval)
                     {
                         tumbleWeedUpdateAccumulator -= tumbleWeedUpdatetickInterval;
-                        udpClientService.UpdateTumbleWeeds();
+                        stateBroadcastService.UpdateTumbleWeeds();
                     }
                 }
             }
@@ -183,6 +231,27 @@ namespace MegabonkTogether.Scripts
             Plugin.Instance.Mode = new();
             isHost = false;
 
+            // Leaving the Steam lobby is part of ending a Steam session, and this is the single
+            // path every teardown funnels through — cancel, failure, and backing out of the lobby
+            // panel all reach here.
+            //
+            // It became load-bearing when the invite flow stopped leaving the lobby it joined: a
+            // player who backed out was still a member of a lobby nothing would release, so the
+            // next invite was refused with "Refusing to join a lobby while InLobby" and they were
+            // stuck until they restarted the game. Guarded, because on the matchmaker path the
+            // Steam lobby belongs to the presence bridge and is not ours to close.
+            if (ModConfig.UseSteamTransport.Value)
+            {
+                try
+                {
+                    Plugin.Services.GetRequiredService<ISteamLobbyService>().LeaveLobby();
+                }
+                catch (System.Exception ex)
+                {
+                    Plugin.Log.LogWarning($"[steam-session] Leaving the Steam lobby threw: {ex.Message}");
+                }
+            }
+
             // FIX P0-5: clear the match flag on teardown. HasNetplaySessionInitialized() reads
             // this, and ~40 patch sites gate on it — SaveManager most importantly. It was
             // previously only reset in HandleNetworking(), i.e. when STARTING a session, so after
@@ -224,6 +293,22 @@ namespace MegabonkTogether.Scripts
             finally
             {
                 udpClientService = null;
+            }
+
+            // Separate from the transport's reset, and deliberately not folded into it: the stream
+            // pacing is per session but has nothing to do with the socket, and the transport no
+            // longer owns it.
+            try
+            {
+                stateBroadcastService?.Reset();
+            }
+            catch (System.Exception ex)
+            {
+                Plugin.Log.LogWarning($"Error resetting state broadcast: {ex}");
+            }
+            finally
+            {
+                stateBroadcastService = null;
             }
 
             try
@@ -280,6 +365,7 @@ namespace MegabonkTogether.Scripts
             if (success)
             {
                 udpClientService = Plugin.Services.GetRequiredService<IUdpClientService>();
+                stateBroadcastService = Plugin.Services.GetRequiredService<IStateBroadcastService>();
                 synchronizationService = Plugin.Services.GetRequiredService<ISynchronizationService>();
                 if (Plugin.Instance.Mode.Mode == Common.Models.NetworkModeType.Random)
                 {

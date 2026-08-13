@@ -135,7 +135,12 @@ namespace MegabonkTogether.Services
     }
     internal class SynchronizationService : ISynchronizationService
     {
-        private readonly IUdpClientService udpClientService;
+        // The seam, not the LiteNetLib implementation. Injecting the concrete service meant every
+        // send here reached LiteNetLib regardless of which transport the session was actually
+        // running on, so a Steam session's character confirm was answered with "Not connected to
+        // host" by a transport that was never started.
+        private readonly INetTransport udpClientService;
+        private readonly IStateBroadcastService stateBroadcastService;
         private readonly IPlayerManagerService playerManagerService;
         private readonly IProjectileManagerService projectileManagerService;
         private readonly IEnemyManagerService enemyManagerService;
@@ -161,6 +166,13 @@ namespace MegabonkTogether.Services
         /// <summary>Invalidates a retry routine left over from a previous round. See <see cref="ClientReadyRoutine"/>.</summary>
         private int readyGeneration;
 
+        /// <summary>
+        /// The round the host has actually acknowledged this client for, or 0. Distinct from the
+        /// replicated <c>IsReady</c> flag, which is a 5 Hz snapshot of the host's view and can still
+        /// describe the previous round at the moment a new one opens.
+        /// </summary>
+        private uint acknowledgedRoundId;
+
         /// <summary>Lobby-ready defect A. See <see cref="ClientReadyRoutine"/>.</summary>
         private const float ReadyRetrySeconds = 2f;
 
@@ -185,7 +197,8 @@ namespace MegabonkTogether.Services
             IPlayerManagerService playerManagerService,
             IEnemyManagerService enemyManagerService,
             ManualLogSource logger,
-            IUdpClientService udpClientService,
+            INetTransport udpClientService,
+            IStateBroadcastService stateBroadcastService,
             IProjectileManagerService projectileManagerService,
             IPickupManagerService pickupManagerService,
             IChestManagerService chestManagerService,
@@ -275,6 +288,7 @@ namespace MegabonkTogether.Services
 
             cancellationToken = cancellationTokenSource.Token;
             this.udpClientService = udpClientService;
+            this.stateBroadcastService = stateBroadcastService;
         }
 
         public bool IsLoading()
@@ -309,7 +323,32 @@ namespace MegabonkTogether.Services
                 return readinessService.AreAllParticipantsReady() && udpClientService.HasAllPeersConnected();
             }
 
-            return playerManagerService.GetAllPlayers().All(p => p.IsReady) && udpClientService.HasAllPeersConnected();
+            // A client cannot be ready for a round it has not been told about, and HasStamp is the
+            // only thing that says whether it has. CloseRound clears it at PortalOpened and the
+            // host's round-start restores it — so this is false for exactly the window between
+            // levels in which the replicated IsReady flags still carry the *previous* round's
+            // answer.
+            //
+            // Without it the client read those stale flags, decided the lobby was ready the instant
+            // it reached the portal on the new level, started the game, and moved to State.Started —
+            // which then made its own report routine bail, because that routine only runs while the
+            // state is Ready. The host waited on a report nobody was going to send. This is defect C
+            // reaching the one branch the comment above did not cover: the host stopped trusting
+            // these flags, and the client never did.
+            // Requiring the host to have acknowledged *this* round, not merely that the flags look
+            // ready. HasStamp alone was not enough: it becomes true the instant the round is
+            // adopted, and the replicated IsReady flags are a 5 Hz snapshot that can still be
+            // carrying the previous round's answer at that moment. The client then started
+            // immediately, moved to State.Started, and its own report routine bailed - which is the
+            // stall that survived the last fix.
+            //
+            // The acknowledgement is the one fact that cannot predate the round: it is set only
+            // after this client reported for the round currently open and saw the host agree. The
+            // flag check stays, because it is what says every *other* peer is ready too.
+            return readinessService.HasStamp
+                && acknowledgedRoundId == readinessService.RoundId
+                && playerManagerService.GetAllPlayers().All(p => p.IsReady)
+                && udpClientService.HasAllPeersConnected();
         }
 
         public bool? IsServerMode()
@@ -398,11 +437,18 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            var netplayer = playerManagerService.GetNetPlayerByNetplayId(playerUpdate.ConnectionId);
+            // Spawned here if missing rather than reported and dropped. An update arriving for a
+            // player with no avatar used to mean the avatar was never coming: the only thing that
+            // created one ran once, behind the lobby-ready barrier, so a peer that missed that
+            // moment stayed invisible for the whole run while this logged the same line every tick.
+            // Receiving position updates for someone is proof they exist and are in the session,
+            // which is the only precondition creating their avatar has.
+            var netplayer = playerManagerService.EnsureNetPlayerSpawned(playerUpdate.ConnectionId);
 
             if (netplayer == null)
             {
-                logger.LogWarning($"NetPlayer not found for ConnectionId: {playerUpdate.ConnectionId}");
+                // Genuinely unknown - left, or never joined. GetPlayer's own throttled report covers
+                // it; repeating it here at 60 Hz is what buried the last log.
                 return;
             }
 
@@ -679,8 +725,40 @@ namespace MegabonkTogether.Services
             foreach (var netPlayer in allNetPlayers)
             {
                 Plugin.Instance.NetPlayersDisplayer.AddPlayer(netPlayer);
-                var spawnedPlayer = playerManagerService.GetNetPlayerByNetplayId(netPlayer.ConnectionId);
+                var spawnedPlayer = playerManagerService.EnsureNetPlayerSpawned(netPlayer.ConnectionId);
                 var playerColor = Plugin.Instance.NetPlayersDisplayer.GetPlayerColor(netPlayer.ConnectionId);
+
+                // Both null checks are load-bearing, and this line is why StartGame threw.
+                //
+                // An avatar can now exist before its model does: a position update arriving during
+                // a level load creates the NetPlayer, and Initialize cannot always build the model
+                // that early. Dereferencing Model here took the whole of StartGame down — and
+                // because StartGame is called from WaitForLobbyReady, the coroutine died before it
+                // hid "Waiting for other players", unpaused time, or cleared its own handle. One
+                // NullReferenceException, three symptoms, none of which named it.
+                //
+                // Losing a minimap arrow is a cosmetic failure. Losing StartGame is the run.
+                // Split, because one message for two causes cost a playtest. "No avatar at all"
+                // and "an avatar with no model" are different failures with different fixes, and
+                // the single warning that covered both sent the last investigation at the wrong
+                // one.
+                if (spawnedPlayer == null)
+                {
+                    logger.LogWarning(
+                        $"[netplayer] {netPlayer.ConnectionId} is in the roster but has no avatar, so "
+                        + "it gets no minimap arrow. EnsureNetPlayerSpawned refused to build one — "
+                        + "look for its reason above this line.");
+                    continue;
+                }
+
+                if (spawnedPlayer.Model == null)
+                {
+                    logger.LogWarning(
+                        $"[netplayer] {netPlayer.ConnectionId} has an avatar but no model, so it gets "
+                        + "no minimap arrow and will be invisible. Initialize did not build one.");
+                    continue;
+                }
+
                 minimapCamera.AddArrow(spawnedPlayer.Model.transform, playerColor);
             }
 
@@ -892,6 +970,12 @@ namespace MegabonkTogether.Services
             {
                 case GameEvent.Ready:
                     CoroutineRunner.Instance.Stop(readyRetryRoutine);
+
+                    // Logged because its absence is a diagnosis. Every other line in the readiness
+                    // report path is inside this routine, so if the round stalls and this line is
+                    // not in the log, the routine never started and the state machine is where to
+                    // look — not the wire.
+                    logger.LogInfo($"[readiness] Starting the report routine (generation {readyGeneration + 1}).");
                     readyRetryRoutine = CoroutineRunner.Instance.Run(ClientReadyRoutine(++readyGeneration));
                     break;
                 case GameEvent.Start:
@@ -1013,10 +1097,27 @@ namespace MegabonkTogether.Services
 
             var connectionId = localPlayer.ConnectionId;
 
+            // Zero means "nothing reported yet for this routine". Round ids are never zero while a
+            // round is open, so this cannot accidentally match one.
+            uint reportedRoundId = 0;
+
+            // A new routine means a new round to be acknowledged for; the previous round's
+            // acknowledgement must not carry over into this one.
+            acknowledgedRoundId = 0;
+
             for (var attempt = 1; attempt <= ReadyRetryAttempts; attempt++)
             {
                 if (generation != readyGeneration || currentState != State.Ready)
                 {
+                    // Both exits are legitimate and both used to be silent, which is why a stalled
+                    // round could not be told apart from a report that was sent and lost. A
+                    // superseded generation means a newer round replaced this one; a state that is
+                    // no longer Ready means the session moved on beneath it.
+                    logger.LogInfo(
+                        $"[readiness] Stopping the report routine before attempt {attempt}: " +
+                        (generation != readyGeneration
+                            ? $"generation {generation} superseded by {readyGeneration}."
+                            : $"state is {currentState}, not Ready."));
                     yield break;
                 }
 
@@ -1033,6 +1134,14 @@ namespace MegabonkTogether.Services
                     };
 
                     udpClientService.SendToHost(message, NetDelivery.ReliableOrdered);
+                    reportedRoundId = readinessService.RoundId;
+
+                    if (attempt == 1)
+                    {
+                        logger.LogInfo(
+                            $"[readiness] Reported ready for round {readinessService.RoundId} " +
+                            $"(session {readinessService.SessionId}).");
+                    }
 
                     if (attempt > 1)
                     {
@@ -1060,6 +1169,11 @@ namespace MegabonkTogether.Services
 
                     if (generation != readyGeneration || currentState != State.Ready)
                     {
+                        logger.LogInfo(
+                            $"[readiness] Stopping the report routine while waiting on attempt {attempt}: " +
+                            (generation != readyGeneration
+                                ? $"generation {generation} superseded by {readyGeneration}."
+                                : $"state is {currentState}, not Ready."));
                         yield break;
                     }
 
@@ -1067,9 +1181,27 @@ namespace MegabonkTogether.Services
                     // player broadcast, so a reference captured earlier can be stale. Checked inside
                     // the wait, not only after it — acknowledgement usually arrives well within the
                     // interval, and stopping promptly keeps a redundant re-report off the wire.
+                    // The acknowledgement must be for the round this routine is reporting, not
+                    // merely "IsReady is true and some stamp exists". Those two facts can come from
+                    // different rounds, and on a level transition they routinely do: IsReady is a
+                    // replicated field the host's full player record overwrites, so it can still
+                    // carry the previous round's answer while the stamp is already the new round's.
+                    //
+                    // That combination made this exit believe the host had acknowledged a report
+                    // the routine had not even sent yet - silently, since this was the one exit
+                    // with no log - and the client then never reported for the new round at all.
+                    // Requiring a report for the current round first makes a stale flag unable to
+                    // satisfy it. Defect C again, in the last place that trusted the flag alone.
                     var acknowledged = playerManagerService.GetPlayer(connectionId);
-                    if (acknowledged != null && acknowledged.IsReady && readinessService.HasStamp)
+                    if (acknowledged != null
+                        && acknowledged.IsReady
+                        && readinessService.HasStamp
+                        && reportedRoundId == readinessService.RoundId)
                     {
+                        acknowledgedRoundId = readinessService.RoundId;
+                        logger.LogInfo(
+                            $"[readiness] The host acknowledged round {readinessService.RoundId}; " +
+                            "stopping the report routine.");
                         yield break;
                     }
                 }
@@ -1848,6 +1980,10 @@ namespace MegabonkTogether.Services
 
         private void OnReceivedSelectedCharacter(SelectedCharacter character)
         {
+            logger.LogInfo(
+                $"[netplayer] {character.ConnectionId} selected character {character.Character}, " +
+                $"skin '{character.Skin}'.");
+
             var localPlayer = playerManagerService.GetLocalPlayer();
             if (localPlayer.ConnectionId == character.ConnectionId)
             {
@@ -3314,7 +3450,9 @@ namespace MegabonkTogether.Services
             if (chargingPlayers.TryGetValue(netplayId, out var chargers)
                 && chargers != null && chargers.Count > 0)
             {
-                logger.LogInfo($"Another player is already charging this {label}. Preventing re trigger.");
+                logger.LogInfo(
+                    $"Another player is already charging this {label} {netplayId}. Preventing re "
+                    + $"trigger. Chargers: [{string.Join(", ", chargers)}], joining: {localId}.");
 
                 // The set used to be discarded here, so a second charger was never recorded and
                 // their later stop hit the "No one is charging this X; ignoring stop" branch.
@@ -3366,7 +3504,9 @@ namespace MegabonkTogether.Services
             if (!chargingPlayers.TryGetValue(netplayId, out var chargers)
                 || chargers == null || chargers.Count == 0)
             {
-                logger.LogInfo($"No one is charging this {label}; ignoring stop.");
+                logger.LogInfo(
+                    $"No one is charging this {label} {netplayId}; ignoring stop from "
+                    + $"{playerManagerService.GetLocalPlayer()?.ConnectionId}.");
                 return false;
             }
 
@@ -3374,7 +3514,13 @@ namespace MegabonkTogether.Services
 
             if (chargers.Count > 0)
             {
-                logger.LogInfo($"Another player is still charging this {label}. Preventing stop trigger.");
+                // The set is printed because an unbalanced one is the whole failure mode here: a
+                // charger that is recorded and never removed leaves this branch suppressing every
+                // stop, and the object charges forever. Without the ids there is no way to tell
+                // that from two players legitimately charging together.
+                logger.LogInfo(
+                    $"Another player is still charging this {label} {netplayId}. Preventing stop "
+                    + $"trigger. Remaining chargers: [{string.Join(", ", chargers)}].");
                 return false;
             }
 
@@ -3414,6 +3560,10 @@ namespace MegabonkTogether.Services
                     {
                         chargers.Add(shrine.PlayerChargingId);
                     }
+
+                    logger.LogInfo(
+                        $"Shrine {shrine.ShrineNetplayId}: {shrine.PlayerChargingId} joined an "
+                        + $"in-progress charge. Chargers: [{string.Join(", ", chargers)}].");
 
                     udpClientService.SendToAllClients(shrine, NetDelivery.ReliableOrdered);
                     return;
@@ -3493,7 +3643,13 @@ namespace MegabonkTogether.Services
                     return;
                 }
 
-                chargers.Remove(shrine.PlayerChargingId);
+                var removed = chargers.Remove(shrine.PlayerChargingId);
+
+                // A stop for someone who was never recorded is the shape that leaves a set
+                // permanently non-empty, and it is silent otherwise.
+                logger.LogInfo(
+                    $"Shrine {shrine.ShrineNetplayId}: {shrine.PlayerChargingId} stopped charging "
+                    + $"(was recorded: {removed}). Remaining: [{string.Join(", ", chargers)}].");
 
                 if (chargers.Count > 0)
                 {
@@ -4151,7 +4307,7 @@ namespace MegabonkTogether.Services
 
         private void OnReceivedGameOver(GameOver over)
         {
-            udpClientService.GameOver();
+            stateBroadcastService.GameOver();
             TransitionToState(GameEvent.GameOver);
         }
 
@@ -4928,9 +5084,20 @@ namespace MegabonkTogether.Services
 
         public void OnHatChanged(EHat eHat)
         {
+            var localPlayer = playerManagerService.GetLocalPlayer();
+            if (localPlayer == null)
+            {
+                return;
+            }
+
+            // Recorded as well as announced. The event tells peers who are listening now; the record
+            // tells everyone who builds this avatar later, which is every level transition.
+            localPlayer.Hat = (uint)eHat;
+            playerManagerService.UpdatePlayer(localPlayer);
+
             IGameNetworkMessage message = new HatChanged
             {
-                OwnerId = playerManagerService.GetLocalPlayer().ConnectionId,
+                OwnerId = localPlayer.ConnectionId,
                 EHat = (int)eHat
             };
 
@@ -4952,6 +5119,15 @@ namespace MegabonkTogether.Services
             {
                 logger.LogWarning("NetPlayer not found in PlayerManagerService when processing OnReceivedHatChanged.");
                 return;
+            }
+
+            // Mirrored onto the record for the same reason the sender does it: a rebuild of this
+            // avatar later reads the record, not the event that has already gone by.
+            var owner = playerManagerService.GetPlayer(changed.OwnerId);
+            if (owner != null)
+            {
+                owner.Hat = (uint)changed.EHat;
+                playerManagerService.UpdatePlayer(owner);
             }
 
             var hatData = DataManager.Instance.GetHat((EHat)changed.EHat);

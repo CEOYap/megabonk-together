@@ -251,7 +251,26 @@ namespace MegabonkTogether
                 // This forwarding is what lets a service depend on the transport contract rather
                 // than on the LiteNetLib session that happens to provide it today; Phase 4 changes
                 // which implementation sits behind it and no consumer notices.
-                services.AddSingleton<INetTransport>(sp => sp.GetRequiredService<IUdpClientService>());
+                // Which transport carries a session, decided once at startup. Resolved through a
+                // factory rather than registered directly so that both implementations exist in the
+                // build and only one is ever wired to gameplay — the migration plan's "both
+                // transports ship in one build during testing".
+                //
+                // Read once because this is a singleton, which is the behaviour we want: a session
+                // cannot change transport halfway through, and a flag flipped mid-run would
+                // otherwise do exactly that.
+                services.AddSingleton<INetTransport>(sp =>
+                    Configuration.ModConfig.UseSteamTransport.Value
+                        ? sp.GetRequiredService<ISteamNetTransport>()
+                        : sp.GetRequiredService<IUdpClientService>());
+
+                // The receive path's other half. Both transports deserialize into this, which is
+                // what makes a second one able to do anything with what it receives.
+                services.AddSingleton<INetMessageRouter, NetMessageRouter>();
+
+                // The send path's other half: the per-tick streams, which read game state and know
+                // nothing about what carries them.
+                services.AddSingleton<IStateBroadcastService, StateBroadcastService>();
                 services.AddSingleton<IPlayerManagerService, PlayerManagerService>();
                 services.AddSingleton<IEnemyManagerService, EnemyManagerService>();
                 services.AddSingleton<IProjectileManagerService, ProjectileManagerService>();
@@ -271,6 +290,15 @@ namespace MegabonkTogether
                 services.AddSingleton<ITrackerService, TrackerService>();
                 services.AddSingleton<ISteamService, SteamService>();
                 services.AddSingleton<ISteamLobbyService, SteamLobbyService>();
+
+                // Registered under its own interface, not under INetTransport. Both transports
+                // exist in this build, and which one carries a session is a decision that has not
+                // been made yet — INetTransport still resolves to the LiteNetLib one, so nothing in
+                // gameplay reaches this. Pointing INetTransport here is Phase 4's wiring step and
+                // wants the session lifecycle moved first.
+                services.AddSingleton<ISteamNetTransport, SteamNetTransport>();
+                services.AddSingleton<ISteamNetSessionService, SteamNetSessionService>();
+                services.AddSingleton<SteamNetSelfTest>();
                 services.AddSingleton<SteamLobbySelfTest>();
                 services.AddSingleton<SteamLobbyPresenceService>();
                 services.AddSingleton<SteamInviteService>();

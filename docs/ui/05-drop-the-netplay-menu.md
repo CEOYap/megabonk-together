@@ -95,6 +95,17 @@ the service, and its screens reflect the service's state and message instead of 
 coroutines. Until this happens there are two implementations of session setup — the service and the
 menu's own copy — which is exactly the drift the service was extracted to prevent.
 
+> **Half-done as of the Phase 4 branch, and the remainder is the harder half.** `OnHostClicked` and
+> `JoinWithCode` already route through the service, but **only when `Network/UseSteamTransport` is
+> on**; the matchmaker paths still call `HandleNetworking()` and drive `HandleFriendlies` themselves.
+> That split was deliberate — it made the Steam transport reachable without disturbing the path that
+> worked — but it means the drift this step exists to prevent is currently real, one implementation
+> per transport. Finish it by moving the matchmaker paths across and deleting the menu's
+> `HandleFriendlies` and `HandleConnectionStatus` coroutines.
+>
+> `HandleSteamFriendlies` in the menu is the shape the replacement should take: it watches
+> `INetplaySessionService.State` rather than the matchmaker's flags.
+
 Do this first because it is the only step verifiable with the menu still in place, and because it
 gives the connecting window a single owner before anything depends on one.
 

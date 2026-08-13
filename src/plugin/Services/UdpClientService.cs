@@ -9,6 +9,7 @@ using MegabonkTogether.Common.Models;
 using MegabonkTogether.Extensions;
 using MegabonkTogether.Helpers;
 using MemoryPack;
+using Microsoft.Extensions.DependencyInjection;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -37,60 +38,43 @@ namespace MegabonkTogether.Services
     }
 
     /// <summary>
-    /// The LiteNetLib session: matchmaking handshake, NAT introduction, relay fallback and the
-    /// per-tick send loop. The transport half of this — everything that puts bytes on a wire — is
-    /// <see cref="INetTransport"/>, which is what gameplay code depends on; the members declared
+    /// The LiteNetLib session: matchmaking handshake, NAT introduction, relay fallback, and putting
+    /// bytes on a wire. Gameplay code depends on <see cref="INetTransport"/>; the members declared
     /// here are session lifecycle and are expected to change shape during the Steamworks migration.
+    ///
+    /// <para><b>Two things this used to own and no longer does.</b> The per-tick outbound streams
+    /// are <see cref="IStateBroadcastService"/> and the receive switch is
+    /// <see cref="INetMessageRouter"/> — neither depends on what carries the bytes, and while they
+    /// lived here they called this class's own methods directly, so pointing
+    /// <see cref="INetTransport"/> at a second transport would have split a session across
+    /// both.</para>
     /// </summary>
     public interface IUdpClientService : INetTransport
     {
         public bool Initialize();
-        public void Update();
 
         public void Poll();
 
         public Task<bool> HandleMatch(MatchInfo matchInfo, uint selfConnectionId, string rdvServerHost, uint rdvServerPort, bool enabledSharedExperience);
-        public bool HasAllPeersConnected();
-
-        public void UpdateEnemies();
-        public void UpdateProjectiles();
-        public void UpdateTumbleWeeds();
 
         public void Reset();
-        public void GameOver();
 
         public int GetNetPeerCount();
-        public bool AreAllPeersReady();
-        public int GetCurrentReadyPeersCount();
         public void UpdateMode(bool isHost);
-        public bool IsHandlingConnection();
         public void CancelAnyNatIntroduction();
         public bool HasHandledHost();
         public void ResetHandledHost();
         public void RemovePeer(uint clientConnectionId);
     }
+    // Six dependencies went with the streams and the receive switch: the enemy, projectile, boss-orb
+    // and spawned-object managers, plus the encounter and readiness services. What is left is what a
+    // transport actually needs — the player roster, for the introduction handshake, and a log.
     internal class UdpClientService(
             IPlayerManagerService playerManagerService,
-            IEnemyManagerService enemyManagerService,
-            IProjectileManagerService projectileManagerService,
-            IFinalBossOrbManagerService finalBossOrbManagerService,
-            ISpawnedObjectManagerService spawnedObjectManagerService,
-            IEncounterService encounterService,
-            IReadinessService readinessService,
             ManualLogSource logger) : IUdpClientService
     {
         private const int MAX_PACKET_SIZE_BYTES = 1000;
 
-        // Slack left in each chunk of a split stream tick for the message envelope that every chunk
-        // repeats — the MemoryPack union tag plus the empty-collection headers for the fields that
-        // stream does not populate. See SendStreamUpdate.
-        private const int CHUNK_ENVELOPE_HEADROOM_BYTES = 100;
-
-        // The full Player record goes out every Nth 60 Hz tick — 5 Hz — plus immediately on any
-        // IsReady change. See SendPlayerStreams for how this number was chosen.
-        private const int FULL_PLAYER_RECORD_EVERY_N_TICKS = 12;
-        private int playerRecordTick;
-        private readonly Dictionary<uint, bool> lastSentReadiness = [];
         private const int STARTING_GAME_UDP_PORT = 27015;
         private int GAME_UDP_PORT = STARTING_GAME_UDP_PORT;
         private NetManager netManager;
@@ -107,7 +91,6 @@ namespace MegabonkTogether.Services
         private bool hasAllPeersConnected = false;
         private bool isHandlingConnection = false;
         private bool hasHandledHost = false;
-        private bool isGameOver = false;
 
         private string rdvServerHost;
         private int rdvServerPort;
@@ -117,6 +100,12 @@ namespace MegabonkTogether.Services
 
         private ConcurrentDictionary<string, bool> tokens = new();
         private bool hasTriedForceRelay = false;
+
+        /// <summary>
+        /// Everything the receive switch used to do that was not about the connection. Resolved
+        /// lazily rather than injected — see <see cref="HandleMessage"/>.
+        /// </summary>
+        private INetMessageRouter netMessageRouter;
 
         private const int POLL_INTERVAL_MS = 5;
 
@@ -262,7 +251,13 @@ namespace MegabonkTogether.Services
                             || Plugin.Instance.Mode.Mode == NetworkModeType.Friendlies && Plugin.Instance.Mode.Role == Role.Host
                     };
 
-                    SendToHost(introduced);
+                    // Explicit, and this is the last caller that was not. The implicit default is
+                    // ReliableSequenced — a channel that guarantees only the newest packet — which
+                    // is the wrong guarantee for a one-shot handshake and has no Steam equivalent
+                    // at all. For a message sent exactly once the two channels behave identically
+                    // on LiteNetLib, so naming the one that was always meant costs nothing here and
+                    // stops Phase 4 having to invent a translation for a semantic nobody wanted.
+                    SendToHost(introduced, NetDelivery.ReliableOrdered);
                 }
             };
 
@@ -519,7 +514,40 @@ namespace MegabonkTogether.Services
             return readyCount;
         }
 
+        /// <summary>
+        /// The receive path's front door. Handles the messages whose meaning depends on <b>which
+        /// peer they arrived on</b>, and hands everything else to <see cref="INetMessageRouter"/>.
+        ///
+        /// <para><b>That split is the whole point, and it is not "plumbing versus logic".</b> Eight
+        /// cases below read or write the peer introduction maps, the relay peer, or tear a
+        /// connection down — none of which has a transport-neutral meaning, and all of which are
+        /// keyed on a LiteNetLib <c>NetPeer.Id</c>. Every other message is a function of its own
+        /// contents, so it can be applied identically no matter what carried it. Only the second
+        /// group could ever be shared with a second transport, and it is all but eight of them.
+        /// </para>
+        /// </summary>
         private void HandleMessage(IGameNetworkMessage message, int netPeerId)
+        {
+            if (TryHandlePeerScopedMessage(message, netPeerId))
+            {
+                return;
+            }
+
+            // Resolved once, on first use. Constructor injection would be a cycle: the router needs
+            // INetTransport, and INetTransport is this object.
+            netMessageRouter ??= Plugin.Services.GetService<INetMessageRouter>();
+
+            if (!netMessageRouter.Route(message, isHost.Value))
+            {
+                Plugin.Log.LogWarning($"Unknown message type received. message={message}");
+            }
+        }
+
+        /// <summary>
+        /// The messages that cannot leave this class, because they are about the connection rather
+        /// than about the game. Returns true when handled.
+        /// </summary>
+        private bool TryHandlePeerScopedMessage(IGameNetworkMessage message, int netPeerId)
         {
             if (!isHost.Value)
             {
@@ -540,13 +568,13 @@ namespace MegabonkTogether.Services
                                 playerManagerService.UpdatePlayer(playerByRelay);
                             }
 
-                            return;
+                            return true;
                         }
 
                         if (!gamePeersIntroduced.TryAdd(netPeerId, new PeerIntroduction(introduced.Name, introduced.ConnectionId, introduced.IsHost)))
                         {
                             Plugin.Log.LogWarning($"Duplicate introduction from host={netPeerId}, ignoring.");
-                            return;
+                            return true;
                         }
 
                         var player = playerManagerService.GetPlayer(introduced.ConnectionId);
@@ -556,7 +584,8 @@ namespace MegabonkTogether.Services
                             playerManagerService.UpdatePlayer(player);
                         }
 
-                        break;
+                        return true;
+
                     case PlayerDisconnected playerDisconnected:
                         if (usesRelay.Any())
                         {
@@ -573,7 +602,7 @@ namespace MegabonkTogether.Services
                                     EventManager.OnPlayerDisconnected(playerDisconnected);
                                 }
 
-                                return;
+                                return true;
                             }
                         }
 
@@ -582,213 +611,28 @@ namespace MegabonkTogether.Services
                         if (disconnectedPeer.Value == null) //Disonnected peer not a host
                         {
                             EventManager.OnPlayerDisconnected(playerDisconnected);
-                            return;
+                            return true;
                         }
 
                         //Host disconnected
                         var peer = gamePeers.FirstOrDefault(p => p.Value.Id == disconnectedPeer.Key).Value;
                         HandleDisconnectedPeer(peer);
 
-                        break;
-                    case LobbyUpdates lobbyUpdate:
-                        OnLobbyUpdate(lobbyUpdate);
-                        break;
-                    case PlayersStateUpdate playersStateUpdate:
-                        OnPlayersStateUpdate(playersStateUpdate);
-                        break;
-                    case ProjectilesUpdate projectilesUpdate:
-                        EventManager.OnProjectilesUpdate(projectilesUpdate.Projectiles);
-                        break;
-                    case SpawnedObject spawnedObject:
-                        EventManager.OnSpawnedObject(spawnedObject);
-                        break;
-                    case SpawnedEnemy spawnedEnemy:
-                        EventManager.OnSpawnedEnemy(spawnedEnemy);
-                        break;
-                    case AbstractSpawnedProjectile spawnedProjectile:
-                        EventManager.OnSpawnedProjectile(spawnedProjectile);
-                        break;
-                    case SelectedCharacter selectedCharacter:
-                        EventManager.OnSelectedCharacter(selectedCharacter);
-                        break;
-                    case EnemyDied enemyDied:
-                        EventManager.OnEnemyDied(enemyDied);
-                        break;
-                    case ProjectileDone projectileDone:
-                        EventManager.OnProjectileDone(projectileDone);
-                        break;
-                    case SpawnedPickupOrb spawnedPickup:
-                        EventManager.OnSpawnedPickupOrb(spawnedPickup);
-                        break;
-                    case SpawnedPickup spawnedPickupItem:
-                        EventManager.OnSpawnedPickup(spawnedPickupItem);
-                        break;
-                    case PickupFollowingPlayer pickupFollowingPlayer:
-                        EventManager.OnPickupFollowingPlayer(pickupFollowingPlayer);
-                        break;
-                    case PickupApplied pickupApplied:
-                        EventManager.OnPickupApplied(pickupApplied);
-                        break;
-                    case SpawnedChest spawnedChest:
-                        EventManager.OnSpawnedChest(spawnedChest);
-                        break;
-                    case ChestOpened chestOpened:
-                        EventManager.OnChestOpened(chestOpened);
-                        break;
-                    case WeaponAdded weaponAdded:
-                        EventManager.OnWeaponAdded(weaponAdded);
-                        break;
-                    case InteractableUsed interactableUsed:
-                        EventManager.OnInteractableUsed(interactableUsed);
-                        break;
-                    case StartingChargingShrine startingChargingShrine:
-                        EventManager.OnStartingChargingShrine(startingChargingShrine);
-                        break;
-                    case StoppingChargingShrine stoppingChargingShrine:
-                        EventManager.OnStoppingChargingShrine(stoppingChargingShrine);
-                        break;
-                    case EnemyExploder enemyExploder:
-                        EventManager.OnEnemyExploder(enemyExploder);
-                        break;
-                    case EnemyDamaged enemyDamaged:
-                        EventManager.OnEnemyDamaged(enemyDamaged);
-                        break;
-                    case SpawnedEnemySpecialAttack spawnedEnemySpecialAttack:
-                        EventManager.OnSpawnedEnemySpecialAttack(spawnedEnemySpecialAttack);
-                        break;
-                    case StartingChargingPylon startingChargingPylon:
-                        EventManager.OnStartingChargingPylon(startingChargingPylon);
-                        break;
-                    case StoppingChargingPylon stoppingChargingPylon:
-                        EventManager.OnStoppingChargingPylon(stoppingChargingPylon);
-                        break;
-                    case FinalBossOrbSpawned finalBossOrbSpawned:
-                        EventManager.OnFinalBossOrbSpawned(finalBossOrbSpawned);
-                        break;
-                    case FinalBossOrbDestroyed finalBossOrbDestroyed:
-                        EventManager.OnFinalBossOrbDestroyed(finalBossOrbDestroyed);
-                        break;
-                    case StartedSwarmEvent startedSwarmEvent:
-                        EventManager.OnStartedSwarmEvent(startedSwarmEvent);
-                        break;
-                    case GameOver gameOver:
-                        EventManager.OnGameOver(gameOver);
-                        break;
-                    case RetargetedEnemies retargetedEnemies:
-                        EventManager.OnRetargetedEnemies(retargetedEnemies);
-                        break;
-                    case RunStarted runStarted:
-                        EventManager.OnRunStarted(runStarted);
-                        break;
-                    case TomeAdded tomeAdded:
-                        EventManager.OnTomeAdded(tomeAdded);
-                        break;
-                    case LightningStrike lightningStrike:
-                        EventManager.OnLightningStrike(lightningStrike);
-                        break;
-                    case TornadoesSpawned tornadoesSpawned:
-                        EventManager.OnTornadoesSpawned(tornadoesSpawned);
-                        break;
-                    case StormStarted stormStarted:
-                        EventManager.OnStormStarted(stormStarted);
-                        break;
-                    case StormStopped stormStopped:
-                        EventManager.OnStormStopped(stormStopped);
-                        break;
-                    case TumbleWeedSpawned tumbleWeedSpawned:
-                        EventManager.OnTumbleWeedSpawned(tumbleWeedSpawned);
-                        break;
-                    case TumbleWeedsUpdate tumbleWeedsUpdate:
-                        EventManager.OnTumbleWeedsUpdate(tumbleWeedsUpdate.TumbleWeeds);
-                        break;
-                    case TumbleWeedDespawned tumbleWeedDespawned:
-                        EventManager.OnTumbleWeedDespawned(tumbleWeedDespawned);
-                        break;
-                    case ItemAdded itemAdded:
-                        EventManager.OnItemAdded(itemAdded);
-                        break;
-                    case ItemRemoved itemRemoved:
-                        EventManager.OnItemRemoved(itemRemoved);
-                        break;
-                    case WeaponToggled weaponToggled:
-                        EventManager.OnWeaponToggled(weaponToggled);
-                        break;
-                    case SpawnedObjectInCrypt spawnedObjectInCrypt:
-                        EventManager.OnSpawnedObjectInCrypt(spawnedObjectInCrypt);
-                        break;
-                    case StartingChargingLamp startingChargingLamp:
-                        EventManager.OnStartingChargingLamp(startingChargingLamp);
-                        break;
-                    case StoppingChargingLamp stoppingChargingLamp:
-                        EventManager.OnStoppingChargingLamp(stoppingChargingLamp);
-                        break;
-                    case TimerStarted timerStarted:
-                        EventManager.OnTimerStarted(timerStarted);
-                        break;
-                    case HatChanged hatChanged:
-                        EventManager.OnHatChanged(hatChanged);
-                        break;
-                    case SpawnedReviver spawnedReviver:
-                        EventManager.OnSpawnedReviver(spawnedReviver);
-                        break;
-                    case PlayerRespawned playerRespawned:
-                        EventManager.OnPlayerRespawned(playerRespawned);
-                        break;
-                    case PlayerDied playerDied:
-                        EventManager.OnPlayerDied(playerDied);
-                        break;
-                    case AddXp addXp:
-                        EventManager.OnAddXp(addXp);
-                        break;
-                    case CloseEncounterStamped closeEncounterStamped:
-                        EventManager.OnCloseEncounterStamped(closeEncounterStamped);
-                        break;
-                    case ReadinessRoundStarted readinessRoundStarted:
-                        EventManager.OnReadinessRoundStarted(readinessRoundStarted);
-                        break;
-                    case LobbyReadyState lobbyReadyState:
-                        EventManager.OnLobbyReadyState(lobbyReadyState);
-                        break;
-                    case LobbyStartRequested:
-                        EventManager.OnLobbyStartRequested();
-                        break;
-                    case CloseEncounter closeEncounter:
-                        EventManager.OnCloseEncounter(closeEncounter);
-                        break;
-                    case GoldChanged goldChanged:
-                        EventManager.OnGoldChanged(goldChanged);
-                        break;
+                        return true;
+
                     default:
-                        Plugin.Log.LogWarning($"Unknown message type received. message={message}");
-                        break;
+                        return false;
                 }
             }
-            else
+
+            switch (message)
             {
-                switch (message)
-                {
-                    case Introduced introduced:
-                        if (relayPeer != null && netPeerId == relayPeer.Id)
+                case Introduced introduced:
+                    if (relayPeer != null && netPeerId == relayPeer.Id)
+                    {
+                        if (!gamePeersIntroducedByRelay.TryAdd(introduced.ConnectionId, new PeerIntroduction(introduced.Name, introduced.ConnectionId, introduced.IsHost)))
                         {
-                            if (!gamePeersIntroducedByRelay.TryAdd(introduced.ConnectionId, new PeerIntroduction(introduced.Name, introduced.ConnectionId, introduced.IsHost)))
-                            {
-                                Plugin.Log.LogWarning($"Duplicate introduction from netPlayerId={netPeerId} via relay, ignoring.");
-                            }
-
-                            if (Plugin.Instance.Mode.Mode == Common.Models.NetworkModeType.Friendlies)
-                            {
-                                Plugin.StartNotification(("MegabonkTogether", "FriendliesClientJoinSuccess"), ("MegabonkTogether", "FriendliesClientJoinSuccessDesc"), [introduced.Name]);
-                            }
-
-                            return;
-                        }
-                        else
-                        {
-                            if (!gamePeersIntroduced.TryAdd(netPeerId, new PeerIntroduction(introduced.Name, introduced.ConnectionId, introduced.IsHost)))
-                            {
-                                Plugin.Log.LogWarning($"Duplicate introduction from netPlayerId={netPeerId}, ignoring.");
-                                return;
-                            }
+                            Plugin.Log.LogWarning($"Duplicate introduction from netPlayerId={netPeerId} via relay, ignoring.");
                         }
 
                         if (Plugin.Instance.Mode.Mode == Common.Models.NetworkModeType.Friendlies)
@@ -796,328 +640,91 @@ namespace MegabonkTogether.Services
                             Plugin.StartNotification(("MegabonkTogether", "FriendliesClientJoinSuccess"), ("MegabonkTogether", "FriendliesClientJoinSuccessDesc"), [introduced.Name]);
                         }
 
-                        IGameNetworkMessage introducedResponse = new Introduced
+                        return true;
+                    }
+                    else
+                    {
+                        if (!gamePeersIntroduced.TryAdd(netPeerId, new PeerIntroduction(introduced.Name, introduced.ConnectionId, introduced.IsHost)))
                         {
-                            ConnectionId = selfConnectionId.Value,
-                            Name = Configuration.ModConfig.PlayerName.Value,
-                            IsHost = isHost.Value
-                        };
-
-                        {
-                            SendToClient(introduced.ConnectionId, introducedResponse);
-
-                            var playerModel = playerManagerService.GetPlayer(introduced.ConnectionId);
-                            if (playerModel != null)
-                            {
-                                playerModel.Name = introduced.Name;
-                                playerManagerService.UpdatePlayer(playerModel);
-                            }
+                            Plugin.Log.LogWarning($"Duplicate introduction from netPlayerId={netPeerId}, ignoring.");
+                            return true;
                         }
+                    }
 
-                        break;
-                    case LobbyReadyChanged lobbyReadyChanged:
-                        EventManager.OnLobbyReadyChanged(lobbyReadyChanged);
-                        break;
-                    case ClientReadyStamped clientReadyStamped:
-                        var stampedReadyId = clientReadyStamped.ConnectionId;
-                        var stampedPlayer = playerManagerService.GetPlayer(stampedReadyId);
-                        if (stampedPlayer == null)
+                    if (Plugin.Instance.Mode.Mode == Common.Models.NetworkModeType.Friendlies)
+                    {
+                        Plugin.StartNotification(("MegabonkTogether", "FriendliesClientJoinSuccess"), ("MegabonkTogether", "FriendliesClientJoinSuccessDesc"), [introduced.Name]);
+                    }
+
+                    IGameNetworkMessage introducedResponse = new Introduced
+                    {
+                        ConnectionId = selfConnectionId.Value,
+                        Name = Configuration.ModConfig.PlayerName.Value,
+                        IsHost = isHost.Value
+                    };
+
+                    {
+                        SendToClient(introduced.ConnectionId, introducedResponse);
+
+                        var playerModel = playerManagerService.GetPlayer(introduced.ConnectionId);
+                        if (playerModel != null)
                         {
-                            Plugin.Log.LogWarning($"[readiness] Report from unknown connection {stampedReadyId}.");
-                            return;
+                            playerModel.Name = introduced.Name;
+                            playerManagerService.UpdatePlayer(playerModel);
                         }
+                    }
 
-                        // Lobby-ready defect B. A report that does not name the round this host has
-                        // open is one that raced ahead of the host's own level transition. Recording
-                        // it is what used to hang the lobby: ResetForNextLevel then cleared it, and a
-                        // client that sent exactly once never reported again. Rejecting it is only
-                        // safe because the client retries — the two halves are one fix.
-                        if (!readinessService.TryMarkReady(stampedReadyId, clientReadyStamped.SessionId, clientReadyStamped.RoundId))
-                        {
-                            logger.LogInfo(
-                                $"[readiness] Dropped a report from {stampedReadyId} for session " +
-                                $"{clientReadyStamped.SessionId} round {clientReadyStamped.RoundId}; host has " +
-                                $"session {readinessService.SessionId} round {readinessService.RoundId} open.");
+                    return true;
 
-                            // Re-announce rather than stay silent. A mismatch usually means this peer
-                            // is reporting against a round it has not been told about yet, and the
-                            // one thing that resolves it is the stamp — which is cheaper to re-send
-                            // than to let the peer burn its retry budget.
-                            EventManager.OnReadinessRoundReAsk();
-                            break;
-                        }
+                case SelectedCharacter selectedCharacter:
 
-                        // Mirrored onto the replicated record so the existing UI, the 5 Hz full
-                        // player broadcast, and the client's own acknowledgement check all keep
-                        // working unchanged. This is now a derived value: the barrier holds the
-                        // truth, and a clobber of this field costs a re-report, not the round.
-                        stampedPlayer.IsReady = true;
-                        playerManagerService.UpdatePlayer(stampedPlayer);
+                    if (gamePeersIntroducedByRelay.TryGetValue(selectedCharacter.ConnectionId, out var introInfoByRelay))
+                    {
+                        introInfoByRelay.HasSelected = true;
+                        gamePeersIntroducedByRelay[selectedCharacter.ConnectionId] = introInfoByRelay;
+                    }
 
-                        break;
-                    case ClientInGameReady clientInGameReady:
-                        // Older build on the other end: no round stamp, so the report cannot be
-                        // attributed and is accepted exactly as it was before, defect B included.
-                        var clientReadyId = clientInGameReady.ConnectionId;
-                        var player = playerManagerService.GetPlayer(clientReadyId);
-                        if (player == null)
-                        {
-                            Plugin.Log.LogWarning($"Received ClientReady from unknown player with connection ID {clientReadyId}.");
-                            return;
-                        }
+                    if (gamePeersIntroduced.TryGetValue(netPeerId, out var introInfo))
+                    {
+                        introInfo.HasSelected = true;
+                        gamePeersIntroduced[netPeerId] = introInfo;
+                    }
 
-                        Plugin.Log.LogWarning(
-                            $"[readiness] Unstamped report from {clientReadyId}. That peer is on an older " +
-                            "build; this report cannot be round-attributed (lobby-ready defect B).");
+                    var toUpdate = playerManagerService.GetPlayer(selectedCharacter.ConnectionId); //We could technically use EventManager.OnSelectedCharacter but the metrics RunStatistics sent later will miss the update
+                    if (toUpdate == null)
+                    {
+                        logger.LogWarning($"Player not found for ConnectionId: {selectedCharacter.ConnectionId}");
+                        return true;
+                    }
 
-                        readinessService.TryMarkReady(clientReadyId, readinessService.SessionId, readinessService.RoundId);
+                    toUpdate.Character = selectedCharacter.Character;
+                    toUpdate.Skin = selectedCharacter.Skin;
+                    playerManagerService.UpdatePlayer(toUpdate);
 
-                        player.IsReady = true;
-                        playerManagerService.UpdatePlayer(player);
+                    SendToAllClientsExcept(selectedCharacter.ConnectionId, selectedCharacter);
 
-                        Plugin.Log.LogInfo($"Player {clientReadyId} is ready.");
+                    if (AreAllPeersReady() && playerManagerService.HasSelectedCharacter() && Plugin.Instance.IS_HOST_READY)
+                    {
+                        var runConfig = WindowManager.activeWindow.GetComponentInChildren<MapSelectionUi>().runConfig;
+                        MapController.StartNewMap(runConfig);
+                    }
 
-                        break;
-                    case PlayerUpdate playerUpdate:
-                        var playerUpdateId = playerUpdate.ConnectionId;
-                        var playerToUpdate = playerManagerService.GetPlayer(playerUpdateId);
-                        if (playerToUpdate == null)
-                        {
-                            Plugin.Log.LogWarning($"Received PlayerUpdate from unknown player with connection ID {playerUpdateId}.");
-                            return;
-                        }
+                    return true;
 
-                        playerToUpdate.Position = Quantizer.Quantize(playerUpdate.Position.ToUnityVector3());
-                        playerToUpdate.MovementState = playerUpdate.MovementState;
-                        playerToUpdate.AnimatorState = playerUpdate.AnimatorState;
-                        playerToUpdate.ConnectionId = playerUpdate.ConnectionId;
-                        //if (playerToUpdate.Hp != 0)
-                        //{
-                        playerToUpdate.Hp = playerUpdate.Hp;
-                        playerToUpdate.Shield = playerUpdate.Shield;
-                        //}
-                        playerToUpdate.MaxHp = playerUpdate.MaxHp;
-                        playerToUpdate.MaxShield = playerUpdate.MaxShield;
-                        //playerToUpdate.Xp = playerUpdate.Xp;
-                        playerToUpdate.Inventory = playerUpdate.Inventory;
-                        playerToUpdate.Name = playerUpdate.Name;
+                case PlayerDisconnected playerDisconnected: //Host only receives this message by the rdv server, normally its handled in LiteNet's PeerDisconnectedEvent
+                    if (!usesRelay.Remove(playerDisconnected.ConnectionId))
+                    {
+                        logger.LogInfo($"PlayerDisconnected: ConnectionId {playerDisconnected.ConnectionId} was not using relay.");
+                        return true;
+                    }
 
-                        playerManagerService.UpdatePlayer(playerToUpdate);
+                    EventManager.OnPlayerDisconnected(playerDisconnected);
+                    SendToAllClients(playerDisconnected, NetDelivery.ReliableOrdered);
 
-                        EventManager.OnPlayerUpdate(playerUpdate);
-                        break;
-                    case SelectedCharacter selectedCharacter:
+                    return true;
 
-                        if (gamePeersIntroducedByRelay.TryGetValue(selectedCharacter.ConnectionId, out var introInfoByRelay))
-                        {
-                            introInfoByRelay.HasSelected = true;
-                            gamePeersIntroducedByRelay[selectedCharacter.ConnectionId] = introInfoByRelay;
-                        }
-
-                        if (gamePeersIntroduced.TryGetValue(netPeerId, out var introInfo))
-                        {
-                            introInfo.HasSelected = true;
-                            gamePeersIntroduced[netPeerId] = introInfo;
-                        }
-
-                        var toUpdate = playerManagerService.GetPlayer(selectedCharacter.ConnectionId); //We could technically use EventManager.OnSelectedCharacter but the metrics RunStatistics sent later will miss the update
-                        if (toUpdate == null)
-                        {
-                            logger.LogWarning($"Player not found for ConnectionId: {selectedCharacter.ConnectionId}");
-                            return;
-                        }
-
-                        toUpdate.Character = selectedCharacter.Character;
-                        toUpdate.Skin = selectedCharacter.Skin;
-                        playerManagerService.UpdatePlayer(toUpdate);
-
-                        SendToAllClientsExcept(selectedCharacter.ConnectionId, selectedCharacter);
-
-                        if (AreAllPeersReady() && playerManagerService.HasSelectedCharacter() && Plugin.Instance.IS_HOST_READY)
-                        {
-                            var runConfig = WindowManager.activeWindow.GetComponentInChildren<MapSelectionUi>().runConfig;
-                            MapController.StartNewMap(runConfig);
-                        }
-                        break;
-                    case AbstractSpawnedProjectile spawnedProjectile:
-                        EventManager.OnSpawnedProjectile(spawnedProjectile);
-                        SendToAllClientsExcept(spawnedProjectile.OwnerId, spawnedProjectile);
-                        break;
-                    case ProjectileDone projectileDone:
-                        EventManager.OnProjectileDone(projectileDone);
-                        SendToAllClientsExcept(projectileDone.SenderConnectionId, projectileDone);
-                        break;
-                    case EnemyDied enemyDied:
-                        EventManager.OnEnemyDied(enemyDied);
-                        SendToAllClientsExcept(enemyDied.DiedByOwnerId, enemyDied);
-                        break;
-                    case PickupApplied pickupApplied:
-                        EventManager.OnPickupApplied(pickupApplied);
-                        SendToAllClientsExcept(pickupApplied.OwnerId, pickupApplied);
-                        break;
-                    case PickupFollowingPlayer pickupFollowingPlayer:
-                        EventManager.OnPickupFollowingPlayer(pickupFollowingPlayer);
-                        SendToAllClientsExcept(pickupFollowingPlayer.PlayerId, pickupFollowingPlayer);
-                        break;
-                    case ChestOpened chestOpened:
-                        EventManager.OnChestOpened(chestOpened);
-                        SendToAllClientsExcept(chestOpened.OwnerId, chestOpened);
-                        break;
-                    case WeaponAdded weaponAdded:
-                        EventManager.OnWeaponAdded(weaponAdded);
-                        SendToAllClientsExcept(weaponAdded.OwnerId, weaponAdded);
-                        break;
-                    case InteractableUsed interactableUsed:
-                        EventManager.OnInteractableUsed(interactableUsed);
-                        SendToAllClientsExcept(interactableUsed.OwnerId, interactableUsed);
-                        break;
-                    case StartingChargingShrine startingChargingShrine:
-                        EventManager.OnStartingChargingShrine(startingChargingShrine);
-                        break;
-                    case StoppingChargingShrine stoppingChargingShrine:
-                        EventManager.OnStoppingChargingShrine(stoppingChargingShrine);
-                        break;
-                    case EnemyExploder enemyExploder:
-                        EventManager.OnEnemyExploder(enemyExploder);
-                        SendToAllClientsExcept(enemyExploder.SenderId, enemyExploder);
-                        break;
-                    case EnemyDamaged enemyDamaged:
-                        EventManager.OnEnemyDamaged(enemyDamaged);
-                        SendToAllClientsExcept(enemyDamaged.AttackerId, enemyDamaged);
-                        break;
-                    //case SpawnedEnemySpecialAttack spawnedEnemySpecialAttack:
-                    //    EventManager.OnSpawnedEnemySpecialAttack(spawnedEnemySpecialAttack);
-                    //    SendToAllClientsExcept(netPlayerId, spawnedEnemySpecialAttack);
-                    //    break;
-                    case StartingChargingPylon startingChargingPylon:
-                        EventManager.OnStartingChargingPylon(startingChargingPylon);
-                        SendToAllClientsExcept(startingChargingPylon.PlayerChargingId, startingChargingPylon);
-                        break;
-                    case StoppingChargingPylon stoppingChargingPylon:
-                        EventManager.OnStoppingChargingPylon(stoppingChargingPylon);
-                        SendToAllClientsExcept(stoppingChargingPylon.PlayerChargingId, stoppingChargingPylon);
-                        break;
-                    //case FinalBossOrbSpawned finalBossOrbSpawned:
-                    //    EventManager.OnFinalBossOrbSpawned(finalBossOrbSpawned);
-                    //    SendToAllClientsExcept(netPlayerId, finalBossOrbSpawned);
-                    //    break;
-                    case FinalBossOrbDestroyed finalBossOrbDestroyed:
-                        EventManager.OnFinalBossOrbDestroyed(finalBossOrbDestroyed);
-                        SendToAllClientsExcept(finalBossOrbDestroyed.SenderId, finalBossOrbDestroyed);
-                        break;
-                    case PlayerDied playerDied:
-                        EventManager.OnPlayerDied(playerDied);
-                        break;
-                    case TomeAdded tomeAdded:
-                        EventManager.OnTomeAdded(tomeAdded);
-                        SendToAllClientsExcept(tomeAdded.OwnerId, tomeAdded);
-                        break;
-                    case InteractableCharacterFightEnemySpawned interactableCharacterFightEnemySpawned:
-                        EventManager.OnInteractableCharacterFightEnemySpawned(interactableCharacterFightEnemySpawned);
-                        break;
-                    case WantToStartFollowingPickup wantToStartFollowingPickup:
-                        EventManager.OnWantToStartFollowingPickup(wantToStartFollowingPickup);
-                        break;
-                    case ItemAdded itemAdded:
-                        EventManager.OnItemAdded(itemAdded);
-                        SendToAllClientsExcept(itemAdded.OwnerId, itemAdded);
-                        break;
-                    case ItemRemoved itemRemoved:
-                        EventManager.OnItemRemoved(itemRemoved);
-                        SendToAllClientsExcept(itemRemoved.OwnerId, itemRemoved);
-                        break;
-                    case WeaponToggled weaponToggled:
-                        EventManager.OnWeaponToggled(weaponToggled);
-                        SendToAllClientsExcept(weaponToggled.OwnerId, weaponToggled);
-                        break;
-                    //case SpawnedObjectInCrypt spawnedObjectInCrypt:
-                    //    EventManager.OnSpawnedObjectInCrypt(spawnedObjectInCrypt);
-                    //    SendToAllClientsExcept(netPlayerId, spawnedObjectInCrypt);
-                    //    break;
-                    case StartingChargingLamp startingChargingLamp:
-                        EventManager.OnStartingChargingLamp(startingChargingLamp);
-                        SendToAllClientsExcept(startingChargingLamp.PlayerChargingId, startingChargingLamp);
-                        break;
-                    case StoppingChargingLamp stoppingChargingLamp:
-                        EventManager.OnStoppingChargingLamp(stoppingChargingLamp);
-                        SendToAllClientsExcept(stoppingChargingLamp.PlayerChargingId, stoppingChargingLamp);
-                        break;
-                    case TimerStarted timerStarted:
-                        EventManager.OnTimerStarted(timerStarted);
-                        SendToAllClientsExcept(timerStarted.SenderId, timerStarted);
-                        break;
-                    case HatChanged hatChanged:
-                        EventManager.OnHatChanged(hatChanged);
-                        SendToAllClientsExcept(hatChanged.OwnerId, hatChanged);
-                        break;
-                    case PlayerDisconnected playerDisconnected: //Host only receives this message by the rdv server, normally its handled in LiteNet's PeerDisconnectedEvent
-                        if (!usesRelay.Remove(playerDisconnected.ConnectionId))
-                        {
-                            logger.LogInfo($"PlayerDisconnected: ConnectionId {playerDisconnected.ConnectionId} was not using relay.");
-                            return;
-                        }
-
-                        EventManager.OnPlayerDisconnected(playerDisconnected);
-                        SendToAllClients(playerDisconnected, NetDelivery.ReliableOrdered);
-
-                        break;
-                    case AddXp addXp:
-                        EventManager.OnAddXp(addXp);
-                        SendToAllClientsExcept(addXp.OwnerId, addXp);
-                        break;
-                    case EncounterClosedStamped encounterClosedStamped:
-                        // SE-5, report half. A report that does not name the round this host has
-                        // open is a leftover from a round already released — counting it toward the
-                        // current round is what releases someone else's window before they have
-                        // chosen. Dropped rather than applied; the reporting peer's own failsafe is
-                        // what recovers it if it really is stuck.
-                        if (!encounterService.IsCurrentStamp(encounterClosedStamped.SessionId, encounterClosedStamped.RoundId))
-                        {
-                            logger.LogInfo(
-                                $"Dropping a stale barrier report from {encounterClosedStamped.OwnerId} " +
-                                $"(session {encounterClosedStamped.SessionId}, round {encounterClosedStamped.RoundId}); " +
-                                $"host is on session {encounterService.SessionId}, round {encounterService.RoundId}.");
-                            break;
-                        }
-
-                        encounterService.AddClosedEncounterForPlayer(encounterClosedStamped.OwnerId);
-
-                        // The accepted counterpart of the "Dropped a stale barrier report" line
-                        // above. Without it a healthy round is invisible and only failures speak,
-                        // which is what made the first run of this build unverifiable.
-                        logger.LogInfo(
-                            $"[barrier] Report from {encounterClosedStamped.OwnerId} accepted for round " +
-                            $"{encounterClosedStamped.RoundId}; barrier closable: {encounterService.IsClosable()}.");
-
-                        if (encounterService.IsClosable())
-                        {
-                            EventManager.OnReleaseBarrier();
-                        }
-
-                        break;
-                    case EncounterClosed encounterClosed:
-                        // Older build on the other end: no round identity, so this report cannot be
-                        // attributed and is accepted as-is, exactly as it was before SE-5.
-                        Plugin.Log.LogWarning(
-                            $"Received an unstamped EncounterClosed from {encounterClosed.OwnerId}. That peer is " +
-                            "on an older build; this report cannot be round-attributed (SE-5).");
-
-                        encounterService.AddClosedEncounterForPlayer(encounterClosed.OwnerId);
-
-                        if (encounterService.IsClosable())
-                        {
-                            EventManager.OnReleaseBarrier();
-                        }
-
-                        break;
-                    case GoldChanged goldChanged:
-                        EventManager.OnGoldChanged(goldChanged);
-                        SendToAllClientsExcept(goldChanged.OwnerId, goldChanged);
-                        break;
-                    default:
-                        Plugin.Log.LogWarning($"Unknown message type received {message}");
-                        break;
-                }
+                default:
+                    return false;
             }
         }
 
@@ -1128,12 +735,6 @@ namespace MegabonkTogether.Services
             isHost = null;
             expectedPeerCount = 0;
             hasAllPeersConnected = false;
-            isGameOver = false;
-            // Player-stream pacing is per session: a stale readiness snapshot here would suppress
-            // the forced full record that a genuine change is supposed to trigger, if a reused
-            // connection id happened to carry the same flag.
-            playerRecordTick = 0;
-            lastSentReadiness.Clear();
             gamePeers.Clear();
             netManager?.Stop();
             hasStarted = false;
@@ -1151,106 +752,7 @@ namespace MegabonkTogether.Services
             netManager.DisconnectAll();
         }
 
-        public void GameOver()
-        {
-            isGameOver = true;
-        }
 
-        /// <summary>
-        /// Applies the continuous half of the player stream. Counterpart of
-        /// <see cref="SendPlayersStateUpdate"/>.
-        ///
-        /// <para><b>This deliberately mutates only the continuous fields</b> rather than replacing
-        /// the stored record the way <c>OnLobbyUpdate</c> does. That is the point of the split and
-        /// it is also a fix: <c>UpdatePlayer</c> overwrites the whole <c>Player</c>, so at 60 Hz the
-        /// old single stream was continuously stamping <c>IsReady</c>, <c>Name</c>, <c>Skin</c> and
-        /// <c>Inventory</c> back over whatever local code had just set — defect C of the four
-        /// lobby-ready barrier defects. Those fields now only ever change when a full record
-        /// arrives, so a readiness flag set locally survives until the host actually contradicts
-        /// it.</para>
-        ///
-        /// <para>Mutating in place is safe because <c>GetPlayer</c> hands back the stored instance,
-        /// and it avoids the remove/insert churn <c>UpdatePlayer</c> does on a 60 Hz path.</para>
-        /// </summary>
-        private void OnPlayersStateUpdate(PlayersStateUpdate update)
-        {
-            foreach (var state in update.States)
-            {
-                var player = playerManagerService.GetPlayer(state.ConnectionId);
-                if (player == null)
-                {
-                    // GetPlayer already reports this, throttled. A state update for a player we do
-                    // not know yet is normal for a tick or two around join and disconnect.
-                    continue;
-                }
-
-                player.Position = state.Position;
-                player.AnimatorState = state.AnimatorState;
-                player.MovementState = state.MovementState;
-                player.Hp = state.Hp;
-                player.Shield = state.Shield;
-
-                EventManager.OnPlayerUpdate(new PlayerUpdate
-                {
-                    Position = Quantizer.Dequantize(state.Position).ToNumericsVector3(),
-                    MovementState = state.MovementState,
-                    AnimatorState = state.AnimatorState,
-                    ConnectionId = state.ConnectionId,
-                    Hp = state.Hp,
-                    // Maxima and identity ride the full record; carry the values we already hold so
-                    // a health bar reading MaxHp off this update does not see a zero between full
-                    // records.
-                    MaxHp = player.MaxHp,
-                    Shield = state.Shield,
-                    MaxShield = player.MaxShield,
-                    Name = player.Name,
-                    Inventory = player.Inventory,
-                });
-            }
-        }
-
-        private void OnLobbyUpdate(LobbyUpdates lobbyUpdate) //TODO: move to synchronizationService
-        {
-
-            foreach (var player in lobbyUpdate.Players)
-            {
-                var existingPlayer = playerManagerService.GetPlayer(player.ConnectionId);
-                if (existingPlayer != null)
-                {
-                    //var previousHp = existingPlayer.Hp;
-                    //if (previousHp == 0)
-                    //{
-                    //    player.Hp = 0;
-                    //}
-                    playerManagerService.UpdatePlayer(player);
-
-                    var playerUpdate = new PlayerUpdate
-                    {
-                        Position = Quantizer.Dequantize(player.Position).ToNumericsVector3(),
-                        MovementState = player.MovementState,
-                        AnimatorState = player.AnimatorState,
-                        ConnectionId = player.ConnectionId,
-                        Hp = player.Hp,
-                        MaxHp = player.MaxHp,
-                        Shield = player.Shield,
-                        MaxShield = player.MaxShield,
-                        //Xp = player.Xp,
-                        Name = player.Name,
-                        Inventory = player.Inventory,
-                    };
-
-                    //if (previousHp == 0)
-                    //{
-                    //    playerUpdate.Hp = 0;
-                    //}
-
-                    EventManager.OnPlayerUpdate(playerUpdate);
-                }
-            }
-
-            EventManager.OnEnemiesUpdate(lobbyUpdate.Enemies);
-            EventManager.OnFinalBossOrbsUpdate(lobbyUpdate.BossOrbs);
-        }
 
         public async Task<bool> HandleMatch(MatchInfo matchInfo, uint selfConnectionId, string rdvServerHost, uint rdvServerPort, bool enabledSharedExperience)
         {
@@ -1438,369 +940,6 @@ namespace MegabonkTogether.Services
             {
                 netManager?.PollEvents();
                 netManager?.NatPunchModule.PollEvents();
-            }
-        }
-
-        public void Update()
-        {
-            UpdateLocalPlayer();
-
-            if (isGameOver)
-            {
-                return;
-            }
-
-            if (isHost.HasValue && isHost.Value)
-            {
-                if (playerManagerService.IsGameOver())
-                {
-                    isGameOver = true;
-                    IGameNetworkMessage wsMessage = new GameOver();
-                    SendToAllClients(wsMessage, NetDelivery.ReliableOrdered);
-                    EventManager.OnGameOver(wsMessage as GameOver);
-
-                    return;
-                }
-
-                SendPlayerStreams();
-            }
-            else
-            {
-                IGameNetworkMessage playerUpdate = playerManagerService.GetLocalPlayerUpdate();
-                if (playerUpdate == null)
-                {
-                    Plugin.Log.LogWarning("Local player update is null, cannot send to host");
-                    return;
-                }
-                SendToHost(playerUpdate, NetDelivery.Unreliable);
-            }
-        }
-
-        public void UpdateEnemies()
-        {
-            if (isGameOver)
-            {
-                return;
-            }
-
-            if (!EnsureIsHost())
-            {
-                return;
-            }
-
-            SendEnemiesUpdate();
-        }
-
-        public void UpdateProjectiles()
-        {
-            if (isGameOver)
-            {
-                return;
-            }
-
-            if (!EnsureIsHost())
-            {
-                return;
-            }
-
-            SendProjectilesUpdate();
-        }
-
-        public void UpdateTumbleWeeds()
-        {
-            if (isGameOver)
-            {
-                return;
-            }
-
-            if (!EnsureIsHost())
-            {
-                return;
-            }
-
-            SendTumbleWeedsUpdate();
-        }
-
-        private void UpdateLocalPlayer()
-        {
-            var player = playerManagerService.GetLocalPlayer();
-            var localPlayer = playerManagerService.GetLocalPlayerUpdate();
-
-            if (player == null)
-            {
-                Plugin.Log.LogWarning("Local player is null");
-                return;
-            }
-
-            if (localPlayer == null)
-            {
-                Plugin.Log.LogWarning("Local player update is null");
-                return;
-            }
-
-            player.Position = Quantizer.Quantize(localPlayer.Position.ToUnityVector3());
-            player.MovementState = localPlayer.MovementState;
-            player.AnimatorState = localPlayer.AnimatorState;
-            player.Hp = localPlayer.Hp;
-            player.MaxHp = localPlayer.MaxHp;
-            player.Shield = localPlayer.Shield;
-            player.MaxShield = localPlayer.MaxShield;
-            //player.Xp = localPlayer.Xp;
-            player.Inventory = localPlayer.Inventory;
-            player.Name = localPlayer.Name;
-
-            playerManagerService.UpdatePlayer(player);
-        }
-
-        /// <summary>
-        /// Splits the host's 60 Hz player broadcast into the half that changes every frame and the
-        /// half that does not.
-        ///
-        /// <para>Two captures measured the old single stream at a flat ~20 KB/s at two players —
-        /// 65-90% of all host egress — re-sending names, skins, character ids and inventories sixty
-        /// times a second. Measured against the real serializer, splitting it saves 62% at two
-        /// players early and 79% at six players late (95.39 -> 19.70 KB/s). The six-player full
-        /// record is 1628 B, which is over MAX_PACKET_SIZE_BYTES: today that promotes to
-        /// ReliableOrdered every single tick, and after the split only the low-rate record does.</para>
-        ///
-        /// <para><b>Readiness never waits for the heartbeat.</b> Any change to a player's
-        /// <c>IsReady</c> sends a full record immediately. This matters: the lobby-ready barrier has
-        /// four open defects where a single lost or late readiness is a permanent hang, and slowing
-        /// that field down to save bandwidth would be the wrong trade. The check is one bool compare
-        /// per player per tick.</para>
-        ///
-        /// <para><b>Why 5 Hz for the heartbeat.</b> With readiness handled separately, everything
-        /// left in the full record is cosmetic on a sub-second scale: inventory display, health-bar
-        /// maxima, and identity (name, skin, character), which is fixed after join. 5 Hz bounds the
-        /// worst case at 200 ms — under the threshold where a joining player would notice a default
-        /// name — while halving the heartbeat's cost against 10 Hz, which is worth 8 KB/s at six
-        /// players. This is the knob to turn if any of that ever proves to want lower latency.</para>
-        /// </summary>
-        private void SendPlayerStreams()
-        {
-            SendPlayersStateUpdate();
-
-            playerRecordTick++;
-
-            if (playerRecordTick < FULL_PLAYER_RECORD_EVERY_N_TICKS && !HasReadinessChanged())
-            {
-                return;
-            }
-
-            playerRecordTick = 0;
-            SendLobbyUpdate();
-        }
-
-        /// <summary>
-        /// True when any player's <c>IsReady</c> differs from the last full record we sent, which
-        /// forces one out immediately. Deliberately only <c>IsReady</c>: it is the sole field in the
-        /// slow half where arriving 100 ms late has a correctness consequence rather than a cosmetic
-        /// one.
-        /// </summary>
-        private bool HasReadinessChanged()
-        {
-            var changed = false;
-
-            foreach (var player in playerManagerService.GetAllPlayers())
-            {
-                if (!lastSentReadiness.TryGetValue(player.ConnectionId, out var wasReady) || wasReady != player.IsReady)
-                {
-                    lastSentReadiness[player.ConnectionId] = player.IsReady;
-                    changed = true;
-                }
-            }
-
-            return changed;
-        }
-
-        /// <summary>
-        /// The continuous half, every tick. Chunked like the other per-entity streams so a six-player
-        /// lobby cannot push it over the MTU and back onto a reliable channel.
-        /// </summary>
-        private void SendPlayersStateUpdate()
-        {
-            var states = new List<PlayerState>();
-
-            foreach (var player in playerManagerService.GetAllPlayers())
-            {
-                states.Add(new PlayerState
-                {
-                    ConnectionId = player.ConnectionId,
-                    Position = player.Position,
-                    AnimatorState = player.AnimatorState,
-                    MovementState = player.MovementState,
-                    Hp = player.Hp,
-                    Shield = player.Shield,
-                });
-            }
-
-            SendStreamUpdate(
-                states,
-                (chunk, _) => new PlayersStateUpdate { States = chunk },
-                nameof(PlayersStateUpdate));
-        }
-
-        private void SendLobbyUpdate()
-        {
-            // Labelled by hand, not by GetType().Name: this send and SendEnemiesUpdate both use the
-            // LobbyUpdates type, so the type name merged the player stream and the enemy stream into
-            // one bucket. That bucket has been reported as 65-90% of host traffic and named as where
-            // bandwidth work belongs — a conclusion the counter could not actually support, because
-            // the two scale with completely different things (player count vs. enemies alive). A
-            // level-159 capture peaked at 199.50 KB/s under the merged name with no way to say which.
-            //
-            // Chunked despite being the smallest of the four streams: a Player carries a name string
-            // and a full inventory snapshot, so at six players late in a run this can cross the cap
-            // even though it rarely does at two.
-            SendStreamUpdate(
-                [.. playerManagerService.GetAllPlayers()],
-                (chunk, _) => new LobbyUpdates { Players = chunk },
-                "LobbyUpdates(players)");
-        }
-
-        private void SendEnemiesUpdate()
-        {
-            List<EnemyModel> enemies = [.. enemyManagerService.GetAllEnemiesDeltaAndUpdate()];
-            List<BossOrbModel> bossFinalOrb = [.. finalBossOrbManagerService.GetAllOrbs()];
-
-            if (enemies.Count == 0 && bossFinalOrb.Count == 0)
-            {
-                return;
-            }
-
-            // The other half of the LobbyUpdates bucket — see the note in SendLobbyUpdate. Enemies
-            // and boss orbs stay together here deliberately: they are one delta stream sharing one
-            // send, so splitting them further would report a size neither of them has on the wire.
-            //
-            // This is the stream the chunking is really aimed at. It is a delta, so a big tick means
-            // "many enemies moved" — and a moving enemy is re-sent next tick regardless, which is
-            // exactly the state that does not need a reliable channel. The old size promotion paid
-            // acks and retransmits to redeliver positions that were already stale on arrival.
-            //
-            // The orbs ride on chunk 0 only: there are a handful of them, they are not what makes a
-            // tick oversized, and repeating them per chunk would be duplicated payload. Chunk 0
-            // exists whether or not the tick splits, so the single-message path is unchanged.
-            if (enemies.Count == 0)
-            {
-                SendStreamUpdate(
-                    bossFinalOrb,
-                    (chunk, _) => new LobbyUpdates { BossOrbs = chunk },
-                    "LobbyUpdates(enemies)");
-                return;
-            }
-
-            SendStreamUpdate(
-                enemies,
-                (chunk, chunkIndex) => new LobbyUpdates
-                {
-                    Enemies = chunk,
-                    BossOrbs = chunkIndex == 0 ? bossFinalOrb : [],
-                },
-                "LobbyUpdates(enemies)");
-        }
-
-        private void SendProjectilesUpdate()
-        {
-            // The worst offender by size in the level-159 capture: 4761 B/send at 20 Hz, i.e. four
-            // fragments of a reliable-ordered message per tick during a swarm.
-            SendStreamUpdate(
-                [.. projectileManagerService.GetAllProjectilesDeltaAndUpdate()],
-                (chunk, _) => new ProjectilesUpdate { Projectiles = chunk },
-                nameof(ProjectilesUpdate));
-        }
-
-        private void SendTumbleWeedsUpdate()
-        {
-            SendStreamUpdate(
-                [.. spawnedObjectManagerService.GetAllTumbleWeedsDeltaAndUpdate()],
-                // TumbleWeeds is an array on the wire, so the chunk is copied. Leaving the field a
-                // List would be a wire change; this stream is Desert-only at 20 Hz and rarely
-                // splits, so the copy is the cheaper of the two.
-                (chunk, _) => new TumbleWeedsUpdate { TumbleWeeds = [.. chunk] },
-                nameof(TumbleWeedsUpdate));
-        }
-
-        /// <summary>
-        /// Sends one tick of a per-entity stream, splitting an oversized tick into several sub-MTU
-        /// <see cref="NetDelivery.Unreliable"/> datagrams instead of promoting the whole tick to
-        /// <see cref="NetDelivery.ReliableOrdered"/>.
-        ///
-        /// <para><b>What this replaces.</b> Each of these senders used to do
-        /// <c>if (serialized.Length >= MAX_PACKET_SIZE_BYTES) deliveryMethod = ReliableOrdered</c>.
-        /// That is not wrong — LiteNetLib fragments reliable channels only, so an oversized
-        /// unreliable send silently fails and promoting is the only way to get it there in one
-        /// message. It is just the expensive answer to the wrong question. The tick does not need to
-        /// arrive in one message; it needs to arrive.</para>
-        ///
-        /// <para><b>Why it matters at scale.</b> A level-159 capture put the merged enemy/player
-        /// bucket at 2100 B/send at 97.3/s and <c>ProjectilesUpdate</c> at 4761 B/send at 20 Hz —
-        /// so the hot streams were spending most of their time on a multi-fragment reliable channel,
-        /// paying acks and retransmits, and head-of-line blocking every later entity update behind
-        /// any one stalled fragment. Splitting by a byte budget keeps every datagram on the
-        /// unreliable path, where a loss costs one entity one tick and the next tick corrects it.</para>
-        ///
-        /// <para><b>No wire change.</b> <c>OnLobbyUpdate</c> and the other receive handlers iterate
-        /// per item and nothing depends on a list being complete, so N messages deserialize exactly
-        /// as one did. Same types, same union tags, same handlers — a peer on the old build cannot
-        /// tell the difference.</para>
-        ///
-        /// <para><b>The fallback still promotes.</b> The chunk count is derived from the whole
-        /// tick's average bytes-per-item, so an unusually large single item (a player with a big
-        /// inventory) can still overflow its chunk. That chunk promotes exactly as before, which
-        /// makes the worst case no worse than today rather than a silent dropped send.</para>
-        ///
-        /// <para>Chunk 0 is passed to <paramref name="buildChunk"/> as index 0 whether or not the
-        /// tick was split, so a caller can attach ride-along state (the enemy stream's boss orbs) to
-        /// the first message only and have it behave identically in both paths.</para>
-        ///
-        /// <para><b>Reading the counters after this lands:</b> a split tick records once per chunk,
-        /// so sends/s rises and B/send falls while KB/s stays put. That is the change working, not a
-        /// regression.</para>
-        /// </summary>
-        private void SendStreamUpdate<TItem>(
-            List<TItem> items,
-            Func<List<TItem>, int, IGameNetworkMessage> buildChunk,
-            string label)
-        {
-            if (items.Count == 0)
-            {
-                return;
-            }
-
-            // Serialized through IGameNetworkMessage explicitly, never the concrete type: the union
-            // tag comes from the interface, and serializing as the concrete message would omit it
-            // and put an undecodable payload on the wire.
-            byte[] serialized = MemoryPackSerializer.Serialize<IGameNetworkMessage>(buildChunk(items, 0));
-
-            // The common case, and the one that must stay cheap: the whole tick fits, so it goes out
-            // exactly as it did before — one serialize, one send, no extra allocation.
-            if (serialized.Length < MAX_PACKET_SIZE_BYTES)
-            {
-                SendToAllClients(serialized, NetDelivery.Unreliable, label);
-                return;
-            }
-
-            // Budget below the cap rather than at it: every chunk repeats the message envelope (the
-            // union tag and the empty-collection headers for the fields this stream does not set),
-            // so sizing purely on the whole tick's bytes-per-item would land the last chunk just
-            // over. Undershooting costs one extra datagram; overshooting costs a promotion.
-            var bytesPerItem = Math.Max(1, serialized.Length / items.Count);
-            var itemsPerChunk = Math.Max(1, (MAX_PACKET_SIZE_BYTES - CHUNK_ENVELOPE_HEADROOM_BYTES) / bytesPerItem);
-
-            for (int start = 0, chunkIndex = 0; start < items.Count; start += itemsPerChunk, chunkIndex++)
-            {
-                var count = Math.Min(itemsPerChunk, items.Count - start);
-                var chunk = items.GetRange(start, count);
-
-                byte[] chunkBytes = MemoryPackSerializer.Serialize<IGameNetworkMessage>(buildChunk(chunk, chunkIndex));
-
-                // Only reachable when the average underestimated this chunk, or when one item is
-                // bigger than the whole budget. Reliable is the sole way such a message arrives.
-                var deliveryMethod = chunkBytes.Length >= MAX_PACKET_SIZE_BYTES
-                    ? NetDelivery.ReliableOrdered
-                    : NetDelivery.Unreliable;
-
-                SendToAllClients(chunkBytes, deliveryMethod, label);
             }
         }
 

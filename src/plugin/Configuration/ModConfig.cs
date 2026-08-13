@@ -21,6 +21,8 @@ namespace MegabonkTogether.Configuration
         public static ConfigEntry<bool> LogBandwidth { get; private set; }
         public static ConfigEntry<bool> LogSteamStatus { get; private set; }
         public static ConfigEntry<bool> SteamLobbySelfTest { get; private set; }
+        public static ConfigEntry<bool> SteamNetSelfTest { get; private set; }
+        public static ConfigEntry<bool> UseSteamTransport { get; private set; }
         public static ConfigEntry<bool> LogUnityStackTraces { get; private set; }
 
         public static void Initialize(ConfigFile config)
@@ -96,6 +98,24 @@ namespace MegabonkTogether.Configuration
                 "member data, then leave it, and log what happened. Off by default. This exists " +
                 "to prove the Steamworks migration's lobby primitives on a real install; it " +
                 "changes nothing about how you play and needs only one player."
+            );
+            SteamNetSelfTest = config.Bind(
+                "Diagnostics",
+                "SteamNetSelfTest",
+                false,
+                "Once per launch, open a Steam peer-to-peer listen socket, hold it for a couple of " +
+                "seconds, then close it, and log what happened. Off by default. Steam has no " +
+                "loopback so this cannot test an actual connection - it tests everything that has " +
+                "to work before one is attempted, and needs only one player."
+            );
+            UseSteamTransport = config.Bind(
+                "Network",
+                "UseSteamTransport",
+                false,
+                "EXPERIMENTAL, and off by default. Carry netplay over Steam's peer-to-peer sockets " +
+                "instead of the matchmaking server, using the Steam lobby as the session. Both " +
+                "players must set this the same way - a Steam host and a matchmaker client cannot " +
+                "see each other at all. Read at startup, so changing it mid-session does nothing."
             );
             LogUnityStackTraces = config.Bind(
                 "Diagnostics",

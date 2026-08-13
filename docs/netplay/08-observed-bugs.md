@@ -11,7 +11,9 @@ cited line. **LIKELY** — strong inference from structure, failing path not obs
 
 OB-1..OB-4 come from the 2026-08-06 session (two players, direct P2P). OB-5..OB-9 come from the
 **2026-08-07** sessions — two players over the internet at ~61 ms rtt, running the round-identity
-build with `WriteUnityLog = true` on both peers.
+build with `WriteUnityLog = true` on both peers. OB-11 and OB-12 come from the **2026-08-13**
+Steam-transport sessions and are both transport-independent — they would behave identically on the
+rendezvous path.
 
 ---
 
@@ -228,9 +230,19 @@ only visibility this path has.
 ---
 
 <a name="ob-6"></a>
-## OB-6 — Shrine charge counters differ between players — CONFIRMED, cause exact
+## OB-6 — A shrine's charge *value* is never transmitted — CONFIRMED, cause exact
 
 **Reported:** shrine counters are not in sync between all players.
+
+> **Scope corrected 2026-08-13, and the correction matters.** This entry was filed as "shrine
+> counters differ" and that title was wrong twice over. It is about the per-shrine **charge value** —
+> the bar that fills while someone stands on it — and not about the run's interactable tally in the
+> HUD. And the tally evidence points the other way: **`Charge Shrines` is the one counter that does
+> agree** between peers, while `Chests`, `Greed Shrines`, `Moais`, `Pots` and `Boss Curses` all
+> diverge. That is [OB-12](#ob-12), and its cause is unrelated to anything below.
+>
+> Everything below stands as an analysis of the charge value. What is no longer claimed is that it is
+> what players were seeing in the counter list.
 
 **Cause, exactly: the charge value is never transmitted.** The two messages that exist carry
 identity only —
@@ -470,6 +482,210 @@ paths, which is a far better starting point than reading every call site.
 
 **Do not silence it.** A guard firing 1,841 times is information; the fix is upstream of the guard.
 
+
+---
+
+<a name="ob-11"></a>
+## OB-11 — Minibosses always spawn near the host — LIKELY
+
+**Reported:** minibosses appear next to the host rather than somewhere between the players. A client
+playing away from the host sees them arrive on top of their teammate, never near themselves.
+
+**Why this is structural rather than a bug in a line somewhere.** The mod does not choose spawn
+positions and never has. It observes them:
+
+```csharp
+// Patches/Enemies/EnemyManager.cs — SpawnEnemy_Postfix
+var isServer = synchronizationService.IsServerMode() ?? false;
+if (isServer)
+{
+    synchronizationService.OnSpawnedEnemy(__result, enemyData.enemyName, pos, /* … */);
+}
+```
+
+`pos` is whatever the game's own spawner computed, on the host, a moment earlier — and it is
+replicated verbatim. `SpawnBoss_Prefix` suppresses the client's own spawning entirely, so the client
+contributes nothing to the decision.
+
+**The game is a single-player game and its spawner knows about one player: `GameManager.Instance.player`.**
+On the host that is the host. So every spawn ring, every "just outside the camera" offset and every
+distance check is measured from the host's position, and the result is faithfully sent to everyone.
+Host-authoritative spawning is correct; host-*centred* spawning is the accident that comes with it.
+
+**Status is LIKELY, not CONFIRMED, and the gap is specific.** What is confirmed by reading the code
+is that the mod supplies no position and replicates the host's. What is *not* confirmed is that the
+game's spawner derives its position from `GameManager.Instance.player` — no spawn-position method has
+been decompiled. **One decompile settles it:** `EnemyManager$$SpawnEnemy`'s callers, or whatever
+computes `pos` before it, from `megabonk-re/build-21750826/dump.cs`. Until then this is an inference
+from structure, however strong.
+
+**Whether it is worth fixing is a design question, not a defect.** Three shapes, in increasing cost:
+
+1. **Leave it.** Minibosses are an event both players can walk to. This is the current behaviour and
+   it is not broken, only unfair to whoever is not hosting.
+2. **Pick a player per spawn, then offset from them.** The host already has every peer's position in
+   the replicated roster, so choosing a random living player and translating the game's chosen
+   position relative to that player is arithmetic the host can do in `SpawnEnemy_Postfix` — but the
+   enemy has already been created at `pos` by then, so it would have to be moved, and anything the
+   game cached from its original transform in `Awake` would be stale. That hazard is real here: see
+   the `SpawnedObject` clone-inactive-then-position note in
+   [`SynchronizationService`](../../src/plugin/Services/SynchronizationService.cs), which exists
+   because a component cached a prefab transform in `Awake`.
+3. **Patch the position source.** Correct, and requires the decompile above first.
+
+**Do not "fix" this by spawning on each peer independently.** Two peers running their own spawner
+would produce two different minibosses with different ids, which is the desync this architecture
+exists to prevent — and the same reasoning that makes `SpawnBoss_Prefix` suppress the client.
+
+---
+
+<a name="ob-12"></a>
+## OB-12 — The run's interactable counters diverge, except charge shrines — CONFIRMED, cause exact
+
+**Reported, with two screenshots of the same moment in one run:**
+
+| Counter | Peer A | Peer B |
+|---|---|---|
+| Charge Shrines | 14 / 15 | 14 / 15 |
+| Boss Curses | 2 / 3 | 0 / 3 |
+| Chests | 4 / 46 | 3 / 46 |
+| Greed Shrines | 0 / 8 | 7 / 8 |
+| Moais | 1 / 4 | 2 / 4 |
+| Pots | 13 / 55 | 24 / 55 |
+| Challenges, Magnet Shrines, Microwaves, Shady Guy | agree (all at 0, or 1/1) |
+
+**The one that agrees is the interesting row.** Everything that diverges has a large, arbitrary gap —
+`Pots` differs by eleven, `Greed Shrines` by seven — which is not drift or timing. Those peers
+counted genuinely different sets of events.
+
+**Cause: the mod replicates an interactable's *outcome* by shortcut, and the game's counter lives
+inside the path that was shortcut.** From `OnReceivedInteractableUsed`
+([`SynchronizationService`](../../src/plugin/Services/SynchronizationService.cs)):
+
+```csharp
+switch (used.Action)
+{
+    case InteractableAction.Destroy:
+        GameObject.DestroyImmediate(interactableObj);   // ← the object goes away
+        break;
+    case InteractableAction.Used:
+        logger.LogInfo($"Net player used interactable with ID: {used.NetplayId}");
+        break;                                          // ← nothing happens at all
+    case InteractableAction.Interact:
+        // … actually calls the game's Interact() for microwaves and friends
+}
+```
+
+`Destroy` removes the object without ever running the game's `Interact`, and `Used` does nothing but
+write a log line. The game increments its own run tally inside the method neither of those calls, so
+the remote peer sees the object vanish and never counts it. Whoever performed the interaction counts
+it; nobody else does. Two players splitting a map therefore end with two tallies that add up to
+roughly the right total between them and match nowhere.
+
+That also explains the exception: **charge shrines are not replicated by outcome.** Their charging is
+replicated as start/stop and *both* peers run their own `OnTriggerEnter` / `OnTriggerExit`, so both
+peers reach the completion through the game's own path — and both count it. The counter agrees
+because the mechanism is different, not because the shrine is special.
+
+### What the decompile actually found — and it corrects the paragraph above
+
+**The tally is not incremented anywhere on the chest's own interaction path.** Three functions
+decompiled (cached in `megabonk-re/decompiled/`, buildid 21750826):
+
+| Function | VA | What it calls |
+|---|---|---|
+| `InteractableChest$$Interact` | `0x180452FB0` | `EncounterWindows.AddEncounter`, `ChestUtility.ChestTypeToEncounter`, a localised string and a text popup |
+| `InteractableChest$$OpenChestImplementation` | `0x180453990` | `ChestUtility.OpenChestNoAnimation`, `EncounterWindows.AddEncounter` |
+| `InteractableChest$$OnChestWindowClose` | `0x1804532B0` | `MoneyUtility.GetChestPrice`, `PlayerInventory.ChangeGold`, `Instantiate`, `Destroy` |
+
+**No counter, no stat call, on any of the three** — including the one that actually consumes the
+chest. So the guess above ("the game increments its own run tally inside `Interact`") is wrong in its
+specifics, and saying so is the point of this section: the shortcut in
+`OnReceivedInteractableUsed` is real, but it is not skipping an increment that lives in `Interact`,
+because there is not one.
+
+### The xref answers it: the tally is event-driven
+
+Run with the new `scripts/re/xrefs_headless.py` (results cached under `megabonk-re/decompiled/`):
+
+```
+RunStats$$AddValue          <- called only by TrackStats$$AddValue
+TrackStats$$AddValue        <- called by ~20 handlers:
+                               OnChestOpened, OnChestBought, OnInteracted, OnShrineCharged,
+                               OnShadyGuyUsed, OnMicrowaveExploded, OnChallengeShrineCompleted,
+                               OnPickup, OnEnemyDied, OnEvade, OnGoldChange, …
+TrackStats$$OnChestOpened   <- referenced only as DATA, never called
+```
+
+**That last line is the finding.** A handler referenced only from the metadata tables and never by a
+call instruction is a delegate target — something built a delegate from its method pointer and
+subscribed it. `TrackStats` is a bank of subscribers to the game's static `Action`s, of which
+`InteractableChest.A_ChestOpened` (`dump.cs:370556`) is one.
+
+So the tally is raised by **events**, and the events are raised by the interactable's own code path.
+That is the path the mod replaces:
+
+- `InteractableAction.Destroy` removes the object without running it — no event, no tally.
+- `InteractableAction.Used` writes a log line — no event, no tally.
+
+The peer that performed the interaction runs the real path and counts it. Every other peer takes the
+shortcut and does not. That is the whole defect, and it now has a named mechanism rather than an
+assumption.
+
+**And it explains the exception exactly.** `OnShrineCharged` is raised from the charge shrine's own
+completion, and both peers reach that completion because charging is replicated as start/stop and
+each peer runs its own `OnTriggerEnter` / `OnTriggerExit`. Both peers therefore raise the event and
+both tally it — which is why `Charge Shrines` is the one row that agrees.
+
+**What is still not pinned**, and it does not change the conclusion: which specific `Action` each
+`TrackStats` handler subscribes to. IL2CPP delegate construction leaves only a metadata reference, so
+the `+=` site is not reachable by cross-reference — it would need the subscribing function
+(`TrackStats$$Init` or equivalent) decompiled and read. The mapping is only needed if a fix wants to
+raise one event directly rather than replay the interaction.
+
+**Fix shape, now that the mechanism is known.** Replaying the real interaction on the remote peer is
+the only option that keeps the tally correct *and* keeps it derived — but `Interact` has side effects
+the receiver must not run twice, which is presumably why the shortcut exists. Raising the specific
+`TrackStats` event on the receiver is narrower and needs the mapping above. Replicating the tally
+itself is cheapest and turns a derived value into a replicated one, which is a real cost of its own.
+
+**Superseded — kept because the reasoning is the useful part.** Before the xref, this entry named two
+candidates:
+
+1. **`InteractableChest.A_ChestOpened`** — a `public static Action` at field offset `0x8`
+   (`dump.cs:370556`). Something subscribes and tallies. If this is the mechanism, the mod's
+   `DestroyImmediate` shortcut never raises it and the divergence follows immediately.
+2. **`RunStats.AddValue(EMyStat stat, int value)`** — `RunStats` is a static class and
+   `EMyStat.chestsOpened = 3`, `potsBroken = 13`, `shrineCharge = 16` exist. Someone calls it with
+   those.
+
+Both turned out to be the same mechanism seen from two ends, and the xref above joined them.
+
+**Why an xref rather than another decompile.** Subscriptions (`+=`) and calls live in *bodies*, and
+`dump.cs` lists only declarations — so grepping it cannot find a caller by construction. That gap is
+what `scripts/re/xrefs_headless.py` now fills.
+
+**What the answer changes.** If the tally is raised by `A_ChestOpened` or an equivalent per-type
+event, the fix is to make the remote peer run the real interaction instead of destroying the object —
+and the reason that was not done originally (side effects the receiver must not run twice) becomes
+the actual design question. If instead the tally is derived by counting objects still in the scene,
+then `DestroyImmediate` *would* have counted it, the counters should already agree, and the cause is
+something else entirely — which would make this entry's whole premise wrong rather than merely
+imprecise.
+
+**The charge-shrine exception survives either answer**, and is the strongest evidence available:
+whatever the mechanism is, both peers reach it for charge shrines because both run their own
+`OnTriggerEnter` / `OnTriggerExit`, and only for charge shrines does the counter agree.
+
+**Fix shape, not chosen.** Either replay the real interaction on the remote peer instead of
+destroying the object — correct, and the reason it was not done that way originally is presumably
+that `Interact` has side effects the receiver must not run twice — or replicate the tally itself as
+part of the player record, which is cheap but makes the HUD a replicated value rather than a derived
+one. **Neither is worth doing before the decompile**, because both assume the counter is where this
+entry assumes it is.
+
+**Not a desync.** Both peers agree about which objects exist and which are gone; only the tally
+disagrees. It is a scoreboard bug, not a world-state one, and nothing downstream reads it.
 
 ---
 

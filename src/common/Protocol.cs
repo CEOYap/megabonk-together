@@ -1,4 +1,4 @@
-namespace MegabonkTogether.Common
+﻿namespace MegabonkTogether.Common
 {
     /// <summary>
     /// The wire contract's own version, published as Steam lobby metadata so incompatible lobbies
@@ -26,7 +26,7 @@ namespace MegabonkTogether.Common
         /// still handshake, so the mismatch corrupts a session silently instead of failing loudly.
         /// That is the whole reason this constant exists.</para>
         /// </summary>
-        public const int Version = 1;
+        public const int Version = 2;
 
         /// <summary>
         /// The lobby metadata key carrying <see cref="Version"/>.
