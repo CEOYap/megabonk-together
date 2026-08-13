@@ -1,7 +1,7 @@
 # Planned: TOGETHER! goes straight to the lobby
 
-**Status: Phase 5. The session-setup extraction is done and landed; everything else is planned.
-Written down so the size of it is known before it is begun — see "The order to do it in".**
+**Status: Phase 5, step 1 done and steps 2–5 planned. Written down so the size of it is known
+before it is begun — see "The order to do it in".**
 
 Today, pressing **TOGETHER!** opens `NetworkMenuTab` — a name box, Netplay Options, and a
 Random / Friendlies choice, and behind Friendlies another screen with Host, a room-code box and
@@ -13,14 +13,14 @@ and the lobby panel now has somewhere.
 
 ## What has to be rehomed first
 
-`NetworkMenuTab` is **1,328 lines** and is not only menus. Deleting the file means finding a home
-for each of these, and three of them are not UI at all.
+`NetworkMenuTab` is **1,268 lines** (was 1,328; step 1 took 190 out) and is not only menus. Deleting
+the file means finding a home for each of these, and three of them are not UI at all.
 
 | What it owns | Where it should go |
 |---|---|
-| `OnJoinClicked` / `JoinWithCode` — sets `Plugin.Instance.Mode` (Mode, Role, RoomCode), calls `NetworkHandler.HandleNetworking()`, starts `HandleFriendlies()` | **A service.** This is session setup wearing a button's clothes, and it is the reason the invite path had to call into a menu. |
-| `HandleFriendlies()` — the connect coroutine | same service |
-| `HandleConnectionStatus()` — 30s timeout, the loader, the Stop button | The lobby panel needs a connecting state; today the loader belongs to the menu being deleted. |
+| ~~`OnJoinClicked` / `JoinWithCode` — sets `Plugin.Instance.Mode`, calls `HandleNetworking()`, starts `HandleFriendlies()`~~ | **Done — the service.** It no longer touches `Mode` or `NetworkHandler` at all; it calls `Join` and watches. |
+| ~~`HandleFriendlies()` — the connect coroutine~~ | **Done — deleted.** |
+| ~~`HandleConnectionStatus()` — 30s timeout, the loader, the Stop button~~ | **Partly done.** The timeout and the matchmaker polling are the service's; the loader and the Stop button are still the menu's, and still need the lobby panel's connecting state (step 3). |
 | `OnHostClicked` / `OnRandomClicked` | TOGETHER! itself, and a decision about Random — see below |
 | Player name box | Gone with `ModConfig.PlayerName`, which Phase 5 also drops. The Steam persona is already adopted in its place. |
 | Netplay Options — save toggle, shared experience toggle | Either the lobby panel or config-file-only. Both are `ModConfig` entries with no other UI. |
@@ -90,23 +90,26 @@ The session-setup extraction is **already done** — `INetplaySessionService` an
 `NetplaySessionService` exist and are registered. Nothing calls them yet, deliberately: it was
 landed on its own so it changed no behaviour. Everything below is Phase 5.
 
-**1. Put `NetworkMenuTab` onto `INetplaySessionService`.** Its Host, Join and Random handlers call
+**1. Put `NetworkMenuTab` onto `INetplaySessionService`.** ~~Its Host, Join and Random handlers call
 the service, and its screens reflect the service's state and message instead of driving their own
-coroutines. Until this happens there are two implementations of session setup — the service and the
-menu's own copy — which is exactly the drift the service was extracted to prevent.
+coroutines.~~ **Done.** Both halves: the Steam paths landed on the Phase 4 branch, the matchmaker
+paths and the deletions after it.
 
-> **Half-done as of the Phase 4 branch, and the remainder is the harder half.** `OnHostClicked` and
-> `JoinWithCode` already route through the service, but **only when `Network/UseSteamTransport` is
-> on**; the matchmaker paths still call `HandleNetworking()` and drive `HandleFriendlies` themselves.
-> That split was deliberate — it made the Steam transport reachable without disturbing the path that
-> worked — but it means the drift this step exists to prevent is currently real, one implementation
-> per transport. Finish it by moving the matchmaker paths across and deleting the menu's
-> `HandleFriendlies` and `HandleConnectionStatus` coroutines.
+> `HandleFriendlies` and `HandleConnectionStatus` are gone, replaced by a single `WatchSession` that
+> watches `INetplaySessionService.State`. `NetworkHandler.HandleNetworking()` now has exactly one
+> caller — the service — so session setup has one implementation again.
 >
-> `HandleSteamFriendlies` in the menu is the shape the replacement should take: it watches
-> `INetplaySessionService.State` rather than the matchmaker's flags.
+> **One trap worth keeping.** `WatchSession` takes the flow as a parameter instead of reading
+> `Plugin.Instance.Mode`, because a failure inside the service calls `ResetNetworking`, which does
+> `Plugin.Instance.Mode = new()`, *before* the state the watcher is waiting on becomes `Failed`. Read
+> back afterwards the mode is always `Random` — the zero value — so a failed Join would restore the
+> quickplay screen. Anything else that later reads session state after a failure has the same
+> problem.
+>
+> **UNVERIFIED**: not yet run in-game. Wants a two-player matchmaker session (host, join by code,
+> Stop mid-connect) and a re-run of the Steam path.
 
-Do this first because it is the only step verifiable with the menu still in place, and because it
+That went first because it is the only step verifiable with the menu still in place, and because it
 gives the connecting window a single owner before anything depends on one.
 
 **2. TOGETHER! opens the lobby panel, always hosting.** `PlayTogetherButton.OpenNetworkTab` becomes
