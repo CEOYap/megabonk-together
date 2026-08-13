@@ -3450,7 +3450,9 @@ namespace MegabonkTogether.Services
             if (chargingPlayers.TryGetValue(netplayId, out var chargers)
                 && chargers != null && chargers.Count > 0)
             {
-                logger.LogInfo($"Another player is already charging this {label}. Preventing re trigger.");
+                logger.LogInfo(
+                    $"Another player is already charging this {label} {netplayId}. Preventing re "
+                    + $"trigger. Chargers: [{string.Join(", ", chargers)}], joining: {localId}.");
 
                 // The set used to be discarded here, so a second charger was never recorded and
                 // their later stop hit the "No one is charging this X; ignoring stop" branch.
@@ -3502,7 +3504,9 @@ namespace MegabonkTogether.Services
             if (!chargingPlayers.TryGetValue(netplayId, out var chargers)
                 || chargers == null || chargers.Count == 0)
             {
-                logger.LogInfo($"No one is charging this {label}; ignoring stop.");
+                logger.LogInfo(
+                    $"No one is charging this {label} {netplayId}; ignoring stop from "
+                    + $"{playerManagerService.GetLocalPlayer()?.ConnectionId}.");
                 return false;
             }
 
@@ -3510,7 +3514,13 @@ namespace MegabonkTogether.Services
 
             if (chargers.Count > 0)
             {
-                logger.LogInfo($"Another player is still charging this {label}. Preventing stop trigger.");
+                // The set is printed because an unbalanced one is the whole failure mode here: a
+                // charger that is recorded and never removed leaves this branch suppressing every
+                // stop, and the object charges forever. Without the ids there is no way to tell
+                // that from two players legitimately charging together.
+                logger.LogInfo(
+                    $"Another player is still charging this {label} {netplayId}. Preventing stop "
+                    + $"trigger. Remaining chargers: [{string.Join(", ", chargers)}].");
                 return false;
             }
 
@@ -3550,6 +3560,10 @@ namespace MegabonkTogether.Services
                     {
                         chargers.Add(shrine.PlayerChargingId);
                     }
+
+                    logger.LogInfo(
+                        $"Shrine {shrine.ShrineNetplayId}: {shrine.PlayerChargingId} joined an "
+                        + $"in-progress charge. Chargers: [{string.Join(", ", chargers)}].");
 
                     udpClientService.SendToAllClients(shrine, NetDelivery.ReliableOrdered);
                     return;
@@ -3629,7 +3643,13 @@ namespace MegabonkTogether.Services
                     return;
                 }
 
-                chargers.Remove(shrine.PlayerChargingId);
+                var removed = chargers.Remove(shrine.PlayerChargingId);
+
+                // A stop for someone who was never recorded is the shape that leaves a set
+                // permanently non-empty, and it is silent otherwise.
+                logger.LogInfo(
+                    $"Shrine {shrine.ShrineNetplayId}: {shrine.PlayerChargingId} stopped charging "
+                    + $"(was recorded: {removed}). Remaining: [{string.Join(", ", chargers)}].");
 
                 if (chargers.Count > 0)
                 {
