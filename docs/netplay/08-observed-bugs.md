@@ -11,9 +11,9 @@ cited line. **LIKELY** — strong inference from structure, failing path not obs
 
 OB-1..OB-4 come from the 2026-08-06 session (two players, direct P2P). OB-5..OB-9 come from the
 **2026-08-07** sessions — two players over the internet at ~61 ms rtt, running the round-identity
-build with `WriteUnityLog = true` on both peers. OB-11 comes from the **2026-08-13** Steam-transport
-sessions and is transport-independent — it is host authority working as designed, with a consequence
-nobody chose.
+build with `WriteUnityLog = true` on both peers. OB-11 and OB-12 come from the **2026-08-13**
+Steam-transport sessions and are both transport-independent — they would behave identically on the
+rendezvous path.
 
 ---
 
@@ -230,9 +230,19 @@ only visibility this path has.
 ---
 
 <a name="ob-6"></a>
-## OB-6 — Shrine charge counters differ between players — CONFIRMED, cause exact
+## OB-6 — A shrine's charge *value* is never transmitted — CONFIRMED, cause exact
 
 **Reported:** shrine counters are not in sync between all players.
+
+> **Scope corrected 2026-08-13, and the correction matters.** This entry was filed as "shrine
+> counters differ" and that title was wrong twice over. It is about the per-shrine **charge value** —
+> the bar that fills while someone stands on it — and not about the run's interactable tally in the
+> HUD. And the tally evidence points the other way: **`Charge Shrines` is the one counter that does
+> agree** between peers, while `Chests`, `Greed Shrines`, `Moais`, `Pots` and `Boss Curses` all
+> diverge. That is [OB-12](#ob-12), and its cause is unrelated to anything below.
+>
+> Everything below stands as an analysis of the charge value. What is no longer claimed is that it is
+> what players were seeing in the counter list.
 
 **Cause, exactly: the charge value is never transmitted.** The two messages that exist carry
 identity only —
@@ -526,6 +536,72 @@ from structure, however strong.
 **Do not "fix" this by spawning on each peer independently.** Two peers running their own spawner
 would produce two different minibosses with different ids, which is the desync this architecture
 exists to prevent — and the same reasoning that makes `SpawnBoss_Prefix` suppress the client.
+
+---
+
+<a name="ob-12"></a>
+## OB-12 — The run's interactable counters diverge, except charge shrines — LIKELY
+
+**Reported, with two screenshots of the same moment in one run:**
+
+| Counter | Peer A | Peer B |
+|---|---|---|
+| Charge Shrines | 14 / 15 | 14 / 15 |
+| Boss Curses | 2 / 3 | 0 / 3 |
+| Chests | 4 / 46 | 3 / 46 |
+| Greed Shrines | 0 / 8 | 7 / 8 |
+| Moais | 1 / 4 | 2 / 4 |
+| Pots | 13 / 55 | 24 / 55 |
+| Challenges, Magnet Shrines, Microwaves, Shady Guy | agree (all at 0, or 1/1) |
+
+**The one that agrees is the interesting row.** Everything that diverges has a large, arbitrary gap —
+`Pots` differs by eleven, `Greed Shrines` by seven — which is not drift or timing. Those peers
+counted genuinely different sets of events.
+
+**Cause: the mod replicates an interactable's *outcome* by shortcut, and the game's counter lives
+inside the path that was shortcut.** From `OnReceivedInteractableUsed`
+([`SynchronizationService`](../../src/plugin/Services/SynchronizationService.cs)):
+
+```csharp
+switch (used.Action)
+{
+    case InteractableAction.Destroy:
+        GameObject.DestroyImmediate(interactableObj);   // ← the object goes away
+        break;
+    case InteractableAction.Used:
+        logger.LogInfo($"Net player used interactable with ID: {used.NetplayId}");
+        break;                                          // ← nothing happens at all
+    case InteractableAction.Interact:
+        // … actually calls the game's Interact() for microwaves and friends
+}
+```
+
+`Destroy` removes the object without ever running the game's `Interact`, and `Used` does nothing but
+write a log line. The game increments its own run tally inside the method neither of those calls, so
+the remote peer sees the object vanish and never counts it. Whoever performed the interaction counts
+it; nobody else does. Two players splitting a map therefore end with two tallies that add up to
+roughly the right total between them and match nowhere.
+
+That also explains the exception: **charge shrines are not replicated by outcome.** Their charging is
+replicated as start/stop and *both* peers run their own `OnTriggerEnter` / `OnTriggerExit`, so both
+peers reach the completion through the game's own path — and both count it. The counter agrees
+because the mechanism is different, not because the shrine is special.
+
+**LIKELY rather than CONFIRMED, and the gap is one lookup.** The shortcut is confirmed by reading the
+code above. What is *not* confirmed is that the game's tally is incremented inside `Interact` rather
+than by something else observing the object's destruction — no counter method has been decompiled.
+`dump.cs` (buildid 21750826) for whatever backs the interactable tally settles it, and would also say
+which of the two fixes below is available.
+
+**Fix shape, not chosen.** Either replay the real interaction on the remote peer instead of
+destroying the object — correct, and the reason it was not done that way originally is presumably
+that `Interact` has side effects the receiver must not run twice — or replicate the tally itself as
+part of the player record, which is cheap but makes the HUD a replicated value rather than a derived
+one. **Neither is worth doing before the decompile**, because both assume the counter is where this
+entry assumes it is.
+
+**Not a desync.** Both peers agree about which objects exist and which are gone; only the tally
+disagrees. It is a scoreboard bug, not a world-state one, and nothing downstream reads it.
 
 ---
 
