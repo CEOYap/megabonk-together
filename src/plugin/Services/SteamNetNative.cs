@@ -75,6 +75,47 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>
+        /// The part of <c>SteamNetConnectionRealTimeStatus_t</c> worth reporting, copied out of the
+        /// native struct so nothing beyond this file handles a type with a fixed buffer in it.
+        ///
+        /// <para><b>Why more than ping.</b> The migration's remaining exit criterion is a run under
+        /// simulated packet loss, and three of its hazards are invisible from the outside:
+        /// <c>ReliableUnordered</c> degrading to reliable-ordered brings back head-of-line blocking,
+        /// which shows up here as <see cref="PendingReliableBytes"/> and
+        /// <see cref="QueueTimeMs"/> climbing while the unreliable streams stay flat.
+        /// <see cref="QualityLocal"/> is the measured delivery ratio, and it is also the only way to
+        /// confirm the <i>test rig</i> is real: a loss run where quality stays at 100% did not test
+        /// anything, and without this it is indistinguishable from a run that passed.</para>
+        /// </summary>
+        public readonly struct SteamLinkStatus(
+            int pingMs,
+            float qualityLocal,
+            float qualityRemote,
+            int pendingReliableBytes,
+            int pendingUnreliableBytes,
+            int sentUnackedReliableBytes,
+            long queueTimeMicroseconds)
+        {
+            public int PingMs { get; } = pingMs;
+
+            /// <summary>Fraction of packets delivered, as measured by this end. 1.0 is a clean link.</summary>
+            public float QualityLocal { get; } = qualityLocal;
+
+            /// <summary>The same, as reported back by the peer. Loss is usually not symmetric.</summary>
+            public float QualityRemote { get; } = qualityRemote;
+
+            /// <summary>Bytes queued on the reliable channel and not yet put on the wire.</summary>
+            public int PendingReliableBytes { get; } = pendingReliableBytes;
+
+            public int PendingUnreliableBytes { get; } = pendingUnreliableBytes;
+
+            /// <summary>Reliable bytes sent and not yet acknowledged — retransmission backlog.</summary>
+            public int SentUnackedReliableBytes { get; } = sentUnackedReliableBytes;
+
+            public float QueueTimeMs { get; } = queueTimeMicroseconds / 1000f;
+        }
+
+        /// <summary>
         /// Latched off after a failure. A missing export or a null interface will not start working
         /// later, and this is called from a per-frame diagnostic path.
         /// </summary>
@@ -82,15 +123,24 @@ namespace MegabonkTogether.Services
 
         /// <summary>
         /// Round-trip time in milliseconds for a connection, or -1 when it cannot be read.
+        /// </summary>
+        public static int TryGetPing(uint connection) =>
+            TryGetLinkStatus(connection, out var status) ? status.PingMs : -1;
+
+        /// <summary>
+        /// Reads a connection's real-time status. False when it cannot be read, which is normal for
+        /// a connection that has just closed.
         ///
         /// <para>Never throws: this is a diagnostic, and a diagnostic that can take the frame down
         /// is worse than no diagnostic. The first failure disables it permanently.</para>
         /// </summary>
-        public static int TryGetPing(uint connection)
+        public static bool TryGetLinkStatus(uint connection, out SteamLinkStatus status)
         {
+            status = default;
+
             if (unavailable || connection == 0U)
             {
-                return -1;
+                return false;
             }
 
             try
@@ -99,23 +149,37 @@ namespace MegabonkTogether.Services
                 if (sockets == IntPtr.Zero)
                 {
                     Disable("the sockets interface was null");
-                    return -1;
+                    return false;
                 }
 
-                var status = default(SteamNetConnectionRealTimeStatusNative);
+                var native = default(SteamNetConnectionRealTimeStatusNative);
 
                 // nLanes 0 and a null lane pointer: we do not use connection lanes, and asking for
                 // lane status is what would need a second struct.
-                var result = GetConnectionRealTimeStatus(sockets, connection, ref status, 0, IntPtr.Zero);
+                var result = GetConnectionRealTimeStatus(sockets, connection, ref native, 0, IntPtr.Zero);
 
                 // k_EResultOK. Anything else — most often a connection that has just closed — is
                 // not worth a log on a path that runs per peer per sample.
-                return result == 1 ? status.Ping : -1;
+                if (result != 1)
+                {
+                    return false;
+                }
+
+                status = new SteamLinkStatus(
+                    native.Ping,
+                    native.ConnectionQualityLocal,
+                    native.ConnectionQualityRemote,
+                    native.PendingReliable,
+                    native.PendingUnreliable,
+                    native.SentUnackedReliable,
+                    native.QueueTime);
+
+                return true;
             }
             catch (Exception ex)
             {
                 Disable($"{ex.GetType().Name}: {ex.Message}");
-                return -1;
+                return false;
             }
         }
 
@@ -123,8 +187,9 @@ namespace MegabonkTogether.Services
         {
             unavailable = true;
             Plugin.Log.LogWarning(
-                $"[steam-net] Round-trip time is unavailable ({reason}). Everything else is "
-                + "unaffected — this is the diagnostic read, not the transport.");
+                $"[steam-net] Connection status is unavailable ({reason}), so rtt and link quality "
+                + "will not be reported. Everything else is unaffected — this is the diagnostic "
+                + "read, not the transport.");
         }
     }
 }

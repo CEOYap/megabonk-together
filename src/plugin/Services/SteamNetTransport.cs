@@ -1249,6 +1249,33 @@ namespace MegabonkTogether.Services
             return SteamNetNative.TryGetPing(peerHandle);
         }
 
+        /// <summary>
+        /// Ping plus the three numbers that make a lossy link legible: the measured delivery ratio
+        /// each way, the reliable backlog, and how long the send queue is holding.
+        ///
+        /// <para>Reliable backlog is the head-of-line signature. Steam has no unordered-reliable
+        /// channel, so every <see cref="NetDelivery.ReliableUnordered"/> send here is ordered
+        /// whether it asked to be or not; under loss a stalled message holds up every reliable
+        /// message queued behind it, and that shows as pending/unacked bytes climbing while the
+        /// unreliable streams carry on. Same P/Invoke as the ping read, so it costs nothing extra.</para>
+        /// </summary>
+        public string DescribeLink(uint connectionId)
+        {
+            if (!peerHandlesByConnectionId.TryGetValue(connectionId, out var peerHandle))
+            {
+                return "no connection";
+            }
+
+            if (!SteamNetNative.TryGetLinkStatus(peerHandle, out var status))
+            {
+                return "status unavailable";
+            }
+
+            return $"rtt {status.PingMs} ms  quality {status.QualityLocal * 100f:F1}%/{status.QualityRemote * 100f:F1}% (local/remote)  "
+                + $"pending {status.PendingReliableBytes} B reliable, {status.PendingUnreliableBytes} B unreliable  "
+                + $"unacked {status.SentUnackedReliableBytes} B  queue {status.QueueTimeMs:F1} ms";
+        }
+
         // ---------------------------------------------------------------- teardown
 
         public void Disconnect(uint connectionId, int endReason, string debugText)

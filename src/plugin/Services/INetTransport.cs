@@ -90,6 +90,18 @@ namespace MegabonkTogether.Services
         /// <summary>Round-trip time to a peer in milliseconds, or -1 when unknown.</summary>
         int GetLatency(uint connectionId);
 
+        /// <summary>
+        /// One line describing the link to a peer, for the bandwidth report. Free-form, because what
+        /// is worth knowing about a link differs per transport and no caller parses it.
+        ///
+        /// <para><b>On the contract rather than read directly off the implementation</b>, for the
+        /// reason this interface exists at all: the diagnostic that used to hold
+        /// <c>IUdpClientService</c> reported <c>rtt -1</c> for an entire Steam session, because it
+        /// was asking a transport that was never started. A reader that names one implementation is
+        /// a reader that silently reports nothing on the other.</para>
+        /// </summary>
+        string DescribeLink(uint connectionId);
+
         /// <summary>Null until the session's role has been decided.</summary>
         bool? IsHost();
 

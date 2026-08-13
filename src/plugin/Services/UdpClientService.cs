@@ -1154,6 +1154,17 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>
+        /// Round-trip time only.
+        ///
+        /// <para>Deliberately thinner than the Steam transport's, which adds delivery ratio and
+        /// reliable backlog. Those exist there to make the lossy-link run readable, and that run is
+        /// on Steam sockets — this transport is behind <c>Network/UseSteamTransport</c> for one
+        /// release and then deleted (Phase 5). Building out a statistics read for it would be work
+        /// with a known expiry date, so this reports what it already knows and no more.</para>
+        /// </summary>
+        public string DescribeLink(uint connectionId) => $"rtt {GetLatency(connectionId)} ms";
+
+        /// <summary>
         /// One id, one space — see <see cref="INetTransport.SendToAllClientsExcept"/>. The two-id
         /// signature this replaces took a LiteNetLib <c>NetPeer.Id</c> for the direct path and a
         /// game connection id for the relay path.
