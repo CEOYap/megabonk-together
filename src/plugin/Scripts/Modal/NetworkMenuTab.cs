@@ -897,24 +897,21 @@ namespace MegabonkTogether.Scripts
         {
             AudioManager.Instance.PlaySfx(AudioManager.Instance.uiSelect.sounds[0]);
 
-            // Refused rather than quietly matched on the other transport. Quickplay needs a pool of
-            // strangers, which on Steam means a lobby browser that does not exist yet — and running
-            // the matchmaker while INetTransport points at Steam is the exact combination that
-            // produced a session where every send was refused.
-            if (Configuration.ModConfig.UseSteamTransport.Value)
+            // The refusal on the Steam transport lives in the service now, with the same wording.
+            // Quickplay needs a pool of strangers, which on Steam means a lobby browser that does
+            // not exist yet, and running the matchmaker while INetTransport points at Steam is the
+            // exact combination that produced a session where every send was refused.
+            SessionService.Quickplay();
+
+            if (!BeganConnecting())
             {
-                SetStatusText("Quickplay is not available on the Steam transport yet. Host or join by code.");
                 return;
             }
 
-            Plugin.Instance.Mode.Mode = NetworkModeType.Random;
-
             UpdateModalContents(false);
-
             ShowLoader("Connecting...");
 
-            Plugin.Instance.NetworkHandler.HandleNetworking();
-            connectionCoroutine = CoroutineRunner.Instance.Run(HandleConnectionStatus());
+            connectionCoroutine = CoroutineRunner.Instance.Run(WatchSession(NetworkModeType.Random));
         }
 
         private void OnFriendliesClicked()
@@ -931,22 +928,17 @@ namespace MegabonkTogether.Scripts
         {
             AudioManager.Instance.PlaySfx(AudioManager.Instance.uiSelect.sounds[0]);
 
-            Plugin.Instance.Mode.Mode = NetworkModeType.Friendlies;
-            Plugin.Instance.Mode.Role = Role.Host;
+            SessionService.Host();
 
-            UpdateFriendliesUI(false);
-
-            ShowLoader("Connecting...");
-
-            if (Configuration.ModConfig.UseSteamTransport.Value)
+            if (!BeganConnecting())
             {
-                SessionService.Host();
-                connectionCoroutine = CoroutineRunner.Instance.Run(HandleSteamFriendlies());
                 return;
             }
 
-            Plugin.Instance.NetworkHandler.HandleNetworking();
-            connectionCoroutine = CoroutineRunner.Instance.Run(HandleFriendlies());
+            UpdateFriendliesUI(false);
+            ShowLoader("Connecting...");
+
+            connectionCoroutine = CoroutineRunner.Instance.Run(WatchSession(NetworkModeType.Friendlies));
         }
 
         private void OnJoinClicked()
@@ -970,23 +962,20 @@ namespace MegabonkTogether.Scripts
         /// </summary>
         internal void JoinWithCode(string code)
         {
-            Plugin.Instance.Mode.Mode = NetworkModeType.Friendlies;
-            Plugin.Instance.Mode.Role = Role.Client;
-            Plugin.Instance.Mode.RoomCode = code;
+            // Mode, Role and RoomCode are set by the service, which also normalises the code. The
+            // empty-code check in OnJoinClicked stays because it reports on this screen; Join
+            // refuses an empty code too, so the invite path is covered as well.
+            SessionService.Join(code);
 
-            UpdateFriendliesUI(false);
-
-            ShowLoader("Joining room...");
-
-            if (Configuration.ModConfig.UseSteamTransport.Value)
+            if (!BeganConnecting())
             {
-                SessionService.Join(code);
-                connectionCoroutine = CoroutineRunner.Instance.Run(HandleSteamFriendlies());
                 return;
             }
 
-            Plugin.Instance.NetworkHandler.HandleNetworking();
-            connectionCoroutine = CoroutineRunner.Instance.Run(HandleFriendlies());
+            UpdateFriendliesUI(false);
+            ShowLoader("Joining room...");
+
+            connectionCoroutine = CoroutineRunner.Instance.Run(WatchSession(NetworkModeType.Friendlies));
         }
 
         /// <summary>
@@ -999,21 +988,72 @@ namespace MegabonkTogether.Scripts
         /// that had never been started. Every send was refused, which broke readiness, and no Steam
         /// lobby was ever created, which hid the invite button.</para>
         ///
-        /// <para>Only the Steam paths route through it for now. Moving the matchmaker paths over is
-        /// step 1 of <c>docs/ui/05-drop-the-netplay-menu.md</c> and wants its own change.</para>
+        /// <para>Every entry point routes through it — host, join and quickplay, on either
+        /// transport. The service picks the transport internally, which is what let the menu's two
+        /// connect coroutines go.</para>
         /// </summary>
         private static Services.INetplaySessionService SessionService =>
             Plugin.Services.GetRequiredService<Services.INetplaySessionService>();
 
         /// <summary>
-        /// Drives the loader and the lobby hand-off for a Steam session. Mirrors
-        /// <see cref="HandleFriendlies"/>'s outcomes, but watches the session service's state rather
-        /// than the matchmaker's, because on this path there is no matchmaker to watch.
+        /// Whether the attempt just requested actually started, and reports it on the current
+        /// screen when it did not.
+        ///
+        /// <para>Some requests are refused before anything is in flight — quickplay on the Steam
+        /// transport, an empty room code, a second press while one attempt is already running. The
+        /// service sets <c>Failed</c> synchronously for those, so taking the screen down and
+        /// raising a loader first would show a spinner for a session that was never attempted, then
+        /// four seconds of nothing, before returning to the screen the player was already on. The
+        /// refusal always carries a reason; this is the guard saying it out loud.</para>
         /// </summary>
-        private IEnumerator HandleSteamFriendlies()
+        private bool BeganConnecting()
         {
+            if (SessionService.IsBusy)
+            {
+                return true;
+            }
+
+            SetStatusText(SessionService.StatusMessage);
+            return false;
+        }
+
+        /// <summary>
+        /// Drives the loader, the status line and the lobby hand-off from the session service's
+        /// state. One watcher for host, join and quickplay on either transport, replacing
+        /// <c>HandleFriendlies</c> and <c>HandleConnectionStatus</c>.
+        ///
+        /// <para>Those two were near-copies that differed in which screen they put back on failure
+        /// and which notification they raised on success — which is what
+        /// <paramref name="mode"/> now carries. Everything else about them was the matchmaker's
+        /// flags read directly, and the service owns those.</para>
+        ///
+        /// <para><b><paramref name="mode"/> is a parameter and not a read of
+        /// <c>Plugin.Instance.Mode</c>, deliberately.</b> A failure inside the service calls
+        /// <c>ResetNetworking</c>, which does <c>Plugin.Instance.Mode = new()</c>, and it does so
+        /// <i>before</i> the state this loop is waiting on becomes <c>Failed</c>. So by the time the
+        /// failure is visible here the mode reads <c>Random</c> — its default — whatever the player
+        /// actually pressed, and a failed Join would put back the wrong screen. The flow has to be
+        /// captured when the attempt starts, not read back afterwards.</para>
+        /// </summary>
+        private IEnumerator WatchSession(NetworkModeType mode)
+        {
+            stopButton.gameObject.SetActive(true);
+            var stopTextWrapper = stopButton.gameObject.GetComponent<ButtonTextWrapper>();
+            stopTextWrapper.t_text.text = "Stop";
+
+            var shownMessage = "";
+
             while (SessionService.IsBusy || SessionService.State == Services.NetplayConnectState.Idle)
             {
+                // Quickplay spends its wait in WaitingForMatch with something to say — the shared
+                // experience notice the old coroutine printed once. Mirroring the message means
+                // this loop does not need to know which flow produces one.
+                if (SessionService.StatusMessage != shownMessage)
+                {
+                    shownMessage = SessionService.StatusMessage;
+                    SetStatusText(shownMessage);
+                }
+
                 yield return new WaitForSeconds(0.1f);
             }
 
@@ -1023,7 +1063,16 @@ namespace MegabonkTogether.Scripts
                 SetStatusText(SessionService.StatusMessage);
                 stopButton.gameObject.SetActive(false);
                 yield return new WaitForSeconds(4f);
-                UpdateFriendliesUI(true);
+
+                if (mode == NetworkModeType.Friendlies)
+                {
+                    UpdateFriendliesUI(true);
+                }
+                else
+                {
+                    UpdateModalContents(true);
+                }
+
                 SetStatusText("");
                 yield break;
             }
@@ -1033,7 +1082,13 @@ namespace MegabonkTogether.Scripts
             SetStatusText("Joined!");
             stopButton.gameObject.SetActive(false);
 
-            if (Plugin.Instance.NetworkHandler.IsHost)
+            if (mode == NetworkModeType.Random)
+            {
+                var role = Plugin.Instance.NetworkHandler.IsHost ? "Host" : "Client";
+                var lobbySize = Plugin.Instance.NetworkHandler.GetLobbySize();
+                Plugin.StartNotification(("MegabonkTogether", "MatchSuccess"), ("MegabonkTogether", "MatchSuccessDesc"), [role, lobbySize.ToString()]);
+            }
+            else if (Plugin.Instance.NetworkHandler.IsHost)
             {
                 Plugin.StartNotification(("MegabonkTogether", "FriendliesHostSuccess"), ("MegabonkTogether", "FriendliesHostSuccessDesc"), []);
             }
@@ -1043,9 +1098,12 @@ namespace MegabonkTogether.Scripts
             }
 
             yield return new WaitForSeconds(1f);
-            CloseModal();
 
+            // Panel before modal: ShowLobbyPanel reads this.mainMenu and CloseModal destroys this
+            // component's GameObject. Both orders are observed to work — the managed reference
+            // outlives the destroyed component — but this is the order with a reason behind it.
             ShowLobbyPanel();
+            CloseModal();
         }
 
         private void OnFriendliesBackClicked()
@@ -1076,13 +1134,17 @@ namespace MegabonkTogether.Scripts
         {
             AudioManager.Instance.PlaySfx(AudioManager.Instance.uiSelect.sounds[0]);
 
+            // Two coroutines end here, and they are not the same one. This stops the menu's
+            // watcher; Cancel stops the service's connect routine and tears the session down —
+            // including leaving the Steam lobby, which ResetNetworking alone would not do on
+            // every path.
             if (connectionCoroutine != null)
             {
                 CoroutineRunner.Instance.StopCoroutine(connectionCoroutine);
                 connectionCoroutine = null;
             }
 
-            Plugin.Instance.NetworkHandler.ResetNetworking();
+            SessionService.Cancel();
 
             HideLoader();
 
@@ -1158,95 +1220,6 @@ namespace MegabonkTogether.Scripts
             netplayOptionsBackButton.gameObject.SetActive(isVisible);
         }
 
-        private IEnumerator HandleConnectionStatus()
-        {
-            stopButton.gameObject.SetActive(true);
-            var stopTextWrapper = stopButton.gameObject.GetComponent<ButtonTextWrapper>();
-            stopTextWrapper.t_text.text = "Stop";
-
-            float timeout = 30f;
-            float elapsed = 0f;
-
-            while (elapsed < timeout && !Plugin.Instance.NetworkHandler.IsConnectedToMatchMaker.HasValue)
-            {
-                yield return new WaitForSeconds(0.5f);
-                elapsed += 0.5f;
-            }
-
-            if (!Plugin.Instance.NetworkHandler.IsConnectedToMatchMaker.Value)
-            {
-                HideLoader();
-                SetStatusText($"Failed to connect to server : {Plugin.Instance.NetworkHandler.MatchMakerFailureMessage}");
-                Plugin.Instance.NetworkHandler.ResetNetworking();
-
-                stopButton.gameObject.SetActive(false);
-                yield return new WaitForSeconds(4f);
-                UpdateModalContents(true);
-                SetStatusText("");
-
-                yield break;
-            }
-
-            AudioManager.Instance.PlaySfx(AudioManager.Instance.uiSelect.sounds[0]);
-            var sharedExpStatus = ModConfig.EnabledSharedExperience.Value
-                ? "<color=green>ON</color>"
-                : "<color=red>OFF</color>";
-            SetStatusText($"Waiting for a match... \n (You can only match people with shared experience {sharedExpStatus})");
-
-            while (!Plugin.Instance.NetworkHandler.HasFoundMatch.HasValue)
-            {
-                if (Plugin.Instance.NetworkHandler.IsNetworkInterruptedStatus)
-                {
-                    HideLoader();
-                    SetStatusText($"Network interrupted. Please try again : {Plugin.Instance.NetworkHandler.MatchMakerFailureMessage}");
-                    Plugin.Instance.NetworkHandler.ResetNetworking();
-
-                    stopButton.gameObject.SetActive(false);
-
-                    yield return new WaitForSeconds(3f);
-                    UpdateModalContents(true);
-                    SetStatusText("");
-                    yield break;
-                }
-                yield return new WaitForSeconds(0.5f);
-            }
-
-            if (!Plugin.Instance.NetworkHandler.HasFoundMatch.HasValue || !Plugin.Instance.NetworkHandler.HasFoundMatch.Value)
-            {
-                HideLoader();
-                SetStatusText($"Failed to connect: {Plugin.Instance.NetworkHandler.MatchMakerFailureMessage}");
-                Plugin.Instance.NetworkHandler.ResetNetworking();
-                stopButton.gameObject.SetActive(false);
-                yield return new WaitForSeconds(4f);
-                UpdateModalContents(true);
-                SetStatusText("");
-                yield break;
-            }
-
-            AudioManager.Instance.PlaySfx(AudioManager.Instance.purchaseSfx.sounds[0]);
-            HideLoader();
-            SetStatusText("Match found!");
-            stopButton.gameObject.SetActive(false);
-
-            mainMenu.GoToCharacterSelection();
-
-            var characterMenu = WindowManager.activeWindow as CharacterMenu;
-            if (characterMenu != null)
-            {
-                characterMenu.selectedButton = characterMenu.characterButtons[0];
-                characterMenu.b_confirm.SetInteractable(false);
-            }
-
-            var role = Plugin.Instance.NetworkHandler.IsHost ? "Host" : "Client";
-            var lobbySize = Plugin.Instance.NetworkHandler.GetLobbySize();
-            Plugin.StartNotification(("MegabonkTogether", "MatchSuccess"), ("MegabonkTogether", "MatchSuccessDesc"), [role, lobbySize.ToString()]);
-
-            yield return new WaitForSeconds(1f);
-            CloseModal();
-
-            ShowLobbyPanel();
-        }
-
         /// <summary>
         /// Opens the lobby panel, which now sits between joining and character selection.
         ///
@@ -1292,120 +1265,5 @@ namespace MegabonkTogether.Scripts
             Plugin.Instance.NetworkHandler.ResetNetworking();
         }
 
-        private IEnumerator HandleFriendlies()
-        {
-            stopButton.gameObject.SetActive(true);
-            var stopTextWrapper = stopButton.gameObject.GetComponent<ButtonTextWrapper>();
-            stopTextWrapper.t_text.text = "Stop";
-
-            float timeout = 30f;
-            float elapsed = 0f;
-
-            while (elapsed < timeout && !Plugin.Instance.NetworkHandler.IsConnectedToMatchMaker.HasValue)
-            {
-                yield return new WaitForSeconds(0.5f);
-                elapsed += 0.5f;
-            }
-
-            if (!Plugin.Instance.NetworkHandler.IsConnectedToMatchMaker.Value)
-            {
-                HideLoader();
-                SetStatusText($"Failed to connect to server : {Plugin.Instance.NetworkHandler.MatchMakerFailureMessage}");
-                Plugin.Instance.NetworkHandler.ResetNetworking();
-
-                stopButton.gameObject.SetActive(false);
-                yield return new WaitForSeconds(4f);
-                UpdateFriendliesUI(true);
-                SetStatusText("");
-
-                yield break;
-            }
-
-            AudioManager.Instance.PlaySfx(AudioManager.Instance.uiSelect.sounds[0]);
-
-            // A HOST goes straight to the lobby panel: the panel IS the waiting room, and gating it
-            // behind a second player having arrived is what made it look like the new UI did
-            // nothing. Everything left in this coroutine for a host is either owned by the panel now
-            // or replaced by its Start button, so it ends here rather than guarding modal calls it
-            // has just destroyed.
-            if (Plugin.Instance.Mode.Role == Role.Host)
-            {
-                // The code arrives on the websocket a moment after the connection reports ready.
-                // Bounded: a host with no code can still use the panel to leave.
-                var codeWait = 0f;
-                while (codeWait < 5f && string.IsNullOrEmpty(Plugin.Instance.Mode.RoomCode))
-                {
-                    yield return new WaitForSeconds(0.1f);
-                    codeWait += 0.1f;
-                }
-
-                if (string.IsNullOrEmpty(Plugin.Instance.Mode.RoomCode))
-                {
-                    Plugin.Log.LogWarning("[lobby] Hosting started but no room code arrived; the panel will open without one.");
-                }
-
-                HideLoader();
-                stopButton.gameObject.SetActive(false);
-
-                // Panel before modal: ShowLobbyPanel reads this.mainMenu and CloseModal destroys
-                // this component's GameObject.
-                ShowLobbyPanel();
-                CloseModal();
-
-                yield break;
-            }
-
-            elapsed = 0f;
-
-            while (elapsed < timeout && !Plugin.Instance.NetworkHandler.HasFoundMatch.HasValue)
-            {
-                if (Plugin.Instance.NetworkHandler.IsNetworkInterruptedStatus)
-                {
-                    HideLoader();
-                    SetStatusText($"Network interrupted. Please try again : {Plugin.Instance.NetworkHandler.MatchMakerFailureMessage}");
-                    Plugin.Instance.NetworkHandler.ResetNetworking();
-
-                    stopButton.gameObject.SetActive(false);
-
-                    yield return new WaitForSeconds(3f);
-                    UpdateFriendliesUI(true);
-                    SetStatusText("");
-                    yield break;
-                }
-                yield return new WaitForSeconds(0.5f);
-                elapsed += 0.5f;
-            }
-
-            if (!Plugin.Instance.NetworkHandler.HasFoundMatch.HasValue || !Plugin.Instance.NetworkHandler.HasFoundMatch.Value)
-            {
-                HideLoader();
-                SetStatusText($"Failed to connect: {Plugin.Instance.NetworkHandler.MatchMakerFailureMessage}");
-                Plugin.Instance.NetworkHandler.ResetNetworking();
-                stopButton.gameObject.SetActive(false);
-                yield return new WaitForSeconds(4f);
-                UpdateFriendliesUI(true);
-                SetStatusText("");
-                yield break;
-            }
-
-            AudioManager.Instance.PlaySfx(AudioManager.Instance.purchaseSfx.sounds[0]);
-            HideLoader();
-            SetStatusText("Joined!");
-            stopButton.gameObject.SetActive(false);
-
-            if (Plugin.Instance.NetworkHandler.IsHost)
-            {
-                Plugin.StartNotification(("MegabonkTogether", "FriendliesHostSuccess"), ("MegabonkTogether", "FriendliesHostSuccessDesc"), []);
-            }
-            else
-            {
-                Plugin.StartNotification(("MegabonkTogether", "FriendliesClientSuccess"), ("MegabonkTogether", "FriendliesClientSuccessDesc"), [""]);
-            }
-
-            yield return new WaitForSeconds(1f);
-            CloseModal();
-
-            ShowLobbyPanel();
-        }
     }
 }
