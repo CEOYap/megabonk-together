@@ -540,7 +540,7 @@ exists to prevent — and the same reasoning that makes `SpawnBoss_Prefix` suppr
 ---
 
 <a name="ob-12"></a>
-## OB-12 — The run's interactable counters diverge, except charge shrines — LIKELY
+## OB-12 — The run's interactable counters diverge, except charge shrines — CONFIRMED, cause exact
 
 **Reported, with two screenshots of the same moment in one run:**
 
@@ -604,7 +604,53 @@ specifics, and saying so is the point of this section: the shortcut in
 `OnReceivedInteractableUsed` is real, but it is not skipping an increment that lives in `Interact`,
 because there is not one.
 
-**Two candidates remain, and both are an xref away.**
+### The xref answers it: the tally is event-driven
+
+Run with the new `scripts/re/xrefs_headless.py` (results cached under `megabonk-re/decompiled/`):
+
+```
+RunStats$$AddValue          <- called only by TrackStats$$AddValue
+TrackStats$$AddValue        <- called by ~20 handlers:
+                               OnChestOpened, OnChestBought, OnInteracted, OnShrineCharged,
+                               OnShadyGuyUsed, OnMicrowaveExploded, OnChallengeShrineCompleted,
+                               OnPickup, OnEnemyDied, OnEvade, OnGoldChange, …
+TrackStats$$OnChestOpened   <- referenced only as DATA, never called
+```
+
+**That last line is the finding.** A handler referenced only from the metadata tables and never by a
+call instruction is a delegate target — something built a delegate from its method pointer and
+subscribed it. `TrackStats` is a bank of subscribers to the game's static `Action`s, of which
+`InteractableChest.A_ChestOpened` (`dump.cs:370556`) is one.
+
+So the tally is raised by **events**, and the events are raised by the interactable's own code path.
+That is the path the mod replaces:
+
+- `InteractableAction.Destroy` removes the object without running it — no event, no tally.
+- `InteractableAction.Used` writes a log line — no event, no tally.
+
+The peer that performed the interaction runs the real path and counts it. Every other peer takes the
+shortcut and does not. That is the whole defect, and it now has a named mechanism rather than an
+assumption.
+
+**And it explains the exception exactly.** `OnShrineCharged` is raised from the charge shrine's own
+completion, and both peers reach that completion because charging is replicated as start/stop and
+each peer runs its own `OnTriggerEnter` / `OnTriggerExit`. Both peers therefore raise the event and
+both tally it — which is why `Charge Shrines` is the one row that agrees.
+
+**What is still not pinned**, and it does not change the conclusion: which specific `Action` each
+`TrackStats` handler subscribes to. IL2CPP delegate construction leaves only a metadata reference, so
+the `+=` site is not reachable by cross-reference — it would need the subscribing function
+(`TrackStats$$Init` or equivalent) decompiled and read. The mapping is only needed if a fix wants to
+raise one event directly rather than replay the interaction.
+
+**Fix shape, now that the mechanism is known.** Replaying the real interaction on the remote peer is
+the only option that keeps the tally correct *and* keeps it derived — but `Interact` has side effects
+the receiver must not run twice, which is presumably why the shortcut exists. Raising the specific
+`TrackStats` event on the receiver is narrower and needs the mapping above. Replicating the tally
+itself is cheapest and turns a derived value into a replicated one, which is a real cost of its own.
+
+**Superseded — kept because the reasoning is the useful part.** Before the xref, this entry named two
+candidates:
 
 1. **`InteractableChest.A_ChestOpened`** — a `public static Action` at field offset `0x8`
    (`dump.cs:370556`). Something subscribes and tallies. If this is the mechanism, the mod's
@@ -613,10 +659,11 @@ because there is not one.
    `EMyStat.chestsOpened = 3`, `potsBroken = 13`, `shrineCharge = 16` exist. Someone calls it with
    those.
 
-**Why the next step is an xref and not another decompile.** Subscriptions (`+=`) and calls live in
-*bodies*, and `dump.cs` lists only declarations — so grepping it cannot find the caller. The lookup
-is a cross-reference search in Ghidra on `A_ChestOpened`'s field address and on `RunStats$$AddValue`,
-which is a different operation from `decompile_headless.py` and has not been done here.
+Both turned out to be the same mechanism seen from two ends, and the xref above joined them.
+
+**Why an xref rather than another decompile.** Subscriptions (`+=`) and calls live in *bodies*, and
+`dump.cs` lists only declarations — so grepping it cannot find a caller by construction. That gap is
+what `scripts/re/xrefs_headless.py` now fills.
 
 **What the answer changes.** If the tally is raised by `A_ChestOpened` or an equivalent per-type
 event, the fix is to make the remote peer run the real interaction instead of destroying the object —
