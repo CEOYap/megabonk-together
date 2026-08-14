@@ -57,6 +57,17 @@ namespace MegabonkTogether.Patches
                 GameObject.Destroy(Plugin.Instance.NetworkTab);
                 Plugin.Instance.NetworkTab = null;
 
+                // The lobby panel is the netplay UI now, so returning to the main menu has to take
+                // it down too. ResetNetworking above has just ended the session underneath it, and
+                // a panel left showing a lobby that no longer exists is worse than no panel.
+                // OnDestroy gives the menu chrome back and unsubscribes, so destroying the object
+                // is the whole teardown.
+                var lobbyPanel = Scripts.Modal.LobbyPanel.Current;
+                if (lobbyPanel != null)
+                {
+                    GameObject.Destroy(lobbyPanel.gameObject);
+                }
+
                 DestroyFriendliesInfoDisplay();
 
                 if (SpawnPlayerPortalPatches.WaitForLobbyCoroutine != null)

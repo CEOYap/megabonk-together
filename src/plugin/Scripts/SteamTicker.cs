@@ -218,9 +218,9 @@ namespace MegabonkTogether.Scripts
         }
 
         /// <summary>
-        /// Opens the netplay menu when an invite has resolved to a room code and nothing is showing
-        /// it yet, so accepting an invite takes the player into the lobby rather than leaving them
-        /// on the main menu wondering.
+        /// Opens the lobby panel and joins when an invite has resolved to a room code and nothing is
+        /// showing it yet, so accepting an invite takes the player into the lobby rather than
+        /// leaving them on the main menu wondering.
         ///
         /// <para><b>This is a layering compromise and worth naming as one.</b> A Steam ticker has no
         /// business knowing about menus. It is here because it is the only always-running component
@@ -231,7 +231,11 @@ namespace MegabonkTogether.Scripts
         /// <para>Guarded on the PLAY TOGETHER button existing, which is the cheap way of asking "is
         /// the main menu up" — during a run it is gone, and an invite arriving mid-game should
         /// leave the code waiting rather than tear the player out of their session. Latched so a
-        /// player who closes the menu is not fighting it to stay closed.</para>
+        /// player who closes the panel is not fighting it to stay open.</para>
+        ///
+        /// <para><b>The code is consumed here now.</b> It used to be enough to open the netplay
+        /// menu and let it find the pending invite for itself; with that menu gone this is the only
+        /// thing acting on the invite, so it takes the code and hands it straight to the join.</para>
         /// </summary>
         private void OpenNetplayMenuForInvite()
         {
@@ -243,14 +247,20 @@ namespace MegabonkTogether.Scripts
             }
 
             var playTogether = Plugin.Instance?.PlayTogetherButton;
-            if (playTogether == null || Plugin.Instance.NetworkTab != null)
+            if (playTogether == null || Scripts.Modal.LobbyPanel.Current != null)
+            {
+                return;
+            }
+
+            var code = steamInviteService.ConsumeJoinCode();
+            if (string.IsNullOrEmpty(code))
             {
                 return;
             }
 
             openedMenuForInvite = true;
-            Plugin.Log.LogInfo("[steam-invite] Opening the netplay menu to act on an invite.");
-            playTogether.OpenNetworkTab();
+            Plugin.Log.LogInfo($"[steam-invite] Opening the lobby to join room {code} from an invite.");
+            playTogether.JoinLobby(code);
         }
 
         private void PollUntilSettled(float delta)

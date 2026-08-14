@@ -1228,42 +1228,15 @@ namespace MegabonkTogether.Scripts
         /// left no point at which a player could see who else had arrived. See
         /// <c>docs/ui/00-lobby-panel.md</c>.</para>
         /// </summary>
+        /// <para><b>This menu is unreachable as of step 2</b> — TOGETHER! opens the panel directly.
+        /// The call stays because the file still compiles and is deleted whole in step 5, and it
+        /// goes through the same factory as every other opener so there is one creation path rather
+        /// than two disagreeing ones. The continue and leave callbacks moved onto the panel with
+        /// it; they were never menu-specific.</para>
+        /// </summary>
         private void ShowLobbyPanel()
         {
-            var panelObj = new GameObject("LobbyPanel");
-            var lobbyPanel = panelObj.AddComponent<LobbyPanel>();
-
-            // Handed the menu before the component builds itself — the panel clones one of
-            // MainMenu's buttons per button it draws.
-            lobbyPanel.Initialize(mainMenu);
-
-            lobbyPanel.OnContinueRequested = GoToCharacterSelection;
-            lobbyPanel.OnLeaveRequested = LeaveLobby;
+            LobbyPanel.Open(mainMenu);
         }
-
-        /// <summary>The step the lobby panel now precedes rather than replaces.</summary>
-        private void GoToCharacterSelection()
-        {
-            mainMenu.GoToCharacterSelection();
-
-            var characterMenu = WindowManager.activeWindow as CharacterMenu;
-            if (characterMenu != null)
-            {
-                characterMenu.selectedButton = characterMenu.characterButtons[0];
-                characterMenu.b_confirm.SetInteractable(false);
-            }
-        }
-
-        /// <summary>
-        /// Tears the session down and returns to the main menu. Routed through
-        /// <c>ResetNetworking</c> rather than just closing the panel, because a peer that abandons
-        /// the UI while still connected is exactly the "player who never reports" case the lobby
-        /// barrier has to survive — better to actually leave.
-        /// </summary>
-        private void LeaveLobby()
-        {
-            Plugin.Instance.NetworkHandler.ResetNetworking();
-        }
-
     }
 }

@@ -47,6 +47,18 @@ namespace MegabonkTogether.Scripts.Modal
         private IUiAssetService uiAssetService;
 
         /// <summary>
+        /// Read only while this peer is not yet in a lobby, to say why. The panel does not start
+        /// sessions; it reports on the one its opener started.
+        /// </summary>
+        private INetplaySessionService sessionService;
+
+        /// <summary>
+        /// The last session message put on screen, so a status repeated at every refresh does not
+        /// keep resetting its own hold timer.
+        /// </summary>
+        private string shownSessionMessage = "";
+
+        /// <summary>
         /// Rebuilt on a timer, never per frame. <see cref="ILobbyViewService.GetMembers"/> allocates
         /// a list and each rebuild touches TMP text, so at 60 Hz this would be exactly the kind of
         /// idle allocation <c>docs/netplay/04-performance-and-gc.md</c> exists to prevent.
@@ -119,6 +131,78 @@ namespace MegabonkTogether.Scripts.Modal
         /// <summary>Runs when Join from clipboard is pressed, with the trimmed clipboard text.</summary>
         internal Action<string> OnJoinRequested { get; set; }
 
+        /// <summary>
+        /// The panel currently on screen, or null.
+        ///
+        /// <para>Exists because the panel is now the netplay entry point rather than something a
+        /// menu opens at the end of a flow, so two callers — the TOGETHER! button and an arriving
+        /// Steam invite — both need to ask "is it already up" before opening a second one. That
+        /// question used to be <c>Plugin.Instance.NetworkTab != null</c>.</para>
+        ///
+        /// <para>Unity null applies here on purpose: a destroyed panel reads as null through this
+        /// property even while its managed reference is alive, which is the answer a caller
+        /// wants.</para>
+        /// </summary>
+        internal static LobbyPanel Current { get; private set; }
+
+        /// <summary>
+        /// Opens the panel, or returns the one already open. The single way it gets created.
+        ///
+        /// <para>The two callbacks are wired here rather than by each caller because they are the
+        /// same for all of them: continue means character selection, leave means tear the session
+        /// down. They were <c>NetworkMenuTab</c>'s private methods, and leaving them there would
+        /// have meant a menu scheduled for deletion owning what the panel does next.</para>
+        ///
+        /// <para><b>This does not start a session</b> — the caller does that, because hosting and
+        /// joining are different and only the caller knows which. The panel opens in its
+        /// not-in-a-lobby state either way and follows the session service from there.</para>
+        /// </summary>
+        internal static LobbyPanel Open(MainMenu menu)
+        {
+            if (Current != null)
+            {
+                return Current;
+            }
+
+            var panelObj = new GameObject("LobbyPanel");
+            var panel = panelObj.AddComponent<LobbyPanel>();
+
+            // Before the component builds itself in Start.
+            panel.Initialize(menu);
+
+            panel.OnContinueRequested = () => GoToCharacterSelection(menu);
+            panel.OnLeaveRequested = () => Plugin.Instance.NetworkHandler.ResetNetworking();
+
+            return panel;
+        }
+
+        /// <summary>
+        /// The step the lobby precedes rather than replaces. Moved here from
+        /// <c>NetworkMenuTab</c> unchanged, except for the bounds check — indexing
+        /// <c>characterButtons[0]</c> on an empty list is the same unguarded dereference that has
+        /// already cost this project a session.
+        /// </summary>
+        private static void GoToCharacterSelection(MainMenu menu)
+        {
+            menu.GoToCharacterSelection();
+
+            var characterMenu = WindowManager.activeWindow as CharacterMenu;
+            if (characterMenu == null || characterMenu.characterButtons == null)
+            {
+                return;
+            }
+
+            if (characterMenu.characterButtons.Count > 0)
+            {
+                characterMenu.selectedButton = characterMenu.characterButtons[0];
+            }
+
+            if (characterMenu.b_confirm != null)
+            {
+                characterMenu.b_confirm.SetInteractable(false);
+            }
+        }
+
         /// <summary>Call before the panel builds itself — i.e. before the component is enabled.</summary>
         internal void Initialize(MainMenu menu)
         {
@@ -127,8 +211,11 @@ namespace MegabonkTogether.Scripts.Modal
 
         public void Awake()
         {
+            Current = this;
+
             lobbyViewService = Plugin.Services.GetService<ILobbyViewService>();
             uiAssetService = Plugin.Services.GetService<IUiAssetService>();
+            sessionService = Plugin.Services.GetService<INetplaySessionService>();
 
             // Unconditional lifecycle logging, deliberately. Two rounds were spent unable to tell
             // "the panel never ran" from "the panel ran and rendered invisibly", because every log
@@ -405,6 +492,17 @@ namespace MegabonkTogether.Scripts.Modal
 
             // Hide rather than grey out, so the panel never offers an action that cannot work.
             var inLobby = lobbyViewService.IsInLobby;
+
+            // Not in a lobby means the session its opener started is still connecting, or has
+            // failed. Either way the service has a sentence about it and the panel is the only
+            // thing on screen to show it — without this a failed host leaves the player looking at
+            // an empty panel with no idea why. The full connecting window with a Stop button is
+            // step 3 of docs/ui/05-drop-the-netplay-menu.md; this is the part that stops it
+            // stranding somebody in the meantime.
+            if (!inLobby)
+            {
+                ShowSessionStatus();
+            }
             SetButtonVisible(inviteButton, inLobby && lobbyViewService.CanInvite);
             SetButtonVisible(copyCodeButton, inLobby && !string.IsNullOrEmpty(code));
             SetButtonVisible(leaveLobbyButton, inLobby);
@@ -554,6 +652,25 @@ namespace MegabonkTogether.Scripts.Modal
             Refresh();
         }
 
+        /// <summary>
+        /// Mirrors the session service's message onto the panel, once per change.
+        /// </summary>
+        private void ShowSessionStatus()
+        {
+            var message = sessionService?.StatusMessage ?? "";
+            if (message == shownSessionMessage)
+            {
+                return;
+            }
+
+            shownSessionMessage = message;
+
+            if (!string.IsNullOrEmpty(message))
+            {
+                SetStatusText(message);
+            }
+        }
+
         private void SetStatusText(string text)
         {
             if (statusTextField == null)
@@ -682,6 +799,16 @@ namespace MegabonkTogether.Scripts.Modal
 
         public void OnDestroy()
         {
+            // ReferenceEquals, not ==. Destroy is deferred to end of frame, so a panel opened
+            // immediately after another was closed sets Current in its Awake before the outgoing
+            // panel's OnDestroy runs — and a plain "Current = null" here would then blank the live
+            // one. Unity's == would also answer true comparing the dying panel to any other
+            // destroyed panel, which is the same trap from the other side.
+            if (ReferenceEquals(Current, this))
+            {
+                Current = null;
+            }
+
             // Restored here rather than only in Close(), so a panel torn down by a scene change
             // still gives the menu back instead of leaving the player on a blank screen.
             RestoreMainMenuChrome();
