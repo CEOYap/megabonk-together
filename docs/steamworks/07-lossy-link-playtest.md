@@ -1,8 +1,9 @@
 # The lossy-link run: protocol
 
-**Status: written, not yet run.** This is the procedure for Phase 4's last exit criterion — a full
-co-op run on the Steam transport under 3% simulated packet loss — and for the reward-window desync
-capture that has to happen in the same sitting.
+**Status: run once, 2026-08-15. Session 27217500. Substantially passed, with one gap — see
+[Run 1](#run-1-session-27217500) at the bottom.** This is the procedure for Phase 4's last exit
+criterion — a full co-op run on the Steam transport under simulated packet loss — and for the
+reward-window desync capture that has to happen in the same sitting.
 
 Read [`06-next-session.md`](06-next-session.md) first for why this gates Phase 5: Phase 5 deletes
 the transport you would otherwise fall back to.
@@ -157,3 +158,80 @@ A full run — lobby, character select, map, a complete run, at least one level 
 
 Anything less than a complete run is not a pass. The criterion is a full run because the failures
 being looked for are the ones that only appear at a transition.
+
+---
+
+## Run 1, session 27217500
+
+**2026-08-15. Two machines, Steam transport, host `85195421` and client `82462037`. The first
+same-session log pair this project has had.** Loss was applied partway through the second level, at
+roughly ten times the required rate, and held for about four minutes.
+
+### The rig was real, and that is now a measured statement
+
+| | host | client |
+|---|---|---|
+| `[bw]` samples | 104 | 103 |
+| samples below 90% quality | 25 (≈250 s) | 24 (≈240 s) |
+| worst quality | 60.0% | 59.9% |
+| peak pending reliable | 30 B | 473 B |
+| peak unacked reliable | 980 B | 1476 B |
+| send failures | 0 | 0 |
+| unreliable→reliable promotions | 0 | 0 |
+
+Quality fell to ~60% on **both** peers though clumsy ran on one, which is expected — it drops on
+that machine's adapter in both directions. ~60% delivery is a far harsher test than the 3% the
+criterion asks for.
+
+### What held
+
+- **The encounter barrier was perfect.** 86 rounds released by the host, 86 applied by the client,
+  no gaps, and **not one** `Dropping a stale barrier report` or `Ignoring a stale release` on either
+  end. `ReliableOrdered` did its job at 40% loss.
+- **Zero send failures** across the whole session.
+- **Head-of-line blocking is real but was bounded.** The reliable backlog is visible in the client's
+  473 B pending / 1476 B unacked, and it drained — `queue` read 0.0 ms in every single sample on
+  both peers, and the backlog returned to 0 between events. The degradation `ReliableUnordered`
+  suffers on Steam cost throughput, not correctness, at this loss rate.
+- **The promotion never fired**, on either peer, in 207 samples. That is the confirming result
+  predicted above, not a missing one.
+- Session ended cleanly on both ends.
+
+### The gap: no level transition happened under loss
+
+**This is why run 1 is not a full pass.** The session had exactly two readiness rounds. Round 2 —
+the level transition — completed on the host at log line 2041, and the first sub-90% sample is at
+line 2093. Loss was switched on *after* arriving at level 2, and the session ended on level 2.
+
+So the readiness barrier, which the Phase 4 handover records as having broken four times and is the
+one path where a single loss has historically been a permanent hang, **was never exercised lossy**.
+Everything that passed above is the in-run case.
+
+**Run 2 should start clumsy in the lobby and cross at least one level transition.** That is the
+whole remaining question.
+
+### Worth knowing anyway
+
+**The readiness retry earned its keep on a clean link.** Round 2 needed
+`Re-reporting for round 2 (attempt 2/15)` before the host acknowledged it, and the quality samples
+around it read 99–100%. So a first readiness report can be lost, or can race the round opening,
+with no packet loss at all. Under loss the retry budget stops being decorative.
+
+**The reward-window desync did not reproduce.** The barrier log is spotless, so this pair does not
+diagnose it. The pair is still worth keeping: it is the healthy baseline the next one gets compared
+against, and it establishes what a clean barrier looks like at 40% loss.
+
+**Three defects fell out of the logs**, all fixed on this branch, none of them loss-related:
+
+- `quality …/-100.0%` on the opening sample — Steam reports an unmeasured quality as -1.
+- `UdpClientService.Reset()` threw on every Steam teardown, on both peers: `netManager` is null on a
+  transport that never started, and `DisconnectAll()` was the one line not guarded.
+- One `NullReferenceException` in `WindowClosed_Postfix`, client only, dereferencing `b_confirm` on
+  a menu that was closing.
+
+**Unattributed, and not from this branch:** the client logged **1716** Unity-sourced
+`NullReferenceException` lines to the host's 7, 1555 of them *before* loss started, so it is not a
+loss effect. They arrive as `[Error : Unity]` with no stack trace, which is the documented BepInEx
+behaviour — `LogOutput.log` keeps the message and discards the trace. **Attributing them needs
+Unity's own player log**, not this one. Worth doing: it is the largest unexplained thing in the
+pair.

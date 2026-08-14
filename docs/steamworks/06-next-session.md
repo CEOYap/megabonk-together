@@ -29,22 +29,34 @@ any connection was attempted.
 
 ## The one exit criterion left
 
-**A full run under 3% simulated packet loss.** Not a formality:
+**A full run under 3% simulated packet loss. Run once on 2026-08-15 at ~40% loss and substantially
+passed — one gap remains.** Full results and the numbers:
+[`07-lossy-link-playtest.md`](07-lossy-link-playtest.md).
 
-- `ReliableUnordered` degrades to reliable-ordered on Steam — head-of-line blocking it exists to
-  avoid comes back.
-- Unreliable sends above ~1200 bytes fragment *unreliably*; one lost fragment discards the message.
-- The promotion threshold added to prevent that (`MaxUnreliableBytes` in `SteamNetTransport`) **has
-  never fired**.
+All three original worries are answered:
 
-A clean link hides all three. `clumsy` at 3% on one end is the test. Do this before Phase 5 — Phase 5
-deletes the transport you would fall back to.
+- `ReliableUnordered` degrading to reliable-ordered on Steam — **real but bounded.** The reliable
+  backlog is visible (473 B pending, 1476 B unacked on the client) and it drained; `queue` read
+  0.0 ms in all 207 samples. It cost throughput, not correctness.
+- Unreliable sends above ~1200 bytes fragmenting unreliably — **cannot occur.** Every unreliable
+  send is bounded below 1000 B by the stream splitter or by its own shape.
+- The `MaxUnreliableBytes` promotion **has still never fired**, and that is now a measurement rather
+  than an assumption: it logs, and it stayed silent for 207 samples on both peers. It also *cannot*
+  be exercised by a loss run, because promotion keys off payload size.
+
+Also proven: 86 barrier rounds released and applied with zero stale reports, and zero send failures,
+at ~60% delivery.
+
+**The gap, and the only reason this is not a full pass: no level transition happened under loss.**
+Loss was switched on after arriving at level 2 and the session ended there, so the readiness barrier
+— the four-times-broken path where one lost message has historically been a permanent hang — was
+never exercised lossy. **Run 2 starts clumsy in the lobby and crosses a level transition.**
 
 ## Open bugs
 
 | | |
 |---|---|
-| **Reward window after a charge shrine occasionally desyncs** | Not diagnosed. Needs **both logs from the same session** — the pair available were from different ones. The encounter barrier already logs enough: host `[barrier] Report … accepted` / `Released round N`, client `Applied release for round N`, and `Dropping a stale barrier report` when the ends disagree about the round |
+| **Reward window after a charge shrine occasionally desyncs** | Still not diagnosed, but **no longer for want of a log pair.** Session 27217500 (2026-08-15) is a same-session host/client pair and the desync did **not** reproduce in it — 86 barrier rounds, zero stale lines, at ~40% loss. That pair is the healthy baseline to compare the next occurrence against. Reproducing it is now the blocker, not capturing it |
 | [OB-11](../netplay/08-observed-bugs.md#ob-11) | Minibosses spawn near the host. Structural — the mod supplies no spawn position, and the game's spawner knows about one player |
 | [OB-12](../netplay/08-observed-bugs.md#ob-12) | Interactable tallies diverge. **Cause now confirmed:** the tally is raised by events (`TrackStats` subscribers) that the mod's `Destroy`/`Used` shortcuts never run |
 | The run starts without locking the lobby | `SetLobbyJoinable(false)` is not exposed by `ISteamLobbyService`; someone could join between Start and the map loading |
