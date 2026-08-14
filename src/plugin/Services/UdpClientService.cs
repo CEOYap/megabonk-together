@@ -749,7 +749,13 @@ namespace MegabonkTogether.Services
             }
             usesRelay.Clear();
 
-            netManager.DisconnectAll();
+            // Null-conditional to match the Stop() above. On a Steam session this transport is
+            // constructed but never started, so netManager is null and this threw on every
+            // teardown — observed on both peers of a Steam run, caught by the caller and logged as
+            // "Error resetting UDP client". Harmless in that it is the last statement here, but it
+            // put a NullReferenceException in both logs at the end of every clean session, which
+            // is exactly the kind of standing noise that hides a real one.
+            netManager?.DisconnectAll();
         }
 
 
