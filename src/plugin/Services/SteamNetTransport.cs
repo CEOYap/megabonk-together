@@ -1334,10 +1334,20 @@ namespace MegabonkTogether.Services
                 return "status unavailable";
             }
 
-            return $"rtt {status.PingMs} ms  quality {status.QualityLocal * 100f:F1}%/{status.QualityRemote * 100f:F1}% (local/remote)  "
+            return $"rtt {status.PingMs} ms  quality {Quality(status.QualityLocal)}/{Quality(status.QualityRemote)} (local/remote)  "
                 + $"pending {status.PendingReliableBytes} B reliable, {status.PendingUnreliableBytes} B unreliable  "
                 + $"unacked {status.SentUnackedReliableBytes} B  queue {status.QueueTimeMs:F1} ms";
         }
+
+        /// <summary>
+        /// Steam reports a quality it does not know yet as -1, which the first formatting of this
+        /// printed literally as "-100.0%" — on the opening sample of every session, because the
+        /// remote end's estimate has not been reported back at that point. A negative percentage is
+        /// a number a reader has to stop and decode, and the whole value of this line during a loss
+        /// run is being able to read the delivery ratio at a glance.
+        /// </summary>
+        private static string Quality(float ratio) =>
+            ratio < 0f ? "unknown" : $"{ratio * 100f:F1}%";
 
         // ---------------------------------------------------------------- teardown
 
