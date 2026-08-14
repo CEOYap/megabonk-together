@@ -110,18 +110,39 @@ namespace MegabonkTogether.Patches
         }
 
         /// <summary>
-        /// Re-enable confirm button on character menu when closed
+        /// Re-enable confirm button on character menu when closed.
+        ///
+        /// <para><b>Guarded because it threw.</b> A Steam co-op session put one
+        /// <c>NullReferenceException</c> here on the client. Two things on this line can be null
+        /// and the name check rules out neither: the cast returns null when the window named
+        /// "W_Character" is not actually a <c>CharacterMenu</c>, and <c>b_confirm</c> is null on a
+        /// menu whose buttons have already been torn down — which is the ordinary case when the
+        /// window is closing. A destroyed Unity object also compares equal to null here, which is
+        /// the behaviour wanted: there is nothing to re-enable on a corpse.</para>
+        ///
+        /// <para>The cast stays <c>as</c> rather than <c>TryCast</c>, which the interop surface
+        /// here does not expose on <c>Window</c>, and which the three sibling casts in this file
+        /// do not use either. Only the dereference was ever the fault.</para>
         /// </summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(WindowManager.WindowClosed))]
         public static void WindowClosed_Postfix(Window closedWindow)
         {
-            if (closedWindow.name == "W_Character" && Plugin.Instance.Mode.Mode == NetworkModeType.Friendlies)
+            if (closedWindow == null
+                || closedWindow.name != "W_Character"
+                || Plugin.Instance.Mode.Mode != NetworkModeType.Friendlies)
             {
-                var character = closedWindow as CharacterMenu;
-                character.b_confirm.state = MyButton.EButtonState.Active;
-                character.b_confirm.RefreshState();
+                return;
             }
+
+            var character = closedWindow as CharacterMenu;
+            if (character == null || character.b_confirm == null)
+            {
+                return;
+            }
+
+            character.b_confirm.state = MyButton.EButtonState.Active;
+            character.b_confirm.RefreshState();
         }
 
         /// <summary>
