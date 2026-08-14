@@ -107,6 +107,16 @@ either machine relaunches the game**:
 Copy-Item "$env:ProgramFiles(x86)\Steam\steamapps\common\Megabonk\BepInEx\LogOutput.log" "$HOME\Desktop\run-2026-08-13-A-host.log"
 ```
 
+**Take two logs from each machine, not one.** `BepInEx/LogOutput.log` and Unity's own player log:
+
+```powershell
+Copy-Item "$env:USERPROFILE\AppData\LocalLow\Ved\Megabonk\Player.log" "$HOME\Desktop\run-2026-08-13-A-host-player.log"
+```
+
+Only the second carries stack traces — `LogOutput.log` keeps the exception message and discards the
+trace — and run 1 could not attribute the client's 1716 exceptions for exactly this reason: only the
+BepInEx log came back from that machine.
+
 Name the pair with the same run identifier and mark which end is the host and which had clumsy.
 A pair that cannot be proven to be one session is worth nothing.
 
@@ -229,9 +239,18 @@ against, and it establishes what a clean barrier looks like at 40% loss.
 - One `NullReferenceException` in `WindowClosed_Postfix`, client only, dereferencing `b_confirm` on
   a menu that was closing.
 
-**Unattributed, and not from this branch:** the client logged **1716** Unity-sourced
-`NullReferenceException` lines to the host's 7, 1555 of them *before* loss started, so it is not a
-loss effect. They arrive as `[Error : Unity]` with no stack trace, which is the documented BepInEx
-behaviour — `LogOutput.log` keeps the message and discards the trace. **Attributing them needs
-Unity's own player log**, not this one. Worth doing: it is the largest unexplained thing in the
-pair.
+**Attributed, and not from this branch:** the client logged **1716** Unity-sourced
+`NullReferenceException` lines to the host's 7, none of them a loss effect. The host's
+`Player.log` — `%USERPROFILE%\AppData\LocalLow\Ved\Megabonk\` — carries full traces where
+`LogOutput.log` carries none, and all 7 are
+[the custom-button null-background bug](../ui/04-custom-button-null-background.md): mod-made
+buttons are built by destroying the original `MyButtonNormal`, so `background` is null and
+`SetColor` throws on every hover.
+
+The client's 1716 are **consistent with the same bug but not proven** — that machine's `Player.log`
+was not captured. They fire only during the run, in 252 bursts averaging 6.8 consecutive lines,
+which is the shape one selection change makes across several mod-made buttons. **Grab the client's
+`Player.log` next session**; one grep closes it.
+
+This is the largest exception source in the mod by two orders of magnitude, and it is a known,
+diagnosed, unfixed bug with its own doc — not something this branch introduced.
