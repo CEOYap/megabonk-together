@@ -1,7 +1,8 @@
 # Planned: TOGETHER! goes straight to the lobby
 
-**Status: Phase 5, step 1 done and steps 2–5 planned. Written down so the size of it is known
-before it is begun — see "The order to do it in".**
+**Status: Phase 5, steps 1 and 2 done, steps 3–5 planned. `NetworkMenuTab` is now unreachable —
+nothing constructs it. Netplay Options and quickplay are offline until steps 4 and 3. None of it
+has been run in-game.**
 
 Today, pressing **TOGETHER!** opens `NetworkMenuTab` — a name box, Netplay Options, and a
 Random / Friendlies choice, and behind Friendlies another screen with Host, a room-code box and
@@ -45,13 +46,18 @@ reason. That is the part most likely to strand somebody.
 
 ## Callers to update
 
-Small, and all of them mechanical:
+Small, and all of them mechanical. **Three of the four are done (step 2).**
 
-- `Patches/WindowManager.cs:52` destroys `Plugin.Instance.NetworkTab` on a window change.
-- `Plugin.cs:64` holds the reference; `Plugin.cs:215` registers the type.
-- `Scripts/Button/PlayTogetherButton.cs` creates it — this becomes the new entry point.
-- `Scripts/SteamTicker.cs:217` checks `NetworkTab != null` to decide whether to open the menu for
-  an invite, and calls `OpenNetworkTab()`. Both become "is the lobby panel already up".
+- ~~`Patches/WindowManager.cs:52` destroys `Plugin.Instance.NetworkTab` on a window change.~~ Done —
+  it also destroys the lobby panel now, since `ResetNetworking` on the line above has just ended the
+  session underneath it.
+- `Plugin.cs:64` holds the reference; `Plugin.cs:215` registers the type. **Still to do, in step 5**
+  — both are harmless while `NetworkTab` simply stays null forever.
+- ~~`Scripts/Button/PlayTogetherButton.cs` creates it — this becomes the new entry point.~~ Done —
+  `OpenLobby()` hosts, `JoinLobby(code)` joins, and both refuse to start a second session if the
+  panel is already up.
+- ~~`Scripts/SteamTicker.cs:217` checks `NetworkTab != null` … and calls `OpenNetworkTab()`.~~ Done
+  — both are now `LobbyPanel.Current`, and it consumes the room code itself.
 
 ## It interacts with the button crash
 
@@ -69,13 +75,13 @@ editing is scheduled for deletion, and not spend care on it accordingly.
 Both were found by looking rather than by building, and both say the same thing: the panel
 additions depend on TOGETHER! opening the panel, not the other way round.
 
-**Quickplay, Join From Clipboard and a connecting window are unreachable until then.** The panel is
+**Quickplay, Join From Clipboard and a connecting window are unreachable until then.** ~~The panel is
 only ever created *after* a session exists — `ShowLobbyPanel` runs when hosting connects or a match
-is found — so it is always shown in-lobby. `SetButtonVisible(joinFromClipboardButton, !inLobby)`
-anticipated a not-in-lobby state that nothing produces, which is also why
-`LobbyPanel.OnJoinRequested` being unassigned has never been noticed. Adding Quickplay next to it
-adds a second button nobody can reach, and a connecting window has nothing to report on because the
-panel never starts a connection.
+is found — so it is always shown in-lobby.~~ **Step 2 resolved this.** The panel now opens *before*
+the session starts, so the not-in-lobby state that `SetButtonVisible(joinFromClipboardButton,
+!inLobby)` always anticipated is finally produced, and step 3's three additions have somewhere to
+live. `LobbyPanel.OnJoinRequested` is still unassigned and therefore still inert — assigning it is
+step 3's job.
 
 **Netplay Options does not fit in the button column.** It reserves 520 units for five buttons at
 about 96 each, and five is already the worst case — Invite, Copy Code, Ready, Start, Leave Lobby.
@@ -112,10 +118,32 @@ paths and the deletions after it.
 That went first because it is the only step verifiable with the menu still in place, and because it
 gives the connecting window a single owner before anything depends on one.
 
-**2. TOGETHER! opens the lobby panel, always hosting.** `PlayTogetherButton.OpenNetworkTab` becomes
-"open the panel"; `SteamTicker`'s invite check and `WindowManager`'s teardown follow. This is the
-step that makes `NetworkMenuTab` unreachable, and it takes Netplay Options offline with it unless
-step 4 lands alongside.
+**2. TOGETHER! opens the lobby panel, always hosting.** ~~`PlayTogetherButton.OpenNetworkTab`
+becomes "open the panel"; `SteamTicker`'s invite check and `WindowManager`'s teardown follow.~~
+**Done.** `NetworkMenuTab` is unreachable — nothing constructs it.
+
+> `LobbyPanel` gained a static `Current` (the replacement for `Plugin.Instance.NetworkTab != null`)
+> and a static `Open` that wires the continue and leave callbacks, which moved off `NetworkMenuTab`
+> because they were never menu-specific. The invite path now consumes the room code itself and
+> joins with it.
+>
+> **Two hazards this turned up, both worth keeping:**
+>
+> - **A second press restarts a working session.** The session service refuses a start only while
+>   it is *busy*, so once a lobby is up a second TOGETHER! passes that check and tears the live
+>   session down to begin another. The entry point guards on the panel already existing. Anything
+>   else that gains a "start a session" button needs the same guard — the service will not save it.
+> - **`Current` must be cleared with `ReferenceEquals`, not `==`.** `Destroy` is deferred to end of
+>   frame, so a panel opened right after one closes sets `Current` in `Awake` before the outgoing
+>   panel's `OnDestroy` runs; a plain `Current = null` there blanks the live one. This is the
+>   destroyed-object rule from the Phase 4 branch, met from the other direction.
+>
+> **Offline as of this step:** Netplay Options and quickplay, both reachable only through the menu.
+> The two toggles stay settable in the config file. Steps 3 and 4 bring them back.
+>
+> **UNVERIFIED**, and this is the step that changes what the button does. The specific risk is that
+> the panel now opens against a live main menu rather than after a modal closed itself, and
+> `HideMainMenuChrome` has only ever run in the latter case.
 
 **3. Quickplay and Join From Clipboard on the panel, and the connecting window.** All three need
 step 2 first — see the constraints above. `LobbyPanel.OnJoinRequested` needs assigning as part of
