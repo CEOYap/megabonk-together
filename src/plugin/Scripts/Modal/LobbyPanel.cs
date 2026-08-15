@@ -682,10 +682,22 @@ namespace MegabonkTogether.Scripts.Modal
                 return;
             }
 
-            var container = buttonContainer as RectTransform;
+            // GetComponent, not `buttonContainer as RectTransform`.
+            //
+            // That cast is why this check has never once produced a line. buttonContainer comes
+            // from Transform.Find, so its managed wrapper is typed Transform, and C#'s `as` tests
+            // the wrapper's type rather than the IL2CPP object's — it answered null for an object
+            // that is a RectTransform, and the method returned two lines in. The column has
+            // overflowed twice since this was written and reported neither, which is the whole
+            // failure mode the check exists to prevent.
+            var container = buttonContainer.GetComponent<RectTransform>();
             var layout = buttonContainer.GetComponent<VerticalLayoutGroup>();
             if (container == null || layout == null)
             {
+                Plugin.Log.LogWarning(
+                    "[lobby] Cannot measure the button column: "
+                    + $"RectTransform {(container == null ? "missing" : "found")}, "
+                    + $"VerticalLayoutGroup {(layout == null ? "missing" : "found")}.");
                 return;
             }
 
