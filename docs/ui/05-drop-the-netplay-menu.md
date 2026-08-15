@@ -1,8 +1,8 @@
-# Planned: TOGETHER! goes straight to the lobby
+﻿# Planned: TOGETHER! goes straight to the lobby
 
-**Status: Phase 5, steps 1–3 done, steps 4 and 5 planned. `NetworkMenuTab` is unreachable — nothing
-constructs it. Random is retired rather than rehomed. Netplay Options is offline until step 4. None
-of steps 2 or 3 has been run in-game.**
+**Status: Phase 5, steps 1–4 done. Only step 5, the deletion, remains. `NetworkMenuTab` is
+unreachable — nothing constructs it. Random is retired rather than rehomed. Steps 2, 3 and 4 have
+not been run in-game; step 2's panel has been seen on screen and sized against two aspect ratios.**
 
 Today, pressing **TOGETHER!** opens `NetworkMenuTab` — a name box, Netplay Options, and a
 Random / Friendlies choice, and behind Friendlies another screen with Host, a room-code box and
@@ -91,12 +91,15 @@ the session starts, so the not-in-lobby state that `SetButtonVisible(joinFromCli
 live. `LobbyPanel.OnJoinRequested` is still unassigned and therefore still inert — assigning it is
 step 3's job.
 
-**Netplay Options does not fit in the button column.** It reserves 520 units for five buttons at
-about 96 each, and five is already the worst case — Invite, Copy Code, Ready, Start, Leave Lobby.
-A sixth needs about 616, which puts the card near 1050 against a 1080 reference. So Netplay Options
-has to be a **sub-view** that replaces the member list and column with the two toggles and a Back
-button, the way the menu does it today, rather than another entry in the column. That is prefab
-work plus a view-state in `LobbyPanel`, not a button.
+**Netplay Options does not fit in the button column.** ~~It reserves 520 units for five buttons at
+about 96 each~~ — **and this held, so step 4 built the sub-view it calls for.** The numbers moved
+underneath it: the buttons are 52 units rather than 96, the column reserves 430 rather than 520,
+and the card is 500x785 rather than 620x950. The conclusion did not move. Seven buttons at 52 use
+424 of the 430 reserved, so the lobby view is full and Options still had to *replace* the column
+rather than extend it.
+
+Worth keeping for the next person who wants to add a button: **there is no room for an eighth.**
+Anything new is either a sub-view or a replacement for something already there.
 
 ## The order to do it in
 
@@ -181,8 +184,17 @@ step 2 first.~~ **Done, with one of the three dropped rather than built.**
 >
 > **UNVERIFIED**: none of step 3 has been run in-game.
 
-**4. Netplay Options as a panel sub-view.** Independent of the others and doable at any point: the
-two toggles and a Back button, replacing the member list and column rather than adding to it.
+**4. Netplay Options as a panel sub-view.** ~~Independent of the others and doable at any point:
+the two toggles and a Back button, replacing the member list and column rather than adding to it.~~
+**Done**, and built exactly that way — the constraint below turned out to be the whole design.
+
+> The toggles are **buttons carrying their state in the label** ("Saves: ON", "Shared XP: OFF"),
+> not clones of the game's `Settings` prefab the way the deleted menu did it. That prefab is found
+> by name and split across a status label and two arrows; a button that says what it is and flips
+> when pressed needs none of that and matches the rest of the column. Both write through to the
+> config file on press, since these are read when a session starts rather than watched.
+>
+> **UNVERIFIED**: not run in-game.
 
 **5. Delete `NetworkMenuTab`, `ModConfig.PlayerName`, and the name box with it.**
 
