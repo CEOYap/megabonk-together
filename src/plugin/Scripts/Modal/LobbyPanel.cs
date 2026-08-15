@@ -563,9 +563,17 @@ namespace MegabonkTogether.Scripts.Modal
             // The prefab's placeholder buttons exist so the column's shape is visible in the editor.
             // They are uGUI Buttons, which Megabonk's Window registry does not collect, so they are
             // cleared and replaced with clones of the game's own button.
+            //
+            // DestroyImmediate, not Destroy. Destroy runs at the end of the frame, so the five
+            // placeholders were still children — and still active — when the column was measured
+            // later in this same frame. That is what reported "8 buttons need 486 units": three
+            // real ones plus five corpses, at exactly 8 x 52 + 7 x 10. The overflow was not real,
+            // and a measurement that counts objects already destroyed is worse than none. Same
+            // reasoning as ReplaceWithCustomButton, which uses DestroyImmediate for the same reason
+            // one layer down.
             for (var i = buttonContainer.childCount - 1; i >= 0; i--)
             {
-                Destroy(buttonContainer.GetChild(i).gameObject);
+                DestroyImmediate(buttonContainer.GetChild(i).gameObject);
             }
 
             // Invite sits above Copy Code: it is the friendlier of the two ways to bring someone
