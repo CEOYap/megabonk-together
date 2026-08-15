@@ -1,8 +1,13 @@
 ﻿# Planned: TOGETHER! goes straight to the lobby
 
-**Status: Phase 5, steps 1–4 done. Only step 5, the deletion, remains. `NetworkMenuTab` is
-unreachable — nothing constructs it. Random is retired rather than rehomed. Steps 2, 3 and 4 have
-not been run in-game; step 2's panel has been seen on screen and sized against two aspect ratios.**
+**Status: done. All five steps landed. `NetworkMenuTab` is deleted — 1,268 lines. Random is
+retired rather than rehomed. Two things this plan said to delete were kept, with reasons: see
+[What was not deleted](#what-was-not-deleted).**
+
+**Verified on screen:** the panel opens from TOGETHER!, hosts, sizes correctly at 16:9 and 21:9,
+shows Steam avatars, and the button column measures 3 buttons at 176 of 430 units. **Not verified:**
+anything needing a second machine — joining by code, the connecting window's Stop, Options round
+trip, and the invite path.
 
 Today, pressing **TOGETHER!** opens `NetworkMenuTab` — a name box, Netplay Options, and a
 Random / Friendlies choice, and behind Friendlies another screen with Host, a room-code box and
@@ -21,11 +26,11 @@ the file means finding a home for each of these, and three of them are not UI at
 |---|---|
 | ~~`OnJoinClicked` / `JoinWithCode` — sets `Plugin.Instance.Mode`, calls `HandleNetworking()`, starts `HandleFriendlies()`~~ | **Done — the service.** It no longer touches `Mode` or `NetworkHandler` at all; it calls `Join` and watches. |
 | ~~`HandleFriendlies()` — the connect coroutine~~ | **Done — deleted.** |
-| ~~`HandleConnectionStatus()` — 30s timeout, the loader, the Stop button~~ | **Partly done.** The timeout and the matchmaker polling are the service's; the loader and the Stop button are still the menu's, and still need the lobby panel's connecting state (step 3). |
-| `OnHostClicked` / `OnRandomClicked` | TOGETHER! itself, and a decision about Random — see below |
-| Player name box | Gone with `ModConfig.PlayerName`, which Phase 5 also drops. The Steam persona is already adopted in its place. |
-| Netplay Options — save toggle, shared experience toggle | Either the lobby panel or config-file-only. Both are `ModConfig` entries with no other UI. |
-| `TryJoinFromInvite` / `PrefillInvitedCode` | The lobby panel. Both were put here because it owned the code box. |
+| ~~`HandleConnectionStatus()` — 30s timeout, the loader, the Stop button~~ | **Done.** The timeout and the matchmaker polling are the service's; the loader and Stop became the panel's connecting window (step 3). |
+| ~~`OnHostClicked` / `OnRandomClicked`~~ | **Done.** TOGETHER! hosts (step 2); Random retired (step 3). |
+| ~~Player name box~~ | **Done — the box is gone.** `ModConfig.PlayerName` stayed; it is storage, not UI. See *What was not deleted*. |
+| ~~Netplay Options — save toggle, shared experience toggle~~ | **Done — the lobby panel, as a sub-view** (step 4). |
+| ~~`TryJoinFromInvite` / `PrefillInvitedCode`~~ | **Done — `SteamTicker` consumes the code and joins** (step 2). Neither method survived. |
 
 ## Three decisions this forces
 
@@ -39,18 +44,21 @@ one release after the loss test. And the button did not fit: with Join Code need
 alone-and-not-committed slot, a matchmaker host sitting alone in their own lobby would have shown
 seven buttons against a column budgeted for about six, which puts the card past the 1080 reference.
 
-`INetplaySessionService.Quickplay` and `NetworkModeType.Random` still exist and still work; nothing
-calls them. Step 5 can take them out with the rest.
+`INetplaySessionService.Quickplay` and `NetworkModeType.Random` still exist and still work. Step 5
+did **not** take them out: `WebsocketClientService` switches on the enum member to reach
+`ConnectRandomAsync` and throws on an unknown mode, so it is dead to the *UI* and load-bearing for
+the matchmaker. They go when that transport does.
 
-**Host or join, without a screen to ask on.** TOGETHER! cannot both create a lobby and join one.
-The likely answer is that it always hosts, and joining happens through Copy Code / Join From
-Clipboard on the panel, plus invites — which is already how a joiner arrives. Worth confirming that
-Join From Clipboard actually works first: `LobbyPanel.OnJoinRequested` is declared and invoked but
-**never assigned**, so that button is currently inert.
+**Host or join, without a screen to ask on. — Decided: it always hosts.** Joining is Join Code on
+the panel plus invites, which is already how a joiner arrives. The suspicion recorded here was
+correct — `LobbyPanel.OnJoinRequested` was declared, invoked and **never assigned**, so the button
+had never done anything. Step 3 assigned it.
 
-**Where connection failure is shown.** Today a failed join leaves you on a menu with a status line.
-With no menu, the lobby panel has to open in a connecting state and be able to close itself with a
-reason. That is the part most likely to strand somebody.
+**Where connection failure is shown. — Decided: on the panel, three ways.** This was called "the
+part most likely to strand somebody" and it earned that twice. A busy session shows a blocking
+window with Stop; a failure shows the service's message on the panel's status line; and
+`leaveLobbyButton` is always visible, relabelled **Back**, because hiding it left a failed host on a
+panel with no route to the main menu.
 
 ## Callers to update
 
@@ -59,8 +67,8 @@ Small, and all of them mechanical. **Three of the four are done (step 2).**
 - ~~`Patches/WindowManager.cs:52` destroys `Plugin.Instance.NetworkTab` on a window change.~~ Done —
   it also destroys the lobby panel now, since `ResetNetworking` on the line above has just ended the
   session underneath it.
-- `Plugin.cs:64` holds the reference; `Plugin.cs:215` registers the type. **Still to do, in step 5**
-  — both are harmless while `NetworkTab` simply stays null forever.
+- ~~`Plugin.cs:64` holds the reference; `Plugin.cs:215` registers the type.~~ Done — the field and
+  the `ClassInjector` registration both went with the file.
 - ~~`Scripts/Button/PlayTogetherButton.cs` creates it — this becomes the new entry point.~~ Done —
   `OpenLobby()` hosts, `JoinLobby(code)` joins, and both refuse to start a second session if the
   panel is already up.
@@ -69,14 +77,14 @@ Small, and all of them mechanical. **Three of the four are done (step 2).**
 
 ## It interacts with the button crash
 
-`NetworkMenuTab` holds **13 of the 18** call sites in
-[`04-custom-button-null-background.md`](04-custom-button-null-background.md). Deleting it removes
-most of that bug's surface for free.
+~~`NetworkMenuTab` holds **13 of the 18** call sites~~ — **and deleting it took all thirteen with
+it.** The bug in [`04-custom-button-null-background.md`](04-custom-button-null-background.md) is
+now a six-site fix rather than a nineteen-site one: `PlayTogetherButton`, `WindowManager`,
+`ChangelogModal`, `UpdateAvailableModal` (x2) and the already-correct `LobbyPanel`.
 
-That is not a reason to delay the button fix — it is needed long before Phase 5, and
-`PlayTogetherButton`, `WindowManager`, `ChangelogModal` and `UpdateAvailableModal` keep their
-share regardless. But whoever does the button fix should know that most of the file they are
-editing is scheduled for deletion, and not spend care on it accordingly.
+The lobby panel's own buttons were never part of it — they go through
+`LobbyPanel.ReplaceWithCustomButton`, which is the one call site that was always right and is the
+template the remaining six should be moved onto.
 
 ## Two constraints found when trying to do the panel work first
 
@@ -88,8 +96,8 @@ only ever created *after* a session exists — `ShowLobbyPanel` runs when hostin
 is found — so it is always shown in-lobby.~~ **Step 2 resolved this.** The panel now opens *before*
 the session starts, so the not-in-lobby state that `SetButtonVisible(joinFromClipboardButton,
 !inLobby)` always anticipated is finally produced, and step 3's three additions have somewhere to
-live. `LobbyPanel.OnJoinRequested` is still unassigned and therefore still inert — assigning it is
-step 3's job.
+live. `LobbyPanel.OnJoinRequested` was assigned in step 3 and the button works for the first
+time.
 
 **Netplay Options does not fit in the button column.** ~~It reserves 520 units for five buttons at
 about 96 each~~ — **and this held, so step 4 built the sub-view it calls for.** The numbers moved
@@ -196,7 +204,29 @@ the two toggles and a Back button, replacing the member list and column rather t
 >
 > **UNVERIFIED**: not run in-game.
 
-**5. Delete `NetworkMenuTab`, `ModConfig.PlayerName`, and the name box with it.**
+**5. Delete `NetworkMenuTab`, `ModConfig.PlayerName`, and the name box with it.** ~~All three.~~
+**Done for the menu and the name box; `ModConfig.PlayerName` was kept — see below.**
+
+## What was not deleted
+
+Two things this plan lists for removal are still here, and both were left deliberately after
+looking at what actually depends on them.
+
+**`ModConfig.PlayerName`.** The plan pairs it with the name box, but they are not the same thing.
+The box was UI and is gone with the menu; the config entry is the *storage* for the local display
+name. Twelve sites read it — `PlayerManagerService`, `SteamNetTransport`, `SteamLobbyService`,
+`UdpClientService`, `WebsocketClientService`, `LobbyView` — and `SteamPersonaService` **writes** to
+it, which is how "the Steam persona is already adopted in its place" is implemented. Deleting it
+would mean introducing an identity service to replace it, so the net change is more code, and it
+would leave a player launched outside Steam — a supported way to run — with no way to set a name at
+all. It is now config-file-only, which is exactly where the Netplay Options toggles sat between
+steps 2 and 4.
+
+**`NetworkModeType.Random` and `INetplaySessionService.Quickplay`.** Retiring the Quickplay
+*button* did not make the enum member dead. `WebsocketClientService` switches on it to choose
+`ConnectRandomAsync`, and its `default` case throws — so removing the member breaks the matchmaker
+connect path, which still ships for one release after the loss test. These go when the matchmaker
+transport does, not before.
 
 Steps 2 and 3 want a two-player playtest between them and step 5, because that is the point at
 which the only route into a session is the new one.
