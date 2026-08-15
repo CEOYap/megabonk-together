@@ -1,4 +1,4 @@
-# Observed bugs — backlog
+﻿# Observed bugs — backlog
 
 Bugs seen in play that are **not yet fixed** and are not tracked elsewhere. Distinct from
 [`01-critical-fixes.md`](01-critical-fixes.md) (defects found by source analysis, most now fixed)
@@ -540,7 +540,15 @@ exists to prevent — and the same reasoning that makes `SpawnBoss_Prefix` suppr
 ---
 
 <a name="ob-12"></a>
-## OB-12 — The run's interactable counters diverge, except charge shrines — CONFIRMED, cause exact
+## OB-12 — The run's interactable counters diverge, except charge shrines — CONFIRMED, cause PARTLY WRONG
+
+> **Read this first (2026-08-15).** The mechanism below — the mod's `Destroy`/`Used` shortcut skips
+> the game's event-driven tally — is real and correctly described. **But it cannot be the whole
+> explanation, and "cause exact" was too strong.** Three findings from the dump, at the end of this
+> entry under *What a second pass found*: `TrackStats.OnInteracted` handles only two interactable
+> types, `EMyStat` has no member for three of the counters that diverged, and the counters are
+> `N / M` pairs where `RunStats` has no denominator to give. **Do not write a fix against this
+> entry until the panel in the screenshots has been identified.**
 
 **Reported, with two screenshots of the same moment in one run:**
 
@@ -683,6 +691,47 @@ that `Interact` has side effects the receiver must not run twice — or replicat
 part of the player record, which is cheap but makes the HUD a replicated value rather than a derived
 one. **Neither is worth doing before the decompile**, because both assume the counter is where this
 entry assumes it is.
+
+### What a second pass found — and why "cause exact" is withdrawn
+
+Three facts, all from `dump.cs` and one decompile on buildid 21750826. Together they say the entry
+is describing a real mechanism that is **not the one behind at least half the reported rows.**
+
+**1. `TrackStats.OnInteracted` is not a general interactable tally.** Decompiled
+(`TrackStats$$OnInteracted`, VA `0x180417690`, cached under `megabonk-re/decompiled/`) it is a
+two-branch dispatcher and nothing more:
+
+| Type tested | Effect |
+|---|---|
+| `InteractablePot` | `AddValue(13, 1)` — `EMyStat.potsBroken` — then invokes a static `Action` (`A_PotBroken`) |
+| `InteractableShrineMagnet` | one further `AddValue` |
+
+Two `AddValue` calls in the whole function. Chests, moais, greed shrines and boss curses do not
+pass through it; they must reach their tally by some other handler, or not at all.
+
+**2. `EMyStat` has no member for three of the diverging counters.** The enum is complete at 0..50
+and contains `chestsOpened`, `potsBroken`, `shrineCharge`, `shrineChallenge`, `shrineSucc`,
+`chestsBought`, `microwavesExploded` and four `shadyGuys*` variants. There is **no** moai, no greed
+shrine, and no boss curse. Those three rows diverged in the screenshots, so whatever counts them is
+not `RunStats`.
+
+**3. The reported counters have denominators; `RunStats` has none.** `RunStats.GetStat(EMyStat)`
+returns a single `int`. "Chests 4 / 46" and "Pots 13 / 55" are a *used-of-present* pair. The
+denominator looks like map spawn configuration — `RandomMapObject.amount` / `maxAmount`, the shape
+behind fields such as `greedShrineSpawns` — which means the panel is a per-map completion readout
+rather than a progression stat.
+
+**So the open question is narrow and cheap to answer:** *which screen are those counters on?* Naming
+it names the class, and the class names the counter. Everything above was reached from the dump
+alone; this last step wants either an xref pass over the UI types or one sentence from whoever took
+the screenshots.
+
+**What is still solid.** The shortcut in `OnReceivedInteractableUsed` genuinely skips the game's own
+interaction path, the charge-shrine exception is genuinely explained by both peers running their own
+trigger callbacks, and both remain true whatever the panel turns out to read. The tally mechanism is
+also now known to be *reachable*: `RunStats.AddValue` is public, and Il2CppInterop exposes
+`TrackStats`'s private statics as public on the proxy, so a fix can call either directly once it is
+known which one the panel reads.
 
 **Not a desync.** Both peers agree about which objects exist and which are gone; only the tally
 disagrees. It is a scoreboard bug, not a world-state one, and nothing downstream reads it.
