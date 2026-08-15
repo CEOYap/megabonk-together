@@ -59,6 +59,19 @@ namespace MegabonkTogether.Scripts.Modal
         private string shownSessionMessage = "";
 
         /// <summary>
+        /// Dims the panel and swallows clicks while a session is being started. Built on the
+        /// panel's own canvas rather than reusing <see cref="LoadingModal"/>, which parents to the
+        /// game's <c>Canvas</c> — that canvas sits below this one's <c>sortingOrder</c> of 1000, so
+        /// its blocker would have drawn <i>behind</i> the panel and blocked nothing.
+        /// </summary>
+        private GameObject busyOverlay;
+
+        private TextMeshProUGUI busyText;
+
+        /// <summary>Last value pushed to the overlay, so an unchanged message is not re-marshalled.</summary>
+        private string shownBusyMessage = "";
+
+        /// <summary>
         /// Rebuilt on a timer, never per frame. <see cref="ILobbyViewService.GetMembers"/> allocates
         /// a list and each rebuild touches TMP text, so at 60 Hz this would be exactly the kind of
         /// idle allocation <c>docs/netplay/04-performance-and-gc.md</c> exists to prevent.
@@ -284,6 +297,10 @@ namespace MegabonkTogether.Scripts.Modal
             // Only now, with every button parented and present.
             lobbyWindow = root.AddComponent<Window>();
 
+            // Last on the canvas, so it draws over the panel and its buttons rather than under
+            // them. Sibling order is the whole mechanism — there is no second canvas here.
+            CreateBusyOverlay();
+
             Refresh();
 
             Plugin.Log.LogInfo("[lobby] LobbyPanel built from prefab and refreshed.");
@@ -370,11 +387,8 @@ namespace MegabonkTogether.Scripts.Modal
         /// </summary>
         private void ApplyGameFont()
         {
-            var source = mainMenu == null || mainMenu.btnPlay == null
-                ? null
-                : mainMenu.btnPlay.GetComponentInChildren<TextMeshProUGUI>();
-
-            if (source == null || source.font == null)
+            var source = GameFontSource();
+            if (source == null)
             {
                 Plugin.Log.LogWarning("[lobby] No game font found to apply; the panel will use the bundle's default.");
                 return;
@@ -388,6 +402,36 @@ namespace MegabonkTogether.Scripts.Modal
                 label.font = source.font;
                 label.fontSharedMaterial = source.fontSharedMaterial;
             }
+        }
+
+        /// <summary>
+        /// The label the game's own font is read off. Null when the main menu is not available to
+        /// copy from.
+        /// </summary>
+        private TextMeshProUGUI GameFontSource()
+        {
+            var source = mainMenu == null || mainMenu.btnPlay == null
+                ? null
+                : mainMenu.btnPlay.GetComponentInChildren<TextMeshProUGUI>();
+
+            return source == null || source.font == null ? null : source;
+        }
+
+        /// <summary>
+        /// Applies the game font to one label. <see cref="ApplyGameFont"/> walks
+        /// <see cref="root"/>, and the busy overlay is deliberately not under it — it is a sibling
+        /// on the canvas so that it draws over the panel rather than inside it.
+        /// </summary>
+        private void ApplyGameFontTo(TextMeshProUGUI label)
+        {
+            var source = GameFontSource();
+            if (source == null || label == null)
+            {
+                return;
+            }
+
+            label.font = source.font;
+            label.fontSharedMaterial = source.fontSharedMaterial;
         }
 
         /// <summary>
@@ -636,6 +680,10 @@ namespace MegabonkTogether.Scripts.Modal
 
         public void Update()
         {
+            // Per frame on purpose — see UpdateBusyOverlay. It gates input, so the half-second
+            // refresh below is too coarse for it.
+            UpdateBusyOverlay();
+
             if (statusClearAt > 0f && Time.unscaledTime >= statusClearAt)
             {
                 statusClearAt = 0f;
@@ -653,10 +701,131 @@ namespace MegabonkTogether.Scripts.Modal
         }
 
         /// <summary>
+        /// Builds the "starting a session" window: a full-canvas dim that swallows clicks, with a
+        /// centred card carrying the message.
+        ///
+        /// <para><b>The dim is what does the blocking</b>, by being a raycast target covering the
+        /// canvas — the panel's buttons are still enabled underneath and simply never receive the
+        /// pointer. Disabling them instead would mean putting each one back afterwards and getting
+        /// the Start button's own interactable rule right a second time.</para>
+        ///
+        /// <para>Created hidden and toggled from <see cref="Update"/>; it is cheap enough to keep
+        /// around for the life of the panel and rebuilding it per state change would be the more
+        /// expensive of the two.</para>
+        /// </summary>
+        private void CreateBusyOverlay()
+        {
+            busyOverlay = new GameObject("BusyOverlay");
+            busyOverlay.transform.SetParent(canvasObject.transform, false);
+
+            var overlayRect = busyOverlay.AddComponent<RectTransform>();
+            overlayRect.anchorMin = Vector2.zero;
+            overlayRect.anchorMax = Vector2.one;
+            overlayRect.sizeDelta = Vector2.zero;
+            overlayRect.anchoredPosition = Vector2.zero;
+
+            var dim = busyOverlay.AddComponent<Image>();
+            dim.color = new Color(0f, 0f, 0f, 0.75f);
+            dim.raycastTarget = true;
+
+            var card = new GameObject("BusyCard");
+            card.transform.SetParent(busyOverlay.transform, false);
+
+            var cardRect = card.AddComponent<RectTransform>();
+            cardRect.anchorMin = new Vector2(0.5f, 0.5f);
+            cardRect.anchorMax = new Vector2(0.5f, 0.5f);
+            cardRect.pivot = new Vector2(0.5f, 0.5f);
+            cardRect.sizeDelta = new Vector2(620f, 160f);
+            cardRect.anchoredPosition = Vector2.zero;
+
+            var cardImage = card.AddComponent<Image>();
+            cardImage.color = new Color(0.10f, 0.08f, 0.07f, 0.98f);
+            cardImage.raycastTarget = true;
+
+            var textObj = new GameObject("BusyText");
+            textObj.transform.SetParent(card.transform, false);
+
+            var textRect = textObj.AddComponent<RectTransform>();
+            textRect.anchorMin = Vector2.zero;
+            textRect.anchorMax = Vector2.one;
+            textRect.sizeDelta = Vector2.zero;
+            textRect.anchoredPosition = Vector2.zero;
+
+            busyText = textObj.AddComponent<TextMeshProUGUI>();
+            busyText.text = "";
+            busyText.fontSize = 40f;
+            busyText.alignment = TextAlignmentOptions.Center;
+            busyText.enableWordWrapping = true;
+            busyText.raycastTarget = false;
+
+            ApplyGameFontTo(busyText);
+
+            busyOverlay.SetActive(false);
+        }
+
+        /// <summary>
+        /// Shows or hides the blocking window from the session service's state.
+        ///
+        /// <para>Driven from <see cref="Update"/> rather than the half-second
+        /// <see cref="Refresh"/>, because this one gates input: appearing up to half a second after
+        /// the press would leave the buttons live for exactly as long as it takes to double-click
+        /// Start. Two enum compares per frame.</para>
+        /// </summary>
+        private void UpdateBusyOverlay()
+        {
+            if (busyOverlay == null)
+            {
+                return;
+            }
+
+            var busy = sessionService != null && sessionService.IsBusy;
+
+            if (busyOverlay.activeSelf != busy)
+            {
+                busyOverlay.SetActive(busy);
+
+                // Focus is a snapshot taken when the window is built, so buttons that just became
+                // unreachable have to be dropped from it — otherwise a controller or the keyboard
+                // walks straight onto them behind the dim.
+                lobbyWindow?.FindAllButtonsInWindow();
+            }
+
+            if (!busy)
+            {
+                return;
+            }
+
+            var message = sessionService.StatusMessage;
+            if (string.IsNullOrEmpty(message))
+            {
+                message = "Working...";
+            }
+
+            if (message != shownBusyMessage)
+            {
+                shownBusyMessage = message;
+
+                if (busyText != null)
+                {
+                    busyText.text = message;
+                }
+            }
+        }
+
+        /// <summary>
         /// Mirrors the session service's message onto the panel, once per change.
         /// </summary>
         private void ShowSessionStatus()
         {
+            // While busy the overlay is already showing this message in the middle of the screen,
+            // and printing it into the status line as well would say the same thing twice. What is
+            // left for the line is the case the overlay does not cover: a failure, which is not
+            // busy, and which is the state the player is looking at when they need a reason.
+            if (sessionService != null && sessionService.IsBusy)
+            {
+                return;
+            }
+
             var message = sessionService?.StatusMessage ?? "";
             if (message == shownSessionMessage)
             {
@@ -1006,7 +1175,7 @@ namespace MegabonkTogether.Scripts.Modal
         /// drew as "OPY COD", LEAVE LOBBY as "AVE LOB". Asking TMP what the string needs, and
         /// writing that width onto the rect, is what actually resizes anything.</para>
         ///
-        /// <para>Width only. The height the game authored is correct, and it is what the column's
+        /// <para>Width only. The height the game authored is correct and is what the column's
         /// overflow budget is measured against — see <see cref="WarnIfButtonColumnOverflows"/>.</para>
         ///
         /// <para>The two forcing calls are kept. <c>Refresh</c> reads the rect that
