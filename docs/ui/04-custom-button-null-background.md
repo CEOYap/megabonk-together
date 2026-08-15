@@ -1,8 +1,13 @@
 ﻿# Every mod-made button throws on hover
 
-**Status: fixed, not yet confirmed in game.** Pre-existing, unrelated to the Steamworks work.
-Done after Phase 5 rather than on its own branch, because deleting `NetworkMenuTab` took 13 of the
-19 call sites with it and left a six-site change.
+**Status: fixed and confirmed on the host, 2026-08-15.** Pre-existing, unrelated to the Steamworks
+work. Done after Phase 5 rather than on its own branch, because deleting `NetworkMenuTab` took 13 of
+the 19 call sites with it and left a six-site change.
+
+A session that pressed TOGETHER!, Ready and Start logged **zero** `NullReferenceException` lines and
+zero `[Error : Unity]` lines of any kind. The same machine logged 7 in session 27217500 while
+clicking less. **Still open:** the client's 1716 were never traced, so "the same bug, at a peer that
+clicks more" remains the hypothesis rather than a measurement — one client-side count closes it.
 
 A `NullReferenceException` is logged every time a mod-made button is clicked or hovered, including
 the main menu's own PLAY TOGETHER button. A short session produces tens of them. Nothing visibly
@@ -165,3 +170,7 @@ lines rather than looking at the buttons:
 Session 27217500 gave 1716 on the client and 7 on the host. Anything near those numbers means it is
 still happening; near zero means it is not. The buttons looked and worked the same either way, which
 is why this went unnoticed for so long in the first place.
+
+**Run 2026-08-15, host, after the fix: 0.** In a session that opened the lobby, toggled Ready and
+pressed Start — more button presses than the 7 were collected over. The client has not been counted
+since the fix.
