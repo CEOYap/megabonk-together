@@ -1,7 +1,8 @@
-# Every mod-made button throws on hover
+﻿# Every mod-made button throws on hover
 
-**Status: diagnosed, not fixed, and now measured. Pre-existing, unrelated to the Steamworks work.
-Deliberately left for its own branch off `main`.**
+**Status: fixed, not yet confirmed in game.** Pre-existing, unrelated to the Steamworks work.
+Done after Phase 5 rather than on its own branch, because deleting `NetworkMenuTab` took 13 of the
+19 call sites with it and left a six-site change.
 
 A `NullReferenceException` is logged every time a mod-made button is clicked or hovered, including
 the main menu's own PLAY TOGETHER button. A short session produces tens of them. Nothing visibly
@@ -51,10 +52,11 @@ So `background`, `defaultColor`, `hoverColor`, `scaleOnHover`, `hoverScale`, `bu
 throws; the rest is why mod buttons have never had the game's hover scaling, colour states or
 greyed-out look.
 
-`PlayTogetherButton` is the same shape without even a clone to copy from — it is
-`AddComponent<PlayTogetherButton>()` onto a cloned object, and `PlayTogetherButton : MyButtonNormal`
-declares no fields of its own. That one accounts for the exceptions that fire at menu load, before
-anything has been clicked.
+`PlayTogetherButton` is the same shape, and **the claim that used to be here — that it has no clone
+to copy from — was wrong.** `MainMenu.Start_Postfix` instantiates `btnPlay.gameObject` and reads its
+`MyButtonNormal` like every other site; it simply destroyed it without keeping anything. It needed
+no special handling in the end. The related claim that it "accounts for the exceptions that fire at
+menu load, before anything has been clicked" is also unsupported — see *Measured* below.
 
 ## The fix already exists, in one place
 
@@ -64,26 +66,33 @@ defect: read the eight serialized fields off the original, `DestroyImmediate` it
 `Destroy` runs at end of frame, leaving two `MyButton`-derived components on one object for the
 rest of the frame, and `Window.FindAllButtonsInWindow` collects every `MyButton` it can see.
 
-**The work is to lift that method out of `LobbyPanel` into a shared helper and use it at every call
-site.** It is mechanical; the reason it is a branch of its own is that it touches five files this
-work does not otherwise go near.
+**Done.** That method's body is now `Helpers/ButtonStyle`, and all six sites use it.
+
+It is a **capture/apply pair** rather than one call that performs the whole swap, because the
+component being added differs per site — `CustomButton` at five, `PlayTogetherButton` at the sixth.
+A generic `AddComponent<T>` would resolve its IL2CPP type at runtime from the type argument;
+splitting it leaves every `AddComponent` written against a concrete type, and `ApplyTo` takes the
+base `MyButtonNormal` so both derived types share one path.
+
+The eight fields were confirmed against the interop assembly rather than carried over on faith:
+`background`, `defaultColor` and `hoverColor` are declared on `MyButtonNormal`; `scaleOnHover`,
+`hoverScale`, `button`, `disabledOverlay` and `customSfx` on the base `MyButton`. `colorInited` and
+`state` are **not** carried — they are runtime state rather than authored style.
 
 ## Call sites
 
-Nineteen, of which `LobbyPanel.cs:831` is the one already correct — it is inside
-`ReplaceWithCustomButton` and copies the fields immediately after.
+Six, all converted. The other thirteen were in `NetworkMenuTab` and went with it in Phase 5 step 5.
 
-| File | Lines |
+| File | What it builds |
 |---|---|
-| `Patches/MainMenu.cs` | 45 (`PlayTogetherButton`, no clone to copy from) |
-| `Patches/WindowManager.cs` | 269 |
-| `Scripts/Modal/ChangelogModal.cs` | 269 |
-| `Scripts/Modal/UpdateAvailableModal.cs` | 99, 138 |
-| `Scripts/Modal/NetworkMenuTab.cs` | 91, 199, 212, 292, 305, 385, 468, 507, 542, 577, 633, 718, 755 |
+| `Patches/MainMenu.cs` | the TOGETHER! button (`PlayTogetherButton`) |
+| `Patches/WindowManager.cs` | the copy-code button on the friendlies display |
+| `Scripts/Modal/ChangelogModal.cs` | its close button |
+| `Scripts/Modal/UpdateAvailableModal.cs` | close, and update |
+| `Scripts/Modal/LobbyPanel.cs` | every lobby panel button, via `ReplaceWithCustomButton` |
 
-`MainMenu.cs:45` needs its own answer rather than the shared helper: there is no original
-`MyButtonNormal` being replaced, so the fields have to be copied from whichever button it was
-cloned from.
+`LobbyPanel` was the one site that was always correct; it now calls the shared helper instead of
+holding its own copy.
 
 ## Two things this cost, worth not repeating
 
@@ -143,3 +152,16 @@ scheduled deletion date. After step 5 the list is six sites: `Patches/MainMenu.c
 That is an argument about ordering, not about severity. Nothing here is user-visible — the buttons
 work, they just throw and lack the game's hover polish — so the 1716 is log noise and wasted frame
 time rather than a broken feature.
+
+## Confirming the fix
+
+The result is the absence of something, which makes it easy to believe on no evidence. Count the
+lines rather than looking at the buttons:
+
+```powershell
+(Select-String -Path LogOutput.log -Pattern '\[Error  :     Unity\] NullReferenceException').Count
+```
+
+Session 27217500 gave 1716 on the client and 7 on the host. Anything near those numbers means it is
+still happening; near zero means it is not. The buttons looked and worked the same either way, which
+is why this went unnoticed for so long in the first place.
