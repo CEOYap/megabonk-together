@@ -540,15 +540,27 @@ exists to prevent — and the same reasoning that makes `SpawnBoss_Prefix` suppr
 ---
 
 <a name="ob-12"></a>
-## OB-12 — The run's interactable counters diverge, except charge shrines — CONFIRMED, cause PARTLY WRONG
+## OB-12 — The run's interactable counters diverge, except charge shrines — FIXED, unverified
 
-> **Read this first (2026-08-15).** The mechanism below — the mod's `Destroy`/`Used` shortcut skips
-> the game's event-driven tally — is real and correctly described. **But it cannot be the whole
-> explanation, and "cause exact" was too strong.** Three findings from the dump, at the end of this
-> entry under *What a second pass found*: `TrackStats.OnInteracted` handles only two interactable
-> types, `EMyStat` has no member for three of the counters that diverged, and the counters are
-> `N / M` pairs where `RunStats` has no denominator to give. **Do not write a fix against this
-> entry until the panel in the screenshots has been identified.**
+> **Resolved 2026-08-15.** The counter was found and the fix is in. It is **not** `RunStats` —
+> that was this entry's one wrong turn, and the detour is kept below because the reasoning that
+> corrected it is reusable.
+>
+> **The counter is `InteractablesStatus`**, a static `Dictionary<string, InteractableStatusContainer>`
+> keyed by an interactable's debug name, each entry holding `numUsed` and `numTotal` — the two
+> halves of "Chests 4 / 46". It backs the panel behind the **Shrine Counter** setting, at
+> `GameUI/GameUI/Debug/EnemyInformation/Shrines`. Identified from the object path rather than by
+> more decompiling; one sentence from whoever had the game open beat an xref pass over every UI type.
+>
+> **The mechanism this entry described was right all along**, just attributed to the wrong class.
+> `InteractablesStatus.OnInteractableUse` is raised from the interactable's own interaction path;
+> the mod's `Destroy`/`Used` shortcut replaces that path; the remote peer never counts it. And
+> `InteractablesStatus.OnChargeShrineCharged` is a separate handler reached by both peers running
+> their own trigger callbacks — which is why charge shrines were the one row that agreed. That
+> prediction held under a changed cause, which is the strongest thing this entry did.
+>
+> **Fix:** both shortcut branches call `InteractablesStatus.OnInteractableUse(interactable, true)`
+> before taking the shortcut. See `Helpers/InteractableCounterHelper`.
 
 **Reported, with two screenshots of the same moment in one run:**
 
@@ -721,10 +733,12 @@ denominator looks like map spawn configuration — `RandomMapObject.amount` / `m
 behind fields such as `greedShrineSpawns` — which means the panel is a per-map completion readout
 rather than a progression stat.
 
-**So the open question is narrow and cheap to answer:** *which screen are those counters on?* Naming
-it names the class, and the class names the counter. Everything above was reached from the dump
-alone; this last step wants either an xref pass over the UI types or one sentence from whoever took
-the screenshots.
+**So the open question is narrow and cheap to answer:** *which screen are those counters on?*
+**Answered:** the Shrine Counter panel, `GameUI/GameUI/Debug/EnemyInformation/Shrines`, which is
+`InteractablesStatus` — see the banner at the top. All three findings above stand and all three were
+what ruled `RunStats` out; none of them found the answer, and the object path did, in one sentence.
+Worth remembering the next time a counter needs identifying: ask where it is on screen before
+decompiling what might produce it.
 
 **What is still solid.** The shortcut in `OnReceivedInteractableUsed` genuinely skips the game's own
 interaction path, the charge-shrine exception is genuinely explained by both peers running their own
