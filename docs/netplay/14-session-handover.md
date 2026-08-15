@@ -1,10 +1,10 @@
-# Handover — Phase 5, and the lobby panel becomes the UI
+﻿# Handover — Phase 5, and the lobby panel becomes the UI
 
 Supersedes [`13-session-handover.md`](13-session-handover.md). Read this first, then
 [`../steamworks/06-next-session.md`](../steamworks/06-next-session.md) for what Phase 4 left open
 and [`06-session-handoff.md`](06-session-handoff.md) for the standing queue.
 
-Branch: `claude/phase5-loss-test-and-session-service`, 37 commits off `main`.
+Branch: `claude/phase5-loss-test-and-session-service` → **[PR #11](https://github.com/CEOYap/megabonk-together/pull/11)**, 38 commits, pushed and open.
 
 **Phase 5 is done: `NetworkMenuTab` is deleted and TOGETHER! opens the lobby panel directly.** Along
 the way the first same-session two-machine log pair this project has had settled the lossy-link run,
