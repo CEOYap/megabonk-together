@@ -282,11 +282,7 @@ namespace MegabonkTogether.Patches
             copyButtonObj.transform.SetParent(friendliesInfoDisplay.transform, false);
             copyButtonObj.SetActive(true);
 
-            var originalButton = copyButtonObj.GetComponent<MyButtonNormal>();
-            if (originalButton != null)
-            {
-                UnityEngine.Object.DestroyImmediate(originalButton);
-            }
+            var style = ButtonStyle.CaptureAndRemove(copyButtonObj);
 
             UnityEngine.UI.Button button = copyButtonObj.GetComponentInChildren<UnityEngine.UI.Button>();
             if (button != null)
@@ -301,6 +297,7 @@ namespace MegabonkTogether.Patches
             }
 
             var copyButton = copyButtonObj.AddComponent<CustomButton>();
+            style.ApplyTo(copyButton);
             copyButton.SetOnClickAction(OnCopyCodeClicked);
             copyButton.OverrideStartHoverAction(() =>
             {

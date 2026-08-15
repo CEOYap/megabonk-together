@@ -1458,35 +1458,17 @@ namespace MegabonkTogether.Scripts.Modal
         /// </summary>
         private static CustomButton ReplaceWithCustomButton(GameObject buttonObj)
         {
-            var original = buttonObj.GetComponent<MyButtonNormal>();
-            if (original == null)
+            // This method was the only correct swap in the codebase and is now the shared one —
+            // its body moved to Helpers/ButtonStyle so the other five call sites could stop
+            // throwing away the same eight fields.
+            var style = ButtonStyle.CaptureAndRemove(buttonObj);
+            if (!style.Captured)
             {
                 return null;
             }
 
-            var background = original.background;
-            var defaultColor = original.defaultColor;
-            var hoverColor = original.hoverColor;
-            var scaleOnHover = original.scaleOnHover;
-            var hoverScale = original.hoverScale;
-            var unityButton = original.button;
-            var disabledOverlay = original.disabledOverlay;
-            var customSfx = original.customSfx;
-
-            // Immediate, not deferred. Destroy() runs at end of frame, which would leave two
-            // MyButton-derived components on this object for the rest of the frame — and
-            // Window.FindAllButtonsInWindow collects every MyButton it can see.
-            DestroyImmediate(original);
-
             var button = buttonObj.AddComponent<CustomButton>();
-            button.background = background;
-            button.defaultColor = defaultColor;
-            button.hoverColor = hoverColor;
-            button.scaleOnHover = scaleOnHover;
-            button.hoverScale = hoverScale;
-            button.button = unityButton;
-            button.disabledOverlay = disabledOverlay;
-            button.customSfx = customSfx;
+            style.ApplyTo(button);
 
             return button;
         }

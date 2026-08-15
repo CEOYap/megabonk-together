@@ -1,4 +1,4 @@
-using MegabonkTogether.Common;
+﻿using MegabonkTogether.Common;
 using MegabonkTogether.Scripts.Button;
 using Microsoft.Extensions.DependencyInjection;
 using TMPro;
@@ -84,11 +84,7 @@ namespace MegabonkTogether.Scripts.Modal
             var buttonObj = GameObject.Instantiate(mainMenu.btnPlay.gameObject);
             buttonObj.transform.SetParent(panel.transform, false);
 
-            var originalButton = buttonObj.GetComponent<MyButtonNormal>();
-            if (originalButton != null)
-            {
-                UnityEngine.Object.DestroyImmediate(originalButton);
-            }
+            var closeStyle = Helpers.ButtonStyle.CaptureAndRemove(buttonObj);
 
             UnityEngine.UI.Button button = buttonObj.GetComponentInChildren<UnityEngine.UI.Button>();
             if (button != null)
@@ -97,6 +93,7 @@ namespace MegabonkTogether.Scripts.Modal
             }
 
             closeButton = buttonObj.AddComponent<CustomButton>();
+            closeStyle.ApplyTo(closeButton);
             closeButton.SetOnClickAction(OnCloseClicked);
 
             var textWrapper = buttonObj.GetComponent<ButtonTextWrapper>();
@@ -123,11 +120,7 @@ namespace MegabonkTogether.Scripts.Modal
             var buttonObj = GameObject.Instantiate(mainMenu.btnPlay.gameObject);
             buttonObj.transform.SetParent(panel.transform, false);
 
-            var originalButton = buttonObj.GetComponent<MyButtonNormal>();
-            if (originalButton != null)
-            {
-                UnityEngine.Object.DestroyImmediate(originalButton);
-            }
+            var updateStyle = Helpers.ButtonStyle.CaptureAndRemove(buttonObj);
 
             UnityEngine.UI.Button button = buttonObj.GetComponentInChildren<UnityEngine.UI.Button>();
             if (button != null)
@@ -136,6 +129,7 @@ namespace MegabonkTogether.Scripts.Modal
             }
 
             updateButton = buttonObj.AddComponent<CustomButton>();
+            updateStyle.ApplyTo(updateButton);
             updateButton.SetOnClickAction(OnUpdateClicked);
 
             var textWrapper = buttonObj.GetComponent<ButtonTextWrapper>();
