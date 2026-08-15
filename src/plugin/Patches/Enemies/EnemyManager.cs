@@ -99,10 +99,17 @@ namespace MegabonkTogether.Patches.Enemies
         /// cost a session's analysis: the key's *appearance* is local to each peer, and
         /// <c>InteractableUsed.IsCryptKey</c> only replicates the *pickup*, on a path with no log
         /// statement at all.</para>
+        ///
+        /// <para><b><c>pos</c> is taken by reference to fix OB-11.</b> The game's spawner anchors
+        /// every position on the local player, so on the host every miniboss lands near the host —
+        /// see <c>docs/netplay/08-observed-bugs.md#ob-11</c>. This is the one point on the path where
+        /// the position can be corrected before the enemy exists, which is why the correction lives
+        /// here and not in <see cref="SpawnEnemy_Postfix"/>. It runs after the host check above, and
+        /// must: two peers each picking their own player would spawn two minibosses.</para>
         /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(EnemyManager.SpawnBoss))]
-        public static bool SpawnBoss_Prefix()
+        public static bool SpawnBoss_Prefix(ref Vector3 pos)
         {
             if (!synchronizationService.HasNetplaySessionStarted())
             {
@@ -113,6 +120,21 @@ namespace MegabonkTogether.Patches.Enemies
             if (!isServer)
             {
                 return false;
+            }
+
+            // The try is here rather than inside the service on purpose: a MissingMethodException
+            // from an interop signature that did not resolve is raised when the *containing* method
+            // is JIT-compiled, so a try within RecentreBossSpawnOnRandomPlayer could never run. It
+            // has to sit at the call site, one level up. Plugin.Load and CountInteractableAsUsed
+            // both carry this same note.
+            try
+            {
+                pos = enemyManagerService.RecentreBossSpawnOnRandomPlayer(pos);
+            }
+            catch (System.Exception ex)
+            {
+                // Fairness only. A miniboss at the vanilla position beats no miniboss at all.
+                Plugin.Log.LogWarning($"OB-11: could not re-centre a miniboss spawn, using the game's position: {ex.Message}");
             }
 
             return true;

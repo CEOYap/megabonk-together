@@ -1,5 +1,8 @@
 ﻿using Actors.Enemies;
 using Assets.Scripts.Actors.Enemies;
+using Assets.Scripts.Game.Spawning;
+using Assets.Scripts.Managers;
+using BepInEx.Logging;
 using MegabonkTogether.Common.Models;
 using MegabonkTogether.Extensions;
 using MegabonkTogether.Helpers;
@@ -31,9 +34,21 @@ namespace MegabonkTogether.Services
         public void RemoveReviverEnemy_Name(Enemy enemy);
         public void RebalanceIfNeededReviverEnemy(Enemy enemy, uint? currentReviver, uint? currentReviverOwner);
         public void ResetReviverSpawnCounts();
+
+        /// <summary>OB-11. Host only — see the implementation for why.</summary>
+        public Vector3 RecentreBossSpawnOnRandomPlayer(Vector3 pos);
     }
     internal class EnemyManagerService : IEnemyManagerService
     {
+        private readonly IPlayerManagerService playerManagerService;
+        private readonly ManualLogSource logger;
+
+        public EnemyManagerService(IPlayerManagerService playerManagerService, ManualLogSource logger)
+        {
+            this.playerManagerService = playerManagerService;
+            this.logger = logger;
+        }
+
         private readonly ConcurrentDictionary<uint, Enemy> spawnedEnemies = [];
         private readonly ConcurrentDictionary<Enemy, string> reviverEnemies_NetplayNames = [];
         private readonly ConcurrentDictionary<uint, int> reviverSpawnCountPerOwner = [];
@@ -479,5 +494,143 @@ namespace MegabonkTogether.Services
         {
             reviverSpawnCountPerOwner.Clear();
         }
+
+        #region OB-11 — miniboss spawns are host-centred
+
+        /// <summary>
+        /// The floor for the re-rolled ring radius, in world units.
+        ///
+        /// <para>Only reached in the degenerate case: when every one of the game's 50 placement
+        /// attempts fails, <c>SummonerController.EventMiniboss</c> falls back to
+        /// <c>MyPlayer.Instance.transform.position</c> and the miniboss spawns *inside* the host.
+        /// The derived radius is then ~0, and without this floor the correction would faithfully
+        /// reproduce the bug on somebody else. <b>The value is a guess and is UNVERIFIED</b> — the
+        /// game's own distances live in unnamed float constants that were not decompiled.</para>
+        /// </summary>
+        private const float MIN_BOSS_RING_RADIUS = 20f;
+
+        /// <summary>How wide a band to give the re-rolled ring, as a fraction of the radius.</summary>
+        private const float BOSS_RING_BAND = 0.1f;
+
+        /// <summary>Matches the attempt count the game itself passes on this path.</summary>
+        private const int BOSS_RING_ATTEMPTS = 50;
+
+        /// <summary>Reused across calls — boss spawns are rare, but this costs nothing to keep.</summary>
+        private readonly List<Vector3> bossSpawnCandidates = [];
+
+        /// <summary>
+        /// OB-11: pick a player at random and re-centre a miniboss spawn on them.
+        ///
+        /// <para><b>The cause is confirmed by decompile, not inferred.</b>
+        /// <c>SpawnPositions.GetEnemySpawnPositionBiased</c> (VA <c>0x180482390</c>) centres its ring
+        /// on <c>MyPlayer.Instance.playerMovement.rigidbody.position + velocity * t</c> and biases the
+        /// direction by <c>MyPlayer.Instance.averageMovingDirection</c>. Every term is the local
+        /// player and there is no second player anywhere in the body — <c>GameManager.Instance</c>
+        /// appears only to supply a layer mask for the ground raycast. The game is single-player and
+        /// its spawner knows about one player; on the host that is the host. Full chain in
+        /// <c>docs/netplay/08-observed-bugs.md#ob-11</c>.</para>
+        ///
+        /// <para><b>Why this runs before the spawn rather than after it.</b> <c>SpawnBoss</c> takes
+        /// the position as a <i>parameter</i>, so correcting it in the prefix means the enemy is
+        /// created at the corrected point. Repositioning afterwards would leave anything the game
+        /// cached from its spawn transform in <c>Awake</c> stale — the hazard the
+        /// clone-inactive-then-position note in <see cref="SynchronizationService"/> already exists
+        /// because of.</para>
+        ///
+        /// <para><b>No wire change, and no new desync surface.</b> The host corrects the position
+        /// before spawning and <c>SpawnEnemy_Postfix</c> replicates the corrected value verbatim.
+        /// Clients never spawn bosses — <c>SpawnBoss_Prefix</c> suppresses that — so there is still
+        /// one miniboss with one id, agreed by both ends. This must stay host-only for exactly that
+        /// reason: two peers each picking their own player would produce two minibosses.</para>
+        ///
+        /// <para><b>Every failure path returns <paramref name="pos"/> unchanged</b>, which is
+        /// vanilla behaviour. This is a fairness correction, not a mechanic — it must never be the
+        /// reason a miniboss fails to spawn.</para>
+        ///
+        /// <para><b>UNVERIFIED.</b> Not run in-game. Specifically unproven: that
+        /// <c>GetEnemySpawnPositionAroundPoint</c> is safe to call from inside a prefix on this path,
+        /// that <see cref="MIN_BOSS_RING_RADIUS"/> is a sensible distance, and that a miniboss placed
+        /// around a non-host player never lands somewhere the host's own camera or pathing logic
+        /// dislikes.</para>
+        /// </summary>
+        public Vector3 RecentreBossSpawnOnRandomPlayer(Vector3 pos)
+        {
+            var gameManager = GameManager.Instance;
+            if (gameManager == null || gameManager.player == null)
+            {
+                return pos;
+            }
+
+            // GameManager.Instance.player is the same object the spawner reads as MyPlayer.Instance;
+            // this is the idiom the rest of the plugin already uses for the local player.
+            var localPosition = gameManager.player.transform.position;
+
+            bossSpawnCandidates.Clear();
+
+            foreach (var netPlayer in playerManagerService.GetAllSpawnedNetPlayers())
+            {
+                if (netPlayer == null)
+                {
+                    continue;
+                }
+
+                var model = playerManagerService.GetPlayer(netPlayer.ConnectionId);
+                if (model == null || model.Hp == 0)
+                {
+                    continue;
+                }
+
+                bossSpawnCandidates.Add(netPlayer.transform.position);
+            }
+
+            if (bossSpawnCandidates.Count == 0)
+            {
+                return pos;
+            }
+
+            // The local player is one candidate among the peers, so with N players each takes a 1/N
+            // share of minibosses. Index Count is the local player's slot: drawing it means the
+            // game's own host-centred position was the right answer this time and nothing is done.
+            var pick = UnityEngine.Random.Range(0, bossSpawnCandidates.Count + 1);
+            if (pick == bossSpawnCandidates.Count)
+            {
+                return pos;
+            }
+
+            var target = bossSpawnCandidates[pick];
+
+            // Reuse the distance the game just chose rather than inventing one: it scales with run
+            // time through constants that were not decompiled, and copying the result preserves that
+            // curve for free. Measured in XZ because the ring is horizontal.
+            var dx = pos.x - localPosition.x;
+            var dz = pos.z - localPosition.z;
+            var radius = Mathf.Sqrt((dx * dx) + (dz * dz));
+            if (radius < MIN_BOSS_RING_RADIUS)
+            {
+                radius = MIN_BOSS_RING_RADIUS;
+            }
+
+            var recentred = SpawnPositions.GetEnemySpawnPositionAroundPoint(
+                target,
+                radius * (1f - BOSS_RING_BAND),
+                radius * (1f + BOSS_RING_BAND),
+                BOSS_RING_ATTEMPTS,
+                true,
+                999f);
+
+            // The game signals "no position found" by returning INVALID_POS rather than by failing,
+            // and EventMiniboss itself compares against it with an epsilon rather than for equality.
+            var invalid = SpawnPositions.INVALID_POS;
+            var offset = recentred - invalid;
+            if (offset.sqrMagnitude < 0.01f)
+            {
+                logger.LogDebug($"OB-11: no valid miniboss position around peer; keeping the host-centred one.");
+                return pos;
+            }
+
+            return recentred;
+        }
+
+        #endregion
     }
 }
