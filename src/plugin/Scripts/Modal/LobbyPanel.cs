@@ -837,7 +837,18 @@ namespace MegabonkTogether.Scripts.Modal
             for (var i = 0; i < buttonContainer.childCount; i++)
             {
                 var child = buttonContainer.GetChild(i);
-                if (!child.gameObject.activeSelf || child is not RectTransform childRect)
+                if (!child.gameObject.activeSelf)
+                {
+                    continue;
+                }
+
+                // GetComponent again, for the reason given above. `child is not RectTransform` has
+                // the same defect as the `as` did — GetChild hands back a Transform-typed wrapper
+                // and the pattern tests the wrapper, so every child was skipped, visible stayed 0,
+                // and the method returned before either log line. Fixing the container's cast
+                // without this one moved the silent exit down two lines and changed nothing.
+                var childRect = child.GetComponent<RectTransform>();
+                if (childRect == null)
                 {
                     continue;
                 }
@@ -848,6 +859,7 @@ namespace MegabonkTogether.Scripts.Modal
 
             if (visible == 0)
             {
+                Plugin.Log.LogWarning("[lobby] Cannot measure the button column: no visible buttons found.");
                 return;
             }
 
