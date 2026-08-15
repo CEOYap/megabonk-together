@@ -80,6 +80,21 @@ namespace MegabonkTogether.Scripts.Modal
 
         private float refreshAccumulator;
 
+        /// <summary>
+        /// The cloned PLAY button is authored for the main menu, where there are three of them and
+        /// the whole screen to spend. Six in a column inside a card is a different problem: at the
+        /// inherited size each one came out about 96 units tall, and the column overflowed the card
+        /// and drew off the bottom of the screen.
+        ///
+        /// <para>These two produce roughly a 52-unit button — the label's own height plus the
+        /// padding twice — which fits seven in the reserved column with room over. They are the
+        /// runtime half of the size pass; the card's own geometry is in <c>ScaffoldLobbyPanel</c>
+        /// and needs the bundle rebuilt.</para>
+        /// </summary>
+        private const float ButtonLabelFontSize = 30f;
+
+        private const int ButtonLabelPaddingY = 6;
+
         /// <summary>How long a transient status message stays up before the panel clears it.</summary>
         private const float StatusHoldSeconds = 4f;
 
@@ -365,7 +380,16 @@ namespace MegabonkTogether.Scripts.Modal
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
             scaler.referenceResolution = new Vector2(1920f, 1080f);
             scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
-            scaler.matchWidthOrHeight = 0.5f;
+
+            // Height only, not a blend of the two.
+            //
+            // This was 0.5, which scales the UI by a mix of width/1920 and height/1080 — and on a
+            // wide screen the width term drags the scale *up*. A 21:9 window is proportionally
+            // short, so a card that fits at 16:9 was rendered larger there and ran off the top and
+            // bottom of the screen. Matching height alone makes the card a fixed fraction of the
+            // screen's height at every aspect ratio, which is the only property that matters for
+            // something this tall: it is a column, and columns run out of vertical room.
+            scaler.matchWidthOrHeight = 1f;
 
             // Without a raycaster the panel draws and nothing on it can be clicked.
             canvasObj.AddComponent<GraphicRaycaster>();
@@ -686,12 +710,21 @@ namespace MegabonkTogether.Scripts.Modal
 
             needed += layout.spacing * (visible - 1) + layout.padding.top + layout.padding.bottom;
 
+            warnedAboutButtonOverflow = true;
+
             if (needed <= container.rect.height)
             {
+                // Logged on the fitting path too, not only on overflow. This constant has been
+                // wrong three times and every correction was made by guessing at a number and
+                // waiting for a screenshot; one line saying what the column actually measured
+                // turns the next adjustment into arithmetic.
+                Plugin.Log.LogInfo(
+                    $"[lobby] Button column: {visible} buttons need {needed:F0} of the "
+                    + $"{container.rect.height:F0} units reserved "
+                    + $"({container.rect.height - needed:F0} spare).");
                 return;
             }
 
-            warnedAboutButtonOverflow = true;
             Plugin.Log.LogWarning(
                 $"[lobby] The button column needs {needed:F0} units for {visible} buttons but the "
                 + $"prefab reserves {container.rect.height:F0}. The last one is drawing past the "
@@ -1309,10 +1342,15 @@ namespace MegabonkTogether.Scripts.Modal
                 return;
             }
 
+            // Set before measuring: GetPreferredValues answers for the font size currently on the
+            // component, so asking first and shrinking after would size the rect for the old one.
+            wrapper.t_text.fontSize = ButtonLabelFontSize;
+            wrapper.paddingY = ButtonLabelPaddingY;
+
             var preferred = wrapper.t_text.GetPreferredValues(label);
-            if (preferred.x > 0f)
+            if (preferred.x > 0f && preferred.y > 0f)
             {
-                textRect.sizeDelta = new Vector2(preferred.x, textRect.sizeDelta.y);
+                textRect.sizeDelta = preferred;
             }
 
             wrapper.t_text.ForceMeshUpdate(false, false);
