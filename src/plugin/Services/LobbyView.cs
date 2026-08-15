@@ -9,12 +9,19 @@ namespace MegabonkTogether.Services
     /// One row of the lobby panel's member list, in the terms the panel draws rather than the terms
     /// the network layer stores.
     /// </summary>
-    public readonly struct LobbyMemberView(uint connectionId, string name, bool isHost, bool isLocal, bool isReady)
+    public readonly struct LobbyMemberView(uint connectionId, string name, bool isHost, bool isLocal, bool isReady, ulong steamId = 0UL)
     {
         public uint ConnectionId { get; } = connectionId;
         public string Name { get; } = name;
         public bool IsHost { get; } = isHost;
         public bool IsLocal { get; } = isLocal;
+
+        /// <summary>
+        /// The Steam account behind this row, or 0 when it is not known — which is every row on the
+        /// matchmaker transport, and any row on the Steam transport whose peer has not yet published
+        /// its connection id. Only the avatar depends on it, so 0 means "no picture", never an error.
+        /// </summary>
+        public ulong SteamId { get; } = steamId;
 
         /// <summary>
         /// Lobby readiness — "ready for the host to start" — and deliberately not
@@ -238,6 +245,8 @@ namespace MegabonkTogether.Services
 
             // Host first, then by connection id so the order is stable between refreshes. An
             // unstable order makes rows appear to swap places while people are reading them.
+            var steamIdsByConnectionId = ResolveSteamIds();
+
             var members = playerManagerService.GetAllPlayers()
                 .OrderByDescending(p => p.IsHost)
                 .ThenBy(p => p.ConnectionId)
@@ -246,7 +255,8 @@ namespace MegabonkTogether.Services
                     string.IsNullOrWhiteSpace(p.Name) ? "Player" : p.Name,
                     p.IsHost,
                     localId.HasValue && p.ConnectionId == localId.Value,
-                    IsReady(p.ConnectionId)))
+                    IsReady(p.ConnectionId),
+                    steamIdsByConnectionId.TryGetValue(p.ConnectionId, out var steamId) ? steamId : 0UL))
                 .ToList();
 
             // A host alone in a fresh lobby is in no roster, so the list would be empty and the
@@ -264,10 +274,49 @@ namespace MegabonkTogether.Services
                     LocalPlayerName,
                     IsLocalPlayerHost,
                     isLocal: true,
-                    IsLocalPlayerReady));
+                    IsLocalPlayerReady,
+
+                    // Read straight off Steam rather than out of the map below. A host alone in a
+                    // fresh lobby is exactly the case that map cannot cover: this row is synthesized
+                    // because the roster has no entry for it, so there is no connection id published
+                    // yet to look it up by, and the one face guaranteed to be available is our own.
+                    steamService.IsAvailable ? steamService.LocalSteamId : 0UL));
             }
 
             return members;
+        }
+
+        /// <summary>
+        /// Connection id to Steam account, built from the Steam lobby's per-member data.
+        ///
+        /// <para>Empty on the matchmaker transport, where there is no Steam lobby standing for the
+        /// session and therefore nothing to read. Avatars are a Steam-transport feature by
+        /// construction; the panel treats a missing id as "no picture".</para>
+        ///
+        /// <para>Rebuilt per call, at the panel's two-a-second refresh. Both Steam calls behind it
+        /// read a local cache that the lobby keeps up to date, so this is a dictionary allocation
+        /// and six string parses rather than any network traffic.</para>
+        /// </summary>
+        private Dictionary<uint, ulong> ResolveSteamIds()
+        {
+            var map = new Dictionary<uint, ulong>();
+
+            if (!Configuration.ModConfig.UseSteamTransport.Value
+                || steamLobbyService.State != SteamLobbyState.InLobby)
+            {
+                return map;
+            }
+
+            foreach (var steamId in steamLobbyService.GetMembers())
+            {
+                var raw = steamLobbyService.GetMemberData(steamId, SteamLobbyKeys.MemberConnectionId);
+                if (!string.IsNullOrEmpty(raw) && uint.TryParse(raw, out var connectionId))
+                {
+                    map[connectionId] = steamId;
+                }
+            }
+
+            return map;
         }
 
         public bool IsLocalPlayerReady

@@ -290,6 +290,7 @@ namespace MegabonkTogether
                 services.AddSingleton<ITrackerService, TrackerService>();
                 services.AddSingleton<ISteamService, SteamService>();
                 services.AddSingleton<ISteamLobbyService, SteamLobbyService>();
+                services.AddSingleton<ISteamAvatarService, SteamAvatarService>();
 
                 // Registered under its own interface, not under INetTransport. Both transports
                 // exist in this build, and which one carries a session is a decision that has not

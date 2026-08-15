@@ -1,4 +1,4 @@
-using MegabonkTogether.Configuration;
+﻿using MegabonkTogether.Configuration;
 using MegabonkTogether.Helpers;
 using MegabonkTogether.Scripts.Button;
 using MegabonkTogether.Services;
@@ -52,6 +52,9 @@ namespace MegabonkTogether.Scripts.Modal
         /// sessions; it reports on the one its opener started.
         /// </summary>
         private INetplaySessionService sessionService;
+
+        /// <summary>Steam profile pictures for the member rows. Null when Steam is unavailable.</summary>
+        private ISteamAvatarService avatarService;
 
         /// <summary>
         /// The last session message put on screen, so a status repeated at every refresh does not
@@ -293,6 +296,7 @@ namespace MegabonkTogether.Scripts.Modal
             lobbyViewService = Plugin.Services.GetService<ILobbyViewService>();
             uiAssetService = Plugin.Services.GetService<IUiAssetService>();
             sessionService = Plugin.Services.GetService<INetplaySessionService>();
+            avatarService = Plugin.Services.GetService<ISteamAvatarService>();
 
             // Unconditional lifecycle logging, deliberately. Two rounds were spent unable to tell
             // "the panel never ran" from "the panel ran and rendered invisibly", because every log
@@ -903,6 +907,8 @@ namespace MegabonkTogether.Scripts.Modal
             var role = member.IsHost ? " (host)" : "";
             var you = member.IsLocal ? " (you)" : "";
 
+            BindAvatar(row, member);
+
             var nameLabel = row.transform.Find("Name")?.GetComponent<TextMeshProUGUI>();
             if (nameLabel != null)
             {
@@ -920,6 +926,41 @@ namespace MegabonkTogether.Scripts.Modal
             }
 
             return row;
+        }
+
+        /// <summary>
+        /// Puts the member's Steam profile picture in the row, or hides the slot.
+        ///
+        /// <para><b>Hidden rather than left as an empty square.</b> There are three ways to have no
+        /// avatar and none of them is an error: the matchmaker transport has no Steam lobby to
+        /// resolve accounts against, a peer may not have published its connection id yet, and Steam
+        /// downloads a picture it has not cached. All three are transient or expected, and a blank
+        /// tile next to a name reads as a broken image where nothing is broken. The row simply has
+        /// no picture until it has one — the panel redraws twice a second, so it appears on its
+        /// own.</para>
+        /// </summary>
+        private void BindAvatar(GameObject row, LobbyMemberView member)
+        {
+            var slot = row.transform.Find("Avatar")?.GetComponent<Image>();
+            if (slot == null)
+            {
+                return;
+            }
+
+            var avatar = avatarService?.TryGetAvatar(member.SteamId);
+            if (avatar == null)
+            {
+                slot.gameObject.SetActive(false);
+                return;
+            }
+
+            slot.sprite = avatar;
+
+            // The placeholder tint the prefab carries would multiply through the picture and leave
+            // every face dark.
+            slot.color = Color.white;
+
+            slot.gameObject.SetActive(true);
         }
 
         public void Update()

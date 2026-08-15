@@ -49,6 +49,13 @@ namespace MegabonkTogether.UiAuthoring
         private static readonly Color StatusInk = Hex("#E8B94F");
         private static readonly Color MembersWell = Hex("#0E0C0A", 0.55f);
         private static readonly Color MemberRowFill = Hex("#2E2721", 0.60f);
+
+        /// <summary>
+        /// Sits under the profile picture. Visible only in the editor preview and for the instant
+        /// before a sprite arrives — the runtime hides the Image outright when there is no avatar,
+        /// rather than leaving a coloured square where a face should be.
+        /// </summary>
+        private static readonly Color MemberAvatarPlaceholder = Hex("#0E0C0A", 0.85f);
         private static readonly Color PlaceholderButton = Hex("#3A322B", 0.55f);
 
         #endregion
@@ -123,6 +130,14 @@ namespace MegabonkTogether.UiAuthoring
         // than as a void — which is what the unstyled panel's blank middle looked like.
         private const int MaxMembers = 6;
         private const float MemberRowHeight = 28f;
+
+        /// <summary>
+        /// The Steam profile picture in a member row. Square and two units shy of the row's height
+        /// so it reads as sitting inside the row rather than as a band across it.
+        /// </summary>
+        private const float AvatarSize = MemberRowHeight - 4f;
+
+        private const float AvatarInset = 4f;
         private const float MemberRowSpacing = 3f;
         private const float WellPadding = 6f;
         private const float MembersWidth = ContentWidth - 4f;
@@ -245,12 +260,28 @@ namespace MegabonkTogether.UiAuthoring
             var row = CreateImage("MemberRow", membersRect, MemberRowFill);
             Anchor(row.rectTransform, Vector2.zero, new Vector2(MembersWidth - (2f * WellPadding), MemberRowHeight));
 
+            // The Steam profile picture, left of the name. Square, inset a couple of units from the
+            // row's edges so it does not touch them.
+            //
+            // Its sprite is assigned at runtime and there is nothing to preview here, so it is
+            // authored as a dim placeholder square: an Image with no sprite draws as a filled rect,
+            // and the runtime hides it entirely for a member whose avatar is unavailable — every
+            // row on the matchmaker transport, and a Steam row whose picture is still downloading.
+            var avatar = CreateImage("Avatar", row.rectTransform, MemberAvatarPlaceholder);
+            var avatarRect = avatar.rectTransform;
+            avatarRect.anchorMin = new Vector2(0f, 0.5f);
+            avatarRect.anchorMax = new Vector2(0f, 0.5f);
+            avatarRect.pivot = new Vector2(0f, 0.5f);
+            avatarRect.sizeDelta = new Vector2(AvatarSize, AvatarSize);
+            avatarRect.anchoredPosition = new Vector2(AvatarInset, 0f);
+
             // Anchored to the row's own edges rather than offset from its centre, so the columns
-            // stay where they belong if the well is ever made wider.
+            // stay where they belong if the well is ever made wider. The left edge clears the
+            // avatar rather than the row.
             var rowName = CreateText("Name", row.rectTransform, "Player", 19f, Vector2.zero, Vector2.zero);
             rowName.alignment = TextAlignmentOptions.MidlineLeft;
             rowName.color = Color.white;
-            EdgeAnchor(rowName.rectTransform, left: 14f, right: 150f);
+            EdgeAnchor(rowName.rectTransform, left: AvatarInset + AvatarSize + 8f, right: 150f);
 
             var rowReady = CreateText("Ready", row.rectTransform, "READY", 17f, Vector2.zero, Vector2.zero);
             rowReady.alignment = TextAlignmentOptions.MidlineRight;

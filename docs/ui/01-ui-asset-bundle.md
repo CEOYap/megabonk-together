@@ -66,6 +66,7 @@ LobbyPanel                 RectTransform, CanvasGroup   (root, full-screen)
     ├── HeaderRule         Image                        decoration
     ├── Members            Image + VerticalLayoutGroup  the list well
     │   └── MemberRow      Image                        template, starts inactive
+    │       ├── Avatar     Image                        Steam profile picture, sprite set at runtime
     │       ├── Name       TextMeshProUGUI
     │       └── Ready      TextMeshProUGUI
     ├── Status             TextMeshProUGUI              transient messages

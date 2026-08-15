@@ -97,6 +97,8 @@ namespace MegabonkTogether.Services
                 return;
             }
 
+            PublishLocalConnectionId();
+
             if (steamLobbyService.IsOwner)
             {
                 PollAsHost();
@@ -104,6 +106,35 @@ namespace MegabonkTogether.Services
             }
 
             PollAsClient();
+        }
+
+        /// <summary>
+        /// The connection id we hold, written into our own lobby member data so other peers can tell
+        /// which Steam account is which row. See <see cref="SteamLobbyKeys.MemberConnectionId"/> for
+        /// why the join lives here rather than on the wire.
+        /// </summary>
+        private uint? publishedConnectionId;
+
+        private void PublishLocalConnectionId()
+        {
+            var local = playerManagerService.GetLocalPlayer();
+            if (local == null)
+            {
+                return;
+            }
+
+            // Written once per value, not once per poll. SetLobbyMemberData is a network round trip
+            // on Steam's side and this runs on the session tick.
+            if (publishedConnectionId == local.ConnectionId)
+            {
+                return;
+            }
+
+            if (steamLobbyService.SetLocalMemberData(SteamLobbyKeys.MemberConnectionId, local.ConnectionId.ToString()))
+            {
+                publishedConnectionId = local.ConnectionId;
+                Plugin.Log.LogInfo($"[steam-lobby] Published connection id {local.ConnectionId} for this member.");
+            }
         }
 
         private void PollAsHost()
