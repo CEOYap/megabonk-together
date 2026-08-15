@@ -185,8 +185,30 @@ namespace MegabonkTogether.Scripts.Modal
 
             panel.OnContinueRequested = () => GoToCharacterSelection(menu);
             panel.OnLeaveRequested = () => Plugin.Instance.NetworkHandler.ResetNetworking();
+            panel.OnJoinRequested = code => SwitchSession(service => service.Join(code));
 
             return panel;
+        }
+
+        /// <summary>
+        /// Ends the session this peer is in, then starts a different one.
+        ///
+        /// <para><b>The Cancel is not optional.</b> Since step 2 the panel is reached by hosting, so
+        /// by the time Join Code is pressed there is already a lobby — this peer's own. The session
+        /// service only refuses a start while it is <i>busy</i>, so without the Cancel the second
+        /// start would be accepted on top of a live session and leave a Steam lobby behind that
+        /// nothing owns. Cancel is safe when idle, which is the other case this covers.</para>
+        ///
+        /// <para><b>UNVERIFIED:</b> the Steam leave-then-join ordering. <c>Cancel</c> calls
+        /// <c>LeaveLobby</c> and the join then searches for a different lobby by code; whether Steam
+        /// has finished releasing the first one by that point has not been observed in game.</para>
+        /// </summary>
+        private static void SwitchSession(Action<INetplaySessionService> start)
+        {
+            var service = Plugin.Services.GetRequiredService<INetplaySessionService>();
+
+            service.Cancel();
+            start(service);
         }
 
         /// <summary>
@@ -501,7 +523,7 @@ namespace MegabonkTogether.Scripts.Modal
             // do not — so hiding one must not leave a gap. The layout group closes it for free,
             // which the hand-placed version could not do.
             copyCodeButton = CreateButton("CopyCodeButton", "Copy Code", OnCopyCodeClicked);
-            joinFromClipboardButton = CreateButton("JoinClipboardButton", "Join From Clipboard", OnJoinFromClipboardClicked);
+            joinFromClipboardButton = CreateButton("JoinClipboardButton", "Join Code", OnJoinFromClipboardClicked);
             readyButton = CreateButton("LobbyReadyButton", "Ready", OnReadyClicked);
             startButton = CreateButton("LobbyStartButton", "Start", OnStartClicked);
 
@@ -547,10 +569,28 @@ namespace MegabonkTogether.Scripts.Modal
             {
                 ShowSessionStatus();
             }
+            var members = lobbyViewService.GetMembers();
+
+            // Going somewhere else is offered while there is nobody here to abandon.
+            //
+            // `!inLobby` alone would have made Join Code unreachable. Step 2 made TOGETHER! host
+            // immediately, so a player is in a lobby of their own within about a second of opening
+            // the panel, and the not-in-a-lobby state is only ever seen behind the connecting
+            // window or after a failure. Leaving a lobby you are alone in costs nobody anything, so
+            // that is the line: alone means you can still change your mind.
+            var alone = !inLobby || members.Count <= 1;
+
             SetButtonVisible(inviteButton, inLobby && lobbyViewService.CanInvite);
             SetButtonVisible(copyCodeButton, inLobby && !string.IsNullOrEmpty(code));
-            SetButtonVisible(leaveLobbyButton, inLobby);
-            SetButtonVisible(joinFromClipboardButton, !inLobby);
+            SetButtonVisible(joinFromClipboardButton, alone);
+
+            // Always offered, and relabelled rather than hidden. The original reasoning — "the
+            // panel only exists while you are in a lobby, so going back IS leaving" — stopped being
+            // true at step 2: a failed host now sits on this panel with no lobby, and hiding the
+            // only exit left them with two buttons and no way to the main menu.
+            SetButtonVisible(leaveLobbyButton, true);
+            SetButtonLabel(leaveLobbyButton, inLobby ? "Leave Lobby" : "Back");
+
             SetButtonVisible(readyButton, inLobby);
 
             // Start is the host's alone. Greyed rather than hidden for the host, so the reason the
@@ -569,7 +609,9 @@ namespace MegabonkTogether.Scripts.Modal
             }
             memberRows.Clear();
 
-            var members = lobbyViewService.GetMembers();
+            // Reuses the list fetched for the visibility rules above — GetMembers allocates, and
+            // twice a second for the life of the panel is exactly the idle allocation the refresh
+            // interval exists to avoid.
             for (var i = 0; i < members.Count; i++)
             {
                 memberRows.Add(CreateMemberRow(members[i]));
