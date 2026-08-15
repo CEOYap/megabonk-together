@@ -1,8 +1,8 @@
 # Planned: TOGETHER! goes straight to the lobby
 
-**Status: Phase 5, steps 1 and 2 done, steps 3–5 planned. `NetworkMenuTab` is now unreachable —
-nothing constructs it. Netplay Options and quickplay are offline until steps 4 and 3. None of it
-has been run in-game.**
+**Status: Phase 5, steps 1–3 done, steps 4 and 5 planned. `NetworkMenuTab` is unreachable — nothing
+constructs it. Random is retired rather than rehomed. Netplay Options is offline until step 4. None
+of steps 2 or 3 has been run in-game.**
 
 Today, pressing **TOGETHER!** opens `NetworkMenuTab` — a name box, Netplay Options, and a
 Random / Friendlies choice, and behind Friendlies another screen with Host, a room-code box and
@@ -29,10 +29,18 @@ the file means finding a home for each of these, and three of them are not UI at
 
 ## Three decisions this forces
 
-**What happens to Random.** It is the quickplay queue and the only thing that matches strangers
-without a code. "TOGETHER! goes straight to the lobby" answers Friendlies and says nothing about
-Random. Either the lobby panel gains a Quickplay button, or Random is dropped as a feature — and
-dropping it is a product decision, not a cleanup.
+**What happens to Random. — Decided at step 3: retired.** The lobby panel gets **no Quickplay
+button**, so nothing reaches the queue any more.
+
+Three things pointed the same way. The Steam transport refuses quickplay outright and will keep
+refusing it until there is a lobby browser to match strangers with, so on the transport everything
+is moving to, the button would never work. The matchmaker transport that *can* serve it is deleted
+one release after the loss test. And the button did not fit: with Join Code needing the same
+alone-and-not-committed slot, a matchmaker host sitting alone in their own lobby would have shown
+seven buttons against a column budgeted for about six, which puts the card past the 1080 reference.
+
+`INetplaySessionService.Quickplay` and `NetworkModeType.Random` still exist and still work; nothing
+calls them. Step 5 can take them out with the rest.
 
 **Host or join, without a screen to ask on.** TOGETHER! cannot both create a lobby and join one.
 The likely answer is that it always hosts, and joining happens through Copy Code / Join From
@@ -145,10 +153,33 @@ becomes "open the panel"; `SteamTicker`'s invite check and `WindowManager`'s tea
 > the panel now opens against a live main menu rather than after a modal closed itself, and
 > `HideMainMenuChrome` has only ever run in the latter case.
 
-**3. Quickplay and Join From Clipboard on the panel, and the connecting window.** All three need
-step 2 first — see the constraints above. `LobbyPanel.OnJoinRequested` needs assigning as part of
-this; it is currently inert. The connecting window can be `LoadingModal.Show`, driven off
-`INetplaySessionService.StateChanged`, with `Cancel()` behind its Stop button.
+**3. Quickplay and Join From Clipboard on the panel, and the connecting window.** ~~All three need
+step 2 first.~~ **Done, with one of the three dropped rather than built.**
+
+> **Join Code** (renamed from Join From Clipboard, which was the longest label on the panel).
+> `OnJoinRequested` is assigned, so the button does something for the first time. It is gated on
+> being **alone** rather than `!inLobby` — step 2 made the latter unreachable — and it cancels the
+> current session before joining, because the service refuses a start only while *busy* and would
+> otherwise have accepted a join on top of this peer's own lobby.
+>
+> **The connecting window** is not `LoadingModal`, and that part of the plan was wrong. `LoadingModal`
+> parents to the game's `Canvas` via `GameObject.Find`, and the panel builds its own canvas at
+> `sortingOrder` 1000 — its blocker would have drawn *behind* the panel and blocked nothing. The
+> window is built on the panel's own canvas instead, with sibling order doing the work. Stop is on
+> it, wired to `Cancel()`, and closes the panel.
+>
+> **Quickplay: retired instead** — see *What happens to Random* above.
+>
+> **The panel gained an exit.** `leaveLobbyButton` was `inLobby`-only, and after step 2 a failed
+> host sits on the panel with no lobby — so hiding it left them with no route to the main menu. It
+> is always shown now, relabelled **Back** when there is no lobby.
+>
+> **Known gap:** Stop is mouse-only. The game's `Window` registry collects `MyButton`s beneath its
+> own transform and the overlay is a sibling of the panel rather than a child, so focus does not
+> walk onto it. Putting the overlay under the panel root would fix that and give up the guarantee
+> that the dim covers the whole canvas.
+>
+> **UNVERIFIED**: none of step 3 has been run in-game.
 
 **4. Netplay Options as a panel sub-view.** Independent of the others and doable at any point: the
 two toggles and a Back button, replacing the member list and column rather than adding to it.
