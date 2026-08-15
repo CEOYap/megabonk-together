@@ -122,6 +122,7 @@ namespace MegabonkTogether.Scripts.Modal
         private CustomButton inviteButton;
         private CustomButton copyCodeButton;
         private CustomButton joinFromClipboardButton;
+        private CustomButton stopButton;
         private CustomButton leaveLobbyButton;
         private CustomButton readyButton;
         private CustomButton startButton;
@@ -143,6 +144,9 @@ namespace MegabonkTogether.Scripts.Modal
 
         /// <summary>Runs when Join from clipboard is pressed, with the trimmed clipboard text.</summary>
         internal Action<string> OnJoinRequested { get; set; }
+
+        /// <summary>Runs when Stop is pressed on the connecting window, before the panel closes.</summary>
+        internal Action OnCancelRequested { get; set; }
 
         /// <summary>
         /// The panel currently on screen, or null.
@@ -185,7 +189,11 @@ namespace MegabonkTogether.Scripts.Modal
 
             panel.OnContinueRequested = () => GoToCharacterSelection(menu);
             panel.OnLeaveRequested = () => Plugin.Instance.NetworkHandler.ResetNetworking();
+
             panel.OnJoinRequested = code => SwitchSession(service => service.Join(code));
+
+            panel.OnCancelRequested = () =>
+                Plugin.Services.GetRequiredService<INetplaySessionService>().Cancel();
 
             return panel;
         }
@@ -194,10 +202,11 @@ namespace MegabonkTogether.Scripts.Modal
         /// Ends the session this peer is in, then starts a different one.
         ///
         /// <para><b>The Cancel is not optional.</b> Since step 2 the panel is reached by hosting, so
-        /// by the time Join Code is pressed there is already a lobby — this peer's own. The session
-        /// service only refuses a start while it is <i>busy</i>, so without the Cancel the second
-        /// start would be accepted on top of a live session and leave a Steam lobby behind that
-        /// nothing owns. Cancel is safe when idle, which is the other case this covers.</para>
+        /// by the time Join Code is pressed there is already a lobby — this peer's own.
+        /// The session service only refuses a start while it is <i>busy</i>, so without the Cancel
+        /// the second start would be accepted on top of a live session and leave a Steam lobby
+        /// behind that nothing owns. Cancel is safe when idle, which is the other case this
+        /// covers.</para>
         ///
         /// <para><b>UNVERIFIED:</b> the Steam leave-then-join ordering. <c>Cancel</c> calls
         /// <c>LeaveLobby</c> and the join then searches for a different lobby by code; whether Steam
@@ -524,6 +533,10 @@ namespace MegabonkTogether.Scripts.Modal
             // which the hand-placed version could not do.
             copyCodeButton = CreateButton("CopyCodeButton", "Copy Code", OnCopyCodeClicked);
             joinFromClipboardButton = CreateButton("JoinClipboardButton", "Join Code", OnJoinFromClipboardClicked);
+
+            // No Quickplay button, deliberately — see the note on Random in
+            // docs/ui/05-drop-the-netplay-menu.md. The service still has the entry point; nothing
+            // reaches it.
             readyButton = CreateButton("LobbyReadyButton", "Ready", OnReadyClicked);
             startButton = CreateButton("LobbyStartButton", "Start", OnStartClicked);
 
@@ -569,15 +582,16 @@ namespace MegabonkTogether.Scripts.Modal
             {
                 ShowSessionStatus();
             }
+
             var members = lobbyViewService.GetMembers();
 
             // Going somewhere else is offered while there is nobody here to abandon.
             //
-            // `!inLobby` alone would have made Join Code unreachable. Step 2 made TOGETHER! host
-            // immediately, so a player is in a lobby of their own within about a second of opening
-            // the panel, and the not-in-a-lobby state is only ever seen behind the connecting
-            // window or after a failure. Leaving a lobby you are alone in costs nobody anything, so
-            // that is the line: alone means you can still change your mind.
+            // `!inLobby` alone would have made both of these unreachable. Step 2 made TOGETHER!
+            // host immediately, so a player is in a lobby of their own within about a second of
+            // opening the panel and the not-in-a-lobby state is only ever seen behind the
+            // connecting window or after a failure. Leaving a lobby you are alone in costs nobody
+            // anything, so that is the line: alone means you can still change your mind.
             var alone = !inLobby || members.Count <= 1;
 
             SetButtonVisible(inviteButton, inLobby && lobbyViewService.CanInvite);
@@ -777,7 +791,7 @@ namespace MegabonkTogether.Scripts.Modal
             cardRect.anchorMin = new Vector2(0.5f, 0.5f);
             cardRect.anchorMax = new Vector2(0.5f, 0.5f);
             cardRect.pivot = new Vector2(0.5f, 0.5f);
-            cardRect.sizeDelta = new Vector2(620f, 160f);
+            cardRect.sizeDelta = new Vector2(620f, 260f);
             cardRect.anchoredPosition = Vector2.zero;
 
             var cardImage = card.AddComponent<Image>();
@@ -787,8 +801,9 @@ namespace MegabonkTogether.Scripts.Modal
             var textObj = new GameObject("BusyText");
             textObj.transform.SetParent(card.transform, false);
 
+            // Upper half of the card; the Stop button takes the lower.
             var textRect = textObj.AddComponent<RectTransform>();
-            textRect.anchorMin = Vector2.zero;
+            textRect.anchorMin = new Vector2(0f, 0.45f);
             textRect.anchorMax = Vector2.one;
             textRect.sizeDelta = Vector2.zero;
             textRect.anchoredPosition = Vector2.zero;
@@ -802,7 +817,47 @@ namespace MegabonkTogether.Scripts.Modal
 
             ApplyGameFontTo(busyText);
 
+            CreateStopButton(card.transform);
+
             busyOverlay.SetActive(false);
+        }
+
+        /// <summary>
+        /// Stop, on the connecting window.
+        ///
+        /// <para>Without it the window is a wait with no way out. The session service does time out
+        /// — 20s for a Steam lobby, 30s for the sockets — so it was bounded rather than a trap, but
+        /// half a minute of a screen that ignores every click is indistinguishable from a hang to
+        /// the person looking at it.</para>
+        ///
+        /// <para><b>Mouse only, and that is a known gap.</b> The game's <c>Window</c> registry
+        /// collects <c>MyButton</c>s beneath its own transform, and this button is on the overlay,
+        /// which is a sibling of the panel on the canvas rather than a child of it — so keyboard and
+        /// controller focus will not walk onto it. It receives pointer events directly through the
+        /// canvas raycaster, which is what the other buttons use for clicking too. Moving the
+        /// overlay under the panel root would fix the focus and lose the guarantee that the dim
+        /// covers the whole canvas; the dim is the part that matters.</para>
+        /// </summary>
+        private void CreateStopButton(Transform card)
+        {
+            stopButton = CreateButton("LobbyStopButton", "Stop", OnStopClicked, card);
+            if (stopButton == null)
+            {
+                return;
+            }
+
+            var rect = stopButton.GetComponent<RectTransform>();
+            if (rect == null)
+            {
+                return;
+            }
+
+            // Anchored to the card's lower middle. The column's layout group does not reach here,
+            // so this one is placed by hand.
+            rect.anchorMin = new Vector2(0.5f, 0f);
+            rect.anchorMax = new Vector2(0.5f, 0f);
+            rect.pivot = new Vector2(0.5f, 0f);
+            rect.anchoredPosition = new Vector2(0f, 28f);
         }
 
         /// <summary>
@@ -954,6 +1009,22 @@ namespace MegabonkTogether.Scripts.Modal
             OnJoinRequested?.Invoke(code);
         }
 
+        /// <summary>
+        /// Abandons the attempt the connecting window is covering and closes the panel.
+        ///
+        /// <para>Closing rather than returning to an idle panel: this button is reached from
+        /// TOGETHER!, so the thing behind it is the main menu, and leaving a lobby-less lobby panel
+        /// on screen would be a state with one button on it. <c>Cancel</c> is what actually ends the
+        /// session — the panel closing is only the part the player sees.</para>
+        /// </summary>
+        private void OnStopClicked()
+        {
+            PlaySelectSfx();
+
+            OnCancelRequested?.Invoke();
+            Close();
+        }
+
         private void OnLeaveLobbyClicked()
         {
             PlaySelectSfx();
@@ -1066,7 +1137,11 @@ namespace MegabonkTogether.Scripts.Modal
         /// hand-computed button constant in the previous version was wrong at least once — 420x48
         /// against real 300x70 clones, then a pitch tighter than the button height.</para>
         /// </summary>
-        private CustomButton CreateButton(string name, string label, Action onClick)
+        /// <param name="parent">
+        /// Where the button goes. Defaults to the column; the connecting window passes its own card,
+        /// because that one has to sit above the dim rather than in the list behind it.
+        /// </param>
+        private CustomButton CreateButton(string name, string label, Action onClick, Transform parent = null)
         {
             if (mainMenu == null || mainMenu.btnPlay == null)
             {
@@ -1076,7 +1151,7 @@ namespace MegabonkTogether.Scripts.Modal
 
             var buttonObj = Instantiate(mainMenu.btnPlay.gameObject);
             buttonObj.name = name;
-            buttonObj.transform.SetParent(buttonContainer, false);
+            buttonObj.transform.SetParent(parent ?? buttonContainer, false);
 
             var unityButton = buttonObj.GetComponentInChildren<UnityEngine.UI.Button>();
             if (unityButton != null)
