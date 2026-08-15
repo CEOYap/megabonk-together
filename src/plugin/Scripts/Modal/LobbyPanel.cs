@@ -1,4 +1,5 @@
-﻿using MegabonkTogether.Helpers;
+using MegabonkTogether.Configuration;
+using MegabonkTogether.Helpers;
 using MegabonkTogether.Scripts.Button;
 using MegabonkTogether.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -143,6 +144,18 @@ namespace MegabonkTogether.Scripts.Modal
         private CustomButton copyCodeButton;
         private CustomButton joinFromClipboardButton;
         private CustomButton stopButton;
+
+        private CustomButton optionsButton;
+        private CustomButton saveToggleButton;
+        private CustomButton sharedExpToggleButton;
+        private CustomButton optionsBackButton;
+
+        /// <summary>
+        /// Which of the panel's two views is up. The options view replaces the member list and the
+        /// button column rather than adding to it — a seventh entry in the column was what the
+        /// column could not afford, which is why this is a view and not a button.
+        /// </summary>
+        private bool showingOptions;
         private CustomButton leaveLobbyButton;
         private CustomButton readyButton;
         private CustomButton startButton;
@@ -569,9 +582,15 @@ namespace MegabonkTogether.Scripts.Modal
             readyButton = CreateButton("LobbyReadyButton", "Ready", OnReadyClicked);
             startButton = CreateButton("LobbyStartButton", "Start", OnStartClicked);
 
-            // "Back" and "Leave Lobby" would be the same action here — the panel only exists while
-            // you are in a lobby, so going back IS leaving.
             leaveLobbyButton = CreateButton("LeaveLobbyButton", "Leave Lobby", OnLeaveLobbyClicked);
+
+            // The options view's three, built into the same column and hidden with everything else
+            // when the lobby view is up. Only one view's buttons are ever visible, so the column
+            // still only has to be tall enough for the larger of the two.
+            optionsButton = CreateButton("NetplayOptionsButton", "Options", OnOptionsClicked);
+            saveToggleButton = CreateButton("SaveToggleButton", "Saves: OFF", OnSaveToggleClicked);
+            sharedExpToggleButton = CreateButton("SharedExpToggleButton", "Shared XP: OFF", OnSharedExpToggleClicked);
+            optionsBackButton = CreateButton("OptionsBackButton", "Back", OnOptionsBackClicked);
         }
 
         /// <summary>
@@ -588,6 +607,12 @@ namespace MegabonkTogether.Scripts.Modal
             var isHost = lobbyViewService.IsLocalPlayerHost;
             var code = lobbyViewService.LobbyCode;
 
+            if (showingOptions)
+            {
+                RefreshOptionsView();
+                return;
+            }
+
             if (titleText != null)
             {
                 titleText.text = isHost ? "Your Lobby" : "Lobby";
@@ -596,6 +621,15 @@ namespace MegabonkTogether.Scripts.Modal
             if (codeText != null)
             {
                 codeText.text = string.IsNullOrEmpty(code) ? "" : $"Code: {code}";
+            }
+
+            SetButtonVisible(saveToggleButton, false);
+            SetButtonVisible(sharedExpToggleButton, false);
+            SetButtonVisible(optionsBackButton, false);
+
+            if (memberListRoot != null && !memberListRoot.gameObject.activeSelf)
+            {
+                memberListRoot.gameObject.SetActive(true);
             }
 
             // Hide rather than grey out, so the panel never offers an action that cannot work.
@@ -635,6 +669,7 @@ namespace MegabonkTogether.Scripts.Modal
             SetButtonLabel(leaveLobbyButton, inLobby ? "Leave Lobby" : "Back");
 
             SetButtonVisible(readyButton, inLobby);
+            SetButtonVisible(optionsButton, true);
 
             // Start is the host's alone. Greyed rather than hidden for the host, so the reason the
             // run has not begun is visible; hidden entirely for clients, for whom it is not theirs.
@@ -665,6 +700,97 @@ namespace MegabonkTogether.Scripts.Modal
             lobbyWindow?.FindAllButtonsInWindow();
 
             WarnIfButtonColumnOverflows();
+        }
+
+        /// <summary>
+        /// The options view: the two netplay settings and a way back, in place of the member list
+        /// and the lobby's own buttons.
+        ///
+        /// <para><b>A view rather than a seventh button</b>, which is the whole reason step 4 was
+        /// its own step. The column is sized for seven and the lobby view already uses seven at its
+        /// worst; adding options to the list rather than replacing it would have needed a taller
+        /// card, and the card had just been shrunk because it did not fit.</para>
+        ///
+        /// <para>The toggles are buttons carrying their own state in the label rather than clones
+        /// of the game's Settings prefab, which is what the deleted menu used. That prefab is found
+        /// by name and split across a status label and two arrows; a button that says what it is
+        /// and flips when pressed needs none of that and matches everything else in the
+        /// column.</para>
+        /// </summary>
+        private void RefreshOptionsView()
+        {
+            if (titleText != null)
+            {
+                titleText.text = "Netplay Options";
+            }
+
+            if (codeText != null)
+            {
+                codeText.text = "";
+            }
+
+            if (memberListRoot != null && memberListRoot.gameObject.activeSelf)
+            {
+                memberListRoot.gameObject.SetActive(false);
+            }
+
+            SetButtonVisible(inviteButton, false);
+            SetButtonVisible(copyCodeButton, false);
+            SetButtonVisible(joinFromClipboardButton, false);
+            SetButtonVisible(leaveLobbyButton, false);
+            SetButtonVisible(readyButton, false);
+            SetButtonVisible(startButton, false);
+            SetButtonVisible(optionsButton, false);
+
+            SetButtonVisible(saveToggleButton, true);
+            SetButtonVisible(sharedExpToggleButton, true);
+            SetButtonVisible(optionsBackButton, true);
+
+            SetButtonLabel(saveToggleButton, ModConfig.AllowSavesDuringNetplay.Value ? "Saves: ON" : "Saves: OFF");
+            SetButtonLabel(sharedExpToggleButton, ModConfig.EnabledSharedExperience.Value ? "Shared XP: ON" : "Shared XP: OFF");
+
+            lobbyWindow?.FindAllButtonsInWindow();
+
+            WarnIfButtonColumnOverflows();
+        }
+
+        private void OnOptionsClicked()
+        {
+            PlaySelectSfx();
+            showingOptions = true;
+            Refresh();
+        }
+
+        private void OnOptionsBackClicked()
+        {
+            PlaySelectSfx();
+            showingOptions = false;
+            Refresh();
+        }
+
+        /// <summary>
+        /// <para>Written through to disk on every press. These are read at the start of a session
+        /// rather than watched, so a player who sets one and then quits without starting a run
+        /// would otherwise find it reverted.</para>
+        /// </summary>
+        private void OnSaveToggleClicked()
+        {
+            PlaySelectSfx();
+
+            ModConfig.AllowSavesDuringNetplay.Value = !ModConfig.AllowSavesDuringNetplay.Value;
+            ModConfig.Save();
+
+            Refresh();
+        }
+
+        private void OnSharedExpToggleClicked()
+        {
+            PlaySelectSfx();
+
+            ModConfig.EnabledSharedExperience.Value = !ModConfig.EnabledSharedExperience.Value;
+            ModConfig.Save();
+
+            Refresh();
         }
 
         /// <summary>
