@@ -979,7 +979,7 @@ namespace MegabonkTogether.Scripts.Modal
             if (wrapper != null && wrapper.t_text != null && wrapper.t_text.text != label)
             {
                 wrapper.t_text.text = label;
-                ResizeButtonToLabel(wrapper);
+                ResizeButtonToLabel(wrapper, label);
             }
         }
 
@@ -997,21 +997,36 @@ namespace MegabonkTogether.Scripts.Modal
         /// after creation, and "Not Ready" was drawn at the width computed for "Ready" — the text
         /// spilling out past both ends of the background.</para>
         ///
-        /// <para>The two forcing calls before it are not decoration. <c>Refresh</c> reads the label's
-        /// <b>current</b> <c>sizeDelta</c>, and a TMP component does not resize on assignment: with
-        /// <c>autoSizeTextContainer</c> its rect follows the mesh, which regenerates on the next
-        /// canvas update, and under a <c>ContentSizeFitter</c> it follows the next layout pass.
-        /// Calling <c>Refresh</c> without forcing both would fit the background to the previous
-        /// label — the same defect one frame earlier. Which of the two mechanisms this button
-        /// actually uses is unknown; both are covered because neither costs anything on a label
-        /// change that happens when somebody presses a button.</para>
+        /// <para><b>The label's own rect has to be set first, and that is the part that was
+        /// missing.</b> <c>Refresh</c> derives the background from
+        /// <c>t_text.rectTransform.sizeDelta</c>, and neither forcing a mesh update nor forcing a
+        /// layout pass makes TMP widen that rect — both were tried, and both leave it at whatever
+        /// width the cloned PLAY button was authored with. So every button came out PLAY's width
+        /// and every label longer than about seven characters was cut off at both ends: COPY CODE
+        /// drew as "OPY COD", LEAVE LOBBY as "AVE LOB". Asking TMP what the string needs, and
+        /// writing that width onto the rect, is what actually resizes anything.</para>
+        ///
+        /// <para>Width only. The height the game authored is correct, and it is what the column's
+        /// overflow budget is measured against — see <see cref="WarnIfButtonColumnOverflows"/>.</para>
+        ///
+        /// <para>The two forcing calls are kept. <c>Refresh</c> reads the rect that
+        /// <c>GetPreferredValues</c> just sized, so they are no longer load-bearing for the width,
+        /// but they settle the mesh and any layout under it before the background is measured, and
+        /// neither costs anything on a label change that happens when somebody presses a
+        /// button.</para>
         /// </summary>
-        private static void ResizeButtonToLabel(ButtonTextWrapper wrapper)
+        private static void ResizeButtonToLabel(ButtonTextWrapper wrapper, string label)
         {
             var textRect = wrapper.t_text.rectTransform;
             if (textRect == null)
             {
                 return;
+            }
+
+            var preferred = wrapper.t_text.GetPreferredValues(label);
+            if (preferred.x > 0f)
+            {
+                textRect.sizeDelta = new Vector2(preferred.x, textRect.sizeDelta.y);
             }
 
             wrapper.t_text.ForceMeshUpdate(false, false);
