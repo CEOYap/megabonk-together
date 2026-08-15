@@ -1,4 +1,4 @@
-# Observed bugs — backlog
+﻿# Observed bugs — backlog
 
 Bugs seen in play that are **not yet fixed** and are not tracked elsewhere. Distinct from
 [`01-critical-fixes.md`](01-critical-fixes.md) (defects found by source analysis, most now fixed)
@@ -540,7 +540,27 @@ exists to prevent — and the same reasoning that makes `SpawnBoss_Prefix` suppr
 ---
 
 <a name="ob-12"></a>
-## OB-12 — The run's interactable counters diverge, except charge shrines — CONFIRMED, cause exact
+## OB-12 — The run's interactable counters diverge, except charge shrines — FIXED, unverified
+
+> **Resolved 2026-08-15.** The counter was found and the fix is in. It is **not** `RunStats` —
+> that was this entry's one wrong turn, and the detour is kept below because the reasoning that
+> corrected it is reusable.
+>
+> **The counter is `InteractablesStatus`**, a static `Dictionary<string, InteractableStatusContainer>`
+> keyed by an interactable's debug name, each entry holding `numUsed` and `numTotal` — the two
+> halves of "Chests 4 / 46". It backs the panel behind the **Shrine Counter** setting, at
+> `GameUI/GameUI/Debug/EnemyInformation/Shrines`. Identified from the object path rather than by
+> more decompiling; one sentence from whoever had the game open beat an xref pass over every UI type.
+>
+> **The mechanism this entry described was right all along**, just attributed to the wrong class.
+> `InteractablesStatus.OnInteractableUse` is raised from the interactable's own interaction path;
+> the mod's `Destroy`/`Used` shortcut replaces that path; the remote peer never counts it. And
+> `InteractablesStatus.OnChargeShrineCharged` is a separate handler reached by both peers running
+> their own trigger callbacks — which is why charge shrines were the one row that agreed. That
+> prediction held under a changed cause, which is the strongest thing this entry did.
+>
+> **Fix:** both shortcut branches call `InteractablesStatus.OnInteractableUse(interactable, true)`
+> before taking the shortcut. See `Helpers/InteractableCounterHelper`.
 
 **Reported, with two screenshots of the same moment in one run:**
 
@@ -683,6 +703,49 @@ that `Interact` has side effects the receiver must not run twice — or replicat
 part of the player record, which is cheap but makes the HUD a replicated value rather than a derived
 one. **Neither is worth doing before the decompile**, because both assume the counter is where this
 entry assumes it is.
+
+### What a second pass found — and why "cause exact" is withdrawn
+
+Three facts, all from `dump.cs` and one decompile on buildid 21750826. Together they say the entry
+is describing a real mechanism that is **not the one behind at least half the reported rows.**
+
+**1. `TrackStats.OnInteracted` is not a general interactable tally.** Decompiled
+(`TrackStats$$OnInteracted`, VA `0x180417690`, cached under `megabonk-re/decompiled/`) it is a
+two-branch dispatcher and nothing more:
+
+| Type tested | Effect |
+|---|---|
+| `InteractablePot` | `AddValue(13, 1)` — `EMyStat.potsBroken` — then invokes a static `Action` (`A_PotBroken`) |
+| `InteractableShrineMagnet` | one further `AddValue` |
+
+Two `AddValue` calls in the whole function. Chests, moais, greed shrines and boss curses do not
+pass through it; they must reach their tally by some other handler, or not at all.
+
+**2. `EMyStat` has no member for three of the diverging counters.** The enum is complete at 0..50
+and contains `chestsOpened`, `potsBroken`, `shrineCharge`, `shrineChallenge`, `shrineSucc`,
+`chestsBought`, `microwavesExploded` and four `shadyGuys*` variants. There is **no** moai, no greed
+shrine, and no boss curse. Those three rows diverged in the screenshots, so whatever counts them is
+not `RunStats`.
+
+**3. The reported counters have denominators; `RunStats` has none.** `RunStats.GetStat(EMyStat)`
+returns a single `int`. "Chests 4 / 46" and "Pots 13 / 55" are a *used-of-present* pair. The
+denominator looks like map spawn configuration — `RandomMapObject.amount` / `maxAmount`, the shape
+behind fields such as `greedShrineSpawns` — which means the panel is a per-map completion readout
+rather than a progression stat.
+
+**So the open question is narrow and cheap to answer:** *which screen are those counters on?*
+**Answered:** the Shrine Counter panel, `GameUI/GameUI/Debug/EnemyInformation/Shrines`, which is
+`InteractablesStatus` — see the banner at the top. All three findings above stand and all three were
+what ruled `RunStats` out; none of them found the answer, and the object path did, in one sentence.
+Worth remembering the next time a counter needs identifying: ask where it is on screen before
+decompiling what might produce it.
+
+**What is still solid.** The shortcut in `OnReceivedInteractableUsed` genuinely skips the game's own
+interaction path, the charge-shrine exception is genuinely explained by both peers running their own
+trigger callbacks, and both remain true whatever the panel turns out to read. The tally mechanism is
+also now known to be *reachable*: `RunStats.AddValue` is public, and Il2CppInterop exposes
+`TrackStats`'s private statics as public on the proxy, so a fix can call either directly once it is
+known which one the panel reads.
 
 **Not a desync.** Both peers agree about which objects exist and which are gone; only the tally
 disagrees. It is a scoreboard bug, not a world-state one, and nothing downstream reads it.

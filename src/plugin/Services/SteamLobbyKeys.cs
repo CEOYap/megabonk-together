@@ -26,6 +26,25 @@
         public const string MemberReady = "ready";
 
         /// <summary>
+        /// Per-member. The game <c>ConnectionId</c> the peer behind this Steam account is using,
+        /// written as a plain decimal string.
+        ///
+        /// <para><b>This is the join between the two identity spaces</b>, and it exists so that
+        /// nothing has to go on the wire to get one. The roster keys everyone by
+        /// <c>ConnectionId</c>; Steam keys everyone by <c>CSteamID</c>; and the lobby panel needs
+        /// both at once to put a face next to a name. Adding a SteamID to the <c>Player</c> record
+        /// would have been the obvious route and the wrong one — MemoryPack serializes positionally,
+        /// so it is a protocol break, and <c>Protocol.Version</c> is already at 2 with v1 and v2
+        /// lobbies refusing each other.</para>
+        ///
+        /// <para>Lobby member data is visible to <b>every</b> member, which the transport's own
+        /// peer table is not: a client holds a connection to the host and to nobody else, so it
+        /// knows one SteamID out of six. Publishing here is what lets every peer resolve every
+        /// other peer.</para>
+        /// </summary>
+        public const string MemberConnectionId = "mt_cid";
+
+        /// <summary>
         /// Set to <c>"1"</c> by the host once its listen socket is open and it can accept peers.
         ///
         /// <para><b>This is what stops the two ends deciding independently when to connect.</b> Only

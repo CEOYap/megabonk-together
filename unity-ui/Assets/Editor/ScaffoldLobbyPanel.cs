@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using TMPro;
 using UnityEditor;
 using UnityEngine;
@@ -49,6 +49,13 @@ namespace MegabonkTogether.UiAuthoring
         private static readonly Color StatusInk = Hex("#E8B94F");
         private static readonly Color MembersWell = Hex("#0E0C0A", 0.55f);
         private static readonly Color MemberRowFill = Hex("#2E2721", 0.60f);
+
+        /// <summary>
+        /// Sits under the profile picture. Visible only in the editor preview and for the instant
+        /// before a sprite arrives — the runtime hides the Image outright when there is no avatar,
+        /// rather than leaving a coloured square where a face should be.
+        /// </summary>
+        private static readonly Color MemberAvatarPlaceholder = Hex("#0E0C0A", 0.85f);
         private static readonly Color PlaceholderButton = Hex("#3A322B", 0.55f);
 
         #endregion
@@ -57,59 +64,95 @@ namespace MegabonkTogether.UiAuthoring
 
         // The card. Top-anchored children measure downward from its top edge, so every offset below
         // reads in the order the panel is drawn.
-        private const float PanelWidth = 620f;
-        private const float PanelHeight = 950f;
+        //
+        // ---------------------------------------------------------------------------------------
+        // SIZE PASS, Phase 5 step 3. The card was 620x950 against a 1080-unit reference — 88% of
+        // the screen's height — and it did not fit. Two separate reasons, and both had to go:
+        //
+        //   1. 950 of 1080 leaves no room for a sixth button, let alone the Netplay Options button
+        //      step 4 still has to place. The column overflowed and Leave Lobby drew off the
+        //      bottom of the screen.
+        //   2. The canvas matched width and height equally, so on a 21:9 window the scale was
+        //      driven up by the width and a card already at 88% of a 16:9 screen was taller than
+        //      the screen. Fixed on the other side, in LobbyPanel.CreateCanvas.
+        //
+        // Everything below is one proportional pass: the card is 500x765, which is 71% of the
+        // height it was, and the column now has room for seven buttons rather than overflowing at
+        // six. Heights are derived downward from the top edge, so changing one offset moves
+        // everything under it — recompute PanelHeight if you touch any of them.
+        // ---------------------------------------------------------------------------------------
+        private const float PanelWidth = 500f;
+
+        /// <summary>
+        /// <see cref="ButtonsY"/> plus <see cref="ButtonColumnHeight"/> plus a bottom margin equal
+        /// to the top one. Derived by hand because every offset above it is a constant; if this
+        /// disagrees with the content the card either clips or carries dead space.
+        /// </summary>
+        private const float PanelHeight = 785f;
 
         /// <summary>Thickness of the border, drawn by insetting <c>Fill</c> inside <c>Panel</c>.</summary>
         private const float BorderThickness = 3f;
 
-        private const float ContentWidth = 560f;
-        private const float RuleWidth = 540f;
+        private const float ContentWidth = 450f;
+        private const float RuleWidth = 430f;
 
         /// <summary>
-        /// Room for the button column, for the worst case of <b>five</b> visible buttons: Invite,
-        /// Copy Code, Ready, Start and Leave Lobby. Join From Clipboard cannot be visible with Copy
-        /// Code — you either have a lobby or you do not — so five is the true maximum.
+        /// Room for the button column, for a worst case of <b>seven</b>: Invite, Copy Code, Join
+        /// Code, Ready, Start, Back and the Netplay Options button step 4 has yet to add. Six is
+        /// what actually renders today.
         ///
-        /// <para>The height is measured rather than chosen. A real cloned button is about 96 units
-        /// tall, which is where 5 x 96 + 4 x 8 of spacing comes from. <b>This constant has now been
-        /// wrong three times</b>: 44 when the buttons were assumed small, then 410 when a fifth
-        /// button was added without revisiting it and Leave Lobby drew off the bottom of the card.
-        /// Nothing clips an overflow, so it is invisible until somebody screenshots it — which is
-        /// why <c>LobbyPanel</c> now measures the built column and warns.</para>
+        /// <para>The height is measured rather than chosen. <b>This constant has now been wrong
+        /// three times</b> — 44 when the buttons were assumed small, 410 when a fifth button was
+        /// added without revisiting it, and 520 when a sixth was. Each time the last button drew
+        /// off the bottom of the card, and nothing clips an overflow, so it was invisible until
+        /// somebody screenshotted it.</para>
+        ///
+        /// <para>The fix this time is on both sides: the buttons themselves are now built at about
+        /// 52 units rather than 96 (<c>LobbyPanel.ResizeButtonToLabel</c>), and this reserves
+        /// 7 x 52 + 6 x 10 = 424 with six units to spare. <c>LobbyPanel</c> measures the built
+        /// column every time and now logs what it measured whether or not it fits, so the next
+        /// person does not have to guess.</para>
         /// </summary>
-        private const float ButtonColumnHeight = 520f;
+        private const float ButtonColumnHeight = 430f;
 
-        private const float ButtonSpacing = 8f;
+        private const float ButtonSpacing = 10f;
 
         /// <summary>
         /// Placeholder size, for the editor preview only. It should stay in the neighbourhood of a
         /// real cloned button or the preview lies about how much room the column needs.
         /// </summary>
-        private const float PlaceholderButtonWidth = 300f;
-        private const float PlaceholderButtonHeight = 70f;
+        private const float PlaceholderButtonWidth = 260f;
+        private const float PlaceholderButtonHeight = 52f;
 
         // The members well is sized for a full lobby and never resizes. Six rows are always
         // reserved even when two are filled: the alternative is a button column that moves under
         // the cursor as people join, and empty rows inside a framed well read as free slots rather
         // than as a void — which is what the unstyled panel's blank middle looked like.
         private const int MaxMembers = 6;
-        private const float MemberRowHeight = 34f;
-        private const float MemberRowSpacing = 4f;
+        private const float MemberRowHeight = 28f;
+
+        /// <summary>
+        /// The Steam profile picture in a member row. Square and two units shy of the row's height
+        /// so it reads as sitting inside the row rather than as a band across it.
+        /// </summary>
+        private const float AvatarSize = MemberRowHeight - 4f;
+
+        private const float AvatarInset = 4f;
+        private const float MemberRowSpacing = 3f;
         private const float WellPadding = 6f;
         private const float MembersWidth = ContentWidth - 4f;
 
         private const float MembersHeight =
             (MaxMembers * MemberRowHeight) + ((MaxMembers - 1) * MemberRowSpacing) + (2f * WellPadding);
 
-        private const float TitleY = -20f;
-        private const float TitleHeight = 46f;
-        private const float SubtitleY = -70f;
-        private const float SubtitleHeight = 28f;
-        private const float HeaderRuleY = -104f;
-        private const float MembersY = -114f;
+        private const float TitleY = -16f;
+        private const float TitleHeight = 34f;
+        private const float SubtitleY = -54f;
+        private const float SubtitleHeight = 22f;
+        private const float HeaderRuleY = -82f;
+        private const float MembersY = -90f;
         private const float StatusY = MembersY - MembersHeight - 8f;
-        private const float StatusHeight = 26f;
+        private const float StatusHeight = 22f;
         private const float FooterRuleY = StatusY - StatusHeight - 8f;
         private const float ButtonsY = FooterRuleY - 10f;
 
@@ -149,11 +192,11 @@ namespace MegabonkTogether.UiAuthoring
             var fill = CreateImage("Fill", panel.rectTransform, PanelFill);
             Inset(fill.rectTransform, BorderThickness);
 
-            var title = CreateText("Title", panel.rectTransform, "Your Lobby", 40f,
+            var title = CreateText("Title", panel.rectTransform, "Your Lobby", 30f,
                 new Vector2(0f, TitleY), new Vector2(ContentWidth, TitleHeight));
             title.color = TitleInk;
 
-            var subtitle = CreateText("Subtitle", panel.rectTransform, "Code: ABC123", 24f,
+            var subtitle = CreateText("Subtitle", panel.rectTransform, "Code: ABC123", 18f,
                 new Vector2(0f, SubtitleY), new Vector2(ContentWidth, SubtitleHeight));
             subtitle.color = SubtitleInk;
 
@@ -167,7 +210,7 @@ namespace MegabonkTogether.UiAuthoring
             // Separate from Subtitle on purpose, wherever it sits: Subtitle carries the lobby code
             // and is rewritten on every refresh tick, so a transient message shown there would be
             // erased within half a second — too fast to read.
-            var status = CreateText("Status", panel.rectTransform, "", 22f,
+            var status = CreateText("Status", panel.rectTransform, "", 18f,
                 new Vector2(0f, StatusY), new Vector2(ContentWidth, StatusHeight));
             status.color = StatusInk;
 
@@ -217,14 +260,30 @@ namespace MegabonkTogether.UiAuthoring
             var row = CreateImage("MemberRow", membersRect, MemberRowFill);
             Anchor(row.rectTransform, Vector2.zero, new Vector2(MembersWidth - (2f * WellPadding), MemberRowHeight));
 
+            // The Steam profile picture, left of the name. Square, inset a couple of units from the
+            // row's edges so it does not touch them.
+            //
+            // Its sprite is assigned at runtime and there is nothing to preview here, so it is
+            // authored as a dim placeholder square: an Image with no sprite draws as a filled rect,
+            // and the runtime hides it entirely for a member whose avatar is unavailable — every
+            // row on the matchmaker transport, and a Steam row whose picture is still downloading.
+            var avatar = CreateRawImage("Avatar", row.rectTransform, MemberAvatarPlaceholder);
+            var avatarRect = avatar.rectTransform;
+            avatarRect.anchorMin = new Vector2(0f, 0.5f);
+            avatarRect.anchorMax = new Vector2(0f, 0.5f);
+            avatarRect.pivot = new Vector2(0f, 0.5f);
+            avatarRect.sizeDelta = new Vector2(AvatarSize, AvatarSize);
+            avatarRect.anchoredPosition = new Vector2(AvatarInset, 0f);
+
             // Anchored to the row's own edges rather than offset from its centre, so the columns
-            // stay where they belong if the well is ever made wider.
-            var rowName = CreateText("Name", row.rectTransform, "Player", 24f, Vector2.zero, Vector2.zero);
+            // stay where they belong if the well is ever made wider. The left edge clears the
+            // avatar rather than the row.
+            var rowName = CreateText("Name", row.rectTransform, "Player", 19f, Vector2.zero, Vector2.zero);
             rowName.alignment = TextAlignmentOptions.MidlineLeft;
             rowName.color = Color.white;
-            EdgeAnchor(rowName.rectTransform, left: 14f, right: 150f);
+            EdgeAnchor(rowName.rectTransform, left: AvatarInset + AvatarSize + 8f, right: 150f);
 
-            var rowReady = CreateText("Ready", row.rectTransform, "READY", 22f, Vector2.zero, Vector2.zero);
+            var rowReady = CreateText("Ready", row.rectTransform, "READY", 17f, Vector2.zero, Vector2.zero);
             rowReady.alignment = TextAlignmentOptions.MidlineRight;
             rowReady.color = new Color(0.55f, 0.95f, 0.55f);
             EdgeAnchor(rowReady.rectTransform, left: MembersWidth - (2f * WellPadding) - 144f, right: 14f);
@@ -246,7 +305,11 @@ namespace MegabonkTogether.UiAuthoring
 
             var layout = buttons.GetComponent<VerticalLayoutGroup>();
             layout.spacing = ButtonSpacing;
-            layout.childAlignment = TextAnchor.UpperCenter;
+
+            // Centred, not top-anchored. The column reserves room for seven buttons and usually
+            // shows six, so with UpperCenter the leftover pooled into one visible hole under the
+            // last button. Centring splits it above and below, where it reads as margin.
+            layout.childAlignment = TextAnchor.MiddleCenter;
 
             // Width must stay uncontrolled. A Megabonk button sizes itself from its label —
             // ButtonTextWrapper writes rect.sizeDelta from the text's size plus padding — so a
@@ -261,6 +324,25 @@ namespace MegabonkTogether.UiAuthoring
             {
                 CreatePlaceholderButton(name, buttons.GetComponent<RectTransform>());
             }
+        }
+
+        /// <summary>
+        /// A <c>RawImage</c>, not an <c>Image</c>, and only for the avatar.
+        ///
+        /// <para><c>Image</c> needs a <c>Sprite</c>, and building one at runtime means
+        /// <c>Sprite.Create</c> — a call across the managed/IL2CPP boundary with two struct
+        /// arguments, on the same UnityEngine.CoreModule mismatch that already cost one playtest
+        /// (see <c>SteamAvatarService</c>). <c>RawImage</c> takes a <c>Texture</c> reference
+        /// directly, and reference parameters bind cleanly. Fewer moving parts for the one thing
+        /// here whose content is generated rather than authored.</para>
+        /// </summary>
+        private static RawImage CreateRawImage(string name, RectTransform parent, Color colour)
+        {
+            var go = new GameObject(name, typeof(RectTransform), typeof(RawImage));
+            go.transform.SetParent(parent, worldPositionStays: false);
+            var image = go.GetComponent<RawImage>();
+            image.color = colour;
+            return image;
         }
 
         private static Image CreateImage(string name, RectTransform parent, Color colour)
@@ -302,7 +384,7 @@ namespace MegabonkTogether.UiAuthoring
             var image = CreateImage(name, parent, PlaceholderButton);
             image.gameObject.AddComponent<Button>();
             Anchor(image.rectTransform, Vector2.zero, new Vector2(PlaceholderButtonWidth, PlaceholderButtonHeight));
-            var label = CreateText("Label", image.rectTransform, name, 30f, Vector2.zero,
+            var label = CreateText("Label", image.rectTransform, name, 24f, Vector2.zero,
                 new Vector2(PlaceholderButtonWidth, PlaceholderButtonHeight));
             Stretch(label.rectTransform);
         }

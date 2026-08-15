@@ -248,11 +248,7 @@ namespace MegabonkTogether.Scripts.Modal
             var buttonObj = GameObject.Instantiate(mainMenu.btnPlay.gameObject);
             buttonObj.transform.SetParent(panel.transform, false);
 
-            var originalButton = buttonObj.GetComponent<MyButtonNormal>();
-            if (originalButton != null)
-            {
-                Object.DestroyImmediate(originalButton);
-            }
+            var style = Helpers.ButtonStyle.CaptureAndRemove(buttonObj);
 
             UnityEngine.UI.Button button = buttonObj.GetComponentInChildren<UnityEngine.UI.Button>();
             if (button != null)
@@ -267,6 +263,7 @@ namespace MegabonkTogether.Scripts.Modal
             }
 
             closeButton = buttonObj.AddComponent<CustomButton>();
+            style.ApplyTo(closeButton);
             closeButton.SetOnClickAction(OnCloseClicked);
 
             var textWrapper = buttonObj.GetComponent<ButtonTextWrapper>();

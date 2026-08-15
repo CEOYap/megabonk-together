@@ -61,8 +61,6 @@ namespace MegabonkTogether
         public static IHost Host = null!;
         public static IServiceProvider Services => Host.Services;
 
-        internal NetworkMenuTab NetworkTab { get; set; }
-
         internal static new ManualLogSource Log;
         private readonly CancellationTokenSource cancellationTokenSource = new();
         private CancellationToken cancellationToken;
@@ -212,7 +210,6 @@ namespace MegabonkTogether
             ClassInjector.RegisterTypeInIl2Cpp<PlayTogetherButton>();
             ClassInjector.RegisterTypeInIl2Cpp<CustomButton>();
             ClassInjector.RegisterTypeInIl2Cpp<ModalBase>();
-            ClassInjector.RegisterTypeInIl2Cpp<NetworkMenuTab>();
             ClassInjector.RegisterTypeInIl2Cpp<Scripts.Modal.LobbyPanel>();
             ClassInjector.RegisterTypeInIl2Cpp<LoadingModal>();
             ClassInjector.RegisterTypeInIl2Cpp<UpdateAvailableModal>();
@@ -290,6 +287,7 @@ namespace MegabonkTogether
                 services.AddSingleton<ITrackerService, TrackerService>();
                 services.AddSingleton<ISteamService, SteamService>();
                 services.AddSingleton<ISteamLobbyService, SteamLobbyService>();
+                services.AddSingleton<ISteamAvatarService, SteamAvatarService>();
 
                 // Registered under its own interface, not under INetTransport. Both transports
                 // exist in this build, and which one carries a session is a decision that has not

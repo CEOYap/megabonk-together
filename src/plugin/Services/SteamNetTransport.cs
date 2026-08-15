@@ -81,8 +81,30 @@ namespace MegabonkTogether.Services
         /// which is worse than the unreliable channel's normal failure mode, because a stream that
         /// expects the next tick to supersede a loss instead loses every tick that is oversized.
         /// The LiteNetLib path has the same cliff at its own MTU and handles it the same way.
+        ///
+        /// <para><b>Nothing can currently reach this, and that is by construction rather than by
+        /// luck.</b> Every unreliable send in the mod is bounded well below it: the per-entity
+        /// streams are split to <c>StateBroadcastService.MAX_PACKET_SIZE_BYTES</c> (1000) by
+        /// <c>SendStreamUpdate</c> before they ever arrive here, and the only two unreliable sends
+        /// that bypass that splitter are small and fixed in shape — <c>EnemyDamaged</c> is all
+        /// scalars, and <c>PlayerUpdate</c> tops out near 800 B with every tome and weapon in the
+        /// game held at once. So this is a backstop against a future oversized unreliable message,
+        /// not a threshold in live use, and a loss run cannot exercise it: promotion keys off
+        /// payload size, which loss does not change.</para>
+        ///
+        /// <para><b>It is 200 B looser than the LiteNetLib transport's equivalent</b>, which
+        /// promotes at 1000 to match the splitter's budget. Both are above anything that occurs, so
+        /// the gap has no effect today; it is recorded because the two numbers reading differently
+        /// invites the conclusion that one of them is wrong.</para>
         /// </summary>
         private const int MaxUnreliableBytes = 1200;
+
+        /// <summary>
+        /// Deliberately long. A promotion is a once-per-session curiosity if it happens at all, so
+        /// this exists to stop a pathological new message type from filling the log, not to sample
+        /// a stream.
+        /// </summary>
+        private const int PromotionLogIntervalMs = 10000;
 
         private bool? isHost;
         private SteamNetTransportState state = SteamNetTransportState.Idle;
@@ -130,6 +152,9 @@ namespace MegabonkTogether.Services
         private long nextSendFailureLogTick;
         private long nextNotRunningLogTick;
         private int suppressedSendFailures;
+
+        private long nextPromotionLogTick;
+        private int suppressedPromotions;
 
         /// <summary>
         /// Latches the transport off after a Steam call throws. Repeating a call that just failed
@@ -1086,9 +1111,21 @@ namespace MegabonkTogether.Services
             // limit fragments unreliably, so one lost fragment discards all of it — an outcome the
             // caller did not ask for and cannot see. Reliable fragments properly up to 512 KB. The
             // LiteNetLib transport promotes at its own MTU for the same reason.
-            var effective = delivery == NetDelivery.Unreliable && payload.Length > MaxUnreliableBytes
-                ? NetDelivery.ReliableOrdered
-                : delivery;
+            var effective = delivery;
+
+            if (delivery == NetDelivery.Unreliable && payload.Length > MaxUnreliableBytes)
+            {
+                effective = NetDelivery.ReliableOrdered;
+
+                // Silently changing the delivery guarantee a caller asked for is the kind of thing
+                // that has to be visible, and this one had no voice at all: the handover into
+                // Phase 5 lists "MaxUnreliableBytes has never fired" as an open risk, which was
+                // never a measurement — there was nothing that could have told anyone either way.
+                // Now the claim is falsifiable. See MaxUnreliableBytes for why it should stay
+                // silent in practice; if this line appears, a new unreliable message has outgrown
+                // the splitter and wants chunking rather than a promotion.
+                LogPromotionThrottled(label, payload.Length);
+            }
 
             EResult result;
             try
@@ -1137,6 +1174,32 @@ namespace MegabonkTogether.Services
 
             LogSendFailureThrottled(result, label, peerHandle, payload.Length);
             return false;
+        }
+
+        /// <summary>
+        /// Reports an unreliable payload that was promoted past <see cref="MaxUnreliableBytes"/>.
+        /// Throttled on its own clock rather than sharing the send-failure one, so that neither can
+        /// hide the other.
+        /// </summary>
+        private void LogPromotionThrottled(string label, int bytes)
+        {
+            var now = Environment.TickCount64;
+            if (now < nextPromotionLogTick)
+            {
+                suppressedPromotions++;
+                return;
+            }
+
+            nextPromotionLogTick = now + PromotionLogIntervalMs;
+            var suppressed = suppressedPromotions;
+            suppressedPromotions = 0;
+
+            Plugin.Log.LogWarning(
+                $"[steam-net] Promoted an unreliable send to reliable: {label} at {bytes} B is over "
+                + $"the {MaxUnreliableBytes} B single-datagram limit. It arrives, but ordered and "
+                + "acked, so it is no longer superseded by the next tick — this message wants "
+                + "splitting at the sender."
+                + (suppressed > 0 ? $" (+{suppressed} more in the last {PromotionLogIntervalMs / 1000}s)" : string.Empty));
         }
 
         /// <summary>
@@ -1248,6 +1311,43 @@ namespace MegabonkTogether.Services
 
             return SteamNetNative.TryGetPing(peerHandle);
         }
+
+        /// <summary>
+        /// Ping plus the three numbers that make a lossy link legible: the measured delivery ratio
+        /// each way, the reliable backlog, and how long the send queue is holding.
+        ///
+        /// <para>Reliable backlog is the head-of-line signature. Steam has no unordered-reliable
+        /// channel, so every <see cref="NetDelivery.ReliableUnordered"/> send here is ordered
+        /// whether it asked to be or not; under loss a stalled message holds up every reliable
+        /// message queued behind it, and that shows as pending/unacked bytes climbing while the
+        /// unreliable streams carry on. Same P/Invoke as the ping read, so it costs nothing extra.</para>
+        /// </summary>
+        public string DescribeLink(uint connectionId)
+        {
+            if (!peerHandlesByConnectionId.TryGetValue(connectionId, out var peerHandle))
+            {
+                return "no connection";
+            }
+
+            if (!SteamNetNative.TryGetLinkStatus(peerHandle, out var status))
+            {
+                return "status unavailable";
+            }
+
+            return $"rtt {status.PingMs} ms  quality {Quality(status.QualityLocal)}/{Quality(status.QualityRemote)} (local/remote)  "
+                + $"pending {status.PendingReliableBytes} B reliable, {status.PendingUnreliableBytes} B unreliable  "
+                + $"unacked {status.SentUnackedReliableBytes} B  queue {status.QueueTimeMs:F1} ms";
+        }
+
+        /// <summary>
+        /// Steam reports a quality it does not know yet as -1, which the first formatting of this
+        /// printed literally as "-100.0%" — on the opening sample of every session, because the
+        /// remote end's estimate has not been reported back at that point. A negative percentage is
+        /// a number a reader has to stop and decode, and the whole value of this line during a loss
+        /// run is being able to read the delivery ratio at a glance.
+        /// </summary>
+        private static string Quality(float ratio) =>
+            ratio < 0f ? "unknown" : $"{ratio * 100f:F1}%";
 
         // ---------------------------------------------------------------- teardown
 

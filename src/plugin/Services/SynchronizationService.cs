@@ -3012,6 +3012,34 @@ namespace MegabonkTogether.Services
             return InteractableAction.Used;
         }
 
+        /// <summary>
+        /// Adds somebody else's interaction to this peer's own used/total counter — see
+        /// <see cref="Helpers.InteractableCounterHelper"/> and OB-12.
+        ///
+        /// <para><b>The try is here rather than inside the helper, and that is not a style
+        /// choice.</b> The helper calls a method that is private in the game and public only on the
+        /// Il2CppInterop proxy, so a future build renaming it produces a
+        /// <c>MissingMethodException</c> — and that is raised when the method containing the call
+        /// is <i>JIT-compiled</i>, not when the call executes. A <c>try</c> inside the helper would
+        /// never run. One level up does. <c>Plugin.Load</c> carries the same note; getting it wrong
+        /// there took the whole plugin down once.</para>
+        ///
+        /// <para>A counter that fails to increment is worth no more than a warning: the tally is a
+        /// readout and nothing downstream reads it.</para>
+        /// </summary>
+        private void CountInteractableAsUsed(GameObject interactableObj)
+        {
+            try
+            {
+                Helpers.InteractableCounterHelper.CountAsUsed(interactableObj);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(
+                    $"[interactable-count] Could not count a replicated interaction: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
         private void OnReceivedInteractableUsed(InteractableUsed used)
         {
             if (used.IsPortal)
@@ -3093,10 +3121,11 @@ namespace MegabonkTogether.Services
                 switch (used.Action)
                 {
                     case InteractableAction.Destroy:
-                        //var chest = interactableObj.GetComponent<InteractableChest>();
+                        CountInteractableAsUsed(interactableObj);
                         GameObject.DestroyImmediate(interactableObj);
                         break;
                     case InteractableAction.Used:
+                        CountInteractableAsUsed(interactableObj);
                         logger.LogInfo($"Net player used interactable with ID: {used.NetplayId}");
                         break;
                     case InteractableAction.Interact:

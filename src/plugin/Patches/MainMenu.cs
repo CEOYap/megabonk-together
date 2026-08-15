@@ -30,11 +30,10 @@ namespace MegabonkTogether.Patches
 
             var go = UnityEngine.Object.Instantiate(playBtn.gameObject);
 
-            var originalButton = go.GetComponent<MyButtonNormal>();
-            if (originalButton != null)
-            {
-                UnityEngine.Object.DestroyImmediate(originalButton);
-            }
+            // Captured before the original goes, applied after the replacement arrives. Destroying
+            // it outright left background null and every hover on TOGETHER! threw — see
+            // Helpers/ButtonStyle.
+            var style = MegabonkTogether.Helpers.ButtonStyle.CaptureAndRemove(go);
 
             UnityEngine.UI.Button button = go.GetComponentInChildren<UnityEngine.UI.Button>();
             if (button != null)
@@ -43,6 +42,7 @@ namespace MegabonkTogether.Patches
             }
 
             var customButton = go.AddComponent<PlayTogetherButton>();
+            style.ApplyTo(customButton);
             customButton.SetMainMenu(__instance);
 
             var textWrapper = go.GetComponent<ButtonTextWrapper>();

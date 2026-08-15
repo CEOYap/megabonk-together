@@ -168,8 +168,10 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>
-        /// Latency and loss per peer. LiteNetLib already runs with <c>EnableStatistics = true</c>
-        /// (UdpClientService.cs:129), so this costs nothing extra to read.
+        /// Latency and loss per peer, in whatever terms the live transport can answer — see
+        /// <see cref="INetTransport.DescribeLink"/>. On Steam that includes the measured delivery
+        /// ratio and the reliable backlog, which is what makes a run under simulated loss readable
+        /// rather than merely survivable.
         /// </summary>
         private static void ReportLinkQuality(INetTransport udpClientService, IPlayerManagerService playerManagerService)
         {
@@ -182,7 +184,7 @@ namespace MegabonkTogether.Services
 
                 try
                 {
-                    Plugin.Log.LogInfo($"[bw]   peer {player.ConnectionId} rtt {udpClientService.GetLatency(player.ConnectionId)} ms");
+                    Plugin.Log.LogInfo($"[bw]   peer {player.ConnectionId} {udpClientService.DescribeLink(player.ConnectionId)}");
                 }
                 catch (Exception ex)
                 {
