@@ -486,7 +486,7 @@ paths, which is a far better starting point than reading every call site.
 ---
 
 <a name="ob-11"></a>
-## OB-11 — Minibosses always spawn near the host — CONFIRMED
+## OB-11 — Minibosses always spawn near the host — CONFIRMED, **FIXED, unverified**
 
 **Reported:** minibosses appear next to the host rather than somewhere between the players. A client
 playing away from the host sees them arrive on top of their teammate, never near themselves.
@@ -584,9 +584,36 @@ The decompile makes shape 3 **cheaper than shape 2**, reversing the order this e
    from the distance the game itself just chose (`|pos − hostPos|` in XZ, ±a few percent), which
    preserves the game's time-scaled distance curve without needing the private `GetSpawnDistances`.
 
-**Still unverified about shape 3:** whether `GetEnemySpawnPositionAroundPoint` can be called from a
-prefix without reentrancy trouble, and whether picking a non-host player ever strands a miniboss
-somewhere the host's own camera logic dislikes. Neither has been run in-game.
+### Shape 3 has landed — what to look for in play
+
+`EnemyManagerService.RecentreBossSpawnOnRandomPlayer`, called from `SpawnBoss_Prefix` after its
+host check. The host picks uniformly among alive players holding an avatar in the world, plus
+itself; drawing itself leaves the position alone. Every failure path returns the game's position
+unchanged, so the worst case is the old behaviour rather than a missing miniboss.
+
+**Verified without a playtest** (these are compile- and metadata-level facts, not behaviour):
+
+- it compiles against the **real install's** `BepInEx/interop`, not the committed `stripped-libs`,
+  so both game signatures exist in build 21750826 — the `Exists()` fallback trap in `CLAUDE.md`
+  did not fire here;
+- `EnemyManager.SpawnBoss`'s fourth parameter is genuinely **named `pos`** in the proxy, which is
+  what Harmony's by-name prefix binding requires — a renamed parameter would have thrown at patch
+  time and surfaced only in the startup log;
+- `GetEnemySpawnPositionAroundPoint(pos, minRadius, maxRadius, attempts, onlyGround, fromHeight)`
+  matches the call argument for argument.
+
+**Unverified — it has not run in-game, on one machine or two:**
+
+| Question | How it would show |
+|---|---|
+| Is `GetEnemySpawnPositionAroundPoint` safe to call from inside a prefix here? | the `OB-11: could not re-centre` warning in the host log, or a hard crash at the first miniboss |
+| Is `MIN_BOSS_RING_RADIUS = 20f` a sensible distance? | minibosses appearing on top of, or absurdly far from, the chosen player |
+| Does a miniboss around a non-host player ever land somewhere the host's camera or pathing dislikes? | a miniboss that never reaches anyone, or one stuck in geometry |
+| Does the share actually even out? | over a run, roughly half the minibosses should arrive near each player in a 2-player session |
+
+The cheap check is the host log: `OB-11: no valid miniboss position around peer` means the re-roll
+is running and failing, and its **absence together with minibosses appearing near the client** is
+the pass.
 
 **Do not "fix" this by spawning on each peer independently.** Two peers running their own spawner
 would produce two different minibosses with different ids, which is the desync this architecture

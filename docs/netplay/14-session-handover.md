@@ -142,7 +142,13 @@ decompiled, and the entry now carries the full chain. Three things it changed:
 Still standing: do not spawn independently on each peer — two peers running their own spawner
 produce two minibosses with different ids, which is the desync the architecture exists to prevent.
 
-**Nothing is coded yet.** Shape 1 (leave it) vs shape 3 (fix it) is a design call, not a defect call.
+**Shape 3 is implemented and unverified.** `EnemyManagerService.RecentreBossSpawnOnRandomPlayer`,
+called from `SpawnBoss_Prefix` after its host check. It compiles against the real install's interop
+and the two signatures it depends on were checked in the proxy metadata, including that
+`SpawnBoss`'s parameter is named `pos` — Harmony binds prefix parameters by name, and a rename would
+have failed at patch time and surfaced only in the startup log. Nothing about its *behaviour* has
+been run. The entry lists what to watch for; the cheap check is that minibosses start arriving near
+the client, with no `OB-11: could not re-centre` warning on the host.
 
 Worth knowing given how the last two bugs went: **both OB-12 and the button bug had a recorded cause
 that was wrong in a way that mattered**, and in both cases the correction came from reading the game
