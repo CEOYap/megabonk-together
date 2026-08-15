@@ -486,7 +486,7 @@ paths, which is a far better starting point than reading every call site.
 ---
 
 <a name="ob-11"></a>
-## OB-11 — Minibosses always spawn near the host — LIKELY
+## OB-11 — Minibosses always spawn near the host — CONFIRMED
 
 **Reported:** minibosses appear next to the host rather than somewhere between the players. A client
 playing away from the host sees them arrive on top of their teammate, never near themselves.
@@ -507,31 +507,86 @@ if (isServer)
 replicated verbatim. `SpawnBoss_Prefix` suppresses the client's own spawning entirely, so the client
 contributes nothing to the decision.
 
-**The game is a single-player game and its spawner knows about one player: `GameManager.Instance.player`.**
-On the host that is the host. So every spawn ring, every "just outside the camera" offset and every
-distance check is measured from the host's position, and the result is faithfully sent to everyone.
-Host-authoritative spawning is correct; host-*centred* spawning is the accident that comes with it.
+**The game is a single-player game and its spawner knows about one player.** On the host that is the
+host. So every spawn ring, every "just outside the camera" offset and every distance check is
+measured from the host's position, and the result is faithfully sent to everyone. Host-authoritative
+spawning is correct; host-*centred* spawning is the accident that comes with it.
 
-**Status is LIKELY, not CONFIRMED, and the gap is specific.** What is confirmed by reading the code
-is that the mod supplies no position and replicates the host's. What is *not* confirmed is that the
-game's spawner derives its position from `GameManager.Instance.player` — no spawn-position method has
-been decompiled. **One decompile settles it:** `EnemyManager$$SpawnEnemy`'s callers, or whatever
-computes `pos` before it, from `megabonk-re/build-21750826/dump.cs`. Until then this is an inference
-from structure, however strong.
+### Promoted LIKELY → CONFIRMED by decompile, 2026-08-16 — and the recorded anchor was wrong
 
-**Whether it is worth fixing is a design question, not a defect.** Three shapes, in increasing cost:
+This entry previously named `GameManager.Instance.player` as the spawner's anchor. **It is not.**
+The anchor is the static singleton **`MyPlayer.Instance`** (`MyPlayer` static field at offset `0x8`).
+`GameManager.Instance` *is* touched in the same body, but only to fetch a layer mask for the ground
+raycast — never for a position. The distinction matters for the fix: `MyPlayer.Instance` is each
+peer's **own local player**, so it is not something that can be swapped for a remote peer's player.
 
-1. **Leave it.** Minibosses are an event both players can walk to. This is the current behaviour and
-   it is not broken, only unfair to whoever is not hosting.
-2. **Pick a player per spawn, then offset from them.** The host already has every peer's position in
-   the replicated roster, so choosing a random living player and translating the game's chosen
-   position relative to that player is arithmetic the host can do in `SpawnEnemy_Postfix` — but the
-   enemy has already been created at `pos` by then, so it would have to be moved, and anything the
-   game cached from its original transform in `Awake` would be stale. That hazard is real here: see
-   the `SpawnedObject` clone-inactive-then-position note in
+Five bodies decompiled, all in `Assets.Scripts.Game.Spawning.SpawnPositions`, plus the miniboss
+caller. Cached under `megabonk-re/decompiled/`.
+
+| Symbol | VA | What the body does |
+|---|---|---|
+| `SummonerController.EventMiniboss` | `0x180487240` | the miniboss caller — see chain below |
+| `SpawnPositions.GetEnemySpawnPosition` | `0x180483380` | reads `MyPlayer.Instance`, calls `MyPlayer.GetSpawnDirectionBias()`, delegates to ↓ |
+| `SpawnPositions.GetEnemySpawnPositionBiased` | `0x180482390` | **the ring is centred on the local player** — see below |
+| `SpawnPositions.GetPositionAroundPlayer` | `0x180483BA0` | thin wrapper: `GetEnemySpawnPositionBiased(null, 0f, 50, maxDistance)` |
+| `SpawnPositions.PredictPlayerPosition` | `0x180484570` | `MyPlayer.Instance.playerMovement.rigidbody.position + velocity * time` |
+| `SpawnPositions.GetPlayerMovementDirection` | `0x180483B20` | returns `MyPlayer.Instance.averageMovingDirection` (`0xF4`) |
+
+**The centre, exactly.** `GetEnemySpawnPositionBiased` computes its ring centre as
+`MyPlayer.Instance.playerMovement(0x28).rigidbody(0x48).position + velocity * Enemy.<static 0x4C>` —
+an inlined `PredictPlayerPosition`. Each of `attempts` candidates is then
+`centre + direction * Random.Range(minDist, maxDist)`, clamped to the map bounds from `FindBounds`,
+raycast down, and resolved by `FindHitClosestToPlayerY`. `direction` is biased toward
+`MyPlayer.Instance.averageMovingDirection`. **Every term is the local player.** There is no second
+player anywhere in the body.
+
+> Field names here are confirmed against `dump.cs` **offsets**, not read off Ghidra's applied structs
+> — `MyPlayer.Instance` at static `0x8` and `averageMovingDirection` at `0xF4` both match the reads
+> in the decompiled bodies. That check is exactly the trap `CLAUDE.md` records.
+
+**The miniboss chain, end to end:** `SummonerController.EventMiniboss` → `MyPlayer.Instance`
+null-check → `GetSpawnDirectionBias()` → `GetEnemySpawnPositionBiased(null, bias, 50, maxDistance)`
+→ `EnemyManager.SpawnBoss(eEnemy, summonerId, 0x10, pos, sizeMult)`. The `0x10` is
+`EEnemyFlag.SummonerMiniboss`, which is what pins this chain to minibosses specifically rather than
+to enemies in general.
+
+**One extra hazard the decompile turned up.** If the returned position lands within a small epsilon
+of `SpawnPositions.INVALID_POS` — i.e. every one of the 50 attempts failed — `EventMiniboss` falls
+back to **`MyPlayer.Instance.transform.position` directly**, spawning the miniboss exactly on top of
+the local player. So the worst case is not merely "near the host", it is "inside the host", and any
+fix has to handle that branch too rather than only the ring.
+
+### Fix shapes, re-costed against the decompile
+
+The decompile makes shape 3 **cheaper than shape 2**, reversing the order this entry had.
+
+1. **Leave it.** Minibosses are an event both players can walk to. Not broken, only unfair to
+   whoever is not hosting.
+2. **Reposition after the fact in `SpawnEnemy_Postfix`.** ~~Cheapest~~ — now the *worst* option. The
+   enemy already exists at `pos` by then, so it has to be moved, and anything the game cached from
+   its original transform in `Awake` is stale. That hazard is real here: see the `SpawnedObject`
+   clone-inactive-then-position note in
    [`SynchronizationService`](../../src/plugin/Services/SynchronizationService.cs), which exists
    because a component cached a prefab transform in `Awake`.
-3. **Patch the position source.** Correct, and requires the decompile above first.
+3. **Rewrite `pos` before the enemy is created — recommended.** `EnemyManager.SpawnBoss` takes
+   `Vector3 pos` as a **parameter**, and
+   [`EnemyManagerPatches.SpawnBoss_Prefix`](../../src/plugin/Patches/Enemies/EnemyManager.cs) already
+   patches it, already runs host-only, and already runs *before* the enemy exists. Widening it to
+   `ref Vector3 pos` puts the correction at the one point where it costs nothing:
+   - the host picks a living player from the replicated roster,
+   - re-rolls the position around that player with the game's **own public**
+     `SpawnPositions.GetEnemySpawnPositionAroundPoint(Vector3 pos, float minRadius, float maxRadius,
+     int attempts, bool onlyGround, float fromHeight)` (VA `0x180481F60`), which already does the
+     ground raycast and bounds work,
+   - and `SpawnEnemy_Postfix` → `OnSpawnedEnemy` then replicates the corrected `pos` verbatim.
+
+   **No wire change, no new union tag, no repositioning of a live object.** The radii can be taken
+   from the distance the game itself just chose (`|pos − hostPos|` in XZ, ±a few percent), which
+   preserves the game's time-scaled distance curve without needing the private `GetSpawnDistances`.
+
+**Still unverified about shape 3:** whether `GetEnemySpawnPositionAroundPoint` can be called from a
+prefix without reentrancy trouble, and whether picking a non-host player ever strands a miniboss
+somewhere the host's own camera logic dislikes. Neither has been run in-game.
 
 **Do not "fix" this by spawning on each peer independently.** Two peers running their own spawner
 would produce two different minibosses with different ids, which is the desync this architecture

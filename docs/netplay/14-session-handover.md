@@ -122,17 +122,27 @@ grep -c '\[Error  :     Unity\] NullReferenceException' LogOutput.log
 
 ---
 
-## OB-11 — the one bug left, and it needs a decompile first
+## OB-11 — the one bug left. **The decompile is done; it is now CONFIRMED**
 
-[OB-11](08-observed-bugs.md#ob-11): minibosses spawn near the host. **Status LIKELY, and the gap is
-specific** — it is confirmed that the mod supplies no spawn position and replicates the host's, and
-*not* confirmed that the game's spawner derives its position from `GameManager.Instance.player`. No
-spawn-position method has been decompiled.
+[OB-11](08-observed-bugs.md#ob-11): minibosses spawn near the host. Done 2026-08-16 — six bodies
+decompiled, and the entry now carries the full chain. Three things it changed:
 
-**Do that decompile before choosing anything.** The entry lists three fix shapes in increasing cost,
-and which is right depends on the answer. It also records one thing not to do: spawning
-independently on each peer produces two minibosses with different ids, which is the desync the
-architecture exists to prevent.
+- **The recorded anchor was wrong.** It is `MyPlayer.Instance`, the local-player static singleton,
+  **not** `GameManager.Instance.player`. `GameManager` appears in the same body only to supply a
+  layer mask for the ground raycast. That makes it three-for-three on this branch: OB-12, the button
+  bug and now OB-11 each had a recorded cause corrected by reading the game.
+- **Shape 3 is now cheaper than shape 2**, reversing the entry's cost order. `EnemyManager.SpawnBoss`
+  takes `Vector3 pos` as a *parameter*, and `SpawnBoss_Prefix` already patches it, already runs
+  host-only, and already runs before the enemy exists — so widening it to `ref Vector3 pos` corrects
+  the position with no wire change, no union tag, and none of shape 2's move-a-live-object hazard.
+- **A worst case nobody had recorded:** when all 50 placement attempts fail, `EventMiniboss` falls
+  back to `MyPlayer.Instance.transform.position` and spawns the miniboss *inside* the host. Any fix
+  has to cover that branch, not just the ring.
+
+Still standing: do not spawn independently on each peer — two peers running their own spawner
+produce two minibosses with different ids, which is the desync the architecture exists to prevent.
+
+**Nothing is coded yet.** Shape 1 (leave it) vs shape 3 (fix it) is a design call, not a defect call.
 
 Worth knowing given how the last two bugs went: **both OB-12 and the button bug had a recorded cause
 that was wrong in a way that mattered**, and in both cases the correction came from reading the game
