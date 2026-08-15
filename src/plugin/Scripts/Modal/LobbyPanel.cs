@@ -1,4 +1,4 @@
-using MegabonkTogether.Helpers;
+﻿using MegabonkTogether.Helpers;
 using MegabonkTogether.Scripts.Button;
 using MegabonkTogether.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -86,12 +86,17 @@ namespace MegabonkTogether.Scripts.Modal
         /// inherited size each one came out about 96 units tall, and the column overflowed the card
         /// and drew off the bottom of the screen.
         ///
-        /// <para>These two produce roughly a 52-unit button — the label's own height plus the
-        /// padding twice — which fits seven in the reserved column with room over. They are the
-        /// runtime half of the size pass; the card's own geometry is in <c>ScaffoldLobbyPanel</c>
-        /// and needs the bundle rebuilt.</para>
+        /// <para>Button height is <see cref="ButtonLabelHeight"/> + 2 x
+        /// <see cref="ButtonLabelPaddingY"/> = 52 units, <b>exactly</b>, because
+        /// <c>ButtonTextWrapper.Refresh</c> derives the background from the label's rect. The label
+        /// height is a constant rather than the measured glyph height on purpose: font metrics
+        /// varied the button by enough that the column's reserved height could only be guessed at,
+        /// and the guess was wrong. Width still comes from the text — that is the part that has to
+        /// fit the string.</para>
         /// </summary>
         private const float ButtonLabelFontSize = 30f;
+
+        private const float ButtonLabelHeight = 40f;
 
         private const int ButtonLabelPaddingY = 6;
 
@@ -1360,9 +1365,10 @@ namespace MegabonkTogether.Scripts.Modal
             wrapper.paddingY = ButtonLabelPaddingY;
 
             var preferred = wrapper.t_text.GetPreferredValues(label);
-            if (preferred.x > 0f && preferred.y > 0f)
+            if (preferred.x > 0f)
             {
-                textRect.sizeDelta = preferred;
+                // Width measured, height fixed. See ButtonLabelHeight.
+                textRect.sizeDelta = new Vector2(preferred.x, ButtonLabelHeight);
             }
 
             wrapper.t_text.ForceMeshUpdate(false, false);

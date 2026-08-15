@@ -81,7 +81,7 @@ namespace MegabonkTogether.UiAuthoring
         /// to the top one. Derived by hand because every offset above it is a constant; if this
         /// disagrees with the content the card either clips or carries dead space.
         /// </summary>
-        private const float PanelHeight = 765f;
+        private const float PanelHeight = 785f;
 
         /// <summary>Thickness of the border, drawn by insetting <c>Fill</c> inside <c>Panel</c>.</summary>
         private const float BorderThickness = 3f;
@@ -102,13 +102,13 @@ namespace MegabonkTogether.UiAuthoring
         ///
         /// <para>The fix this time is on both sides: the buttons themselves are now built at about
         /// 52 units rather than 96 (<c>LobbyPanel.ResizeButtonToLabel</c>), and this reserves
-        /// 7 x 52 + 6 x 6 = 400 with ten units to spare. <c>LobbyPanel</c> measures the built
+        /// 7 x 52 + 6 x 10 = 424 with six units to spare. <c>LobbyPanel</c> measures the built
         /// column every time and now logs what it measured whether or not it fits, so the next
         /// person does not have to guess.</para>
         /// </summary>
-        private const float ButtonColumnHeight = 410f;
+        private const float ButtonColumnHeight = 430f;
 
-        private const float ButtonSpacing = 6f;
+        private const float ButtonSpacing = 10f;
 
         /// <summary>
         /// Placeholder size, for the editor preview only. It should stay in the neighbourhood of a
@@ -274,7 +274,11 @@ namespace MegabonkTogether.UiAuthoring
 
             var layout = buttons.GetComponent<VerticalLayoutGroup>();
             layout.spacing = ButtonSpacing;
-            layout.childAlignment = TextAnchor.UpperCenter;
+
+            // Centred, not top-anchored. The column reserves room for seven buttons and usually
+            // shows six, so with UpperCenter the leftover pooled into one visible hole under the
+            // last button. Centring splits it above and below, where it reads as margin.
+            layout.childAlignment = TextAnchor.MiddleCenter;
 
             // Width must stay uncontrolled. A Megabonk button sizes itself from its label —
             // ButtonTextWrapper writes rect.sizeDelta from the text's size plus padding — so a
