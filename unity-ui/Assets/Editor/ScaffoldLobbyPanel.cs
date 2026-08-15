@@ -267,7 +267,7 @@ namespace MegabonkTogether.UiAuthoring
             // authored as a dim placeholder square: an Image with no sprite draws as a filled rect,
             // and the runtime hides it entirely for a member whose avatar is unavailable — every
             // row on the matchmaker transport, and a Steam row whose picture is still downloading.
-            var avatar = CreateImage("Avatar", row.rectTransform, MemberAvatarPlaceholder);
+            var avatar = CreateRawImage("Avatar", row.rectTransform, MemberAvatarPlaceholder);
             var avatarRect = avatar.rectTransform;
             avatarRect.anchorMin = new Vector2(0f, 0.5f);
             avatarRect.anchorMax = new Vector2(0f, 0.5f);
@@ -324,6 +324,25 @@ namespace MegabonkTogether.UiAuthoring
             {
                 CreatePlaceholderButton(name, buttons.GetComponent<RectTransform>());
             }
+        }
+
+        /// <summary>
+        /// A <c>RawImage</c>, not an <c>Image</c>, and only for the avatar.
+        ///
+        /// <para><c>Image</c> needs a <c>Sprite</c>, and building one at runtime means
+        /// <c>Sprite.Create</c> — a call across the managed/IL2CPP boundary with two struct
+        /// arguments, on the same UnityEngine.CoreModule mismatch that already cost one playtest
+        /// (see <c>SteamAvatarService</c>). <c>RawImage</c> takes a <c>Texture</c> reference
+        /// directly, and reference parameters bind cleanly. Fewer moving parts for the one thing
+        /// here whose content is generated rather than authored.</para>
+        /// </summary>
+        private static RawImage CreateRawImage(string name, RectTransform parent, Color colour)
+        {
+            var go = new GameObject(name, typeof(RectTransform), typeof(RawImage));
+            go.transform.SetParent(parent, worldPositionStays: false);
+            var image = go.GetComponent<RawImage>();
+            image.color = colour;
+            return image;
         }
 
         private static Image CreateImage(string name, RectTransform parent, Color colour)

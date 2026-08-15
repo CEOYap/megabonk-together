@@ -941,7 +941,7 @@ namespace MegabonkTogether.Scripts.Modal
         /// </summary>
         private void BindAvatar(GameObject row, LobbyMemberView member)
         {
-            var slot = row.transform.Find("Avatar")?.GetComponent<Image>();
+            var slot = row.transform.Find("Avatar")?.GetComponent<RawImage>();
             if (slot == null)
             {
                 return;
@@ -954,7 +954,7 @@ namespace MegabonkTogether.Scripts.Modal
                 return;
             }
 
-            slot.sprite = avatar;
+            slot.texture = avatar;
 
             // The placeholder tint the prefab carries would multiply through the picture and leave
             // every face dark.

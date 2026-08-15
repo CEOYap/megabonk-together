@@ -1,13 +1,14 @@
-using Il2CppInterop.Runtime.InteropTypes.Arrays;
+﻿using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using Steamworks;
 using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using UnityEngine;
 
 namespace MegabonkTogether.Services
 {
     /// <summary>
-    /// Steam profile pictures, as sprites the lobby panel can drop into an <c>Image</c>.
+    /// Steam profile pictures, as textures the lobby panel can drop into a <c>RawImage</c>.
     /// </summary>
     public interface ISteamAvatarService
     {
@@ -17,8 +18,11 @@ namespace MegabonkTogether.Services
         /// <para>Null is the ordinary answer the first time an account is asked about, not a
         /// failure: Steam fetches an avatar it does not have cached over the network. Ask again on
         /// a later frame — the caller here is a panel that redraws twice a second, so it does.</para>
+        ///
+        /// <para>A <c>Texture2D</c> for a <c>RawImage</c>, deliberately not a <c>Sprite</c> for an
+        /// <c>Image</c> — see the note on <see cref="SteamAvatarService"/>.</para>
         /// </summary>
-        Sprite TryGetAvatar(ulong steamId);
+        Texture2D TryGetAvatar(ulong steamId);
 
         /// <summary>Drops every cached texture. Call when a session ends.</summary>
         void Clear();
@@ -38,18 +42,22 @@ namespace MegabonkTogether.Services
     /// <para><b>All main-thread.</b> The image is at most 184x184, so the copy and the conversion
     /// are trivial next to the frame they run in, and doing it inline avoids handing Unity texture
     /// calls to a worker thread — which is a hard crash with no managed stack, not a race.</para>
+    ///
+    /// <para><b>Nothing here passes an array to Unity, and that is the whole shape of this class.</b>
+    /// The plugin compiles <c>UnityEngine.CoreModule</c> from <c>unity-libs</c> — plain managed
+    /// Unity — while the runtime loads the Il2CppInterop proxy, so any Unity method taking an array
+    /// is declared <c>T[]</c> at compile time and <c>Il2CppStructArray&lt;T&gt;</c> at run time. It
+    /// links, and then throws <c>MissingMethodException</c> the first time it is called. The first
+    /// version of this used <c>SetPixels32</c> and did exactly that. The pixels now go in through
+    /// <c>LoadRawTextureData(IntPtr, int)</c>, whose parameters are primitives, and the result is a
+    /// <c>Texture2D</c> for a <c>RawImage</c> rather than a <c>Sprite</c>, because
+    /// <c>Sprite.Create</c> is another boundary call that did not need to be in the path.</para>
     /// </summary>
     internal class SteamAvatarService(ISteamService steamService) : ISteamAvatarService
     {
-        /// <summary>
-        /// Steam's medium avatar, 64x64. Large is 184 and would be four times the pixels to convert
-        /// for a row 28 units tall; small is 32 and visibly soft once the canvas scales it up.
-        /// </summary>
-        private const int MediumAvatarSize = 64;
-
         private const int BytesPerPixel = 4;
 
-        private readonly Dictionary<ulong, Sprite> sprites = [];
+        private readonly Dictionary<ulong, Texture2D> textures = [];
 
         /// <summary>
         /// Accounts whose avatar could not be read, so a permanent failure is not retried at the
@@ -58,54 +66,49 @@ namespace MegabonkTogether.Services
         /// </summary>
         private readonly HashSet<ulong> failed = [];
 
-        public Sprite TryGetAvatar(ulong steamId)
+        public Texture2D TryGetAvatar(ulong steamId)
         {
             if (steamId == 0UL || !steamService.IsAvailable || failed.Contains(steamId))
             {
                 return null;
             }
 
-            if (sprites.TryGetValue(steamId, out var cached) && cached != null)
+            if (textures.TryGetValue(steamId, out var cached) && cached != null)
             {
                 return cached;
             }
 
-            var sprite = Build(steamId);
-            if (sprite != null)
+            var texture = Build(steamId);
+            if (texture != null)
             {
-                sprites[steamId] = sprite;
+                textures[steamId] = texture;
             }
 
-            return sprite;
+            return texture;
         }
 
         public void Clear()
         {
-            foreach (var sprite in sprites.Values)
+            foreach (var texture in textures.Values)
             {
-                if (sprite == null)
+                // Nothing else owns these — they are built here and handed to a RawImage that does
+                // not take ownership. Left alone they would leak 16 KB per member per session.
+                if (texture != null)
                 {
-                    continue;
+                    UnityEngine.Object.Destroy(texture);
                 }
-
-                // The texture is not owned by anything else, so it goes with the sprite. Leaving it
-                // would leak 16 KB per member per session, which is small and unbounded.
-                if (sprite.texture != null)
-                {
-                    UnityEngine.Object.Destroy(sprite.texture);
-                }
-
-                UnityEngine.Object.Destroy(sprite);
             }
 
-            sprites.Clear();
+            textures.Clear();
             failed.Clear();
         }
 
-        private Sprite Build(ulong steamId)
+        private Texture2D Build(ulong steamId)
         {
             try
             {
+                // Medium is 64x64. Large is 184 and four times the pixels to flip for a row 28
+                // units tall; small is 32 and visibly soft once the canvas scales it up.
                 var handle = SteamFriends.GetMediumFriendAvatar(new CSteamID(steamId));
 
                 // 0 means Steam does not have it yet and is now fetching it; a later call answers.
@@ -143,7 +146,7 @@ namespace MegabonkTogether.Services
                     return null;
                 }
 
-                return ToSprite(buffer, (int)width, (int)height);
+                return ToTexture(buffer, (int)width, (int)height);
             }
             catch (Exception ex)
             {
@@ -154,13 +157,18 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>
-        /// Turns Steam's raw RGBA into a sprite.
+        /// Turns Steam's raw RGBA into a texture.
         ///
         /// <para><b>The rows are flipped, and that is not optional.</b> Steam hands the image back
-        /// top-row-first; Unity's <c>SetPixels32</c> reads bottom-row-first. Copying straight
+        /// top-row-first and Unity's raw texture data is bottom-row-first, so copying straight
         /// through compiles, runs, and renders every avatar upside down.</para>
+        ///
+        /// <para><b>Uploaded through a pinned pointer</b> rather than any of the array-taking
+        /// overloads. RGBA32 is byte-for-byte what Steam already handed over, so the only work is
+        /// the flip, and <c>LoadRawTextureData(IntPtr, int)</c> takes nothing that has to be
+        /// marshalled — which is the point. See the note on this class.</para>
         /// </summary>
-        private static Sprite ToSprite(Il2CppStructArray<byte> rgba, int width, int height)
+        private static Texture2D ToTexture(Il2CppStructArray<byte> rgba, int width, int height)
         {
             var texture = new Texture2D(width, height, TextureFormat.RGBA32, mipChain: false)
             {
@@ -170,32 +178,32 @@ namespace MegabonkTogether.Services
                 filterMode = FilterMode.Bilinear,
             };
 
-            var pixels = new Il2CppStructArray<Color32>(width * height);
+            var stride = width * BytesPerPixel;
+            var flipped = new byte[stride * height];
 
             for (var y = 0; y < height; y++)
             {
-                var sourceRow = y * width * BytesPerPixel;
-                var targetRow = (height - 1 - y) * width;
+                var source = y * stride;
+                var target = (height - 1 - y) * stride;
 
-                for (var x = 0; x < width; x++)
+                for (var i = 0; i < stride; i++)
                 {
-                    var i = sourceRow + (x * BytesPerPixel);
-                    pixels[targetRow + x] = new Color32(rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]);
+                    flipped[target + i] = rgba[source + i];
                 }
             }
 
-            texture.SetPixels32(pixels);
-            texture.Apply();
+            var pin = GCHandle.Alloc(flipped, GCHandleType.Pinned);
+            try
+            {
+                texture.LoadRawTextureData(pin.AddrOfPinnedObject(), flipped.Length);
+                texture.Apply();
+            }
+            finally
+            {
+                pin.Free();
+            }
 
-            var sprite = Sprite.Create(
-                texture,
-                new Rect(0f, 0f, width, height),
-                new Vector2(0.5f, 0.5f),
-                MediumAvatarSize);
-
-            sprite.hideFlags = HideFlags.HideAndDontSave;
-
-            return sprite;
+            return texture;
         }
     }
 }
