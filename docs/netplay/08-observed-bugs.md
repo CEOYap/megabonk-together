@@ -13,7 +13,7 @@ OB-1..OB-4 come from the 2026-08-06 session (two players, direct P2P). OB-5..OB-
 **2026-08-07** sessions — two players over the internet at ~61 ms rtt, running the round-identity
 build with `WriteUnityLog = true` on both peers. OB-11 and OB-12 come from the **2026-08-13**
 Steam-transport sessions and are both transport-independent — they would behave identically on the
-rendezvous path.
+rendezvous path. OB-13 was reported on **2026-08-16** and has no capture attached yet.
 
 ---
 
@@ -983,6 +983,84 @@ known which one the panel reads.
 
 **Not a desync.** Both peers agree about which objects exist and which are gone; only the tally
 disagrees. It is a scoreboard bug, not a world-state one, and nothing downstream reads it.
+
+---
+
+<a name="ob-13"></a>
+## OB-13 — Enemies keep taking projectile damage while an encounter window has the game paused — UNVERIFIED
+
+**Reported (2026-08-16):** with the game paused by an encounter window, bosses and enemies still
+receive damage from projectiles.
+
+**The first thing to settle is whether this is a bug at all**, and the report does not yet say.
+Shared experience means one peer can be in an encounter window while the other is still fighting, so
+*some* damage arriving during your pause is the design working. Three readings, and they want
+different fixes:
+
+| Reading | Correct? |
+|---|---|
+| The **other** player's projectiles damage enemies while you are paused | **Correct.** One shared world; they never stopped playing. |
+| **Your own** projectiles, already in flight, keep dealing damage while you are paused | A bug — your simulation was supposed to stop. |
+| Enemies take damage on the **host** from a client that is paused, or vice versa | A bug, and the one that would also desync HP. |
+
+**Which of the three it is is the whole question**, and it is answered by watching whose weapon the
+damage comes from during a pause with the other player standing still.
+
+### What is established about the pause itself
+
+`MyTime.Pause()` — VA `0x1803E5B20`, decompiled — does exactly three things:
+
+1. sets `MyTime.paused = true` (static offset `0x0`),
+2. sets `UnityEngine.Physics.simulationMode = 2` (`Script`),
+3. raises `MyTime.A_Pause(true)`.
+
+**It never touches `Time.timeScale`.** That is the important part. The pause is cooperative, not a
+hard stop: it halts *automatic* physics stepping and sets a flag that the game's own update methods
+are expected to check. Anything that does not check `MyTime.paused`, and anything that deals damage
+from `Update` rather than from physics, keeps running at full speed.
+
+The game's own projectiles do check it. `Rocket.FixedUpdate` is
+`if (!MyTime.paused) { StepMovement(); … }` — recorded in
+[`Patches/Projectiles/Rocket.cs`](../../src/plugin/Patches/Projectiles/Rocket.cs), which already
+relies on that fact for an unrelated reason. So a stock projectile should not advance under pause.
+
+**And the pause is local.** `MyTime.Pause()` is a static on this peer's runtime; nothing replicates
+it. The mod calls it from `EncounterWindows.PopReward_Prefix`, `SpawnPlayerPortal`, `LevelUpScreen`
+and several branches of `SynchronizationService`. A peer opening an encounter window therefore pauses
+itself alone, which is the intended shared-experience behaviour and is also why reading 1 above is
+not a defect.
+
+### Why it could still be real
+
+Two mechanisms would produce genuine damage-under-pause, and neither is ruled out:
+
+- **Damage is host-authoritative, and the host may not be the paused peer.** Enemy HP is decided on
+  the host and replicated. If a *client* is paused, the host is still resolving that client's
+  in-flight projectiles against enemies — the client's pause stopped its own simulation, not the
+  authority's copy of it. `Rocket`'s host branch keeps simulating a remote player's rocket by
+  design.
+- **`simulationMode = Script` is global and stops stepping, not collision.** It prevents Unity
+  advancing the simulation automatically; it does not make an already-overlapping collider stop
+  reporting, and it does nothing at all to damage applied from `Update` or from a timer read off
+  `MyTime.time` — which does not advance under pause, so an expiry comparison can also latch.
+
+### The cheap next step, before any code
+
+This wants an observation, not a decompile — the reverse of the last several entries:
+
+1. Two peers. One opens an encounter window; the other **stops firing and stands still**.
+2. Watch whether a boss's HP still moves. If it does not, reading 1 is the whole story and this
+   entry closes as "working as designed".
+3. If it does, note **whose** weapon is doing it and **which peer is host**. That single detail
+   separates readings 2 and 3.
+
+**Do not "fix" this by pausing every peer.** Shared experience exists so that one player choosing a
+reward does not freeze the others; a global pause would undo the feature rather than fix the bug.
+
+**Related.** [OB-4](#ob-4) and [SE-5](07-shared-experience-audit.md#se-5) concern the same window
+being closed at the wrong moment, and [OB-3](#ob-3) the barrier re-arming — all three are about the
+encounter window's *lifetime*. This one is about what the world does while it is open, which is a
+different axis and has not been examined before.
 
 ---
 
