@@ -18,6 +18,7 @@ namespace MegabonkTogether.Configuration
         public static ConfigEntry<bool> EnabledSharedExperience { get; private set; }
         public static ConfigEntry<float> EncounterInputGraceSeconds { get; private set; }
         public static ConfigEntry<bool> LogAllocationRate { get; private set; }
+        public static ConfigEntry<bool> LogEncounterPause { get; private set; }
         public static ConfigEntry<bool> LogBandwidth { get; private set; }
         public static ConfigEntry<bool> LogSteamStatus { get; private set; }
         public static ConfigEntry<bool> SteamLobbySelfTest { get; private set; }
@@ -72,6 +73,16 @@ namespace MegabonkTogether.Configuration
                 "Log the mod's own managed allocation rate every 10 seconds during a session. Off " +
                 "by default. Turn it on when investigating stutter: the Unity Profiler cannot " +
                 "attach to a retail IL2CPP build, so this is how GC pressure gets measured here."
+            );
+            LogEncounterPause = config.Bind(
+                "Diagnostics",
+                "LogEncounterPause",
+                false,
+                "Log whether the encounter-window pause actually holds while the window is open. " +
+                "Off by default. Turn it on to investigate enemies taking damage during a reward " +
+                "pop-up (OB-13): it prints one line whenever the window state, MyTime.paused or " +
+                "Physics.simulationMode changes, and flags any moment the window is open without " +
+                "the game being paused."
             );
             LogBandwidth = config.Bind(
                 "Diagnostics",

@@ -25,6 +25,9 @@ namespace MegabonkTogether.Scripts
         private const float tumbleWeedUpdatetickInterval = 1f / Tunables.TUMBLEWEED_UPDATE_TICK_RATE;
         private float tumbleWeedUpdateAccumulator = 0f;
 
+        /// <summary>OB-13. Latched so a failing diagnostic warns once rather than every frame.</summary>
+        private bool encounterPauseDiagnosticsFailed = false;
+
         private bool hasStarted = false;
         private bool? hasFoundMatch = null;
         private bool? hasJoinedFriendlyRoom = null;
@@ -125,6 +128,32 @@ namespace MegabonkTogether.Scripts
                 if (GameManager.Instance == null || GameManager.Instance.player == null || GameManager.Instance.player.inventory == null) return;
 
                 Services.AllocationDiagnostics.Sample(ModConfig.LogAllocationRate.Value);
+
+                // OB-13. Edge-triggered, so a well-behaved window costs two lines for the whole
+                // window rather than one per frame or per second. It has to be sampled every frame
+                // and not on an accumulator: the hypothesis is a pause that is cleared and restored
+                // by another screen, which can happen inside a single frame.
+                //
+                // The try is at this call site rather than inside Sample, deliberately. Sample reads
+                // Physics.simulationMode, which links against the managed unity-libs copy of
+                // PhysicsModule; if that does not resolve against this runtime the result is a
+                // MissingMethodException raised when the *containing* method is JIT-compiled, so a
+                // try within Sample could never execute. It has to sit one level up. The game's own
+                // MyTime.Pause calls set_simulationMode, so it should resolve — "should" being why
+                // this is guarded rather than assumed. A diagnostic must never take a session down.
+                if (!encounterPauseDiagnosticsFailed)
+                {
+                    try
+                    {
+                        Services.EncounterPauseDiagnostics.Sample(ModConfig.LogEncounterPause.Value);
+                    }
+                    catch (System.Exception ex)
+                    {
+                        encounterPauseDiagnosticsFailed = true;
+                        Plugin.Log.LogWarning(
+                            $"[pause] OB-13 diagnostic disabled for this session: {ex.Message}");
+                    }
+                }
                 // The active transport, whichever it is — a diagnostic that reads the wrong one
                 // reports on a socket nobody is using.
                 // The active transport, whichever it is — a diagnostic that reads the wrong one
@@ -278,6 +307,7 @@ namespace MegabonkTogether.Scripts
             Helpers.EncounterInputGrace.Reset();
             Services.AllocationDiagnostics.Reset();
             Services.BandwidthDiagnostics.Reset();
+            Services.EncounterPauseDiagnostics.Reset();
 
             try
             {
