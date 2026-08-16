@@ -510,7 +510,7 @@ Forest-with-a-death reproduction suggested in OB-7 would test both at once.
 ---
 
 <a name="ob-9"></a>
-## OB-9 — Enemy max health is never replicated — CONFIRMED, cause exact
+## OB-9 — Enemy max health is never replicated — **cause corrected**, FIXED, unverified
 
 **Reported:** for summoned bosses (bush, bandit) the **current** health agrees between players but
 the **maximum** does not.
@@ -532,27 +532,82 @@ public float Hp { get; set; }          // current only
 A repo-wide search for `MaxHp` / `MaxHealth` under `src/common/` returns **players only**
 (`Player.MaxHp`, `PlayerUpdate.MaxHp`). There is no enemy equivalent.
 
-So current HP converges — it is re-sent at 40 Hz and the refresh sweep bounds its staleness — while
-max HP is **derived locally on each peer** from whatever the game computes at spawn. Any input to
-that computation which differs between peers produces a permanently different maximum, and the
-health bar reads as a different fraction on each screen even though the absolute values agree.
+### Cause corrected 2026-08-16 — it was replicated, just sampled too early
 
-**Why summoned bosses specifically.** `SpawnedEnemy` does replicate *some* scaling inputs — `Wave`,
-`CanBeElite`, `ExtraSizeMultiplier`. A regular wave enemy therefore tends to agree by construction.
-A boss summoned through `ChallengeSummoner` is scaled by state that is **not** in that message, so
-its locally-derived maximum diverges. That matches the report exactly: ordinary enemies look fine,
-summoned bosses do not.
+This entry said max HP is **derived locally on each peer**. It is not derived at all.
+`SynchronizationService.ProcessSpawnedEnemy` assigns it outright:
 
-**Fix shape, cheapest first.** Add a max-health field to `SpawnedEnemy` — **as a new append-only
-union tag, never as a field on tag 4**, because MemoryPack is positional and widening a shipped
-message silently corrupts sessions between builds. Max health changes rarely, so it belongs on the
-spawn message and not in the 40 Hz delta; putting it in `EnemyModel` would cost bandwidth on every
-enemy every tick to fix a value that almost never changes.
+```csharp
+enemy.hp = spawnedEnemy.Hp;
+enemy.controlHp = spawnedEnemy.Hp;
+enemy.maxHp = spawnedEnemy.Hp;          // ← max comes straight off the spawn message
+enemy._hp_k__BackingField = spawnedEnemy.Hp;
+```
 
-**Not established:** whether the divergence is purely cosmetic (a health bar reading wrong) or
-whether anything gameplay-relevant reads max health — execute thresholds, percentage damage, or
-phase transitions would all make this a correctness bug rather than a display one. Worth checking
-before choosing how much to spend on it.
+Setting max from current is correct *if* the message carries the enemy's full health — which it does
+for an ordinary enemy, because a fresh spawn is undamaged. **The defect is the sampling moment.**
+Every HP scaler runs in the **caller** of `EnemyManager.SpawnEnemy`, after it has returned, and
+`SpawnEnemy_Postfix` fires in between:
+
+```
+caller → EnemyManager.SpawnEnemy(...)
+              └── [mod] SpawnEnemy_Postfix → sends SpawnedEnemy { Hp = unscaled }
+       → Enemy.SetSwarmMultiplierHp(...)          ← scaling happens only now
+```
+
+So the spawn message carries pre-scaling HP. The client writes all four fields from it, then the
+40 Hz `EnemyModel` delta — which carries `Hp` and nothing else — pulls **current** HP up to the
+scaled value and leaves the maximum behind forever. Hence current agrees and maximum does not.
+
+**Which enemies, precisely.** An xref on `Enemy.SetSwarmMultiplierHp` gives five callers:
+
+| Caller | What it spawns |
+|---|---|
+| `EnemyManager.SpawnBoss` | minibosses, coffin bosses, the stage boss — all confirmed to funnel here |
+| `SwarmSummoner.SpendCredits` | swarm enemies |
+| `InteractableCharacterFight.SpawnEnemy` | the character fight — bandit |
+| `InteractableDesertGrave.SpawnEnemy` | grave spawns |
+| `InteractableSkeletonKingStatue.SpawnEnemy` | statue spawns |
+
+The three interactables call `SpawnEnemy` and scale it **themselves**, which is why the report reads
+as "any interactable that spawns bosses". Note `ChallengeSummoner.SpendCredits`, which this entry
+originally blamed, calls `SpawnEnemy` directly and never scales — so it was the wrong suspect.
+
+**Why boss curses decide it.** `SpawnBoss` applies the scale only when `GameManager.bossCurses > 0`.
+Boss curses accumulate over a run, so an early boss is genuinely unaffected and a late one is not —
+which is a better account of "minibosses seem fine" than a per-spawner distinction.
+
+### The fix has landed
+
+New append-only union tag **76, `EnemyMaxHpScaled`** (`Id`, `Hp`), sent host-side from a postfix on
+`Enemy.SetSwarmMultiplierHp` — the one point all five callers share — and applied on the client to
+the same four fields. Reliable, because this is a one-shot transition that nothing supersedes: the
+delta stream carries current HP only, which is exactly why the maximum never self-corrected.
+
+A field on `SpawnedEnemy` was **not** an option: MemoryPack is positional, so widening a shipped
+message corrupts sessions between builds silently. And the message cannot simply be sent later —
+the five callers share no "done" hook.
+
+**The client buffers a correction that outruns its spawn.** Both messages go `ReliableUnordered`,
+which guarantees delivery but explicitly not order, and the scaler runs in the same frame as the
+spawn, so the two are always in flight together. The buffer is cleared on `Reset`; ids come from
+`Interlocked.Increment` and are never reused, so a stale entry is a leak rather than a
+misapplication.
+
+**Verified without a playtest:** builds against the real install's interop; the server still
+compiles, so the new message stayed Unity-free; union tags remain unique.
+
+**Unverified — not run in-game:**
+
+| Question | How it would show |
+|---|---|
+| Do boss health bars now agree between peers? | the direct check — take a late-run boss, with boss curses accumulated |
+| Is `InteractableCharacterFight` really the bush/bandit spawner? | read from the xref, not confirmed in play |
+| Is the divergence cosmetic or gameplay-relevant? | still open — execute thresholds, percentage damage or phase transitions reading max HP would make it a correctness bug |
+
+**Deliberately not covered:** `FinalFightController.SpawnGoons` scales via `SetMinibossGoon`, not
+`SetSwarmMultiplierHp`, so final-boss goons keep the old behaviour. Final bosses were reported as
+fine, and widening the fix to a path with no reported symptom risks changing something that works.
 
 ---
 
