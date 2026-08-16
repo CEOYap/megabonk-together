@@ -52,11 +52,40 @@ count is countable by eye.
 | `AegisAttack.A_Used` / `A_Regen` — `static Action<int>` | the events that change it |
 | `AegisRenderer.SetAmount(int)` VA `0x18034AAD0` | what actually shows N orbs |
 
-**Fix shape, not yet chosen.** Either replicate the count (a new append-only union tag carrying
-`ownerId` + `eWeapon` + `currentAmount`, at a low rate — it changes rarely), or derive it locally on
-each peer from the already-replicated weapon level, which costs no wire at all but needs
-`AegisAttack`'s amount formula decompiled first. **Prefer the second if the formula is pure**; it
-avoids a wire change entirely.
+**Fix shape — decided 2026-08-16 by decompile. The cheap option is ruled out.**
+
+The entry previously said "prefer deriving it locally if the formula is pure". **It is not pure**, so
+that option is wrong and would have shipped a subtler version of the same bug.
+
+```
+AegisAttack.GetMaxShields()                       VA 0x1804A4590
+  = WeaponUtility.GetAttackQuantity(this.weaponBase)
+
+WeaponUtility.GetAttackQuantity(weaponBase)       VA 0x1804346F0
+  if (weaponBase.weaponData.eWeapon == 29 /* Shotgun */) return 2;
+  return max(weaponStats[EStat.Projectiles] + PlayerStats.GetStat(EStat.Projectiles), floor);
+```
+
+`PlayerStats.GetStat` is **static and takes no player** — the same local-player-singleton pattern as
+[OB-11](#ob-11)'s spawner and [OB-2](#ob-2)'s ghosts. So the count is
+`per-weapon stat + the reading peer's own global Projectiles stat`. Deriving peer A's shield count on
+peer B would add **B's** Projectiles stat to A's weapon, and the two ends would still disagree.
+
+Worse, it would look correct in testing: while both players have the base Projectiles stat the
+derived number matches, and it only diverges once somebody takes the upgrade. A playtest would
+plausibly pass it.
+
+**So OB-1 needs replication.** A new append-only union tag carrying `ownerId` + `eWeapon` +
+`currentAmount`, at a low rate — it changes rarely. Replicating the owner's Projectiles stat instead
+would also work and is not obviously cheaper, since the count still has to be pushed on every
+`A_Used` / `A_Regen` to stay live.
+
+> **Two Ghidra field names in this chain are off by one slot**, in the same direction, and both were
+> caught against `dump.cs` offsets rather than trusted. `GetMaxShields` prints `.shieldUseSfx`
+> (`0x28`) where it reads `ConstantAttack.weaponBase` (`0x20`), and `GetAttackQuantity` prints
+> `.icon` (`0x58`, a `Texture` pointer) where it reads `WeaponData.eWeapon` (`0x50`, an int) — a
+> pointer compared against `29` is the tell. This is the trap `CLAUDE.md` records, twice in one
+> chain.
 
 **Not known:** whether the wrong count is purely cosmetic or whether the remote `AegisAttack` also
 blocks or deals damage on the observing peer. `FixedUpdate` is suppressed, which suggests cosmetic,
@@ -65,30 +94,65 @@ but the collision path was not traced.
 ---
 
 <a name="ob-2"></a>
-## OB-2 — Ghost item's summons appear for players who do not have the item — UNVERIFIED
+## OB-2 — Ghost item's summons appear for players who do not have the item — CONFIRMED, cause exact
 
 **Reported:** when either peer holds the Ghost item — which summons ghosts on interacting with pots,
 shrines and similar — the other player sees the ghosts too, without owning the item. Whether the
 non-owner also *receives the effect* (damage dealt by those ghosts, or credit for it) is unknown to
 the reporter.
 
-**Do not assume this is a bug.** `ItemGhost` summons entities that carry `GetDamage()` and a
-`damageSource`, so they are gameplay actors rather than decoration. Enemies in this project are
-host-authoritative and replicated, so if `SpawnGhost` routes through the normal enemy spawn path
-then **both players seeing them is correct** — one shared world, one set of ghosts. The bug would
-instead be if each peer spawns its own set locally, or if a client's summon is suppressed and
-silently lost.
+### Answered by decompile 2026-08-16 — and the recorded decision criterion was the wrong question
 
-**The one lookup that decides it:**
+This entry said the deciding lookup was whether `SpawnGhost` routes through `EnemyManager.SpawnEnemy`
+(correct-by-construction) or instantiates directly (a real divergence). **Neither branch is what
+happens**, and the framing — host authority over a shared set of ghosts — does not apply at all.
 
-```bash
-"$APPDATA/ghidra/ghidra_12.1.2_PUBLIC/venv/Scripts/python.exe" scripts/re/decompile_headless.py 0x180457EE0 SpawnGhost
+```
+ItemGhost.OnInteracted(interactable, success)   VA 0x180457DA0
+  if (!success) return;
+  for (i = 0; i < this.numGhosts; i++)
+      EffectManager.SpawnGhostProjectile(
+          MyPlayer.Instance.baseDamage * 2,            // 0x12C
+          PlayerStats.GetStat(10) * k,
+          this.damageSource);
+
+ItemGhost.SpawnGhost()                          VA 0x180457EE0   — same call, once
+ItemGhost.Init()                                VA 0x180457C60
+  DetectInteractables.<static Action<BaseInteractable,bool>> += this.OnInteracted
 ```
 
-`ItemGhost.SpawnGhost` is at VA `0x180457EE0`; `OnInteracted` at `0x180457DA0`. If `SpawnGhost` calls
-`EnemyManager.SpawnEnemy`, our `EnemyManagerPatches.SpawnEnemy_Prefix` already gates it on host
-authority and the behaviour is correct-by-construction. If it instantiates directly, it bypasses
-that gate on both peers and this is a real divergence.
+Three facts, and together they are the whole bug:
+
+1. **Ghosts are `EffectManager` projectiles, not enemies.** `SpawnEnemy` is never involved, so no
+   host-authority gate applies to them and none is missing. Nothing here is host-authoritative.
+2. **`SpawnGhostProjectile` takes no position**, and both of its numbers come from
+   `MyPlayer.Instance` and the static `PlayerStats.GetStat` — the *local* player. So a ghost always
+   appears at, and is scaled by, whoever's machine spawned it. Same local-player-singleton pattern as
+   [OB-1](#ob-1) and [OB-11](#ob-11).
+3. **`Init` subscribes each instance to a static event on `DetectInteractables`** — one global
+   `Action<BaseInteractable, bool>`, not something per-owner.
+
+**The mechanism.** `NetPlayer.Inventory.itemInventory.items` holds **real `ItemGhost` instances for
+remote players** — `PlayerManagerService.IsRemoteItem` exists precisely because they do. Every one of
+those instances has run `Init` and is therefore subscribed to the same global interaction event. So
+when the *local* player interacts with anything, the event fires every subscribed instance, including
+the ones belonging to remote players, and each spawns its ghosts **at the local player using the
+local player's `baseDamage`**.
+
+That is exactly the report: a player who does not own the item sees ghosts, because the copy of the
+*other* player's item living on their machine fired on their interaction. It is not a shared world
+being replicated; it is one peer's item running on the other peer's machine.
+
+**The fix is already written and never wired up.** `IsRemoteItem(ItemGhost)` is declared at
+`IPlayerManagerService` and implemented in `PlayerManagerService` — and **has no callers**. Its
+sibling `IsANetPlayerAbility` is used exactly this way in
+[`Patches/Passives/PassiveAbilityBullseye.cs`](../../src/plugin/Patches/Passives/PassiveAbilityBullseye.cs).
+`OnInteracted_Prefix` should take `ItemGhost __instance` and return `false` when the instance is
+remote, mirroring that patch.
+
+**Not yet known:** whether the non-owner's ghosts also *deal* damage on their machine, or whether the
+owner's own ghosts are additionally suppressed anywhere. `damageSource` is carried per-instance, so
+credit attribution is worth checking once the guard lands.
 
 **Separately, and regardless of the above:** the existing patch
 [`Patches/Items/ItemGhost.cs`](../../src/plugin/Patches/Items/ItemGhost.cs) has **no
