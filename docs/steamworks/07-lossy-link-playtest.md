@@ -292,7 +292,7 @@ and **67.5%** at lines 2315, 2350 and 2385. Loss was continuously active across 
 - **Zero send failures on the client**, and the promotion never fired on either peer — the
   confirming result predicted in this document, now observed twice.
 
-### The one new defect the run exposed
+### The one new defect the run exposed — and it is not a loss effect
 
 **63 `k_EResultLimitExceeded` send failures on the host**, against zero on the client and zero
 anywhere in run 1:
@@ -304,11 +304,25 @@ anywhere in run 1:
 | `ProjectilesUpdate` | 7 |
 | `LightningStrike` | 2 |
 
-This is Steam refusing sends, not packet loss dropping them — a backpressure limit reached while
-retransmitting under ~35% loss. It is concentrated in exactly the three highest-rate streams. **It
-did not break the run**, but it is the first evidence that the enemy stream's budget is tuned for a
-clean link and not a degraded one, and it is a stronger argument for lowering the enemy tick or
-raising `ENEMY_POSITION_THRESHOLD` than any bandwidth number so far.
+> **Corrected.** These were first written up here as backpressure from retransmitting under loss.
+> **That was wrong, and the log says so plainly:** the host's last sub-90% quality sample is at line
+> **1846**, and the first send failure is at line **3787** — the link had been at 100% for roughly
+> 1,900 lines before any send failed. The players confirmed they were deliberately stress-testing
+> the **final swarm**. So this is a peak-load ceiling on a *clean* link, which is a more serious
+> result than a loss artefact: it does not need a bad connection to happen.
+
+**And the capture shows why.** At peak the enemy stream ran **166–181 KB/s**. At the 40 Hz tick that
+is **4,250–4,644 bytes per tick**, against a `MAX_ENEMY_TICK_BYTES` budget of **3,600**. The budget
+was overshooting by about a quarter *while reporting that it was holding*.
+
+Dividing by the 240 models the budget allowed gives **17.7–19.3 B per model on the wire**, against
+the `ENEMY_MODEL_WIRE_BYTES = 15` the budget was computed from. The constant was simply wrong, and
+its own documentation had warned that a stale value would make the budget "silently stop meaning
+what it says". Corrected to **19**, which drops `MAX_ENEMIES_PER_TICK` from 240 to 189 and brings the
+tick back to ~3,600 B — roughly a 22% cut at peak, aimed squarely at these failures.
+
+**This is the strongest argument yet for raising `ENEMY_POSITION_THRESHOLD`**, and unlike per-peer
+culling it is measurable at two players: repeat a final swarm and compare the `[bw]` peak.
 
 ### Other results from the same capture
 

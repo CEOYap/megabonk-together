@@ -102,8 +102,20 @@
         /// <see cref="MAX_ENEMY_TICK_BYTES"/> into a count. If the shape of <c>EnemyModel</c>
         /// changes, this must be re-measured or the byte budget silently stops meaning what it
         /// says.</para>
+        ///
+        /// <para><b>Corrected from 15 to 19 on 2026-08-17, and the old value is exactly the failure
+        /// this warns about.</b> A final-swarm capture put the enemy stream at 166–181 KB/s, which
+        /// at the 40 Hz tick is 4,250–4,644 B per tick against a stated budget of
+        /// <see cref="MAX_ENEMY_TICK_BYTES"/> = 3,600. Dividing by the 240 models the old constant
+        /// allowed gives 17.7–19.3 B actually on the wire per model. The budget was therefore
+        /// overshooting by about a quarter while reporting that it was holding — and the same
+        /// capture logged 63 <c>k_EResultLimitExceeded</c> send failures on the host, on a link at
+        /// 100% quality.</para>
+        ///
+        /// <para>At 19 the tick lands near 3,600 B as intended and
+        /// <see cref="MAX_ENEMIES_PER_TICK"/> drops from 240 to 189.</para>
         /// </summary>
-        internal const int ENEMY_MODEL_WIRE_BYTES = 15;
+        internal const int ENEMY_MODEL_WIRE_BYTES = 19;
 
         /// <summary>
         /// Byte ceiling for one enemy tick, before splitting.
@@ -114,7 +126,7 @@
         internal const int MAX_ENEMY_TICK_BYTES = 3600;
 
         /// <summary>
-        /// Derived: how many enemies fit in one tick's budget. Currently 240.
+        /// Derived: how many enemies fit in one tick's budget. Currently 189.
         ///
         /// <para><b>This caps the stream regardless of how many enemies are alive</b>, which is why
         /// allocation predictions based on raw enemy count are wrong — see

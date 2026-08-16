@@ -31,9 +31,10 @@ namespace MegabonkTogether.Services
     /// <para><b>The prediction, corrected 2026-08-16.</b> This originally read "at 600 enemies that
     /// predicts roughly 24,000 objects a second", which was written before the budgeted priority
     /// stream landed and is no longer reachable. `MAX_ENEMY_TICK_BYTES / ENEMY_MODEL_WIRE_BYTES`
-    /// caps the tick at <b>240</b> enemies regardless of how many are alive, so the ceiling is
-    /// 240 x 40 Hz = <b>~9,600 `EnemyModel` per second</b>. Judge the reading against that number,
-    /// not the old one — the enemy count in the world no longer sets the rate.</para>
+    /// caps the tick at <b>189</b> enemies regardless of how many are alive, so the ceiling is
+    /// 189 x 40 Hz = <b>~7,560 `EnemyModel` per second</b>. Judge the reading against that number,
+    /// not the old one — the enemy count in the world no longer sets the rate. (240/9,600 until
+    /// 2026-08-17, when ENEMY_MODEL_WIRE_BYTES was corrected from 15 to a measured 19.)</para>
     ///
     /// <para><b>Read the contrast, not the absolute.</b> A rate that does not move between a full
     /// swarm and an empty field is not this stream, whatever its magnitude.</para>
