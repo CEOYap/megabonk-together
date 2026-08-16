@@ -774,7 +774,7 @@ exists to prevent — and the same reasoning that makes `SpawnBoss_Prefix` suppr
 ---
 
 <a name="ob-12"></a>
-## OB-12 — The run's interactable counters diverge, except charge shrines — **the fix did NOT work (2026-08-17)**
+## OB-12 — The run's interactable counters diverge, except charge shrines — re-diagnosed, **FIXED (attempt 2), unverified**
 
 ### RE-DIAGNOSED 2026-08-17 — the fix was applied to branches your config never reaches
 
@@ -840,9 +840,23 @@ Three shapes, and the choice is a real one:
    readout — but the denominator makes it incoherent, so this really means changing the
    denominator, not leaving it alone.
 
-**Prefer 2.** This entry has now had its cause corrected three times, and the failure mode each time
-was reasoning about which path runs instead of checking. Option 2 does not need that reasoning to be
-right.
+**Option 2 has landed.** `InteractableCounterHelper.Take` reads `numUsed` before dispatch and
+`CountIfDispatchDidNot` counts only if it did not move, so whichever sub-path ran the interactable is
+counted exactly once — and a sub-branch added later needs no matching change. The debug name is
+captured up front because it comes off the live component and some paths destroy the object.
+
+Chosen for that property rather than for elegance: this entry has had its cause corrected three
+times, and the failure each time was reasoning about which path runs instead of checking. This shape
+does not need that reasoning to be right.
+
+**What confirms it: the Microwaves row.** The map holds exactly one microwave, so a working fix reads
+`1/1` on **both** peers. That single row is a cleaner test than any other, because the two values
+cannot legitimately differ. If chests and pots now agree too, the whole class is fixed.
+
+**Watch for the opposite failure.** If a counter now reads *higher* than the map total — `50/46` —
+the comparison is failing and something is counting twice. That is the exact hazard the measured
+shape exists to prevent, so it would mean the read is returning null or the wrong key rather than
+that the design is wrong.
 
 > **Resolved 2026-08-15.** The counter was found and the fix is in. It is **not** `RunStats` —
 > that was this entry's one wrong turn, and the detour is kept below because the reasoning that
