@@ -987,24 +987,24 @@ disagrees. It is a scoreboard bug, not a world-state one, and nothing downstream
 ---
 
 <a name="ob-13"></a>
-## OB-13 — Enemies keep taking projectile damage while an encounter window has the game paused — UNVERIFIED
+## OB-13 — Enemies keep taking projectile damage while an encounter window has the game paused — CONFIRMED as a defect, cause UNVERIFIED
 
 **Reported (2026-08-16):** with the game paused by an encounter window, bosses and enemies still
-receive damage from projectiles.
+receive damage from projectiles. **Refined by the reporter: it happens only when shared experience is
+enabled, where *both* players are paused by the reward pop-up.**
 
-**The first thing to settle is whether this is a bug at all**, and the report does not yet say.
-Shared experience means one peer can be in an encounter window while the other is still fighting, so
-*some* damage arriving during your pause is the design working. Three readings, and they want
-different fixes:
+**That refinement is what makes it a defect rather than a design question.** The obvious benign
+reading — your teammate is still playing, so their shots still land — requires somebody to be
+unpaused. With shared experience nobody is: the barrier holds every peer until all have chosen. There
+is no legitimate source of projectile damage during that window, so something is running that should
+not be.
 
-| Reading | Correct? |
-|---|---|
-| The **other** player's projectiles damage enemies while you are paused | **Correct.** One shared world; they never stopped playing. |
-| **Your own** projectiles, already in flight, keep dealing damage while you are paused | A bug — your simulation was supposed to stop. |
-| Enemies take damage on the **host** from a client that is paused, or vice versa | A bug, and the one that would also desync HP. |
-
-**Which of the three it is is the whole question**, and it is answered by watching whose weapon the
-damage comes from during a pause with the other player standing still.
+**And the mod deliberately holds that pause.** `EncounterWindowPatches.PopReward_Postfix` calls
+`MyTime.Unpause()` **only when shared experience is off**; with it on it re-shows the window and
+returns early, leaving the peer paused until the barrier releases. So the shared-experience pause is
+not incidental — it is held open, potentially for many seconds ([OB-3](#ob-3) records the failsafe
+firing on a 20-second cycle), and that long window is itself a clue: it is the one state that lasts
+long enough for something else to interfere.
 
 ### What is established about the pause itself
 
@@ -1019,40 +1019,53 @@ hard stop: it halts *automatic* physics stepping and sets a flag that the game's
 are expected to check. Anything that does not check `MyTime.paused`, and anything that deals damage
 from `Update` rather than from physics, keeps running at full speed.
 
-The game's own projectiles do check it. `Rocket.FixedUpdate` is
-`if (!MyTime.paused) { StepMovement(); … }` — recorded in
-[`Patches/Projectiles/Rocket.cs`](../../src/plugin/Patches/Projectiles/Rocket.cs), which already
-relies on that fact for an unrelated reason. So a stock projectile should not advance under pause.
+### The game's own projectiles are not the culprit — that is now checked, not assumed
 
-**And the pause is local.** `MyTime.Pause()` is a static on this peer's runtime; nothing replicates
-it. The mod calls it from `EncounterWindows.PopReward_Prefix`, `SpawnPlayerPortal`, `LevelUpScreen`
-and several branches of `SynchronizationService`. A peer opening an encounter window therefore pauses
-itself alone, which is the intended shared-experience behaviour and is also why reading 1 above is
-not a defect.
+All three projectile update paths gate on the flag, decompiled on buildid 21750826:
 
-### Why it could still be real
+| Symbol | VA | Body |
+|---|---|---|
+| `ProjectileBase.FixedUpdate` | `0x18042BBD0` | `if (!MyTime.paused) { MyFixedUpdate(); StepMovement(); … }` |
+| `ProjectileBase.Update` | `0x18042D020` | `if (!MyTime.paused) { MyUpdate(); }` |
+| `Rocket.FixedUpdate` | — | `if (!MyTime.paused) { StepMovement(); … }`, already recorded in [`Patches/Projectiles/Rocket.cs`](../../src/plugin/Patches/Projectiles/Rocket.cs) |
 
-Two mechanisms would produce genuine damage-under-pause, and neither is ruled out:
+`Rocket` is the one projectile that does **not** derive from `ProjectileBase`, so between them these
+cover the projectile hierarchy. **Every stock projectile therefore freezes on a paused peer, and
+both peers are paused.** Whatever is dealing the damage is not the game's projectile simulation
+running normally.
 
-- **Damage is host-authoritative, and the host may not be the paused peer.** Enemy HP is decided on
-  the host and replicated. If a *client* is paused, the host is still resolving that client's
-  in-flight projectiles against enemies — the client's pause stopped its own simulation, not the
-  authority's copy of it. `Rocket`'s host branch keeps simulating a remote player's rocket by
-  design.
-- **`simulationMode = Script` is global and stops stepping, not collision.** It prevents Unity
-  advancing the simulation automatically; it does not make an already-overlapping collider stop
-  reporting, and it does nothing at all to damage applied from `Update` or from a timer read off
-  `MyTime.time` — which does not advance under pause, so an expiry comparison can also latch.
+### The two candidates left
+
+**1. Something clears the pause while the window is still up.** `MyTime.Unpause()` restores both
+`MyTime.paused` and `Physics.simulationMode`, and the mod calls it from six places —
+`ChestWindowUI`, `LevelUpScreen`, `PauseUi`, `SpawnPlayerPortal`, `EncounterWindow` and
+`SynchronizationService`. Under shared experience the encounter pause is *held* rather than
+released immediately, so it is the only pause long enough for one of those to interleave: a level-up
+screen or chest window opening and closing during the wait would unpause the world underneath an
+encounter window that is still displayed. **This fits the "shared experience only" condition exactly
+and is the first thing to check** — without shared experience `PopReward_Postfix` unpauses at once,
+leaving no window for the interleave.
+
+**2. The mod's own injected components ignore the pause.** `MyTime.paused` is read in **exactly one
+place in the entire plugin** — `Helpers/ScreenTextHelper.cs` — and nowhere else. Every injected
+`MonoBehaviour` therefore ticks straight through: `ProjectileInterpolator.Update()` in particular
+keeps teleporting replicated projectiles to host snapshots with no pause check at all. On its own,
+moving a transform should not deal damage while `simulationMode` is `Script`, which is why this is
+listed second — but combined with candidate 1 it would, and it is a standing hazard regardless.
 
 ### The cheap next step, before any code
 
-This wants an observation, not a decompile — the reverse of the last several entries:
+Both candidates are settled by log, not by decompile:
 
-1. Two peers. One opens an encounter window; the other **stops firing and stands still**.
-2. Watch whether a boss's HP still moves. If it does not, reading 1 is the whole story and this
-   entry closes as "working as designed".
-3. If it does, note **whose** weapon is doing it and **which peer is host**. That single detail
-   separates readings 2 and 3.
+1. Log `MyTime.paused` and `Physics.simulationMode` on both peers each second while an encounter
+   window is open. **If either flips back before the barrier releases, candidate 1 is the answer**
+   and the fix is to make the shared-experience pause own its state rather than share one global
+   flag with five other screens.
+2. If both stay paused for the whole window, the damage is being applied by something that never
+   consulted the flag — start at `ProjectileInterpolator` and the `HitEnemy` path.
+
+Note the reporter's condition is itself strong evidence for candidate 1: the difference between
+"shared experience on" and "off" is not *what* pauses, it is *how long the pause is held*.
 
 **Do not "fix" this by pausing every peer.** Shared experience exists so that one player choosing a
 reward does not freeze the others; a global pause would undo the feature rather than fix the bug.
