@@ -33,6 +33,114 @@ namespace MegabonkTogether.Helpers
     internal static class InteractableCounterHelper
     {
         /// <summary>
+        /// What this peer's counter read for one interactable, before a replicated interaction was
+        /// dispatched. <see cref="Name"/> is captured up front on purpose: the debug name comes off
+        /// the live component, and some branches destroy the object before we get to look again.
+        /// </summary>
+        internal readonly struct Snapshot
+        {
+            internal Snapshot(string name, int? used)
+            {
+                Name = name;
+                Used = used;
+            }
+
+            internal string Name { get; }
+
+            /// <summary>Null when the counter could not be read at all — then nothing is inferred.</summary>
+            internal int? Used { get; }
+        }
+
+        /// <summary>Reads this peer's <c>numUsed</c> for an interactable, before dispatching to it.</summary>
+        internal static Snapshot Take(GameObject interactableObj)
+        {
+            if (interactableObj == null)
+            {
+                return new Snapshot(null, null);
+            }
+
+            var interactable = interactableObj.GetComponentInChildren<BaseInteractable>();
+            if (interactable == null)
+            {
+                return new Snapshot(null, null);
+            }
+
+            var name = interactable.GetDebugName();
+            return new Snapshot(name, ReadUsedCount(name));
+        }
+
+        /// <summary>
+        /// OB-12. Counts the interactable only if the dispatch did not already count it.
+        ///
+        /// <para><b>Why measured rather than reasoned about.</b> The <c>Interact</c> branch of
+        /// <c>OnReceivedInteractableUsed</c> replays the real interaction on some sub-paths
+        /// (<c>microwave.Interact()</c> and friends) and opts out on others (dead player, cannot
+        /// afford, cannot interact). Where the real interaction runs, the game raises the counter
+        /// itself, so counting unconditionally would double it — turning a counter that reads too
+        /// low into one that reads too high. Deciding per sub-branch would work today and would be
+        /// silently wrong the next time a sub-branch is added. Comparing the number before and
+        /// after needs no such judgement: whatever ran, this counts once.</para>
+        ///
+        /// <para><b>OB-12's cause has now been corrected three times</b>, and each previous attempt
+        /// failed by reasoning about which path executes instead of checking. That is the whole
+        /// argument for this shape.</para>
+        /// </summary>
+        internal static void CountIfDispatchDidNot(GameObject interactableObj, Snapshot before)
+        {
+            // Nothing readable to compare against — do not guess in either direction.
+            if (before.Used == null || string.IsNullOrEmpty(before.Name))
+            {
+                return;
+            }
+
+            var after = ReadUsedCount(before.Name);
+            if (after == null || after.Value != before.Used.Value)
+            {
+                // Either the counter vanished, or the dispatch already counted it. Both mean stop.
+                return;
+            }
+
+            // The object may have been destroyed by the dispatch. If it was, the game almost
+            // certainly counted it too and we would have returned above; reaching here with a dead
+            // object is the rare case, and there is no live component to resolve a name from.
+            if (interactableObj == null)
+            {
+                Plugin.Log.LogDebug(
+                    $"OB-12: '{before.Name}' was consumed without being counted and is already gone.");
+                return;
+            }
+
+            CountAsUsed(interactableObj);
+        }
+
+        /// <summary>
+        /// Reads <c>numUsed</c> for a debug name, or null if it cannot be read.
+        ///
+        /// <para><c>interactablesByName</c> is an <c>Il2CppSystem</c> dictionary, so this uses its
+        /// own <c>TryGetValue</c> rather than anything LINQ-shaped.</para>
+        /// </summary>
+        private static int? ReadUsedCount(string debugName)
+        {
+            if (string.IsNullOrEmpty(debugName))
+            {
+                return null;
+            }
+
+            var byName = InteractablesStatus.interactablesByName;
+            if (byName == null)
+            {
+                return null;
+            }
+
+            if (!byName.TryGetValue(debugName, out var container) || container == null)
+            {
+                return null;
+            }
+
+            return container.numUsed;
+        }
+
+        /// <summary>
         /// Counts <paramref name="interactableObj"/> as used by this peer. Must be called
         /// <b>before</b> the object is destroyed — the debug name comes off the live component.
         /// </summary>

@@ -3136,6 +3136,39 @@ namespace MegabonkTogether.Services
             }
         }
 
+        /// <summary>
+        /// OB-12. Same try placement and same rationale as <see cref="CountInteractableAsUsed"/> —
+        /// the interop call has to be guarded from one level up.
+        /// </summary>
+        private Helpers.InteractableCounterHelper.Snapshot SnapshotInteractableCounter(GameObject interactableObj)
+        {
+            try
+            {
+                return Helpers.InteractableCounterHelper.Take(interactableObj);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(
+                    $"[interactable-count] Could not read the counter before dispatch: {ex.GetType().Name}: {ex.Message}");
+                return default;
+            }
+        }
+
+        /// <summary>OB-12. Counts only if the dispatch did not — see the helper for why measured.</summary>
+        private void CountInteractableIfDispatchDidNot(
+            GameObject interactableObj, Helpers.InteractableCounterHelper.Snapshot before)
+        {
+            try
+            {
+                Helpers.InteractableCounterHelper.CountIfDispatchDidNot(interactableObj, before);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(
+                    $"[interactable-count] Could not count a replicated interaction: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
         private void OnReceivedInteractableUsed(InteractableUsed used)
         {
             if (used.IsPortal)
@@ -3211,6 +3244,13 @@ namespace MegabonkTogether.Services
 
                 return;
             }
+
+            // OB-12. Read this peer's tally before dispatching, so the Interact branch below can be
+            // counted without knowing which of its many sub-paths ran. With shared experience on —
+            // which is how this is played — *every* InteractableUsed arrives as Interact, so the
+            // Destroy and Used branches are unreachable and the counting added to them in an earlier
+            // session never executed. That is why the counters still diverged after it.
+            var counterBefore = SnapshotInteractableCounter(interactableObj);
 
             using (Plugin.SuppressOutbound())
             {
@@ -3521,6 +3561,17 @@ namespace MegabonkTogether.Services
 
                         break;
                 }
+            }
+
+            // OB-12. Outside the switch on purpose: the Interact branch has a dozen exits and
+            // several of them replay the real interaction, which counts on its own. Comparing the
+            // tally against `counterBefore` counts exactly once whichever path ran, and keeps
+            // working when a sub-branch is added. Only Interact needs this — Destroy and Used
+            // already count explicitly, and doing it twice for them is what the comparison
+            // prevents anyway.
+            if (used.Action == InteractableAction.Interact)
+            {
+                CountInteractableIfDispatchDidNot(interactableObj, counterBefore);
             }
         }
 
