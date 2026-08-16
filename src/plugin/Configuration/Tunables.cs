@@ -221,8 +221,15 @@
         /// </summary>
         internal const float MIN_BOSS_RING_RADIUS = 20f;
 
-        /// <summary>Width of the re-rolled ring, as a fraction of its radius.</summary>
-        internal const float BOSS_RING_BAND = 0.1f;
+        /// <summary>
+        /// Width of the re-rolled ring, as a fraction of its radius.
+        ///
+        /// <para>Widened from 0.1 to 0.35 after the 2026-08-17 run failed 9 of 9 placements. The
+        /// dominant cause there was a too-strict layer mask, fixed separately — but a +/-10% annulus
+        /// is also very little area for the search to find footing in, and a wider band costs only
+        /// some variance in how far the miniboss lands from its player.</para>
+        /// </summary>
+        internal const float BOSS_RING_BAND = 0.35f;
 
         /// <summary>Placement attempts for the re-rolled ring. Matches what the game itself passes.</summary>
         internal const int BOSS_RING_ATTEMPTS = 50;

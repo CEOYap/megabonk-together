@@ -596,12 +596,19 @@ namespace MegabonkTogether.Services
                 radius = Tunables.MIN_BOSS_RING_RADIUS;
             }
 
+            // onlyGround MUST stay false. It selects the layer mask: true gives
+            // GameManager.whatIsGround (0x20), false gives whatIsGroundAndObjects (0x34) — and
+            // whatIsGroundAndObjects is what the game's own enemy spawner uses
+            // (GetEnemySpawnPositionBiased reads 0x34, and its FindHitClosestToPlayerY passes
+            // canChooseObject: true). Passing true here asked for somewhere strictly stricter than
+            // the game will place an enemy itself, and the 2026-08-17 run failed all 9 of 9
+            // placements because of it.
             var recentred = SpawnPositions.GetEnemySpawnPositionAroundPoint(
                 target,
                 radius * (1f - Tunables.BOSS_RING_BAND),
                 radius * (1f + Tunables.BOSS_RING_BAND),
                 Tunables.BOSS_RING_ATTEMPTS,
-                true,
+                false,
                 999f);
 
             // The game signals "no position found" by returning INVALID_POS rather than by failing,
@@ -610,7 +617,13 @@ namespace MegabonkTogether.Services
             var offset = recentred - invalid;
             if (offset.sqrMagnitude < 0.01f)
             {
-                logger.LogDebug($"OB-11: no valid miniboss position around peer; keeping the host-centred one.");
+                // Carries the radius because that is the input most likely to be wrong next time:
+                // `pos` is a ring position around the player only on the EventMiniboss path, while
+                // a coffin passes its own transform, so the derived radius is whatever that
+                // happens to be. A silent "it failed" cost a whole playtest to diagnose once.
+                logger.LogDebug(
+                    $"OB-11: no valid miniboss position within {radius:F1}u of the chosen peer; " +
+                    "keeping the host-centred one.");
                 return pos;
             }
 
