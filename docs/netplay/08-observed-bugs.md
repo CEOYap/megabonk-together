@@ -776,26 +776,73 @@ exists to prevent — and the same reasoning that makes `SpawnBoss_Prefix` suppr
 <a name="ob-12"></a>
 ## OB-12 — The run's interactable counters diverge, except charge shrines — **the fix did NOT work (2026-08-17)**
 
-> **The fix did not work — screenshots, 2026-08-17.** Both peers, same run, side by side:
->
-> | Counter | Peer A | Peer B |
-> |---|---|---|
-> | Challenges | 1/3 | 0/3 |
-> | **Charge Shrines** | **10/15** | **10/15** |
-> | Chests | 2/46 | 6/46 |
-> | Greed Shrines | 2/8 | 1/8 |
-> | Magnet Shrines | 0/4 | 0/4 |
-> | Microwaves | 1/1 | 0/1 |
-> | Moais | 0/3 | 1/3 |
-> | Pots | 5/55 | 8/55 |
-> | Shady Guy | 2/4 | 2/4 |
->
-> **The signature is unchanged from the original report**, which is the important part: charge
-> shrines still agree and almost everything else still diverges. Denominators agree throughout, so
-> the map spawn counts replicate correctly and only the *used* tally is wrong. Calling
-> `InteractablesStatus.OnInteractableUse` before the shortcut was therefore either not reached, not
-> sufficient, or not the counter the panel reads. **Re-open the cause; do not assume the mechanism
-> recorded below is right** — the entry has already been wrong twice about this counter.
+### RE-DIAGNOSED 2026-08-17 — the fix was applied to branches your config never reaches
+
+**The cause is exact and the evidence is arithmetic, not inference.**
+
+**1. The numerator is per-peer; the denominator is shared.** `Microwaves 1/1` on one peer and `0/1`
+on the other settles it: the map contains exactly **one** microwave, one peer used it, and the other
+never counted it. Every divergent row is consistent with "each peer counts only what it personally
+did", and the sums behave — Chests 2+6, Pots 5+8, Moais 0+1, Microwaves 1+0. Denominators agree
+everywhere, so map spawn config replicates correctly.
+
+**So the panel is not "a shared tally that diverged". It is a per-peer tally paired with a
+shared-world denominator**, which is unreachable by construction: a player who opens 2 of 46 chests
+in a run where 8 were consumed can never reach 46, and the remaining 38 no longer exist.
+
+**2. Why last session's fix does nothing here.** The message is built as:
+
+```csharp
+Action = IsSharedExperienceEnabled() ? InteractableAction.Interact : GetActionByInteractable(instance),
+```
+
+**With shared experience on, every `InteractableUsed` carries `Action = Interact`.** The receive
+switch in `OnReceivedInteractableUsed` has three branches:
+
+| Branch | Counts? |
+|---|---|
+| `InteractableAction.Destroy` | yes — `CountInteractableAsUsed` (added last session) |
+| `InteractableAction.Used` | yes — `CountInteractableAsUsed` (added last session) |
+| `InteractableAction.Interact` | **no — zero calls** |
+
+Last session's note reads "both shortcut branches now call `InteractablesStatus.OnInteractableUse`".
+It was accurate and it was irrelevant: with shared experience enabled **neither of those branches is
+ever reached**, and the third one was never touched.
+
+**3. Corroboration from the capture.** The `Used` branch logs
+`Net player used interactable with ID: …`. Across both peers for the whole session that line appears
+**zero** times — exactly what `Action` never being `Used` predicts.
+
+**4. Why charge shrines still agree**, unchanged from the original analysis and now the only part of
+it that survives: both peers run their own `OnTriggerEnter`/`OnTriggerExit` for a charge shrine, so
+both reach the counter without any message. Shady Guy agreeing at 2/4 is the same shape — and note
+the send path explicitly skips `netplayId` warnings for `ShadyGuy` and `Microwave`, so those two
+types are already known to travel differently.
+
+### The fix is NOT "add the call to the third branch"
+
+**The `Interact` branch replays the real interaction on some sub-paths and opts out on others.**
+`microwave.Interact()` is called outright in two places, and the branch breaks early in several
+others (dead player, cannot afford, cannot interact). Where the real interaction runs, **the game
+increments the counter itself** — so a blanket `CountInteractableAsUsed` at the top of the branch
+would double-count exactly those cases, turning a too-low counter into a too-high one.
+
+Three shapes, and the choice is a real one:
+
+1. **Count only in the opt-out sub-branches.** Correct, and matches how the branch already reasons
+   — but it is many sites (microwave, shrine balance, moai, chest, …), each needing the same
+   judgement, and a future sub-branch will silently miss it.
+2. **Measure instead of assume: read `numUsed` for this interactable before and after the branch
+   runs, and call the helper only if it did not move.** Immune to which sub-path executed, and
+   stays correct when sub-branches are added. Costs one dictionary read either side and a little
+   more interop surface.
+3. **Decide the panel is per-peer by design and leave it.** Defensible for a personal-progress
+   readout — but the denominator makes it incoherent, so this really means changing the
+   denominator, not leaving it alone.
+
+**Prefer 2.** This entry has now had its cause corrected three times, and the failure mode each time
+was reasoning about which path runs instead of checking. Option 2 does not need that reasoning to be
+right.
 
 > **Resolved 2026-08-15.** The counter was found and the fix is in. It is **not** `RunStats` —
 > that was this entry's one wrong turn, and the detour is kept below because the reasoning that
