@@ -1,7 +1,7 @@
 # The lossy-link run: protocol
 
-**Status: run once, 2026-08-15. Session 27217500. Substantially passed, with one gap — see
-[Run 1](#run-1-session-27217500) at the bottom.** This is the procedure for Phase 4's last exit
+**Status: PASSED on run 2, 2026-08-17, session 54272875. The Phase 4 exit criterion is met.**
+Run 1's gap — no level transition under loss — is closed. See [Run 2](#run-2-session-54272875). This is the procedure for Phase 4's last exit
 criterion — a full co-op run on the Steam transport under simulated packet loss — and for the
 reward-window desync capture that has to happen in the same sitting.
 
@@ -254,3 +254,68 @@ which is the shape one selection change makes across several mod-made buttons. *
 
 This is the largest exception source in the mod by two orders of magnitude, and it is a known,
 diagnosed, unfixed bug with its own doc — not something this branch introduced.
+
+
+---
+
+## Run 2, session 54272875 — **PASS**
+
+**2026-08-17. Two machines, Steam transport, host `85195421`. Loss applied in the lobby and held
+across the transition to level 2**, which is exactly what run 1 could not show.
+
+Both logs came back from the same session — 215 matching barrier lines on each end — so the pair is
+usable, which is itself a first for a lossy run.
+
+### The rig was real, and it covered the transition
+
+| | client |
+|---|---|
+| `[bw]` samples | 228 |
+| samples below 90% quality | **51** (~22% of the run) |
+| worst quality | **61.1%** |
+| send failures | 0 |
+| unreliable→reliable promotions | 0 |
+
+**The transition happened under loss, and this is the measured part.** `GameBalance Initialized for
+2 players, Stage 2` lands at client line 2370, bracketed by quality samples of **63.0%**, **68.2%**
+and **67.5%** at lines 2315, 2350 and 2385. Loss was continuously active across it.
+
+### What held
+
+- **The readiness barrier was perfect at ~35% loss.** 215 rounds released by the host, 215 applied
+  by the client, and **zero** `Dropping a stale barrier report`, `Ignoring a stale release` or
+  shared-experience failsafe fires on either end.
+- **The retry earned its keep again, this time lossy.** Round 2 — the level transition — needed
+  `Re-reporting for round 2 (attempt 2/15)` before the host acknowledged it. Run 1 saw the same
+  thing on a *clean* link; under loss the retry budget stops being decorative and starts being the
+  reason the transition completes.
+- **Zero send failures on the client**, and the promotion never fired on either peer — the
+  confirming result predicted in this document, now observed twice.
+
+### The one new defect the run exposed
+
+**63 `k_EResultLimitExceeded` send failures on the host**, against zero on the client and zero
+anywhere in run 1:
+
+| Message | Failures |
+|---|---|
+| `LobbyUpdates(enemies…)` | 30 |
+| `EnemyDamaged` | 21 |
+| `ProjectilesUpdate` | 7 |
+| `LightningStrike` | 2 |
+
+This is Steam refusing sends, not packet loss dropping them — a backpressure limit reached while
+retransmitting under ~35% loss. It is concentrated in exactly the three highest-rate streams. **It
+did not break the run**, but it is the first evidence that the enemy stream's budget is tuned for a
+clean link and not a degraded one, and it is a stronger argument for lowering the enemy tick or
+raising `ENEMY_POSITION_THRESHOLD` than any bandwidth number so far.
+
+### Other results from the same capture
+
+- **Client NREs: 7,927** against the host's 0. The button-bug attribution is refuted — see
+  [OB-15](../netplay/08-observed-bugs.md#ob-15).
+- **OB-11's fix failed 9 of 9 placements** and fell back silently to host-centred spawns. Caught only
+  because the fallback logged.
+- **OB-13's leading hypothesis is refuted by measurement** — the pause holds for the whole window.
+- **OB-2 and OB-9 confirmed fixed** by the players.
+- **OB-12 is still broken**, with the same signature as the original report.

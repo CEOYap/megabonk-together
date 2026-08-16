@@ -94,7 +94,7 @@ but the collision path was not traced.
 ---
 
 <a name="ob-2"></a>
-## OB-2 — Ghost item's summons appear for players who do not have the item — CONFIRMED, **FIXED, unverified**
+## OB-2 — Ghost item's summons appear for players who do not have the item — **FIXED and CONFIRMED in play (2026-08-17)**
 
 **Reported:** when either peer holds the Ghost item — which summons ghosts on interacting with pots,
 shrines and similar — the other player sees the ghosts too, without owning the item. Whether the
@@ -510,7 +510,7 @@ Forest-with-a-death reproduction suggested in OB-7 would test both at once.
 ---
 
 <a name="ob-9"></a>
-## OB-9 — Enemy max health is never replicated — **cause corrected**, FIXED, unverified
+## OB-9 — Enemy max health is never replicated — cause corrected, **FIXED and CONFIRMED in play (2026-08-17)**
 
 **Reported:** for summoned bosses (bush, bandit) the **current** health agrees between players but
 the **maximum** does not.
@@ -638,7 +638,7 @@ paths, which is a far better starting point than reading every call site.
 ---
 
 <a name="ob-11"></a>
-## OB-11 — Minibosses always spawn near the host — CONFIRMED, **FIXED, unverified**
+## OB-11 — Minibosses always spawn near the host — CONFIRMED, **first fix FAILED in play; corrected, unverified**
 
 **Reported:** minibosses appear next to the host rather than somewhere between the players. A client
 playing away from the host sees them arrive on top of their teammate, never near themselves.
@@ -774,7 +774,28 @@ exists to prevent — and the same reasoning that makes `SpawnBoss_Prefix` suppr
 ---
 
 <a name="ob-12"></a>
-## OB-12 — The run's interactable counters diverge, except charge shrines — FIXED, unverified
+## OB-12 — The run's interactable counters diverge, except charge shrines — **the fix did NOT work (2026-08-17)**
+
+> **The fix did not work — screenshots, 2026-08-17.** Both peers, same run, side by side:
+>
+> | Counter | Peer A | Peer B |
+> |---|---|---|
+> | Challenges | 1/3 | 0/3 |
+> | **Charge Shrines** | **10/15** | **10/15** |
+> | Chests | 2/46 | 6/46 |
+> | Greed Shrines | 2/8 | 1/8 |
+> | Magnet Shrines | 0/4 | 0/4 |
+> | Microwaves | 1/1 | 0/1 |
+> | Moais | 0/3 | 1/3 |
+> | Pots | 5/55 | 8/55 |
+> | Shady Guy | 2/4 | 2/4 |
+>
+> **The signature is unchanged from the original report**, which is the important part: charge
+> shrines still agree and almost everything else still diverges. Denominators agree throughout, so
+> the map spawn counts replicate correctly and only the *used* tally is wrong. Calling
+> `InteractablesStatus.OnInteractableUse` before the shortcut was therefore either not reached, not
+> sufficient, or not the counter the panel reads. **Re-open the cause; do not assume the mechanism
+> recorded below is right** — the entry has already been wrong twice about this counter.
 
 > **Resolved 2026-08-15.** The counter was found and the fix is in. It is **not** `RunStats` —
 > that was this entry's one wrong turn, and the detour is kept below because the reasoning that
@@ -987,7 +1008,7 @@ disagrees. It is a scoreboard bug, not a world-state one, and nothing downstream
 ---
 
 <a name="ob-13"></a>
-## OB-13 — Enemies keep taking projectile damage while an encounter window has the game paused — CONFIRMED as a defect, cause UNVERIFIED
+## OB-13 — Enemies keep taking projectile damage while an encounter window has the game paused — CONFIRMED, **leading cause REFUTED by measurement (2026-08-17)**
 
 **Reported (2026-08-16):** with the game paused by an encounter window, bosses and enemies still
 receive damage from projectiles. **Refined by the reporter: it happens only when shared experience is
@@ -1053,9 +1074,29 @@ keeps teleporting replicated projectiles to host snapshots with no pause check a
 moving a transform should not deal damage while `simulationMode` is `Script`, which is why this is
 listed second — but combined with candidate 1 it would, and it is a standing hazard regardless.
 
-### The cheap next step, before any code
+### MEASURED 2026-08-17 — candidate 1 is dead
 
-Both candidates are settled by log, not by decompile:
+`LogEncounterPause` ran on both peers for a full session. **The flag never fired: zero
+`WINDOW OPEN BUT NOT PAUSED` lines on either end.** The client's states across the whole run:
+
+| State | Samples |
+|---|---|
+| `encounterWindow=False paused=False simulationMode=FixedUpdate` | 217 |
+| `encounterWindow=True  paused=True  simulationMode=Script` | 213 |
+| `encounterWindow=False paused=True  simulationMode=Script` | 4 |
+
+**The pause holds for the entire window, every time.** Candidate 1 — something clearing the pause
+underneath a window that is still displayed — is refuted. The four `window closed but still paused`
+samples are the opposite ordering and are harmless.
+
+**So candidate 2 is the answer by elimination**: the damage comes from something that never consults
+`MyTime.paused`. The plugin reads that flag in exactly one file (`Helpers/ScreenTextHelper.cs`), so
+every injected `MonoBehaviour` ticks straight through the pause — `ProjectileInterpolator.Update()`
+foremost, which keeps teleporting replicated projectiles to host snapshots. Start there.
+
+**Do not re-run the pause log.** It has answered its question; keeping it on is now noise.
+
+### Superseded — the plan that produced the measurement above
 
 1. Log `MyTime.paused` and `Physics.simulationMode` on both peers each second while an encounter
    window is open. **If either flips back before the barrier releases, candidate 1 is the answer**
@@ -1074,6 +1115,113 @@ reward does not freeze the others; a global pause would undo the feature rather 
 being closed at the wrong moment, and [OB-3](#ob-3) the barrier re-arming — all three are about the
 encounter window's *lifetime*. This one is about what the world does while it is open, which is a
 different axis and has not been examined before.
+
+---
+
+<a name="ob-14"></a>
+## OB-14 — The end-of-run damage panel credits you with your teammate's weapons — LIKELY
+
+**Reported 2026-08-17, with screenshots.** The DAMAGE column on the summary screen lists ~23 damage
+sources for a player whose inventory held **4 weapons and 4 tomes**. The extras are the other
+player's weapons, and they appear at **LVL 0** — a level this peer never gave them, because they
+were never this peer's weapons.
+
+**LVL 0 is the tell, and it says this is attribution rather than possession.** Nothing was granted to
+the wrong player: the summary's own inventory panel is correct. What is wrong is whose ledger the
+damage was written into.
+
+**Mechanism, LIKELY.** [`Patches/Projectiles/ProjectileBase.cs`](../../src/plugin/Patches/Projectiles/ProjectileBase.cs)
+attributes each hit on the host:
+
+```csharp
+var owner = playerManagerService.GetNetPlayerByWeapon(__instance.weaponBase);
+if (owner != null)
+{
+    trackerService.SetCurrentPlayerId(owner.ConnectionId);
+    __state = true;
+}
+```
+
+When the lookup returns **null the hit is left attributed to whoever the tracker already had — the
+host**. So every client projectile whose `weaponBase` fails to match is silently recorded against the
+host's own run stats. That is exactly the reported shape, and it explains why the host is the peer
+who sees it.
+
+**The lookup is already known to be unreliable, in this same file.** `RocketPatches` records that
+keying on `GetNetPlayerByWeapon(__instance.weaponBase)` "was a no-op on the exact case it was written
+for", because the client's spawn path sets `weaponBase` on the `ProjectileRocket` **parent** and never
+on the `Rocket` child. Whatever share of weapons has the same parent/child mismatch would fail here
+identically.
+
+```csharp
+// PlayerManagerService — the lookup itself
+return spawnedPlayers.Values
+    .FirstOrDefault(np => np.Inventory.weaponInventory.weapons.ContainsValue(weapon));
+```
+
+**Two secondary defects visible in that one line.** `np.Inventory` is dereferenced unguarded, and
+`NetPlayer` receives its `Inventory` in a later lifecycle step than its spawn — the same window that
+`IsRemoteItem` was hardened against in [OB-2](#ob-2). A null there throws inside a Harmony prefix.
+And the enumeration allocates a closure per hit, on the host's damage path.
+
+**Why the existing diagnostic did not catch it.** `TrackerAttributionDiagnostics` counts set/unset
+*pairing* anomalies — `UNBALANCED-UNSET`, `overwrite-while-set` — and the 2026-08-17 host log reports
+**none**. A lookup that simply returns null sets nothing, so it is not an anomaly by that
+definition and is invisible. **The diagnostic measures the wrong half of the problem**, which is the
+same shape as the trap this branch already paid for once: a diagnostic whose silence was read as
+health.
+
+**The decisive next step.** Count the null lookups. One counter in the `owner == null` branch of
+`HitEnemy_Prefix`, reported alongside the existing anomalies, separates "the lookup never matches"
+from "it matches for most weapons and fails for a class of them" — and those want different fixes.
+If it is the parent/child mismatch, the fix is the one `RocketPatches` already uses: key on the
+`ownerId` written into `DynamicData` at spawn, which is present on a received projectile and absent
+on one this peer fired itself.
+
+**Not established:** whether anything beyond the scoreboard reads this attribution. The patch's own
+comment says it drives "money flying, item procs, kills", so **gold and kill credit may be
+misassigned too** rather than only the end screen. Worth checking before this is filed as cosmetic.
+
+---
+
+<a name="ob-15"></a>
+## OB-15 — The client's NullReferenceException storm is not the button bug — CONFIRMED, cause open
+
+**The hypothesis carried since 2026-08-15 is refuted.** The client's exception storm was recorded as
+"consistent with the custom-button null-background bug but not proven". The button bug is fixed and
+confirmed — and the 2026-08-17 run, the first with the client's own log in hand, gives:
+
+| Peer | NREs |
+|---|---|
+| Host | **0** |
+| Client | **7,927** |
+
+The host is clean, so the button fix works. The client is not merely still throwing, it is throwing
+**more** than the 1,716 that were attributed to the button bug. Whatever this is, it was never the
+buttons.
+
+**The one lead the capture provides.** The first burst begins immediately after an encounter window
+closes:
+
+```
+[pause] encounterWindow=True  MyTime.paused=True  simulationMode=Script     t=353.28
+[barrier] Applied release for round 32 (session 54272875).
+[pause] encounterWindow=False MyTime.paused=False simulationMode=FixedUpdate t=355.47
+[Error :Unity] NullReferenceException: Object reference not set to an instance of an object.   (x4)
+```
+
+That is a correlation across one burst, not a proven cause — but the encounter-window close path is
+where to look first, and it is a path this project already knows is fragile
+([OB-4](#ob-4), [SE-5](07-shared-experience-audit.md#se-5)).
+
+**Still no managed frame.** `LogOutput.log` discards traces by design, and the previous session
+established that `SetStackTraceLogType(ScriptOnly)` on both peers still produced no managed frame —
+which points at native game code rather than managed mod code. That remains the obstacle: **the
+count is now measured on both ends, and the thrower is still unidentified.**
+
+**Next step, and it is not another grep.** Bisect by correlation instead: the `[pause]` timeline is
+already in the log, so counting NREs in the N seconds after each encounter close versus a matched
+window elsewhere tests the lead above cheaply against a capture that already exists.
 
 ---
 
