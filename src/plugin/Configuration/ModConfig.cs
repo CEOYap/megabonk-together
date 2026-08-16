@@ -124,11 +124,14 @@ namespace MegabonkTogether.Configuration
             UseSteamTransport = config.Bind(
                 "Network",
                 "UseSteamTransport",
-                false,
-                "EXPERIMENTAL, and off by default. Carry netplay over Steam's peer-to-peer sockets " +
-                "instead of the matchmaking server, using the Steam lobby as the session. Both " +
-                "players must set this the same way - a Steam host and a matchmaker client cannot " +
-                "see each other at all. Read at startup, so changing it mid-session does nothing."
+                true,
+                "Carry netplay over Steam's peer-to-peer sockets instead of the matchmaking " +
+                "server, using the Steam lobby as the session. On by default. Both players must " +
+                "set this the same way - a Steam host and a matchmaker client cannot see each " +
+                "other at all, and there is no in-game warning when they differ. Read at startup, " +
+                "so changing it mid-session does nothing. If you played before this default " +
+                "changed, your config file already has the old value and keeps it: set it to true " +
+                "by hand, on both machines."
             );
             LogUnityStackTraces = config.Bind(
                 "Diagnostics",
