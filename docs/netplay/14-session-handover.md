@@ -36,8 +36,10 @@ setup, so do them in one sitting:
 
 Then, not needing a playtest:
 
-5. **OB-11**, the only known bug left with no fix. It wants one decompile before any code — see
-   below.
+5. **OB-11** — done this session, see below. **Correction:** this line previously called it "the
+   only known bug left with no fix", which was wrong. [`08-observed-bugs.md`](08-observed-bugs.md)
+   has **nine** open entries; only OB-4, OB-11 and OB-12 are fixed. OB-1, OB-2, OB-9 and OB-10 were
+   each re-checked against the code on 2026-08-16 and are genuinely still open.
 6. **The rename to OmniBonk.** Deliberately deferred to "once everything is done". Notes below.
 
 ---
