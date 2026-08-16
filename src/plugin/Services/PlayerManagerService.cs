@@ -993,9 +993,50 @@ namespace MegabonkTogether.Services
             return GetAllSpawnedNetPlayers().Any(netPlayer => netPlayer.Inventory.passiveAbility == instance);
         }
 
+        /// <summary>
+        /// Is this <see cref="ItemGhost"/> owned by a *remote* player rather than the local one?
+        ///
+        /// <para><b>This existed unused until OB-2.</b> It was written, never called, and the bug it
+        /// would have prevented was reported and mis-diagnosed in the meantime — see
+        /// <c>docs/netplay/08-observed-bugs.md#ob-2</c>. Remote players carry real
+        /// <c>ItemGhost</c> instances in their replicated inventory, every instance subscribes
+        /// itself to one static interaction event, and so a remote player's item fires on the local
+        /// player's interaction.</para>
+        ///
+        /// <para><b>Null-hardened because it is now on a gameplay path.</b> <see cref="NetPlayer"/>
+        /// gets its <c>Inventory</c> in a later lifecycle step than its spawn, so there is a window
+        /// where it is null; an exception thrown here would be thrown inside a Harmony prefix. The
+        /// <c>netPlayer == null</c> check is Unity's operator, deliberately — a destroyed avatar is
+        /// still non-null managed-side, so <c>?.</c> would not catch it.</para>
+        /// </summary>
         public bool IsRemoteItem(ItemGhost instance)
         {
-            return GetAllSpawnedNetPlayers().Any(netPlayer => netPlayer.Inventory.itemInventory.items.ContainsValue(instance));
+            if (instance == null)
+            {
+                return false;
+            }
+
+            foreach (var netPlayer in GetAllSpawnedNetPlayers())
+            {
+                if (netPlayer == null)
+                {
+                    continue;
+                }
+
+                var inventory = netPlayer.Inventory;
+                if (inventory == null || inventory.itemInventory == null)
+                {
+                    continue;
+                }
+
+                var items = inventory.itemInventory.items;
+                if (items != null && items.ContainsValue(instance))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
     }
 }
