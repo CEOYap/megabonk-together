@@ -1,9 +1,10 @@
+﻿using MegabonkTogether.Configuration;
 using System.Collections.Generic;
 using UnityEngine;
 
 namespace MegabonkTogether.Helpers
 {
-    public class DistanceThrottler(float mediumDistanceUpdateInterval = 1f)
+    public class DistanceThrottler(float mediumDistanceUpdateInterval = Tunables.MEDIUM_DISTANCE_UPDATE_INTERVAL_SECONDS)
     {
         private readonly Dictionary<int, float> lastUpdateTimes = [];
         private readonly Dictionary<int, bool> rendererDisabledState = [];

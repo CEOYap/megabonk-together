@@ -1,3 +1,4 @@
+﻿using MegabonkTogether.Configuration;
 using System;
 using UnityEngine;
 
@@ -39,7 +40,7 @@ namespace MegabonkTogether.Services
     /// </summary>
     internal static class AllocationDiagnostics
     {
-        private const float REPORT_INTERVAL_SECONDS = 10f;
+        private const float REPORT_INTERVAL_SECONDS = Tunables.DIAGNOSTIC_REPORT_INTERVAL_SECONDS;
 
         private static float lastReportTime = -999f;
         private static long lastAllocatedBytes;

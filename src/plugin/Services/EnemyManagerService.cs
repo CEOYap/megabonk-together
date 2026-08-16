@@ -4,6 +4,7 @@ using Assets.Scripts.Game.Spawning;
 using Assets.Scripts.Managers;
 using BepInEx.Logging;
 using MegabonkTogether.Common.Models;
+using MegabonkTogether.Configuration;
 using MegabonkTogether.Extensions;
 using MegabonkTogether.Helpers;
 using MegabonkTogether.Scripts.Enemies;
@@ -57,9 +58,7 @@ namespace MegabonkTogether.Services
         // the "allocation failed" sentinel AddSpawnedEnemy returns.
         private int currentEnemyId = 0;
 
-        private const float POSITION_TRESHOLD = 0.1f;
-        private const float YAW_TRESHOLD = 5.0f;
-        private const ushort HP_TRESHOLD = 1;
+        // Thresholds and the tick budget below live in Configuration/Tunables.cs.
 
         #region Budgeted priority enemy stream
 
@@ -101,12 +100,12 @@ namespace MegabonkTogether.Services
         /// refinement of the ordering below and can land on its own; it is left out so this change
         /// stays one variable in a playtest.</para>
         /// </remarks>
-        private const int ENEMY_MODEL_WIRE_BYTES = 15;
+        private const int ENEMY_MODEL_WIRE_BYTES = Tunables.ENEMY_MODEL_WIRE_BYTES;
 
         /// <summary>Roughly four sub-MTU datagrams — see UdpClientService.SendStreamUpdate.</summary>
-        private const int MAX_ENEMY_TICK_BYTES = 3600;
+        private const int MAX_ENEMY_TICK_BYTES = Tunables.MAX_ENEMY_TICK_BYTES;
 
-        private const int MAX_ENEMIES_PER_TICK = MAX_ENEMY_TICK_BYTES / ENEMY_MODEL_WIRE_BYTES;
+        private const int MAX_ENEMIES_PER_TICK = Tunables.MAX_ENEMIES_PER_TICK;
 
         /// <summary>
         /// How stale an unchanged enemy must be before the refresh sweep will re-send it, and the
@@ -114,7 +113,7 @@ namespace MegabonkTogether.Services
         /// tick rate, so a quiet enemy costs one re-send per second and no state survives being
         /// wrong for longer than that plus contention for the budget.
         /// </summary>
-        private const int ENEMY_REFRESH_PERIOD_TICKS = 40;
+        private const int ENEMY_REFRESH_PERIOD_TICKS = Tunables.ENEMY_REFRESH_PERIOD_TICKS;
 
         /// <summary>What was last put on the wire, not what was last sampled. See the remarks above.</summary>
         private Dictionary<uint, EnemyModel> lastSentEnemies = [];
@@ -336,9 +335,9 @@ namespace MegabonkTogether.Services
 
             float hpDelta = Mathf.Abs(previous.Hp - current.Hp);
 
-            return positionDelta > POSITION_TRESHOLD ||
-                   yawDelta > YAW_TRESHOLD ||
-                   hpDelta > HP_TRESHOLD;
+            return positionDelta > Tunables.ENEMY_POSITION_THRESHOLD ||
+                   yawDelta > Tunables.ENEMY_YAW_THRESHOLD ||
+                   hpDelta > Tunables.ENEMY_HP_THRESHOLD;
         }
 
         public Enemy GetEnemyById(uint id)
@@ -497,23 +496,10 @@ namespace MegabonkTogether.Services
 
         #region OB-11 — miniboss spawns are host-centred
 
-        /// <summary>
-        /// The floor for the re-rolled ring radius, in world units.
-        ///
-        /// <para>Only reached in the degenerate case: when every one of the game's 50 placement
-        /// attempts fails, <c>SummonerController.EventMiniboss</c> falls back to
-        /// <c>MyPlayer.Instance.transform.position</c> and the miniboss spawns *inside* the host.
-        /// The derived radius is then ~0, and without this floor the correction would faithfully
-        /// reproduce the bug on somebody else. <b>The value is a guess and is UNVERIFIED</b> — the
-        /// game's own distances live in unnamed float constants that were not decompiled.</para>
-        /// </summary>
-        private const float MIN_BOSS_RING_RADIUS = 20f;
-
-        /// <summary>How wide a band to give the re-rolled ring, as a fraction of the radius.</summary>
-        private const float BOSS_RING_BAND = 0.1f;
-
-        /// <summary>Matches the attempt count the game itself passes on this path.</summary>
-        private const int BOSS_RING_ATTEMPTS = 50;
+        // The ring radius floor, its band and its attempt count live in Configuration/Tunables.cs,
+        // with the reasoning for each — including why the floor exists at all: when every placement
+        // attempt fails the game falls back to the local player's own position, and without a floor
+        // the correction would reproduce the bug on somebody else.
 
         /// <summary>Reused across calls — boss spawns are rare, but this costs nothing to keep.</summary>
         private readonly List<Vector3> bossSpawnCandidates = [];
@@ -549,7 +535,7 @@ namespace MegabonkTogether.Services
         ///
         /// <para><b>UNVERIFIED.</b> Not run in-game. Specifically unproven: that
         /// <c>GetEnemySpawnPositionAroundPoint</c> is safe to call from inside a prefix on this path,
-        /// that <see cref="MIN_BOSS_RING_RADIUS"/> is a sensible distance, and that a miniboss placed
+        /// that <see cref="Tunables.MIN_BOSS_RING_RADIUS"/> is a sensible distance, and that a miniboss placed
         /// around a non-host player never lands somewhere the host's own camera or pathing logic
         /// dislikes.</para>
         /// </summary>
@@ -605,16 +591,16 @@ namespace MegabonkTogether.Services
             var dx = pos.x - localPosition.x;
             var dz = pos.z - localPosition.z;
             var radius = Mathf.Sqrt((dx * dx) + (dz * dz));
-            if (radius < MIN_BOSS_RING_RADIUS)
+            if (radius < Tunables.MIN_BOSS_RING_RADIUS)
             {
-                radius = MIN_BOSS_RING_RADIUS;
+                radius = Tunables.MIN_BOSS_RING_RADIUS;
             }
 
             var recentred = SpawnPositions.GetEnemySpawnPositionAroundPoint(
                 target,
-                radius * (1f - BOSS_RING_BAND),
-                radius * (1f + BOSS_RING_BAND),
-                BOSS_RING_ATTEMPTS,
+                radius * (1f - Tunables.BOSS_RING_BAND),
+                radius * (1f + Tunables.BOSS_RING_BAND),
+                Tunables.BOSS_RING_ATTEMPTS,
                 true,
                 999f);
 

@@ -755,11 +755,11 @@ namespace MegabonkTogether
             }
 
             var distance = Vector3.Distance(position, distanceTarget);
-            if (distance < 25f)
+            if (distance < Tunables.DISTANCE_CLOSE)
             {
                 return DistanceToPlayer.Close;
             }
-            else if (distance < 60f)
+            else if (distance < Tunables.DISTANCE_MEDIUM)
             {
                 return DistanceToPlayer.Medium;
             }

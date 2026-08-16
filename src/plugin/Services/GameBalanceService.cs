@@ -1,4 +1,5 @@
-﻿using Assets.Scripts.Actors.Enemies;
+﻿using MegabonkTogether.Configuration;
+using Assets.Scripts.Actors.Enemies;
 using Assets.Scripts.Managers;
 using System;
 using System.Linq;
@@ -28,7 +29,7 @@ namespace MegabonkTogether.Services
 
     internal class GameBalanceService(IPlayerManagerService playerManagerService) : IGameBalanceService
     {
-        private const float hpScalingPerAdditionalPlayer = 0.1f;
+        private const float hpScalingPerAdditionalPlayer = Tunables.HP_SCALING_PER_ADDITIONAL_PLAYER;
         // FIX P1-4: was GetAllPlayersAlive().Count(), which materialised a Player[] plus two LINQ
         // iterators just to read its length. Six multiplier getters read this property.
         private int PlayersCount => playerManagerService.GetAlivePlayerCount();

@@ -1,4 +1,5 @@
-﻿using Assets.Scripts.Inventory__Items__Pickups.Items;
+﻿using MegabonkTogether.Configuration;
+using Assets.Scripts.Inventory__Items__Pickups.Items;
 using Assets.Scripts.Managers;
 using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
@@ -97,7 +98,7 @@ namespace MegabonkTogether.Services
         /// the gap has no effect today; it is recorded because the two numbers reading differently
         /// invites the conclusion that one of them is wrong.</para>
         /// </summary>
-        private const int MaxUnreliableBytes = 1200;
+        private const int MaxUnreliableBytes = Tunables.MAX_UNRELIABLE_BYTES;
 
         /// <summary>
         /// Deliberately long. A promotion is a once-per-session curiosity if it happens at all, so

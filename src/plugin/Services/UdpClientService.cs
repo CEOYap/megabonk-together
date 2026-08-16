@@ -1,4 +1,5 @@
-﻿using Assets.Scripts.Inventory__Items__Pickups.Items;
+﻿using MegabonkTogether.Configuration;
+using Assets.Scripts.Inventory__Items__Pickups.Items;
 using Assets.Scripts.Managers;
 using BepInEx.Logging;
 using LiteNetLib;
@@ -73,7 +74,7 @@ namespace MegabonkTogether.Services
             IPlayerManagerService playerManagerService,
             ManualLogSource logger) : IUdpClientService
     {
-        private const int MAX_PACKET_SIZE_BYTES = 1000;
+        private const int MAX_PACKET_SIZE_BYTES = Tunables.MAX_PACKET_SIZE_BYTES;
 
         private const int STARTING_GAME_UDP_PORT = 27015;
         private int GAME_UDP_PORT = STARTING_GAME_UDP_PORT;

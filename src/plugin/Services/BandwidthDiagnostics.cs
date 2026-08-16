@@ -1,4 +1,5 @@
-﻿using System;
+﻿using MegabonkTogether.Configuration;
+using System;
 using System.Collections.Concurrent;
 using System.Linq;
 using System.Threading;
@@ -38,7 +39,7 @@ namespace MegabonkTogether.Services
     /// </summary>
     internal static class BandwidthDiagnostics
     {
-        private const float REPORT_INTERVAL_SECONDS = 10f;
+        private const float REPORT_INTERVAL_SECONDS = Tunables.DIAGNOSTIC_REPORT_INTERVAL_SECONDS;
 
         /// <summary>How many message types to name in a report, worst-first.</summary>
         private const int TOP_N = 8;

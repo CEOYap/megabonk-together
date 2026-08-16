@@ -1,4 +1,5 @@
-﻿using Actors.Enemies;
+﻿using MegabonkTogether.Configuration;
+using Actors.Enemies;
 using Assets.Scripts._Data.Hats;
 using Assets.Scripts._Data.Tomes;
 using Assets.Scripts.Actors;
@@ -177,11 +178,11 @@ namespace MegabonkTogether.Services
         private uint acknowledgedRoundId;
 
         /// <summary>Lobby-ready defect A. See <see cref="ClientReadyRoutine"/>.</summary>
-        private const float ReadyRetrySeconds = 2f;
+        private const float ReadyRetrySeconds = Tunables.READY_RETRY_SECONDS;
 
         /// <summary>~30 s of re-reporting, then it gives up and says who.</summary>
-        private const int ReadyRetryAttempts = 15;
-        private const int MAX_ENEMY_SPAWNS_PER_FRAME = 32;
+        private const int ReadyRetryAttempts = Tunables.READY_RETRY_ATTEMPTS;
+        private const int MAX_ENEMY_SPAWNS_PER_FRAME = Tunables.MAX_ENEMY_SPAWNS_PER_FRAME;
         private readonly ConcurrentDictionary<uint, ICollection<uint>> shrineChargingPlayers = new();
 
         /// <summary>Guards <see cref="OnBossDefeated"/> against its two call sites both firing.</summary>

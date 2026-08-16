@@ -12,20 +12,17 @@ namespace MegabonkTogether.Scripts
 {
     public class NetworkHandler : MonoBehaviour
     {
-        private const float LOBBY_UPDATE_TICK_RATE = 60f;
-        private const float lobbyUpdatetickInterval = 1f / LOBBY_UPDATE_TICK_RATE;
+        // Rates live in Configuration/Tunables.cs; the intervals stay derived here.
+        private const float lobbyUpdatetickInterval = 1f / Tunables.LOBBY_UPDATE_TICK_RATE;
         private float lobbyUpdateAccumulator = 0f;
 
-        private const float ENEMY_UPDATE_TICK_RATE = 40f;
-        private const float enemyUpdatetickInterval = 1f / ENEMY_UPDATE_TICK_RATE;
+        private const float enemyUpdatetickInterval = 1f / Tunables.ENEMY_UPDATE_TICK_RATE;
         private float enemyUpdateAccumulator = 0f;
 
-        private const float PROJECTILE_UPDATE_TICK_RATE = 20f;
-        private const float projectileUpdatetickInterval = 1f / PROJECTILE_UPDATE_TICK_RATE;
+        private const float projectileUpdatetickInterval = 1f / Tunables.PROJECTILE_UPDATE_TICK_RATE;
         private float projectileUpdateAccumulator = 0f;
 
-        private const float TUMBLEWEED_UPDATE_TICK_RATE = 20f;
-        private const float tumbleWeedUpdatetickInterval = 1f / TUMBLEWEED_UPDATE_TICK_RATE;
+        private const float tumbleWeedUpdatetickInterval = 1f / Tunables.TUMBLEWEED_UPDATE_TICK_RATE;
         private float tumbleWeedUpdateAccumulator = 0f;
 
         private bool hasStarted = false;
