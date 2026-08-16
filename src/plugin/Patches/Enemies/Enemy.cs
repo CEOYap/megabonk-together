@@ -412,5 +412,56 @@ namespace MegabonkTogether.Patches.Enemies
             var instanceId = __instance.GetInstanceID();
             EnemiesDistanceThrottler.Cleanup(instanceId);
         }
+
+        /// <summary>
+        /// OB-9. Replicate an enemy's HP after it has been rescaled post-spawn.
+        ///
+        /// <para><b>The ordering that caused the bug.</b> Every scaler runs in the *caller* of
+        /// <c>EnemyManager.SpawnEnemy</c>, after it has returned — and
+        /// <c>EnemyManagerPatches.SpawnEnemy_Postfix</c> fires in between. So the
+        /// <c>SpawnedEnemy</c> message went out carrying the enemy's *unscaled* HP. The client sets
+        /// <c>hp</c>, <c>controlHp</c> and <c>maxHp</c> from that single value, and the 40 Hz
+        /// <c>EnemyModel</c> delta carries current HP and nothing else — so current HP converged and
+        /// the maximum stayed at the unscaled number for the rest of the run. That is exactly the
+        /// report: current agrees between peers, maximum does not.</para>
+        ///
+        /// <para><b>Why this method and not each spawner.</b> An xref gives
+        /// <c>SetSwarmMultiplierHp</c> five callers — <c>EnemyManager.SpawnBoss</c>,
+        /// <c>SwarmSummoner.SpendCredits</c>, and the <c>SpawnEnemy</c> of
+        /// <c>InteractableCharacterFight</c>, <c>InteractableDesertGrave</c> and
+        /// <c>InteractableSkeletonKingStatue</c>. They share no other hook, and the three
+        /// interactables are the "interactables that spawn bosses" in the report. Patching the one
+        /// scaler covers all five and any future caller.</para>
+        ///
+        /// <para><b>The multiplier is <c>GameManager.bossCurses</c>-driven</b> (<c>SpawnBoss</c>
+        /// applies it only when <c>bossCurses &gt; 0</c>), which is why an early-run boss can look
+        /// correct and a late-run one cannot.</para>
+        ///
+        /// <para>Host only: the client never runs the scaler, because its spawn was suppressed. The
+        /// enemy already carries a netplay id here — <c>SpawnEnemy_Postfix</c> registered it before
+        /// the caller got the reference back.</para>
+        /// </summary>
+        [HarmonyPostfix]
+        [HarmonyPatch(nameof(Enemy.SetSwarmMultiplierHp))]
+        public static void SetSwarmMultiplierHp_Postfix(Enemy __instance)
+        {
+            if (__instance == null)
+            {
+                return;
+            }
+
+            if (!synchronizationService.HasNetplaySessionStarted())
+            {
+                return;
+            }
+
+            var isServer = synchronizationService.IsServerMode() ?? false;
+            if (!isServer)
+            {
+                return;
+            }
+
+            synchronizationService.OnEnemyHpRescaled(__instance);
+        }
     }
 }

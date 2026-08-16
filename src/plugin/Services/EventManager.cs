@@ -11,6 +11,7 @@ namespace MegabonkTogether.Services
     {
         private static event Action<SpawnedObject> SpawnedObjectsEvents;
         private static event Action<SpawnedEnemy> SpawnedEnemyEvents;
+        private static event Action<EnemyMaxHpScaled> EnemyMaxHpScaledEvents;
         private static event Action<PlayerUpdate> PlayerUpdatesEvents;
         private static event Action<SelectedCharacter> SelectedCharacterEvents;
         private static event Action<IEnumerable<EnemyModel>> EnemiesUpdateEvents;
@@ -112,6 +113,20 @@ namespace MegabonkTogether.Services
         public static void SubscribeSpawnedEnemyEvents(Action<SpawnedEnemy> action)
         {
             SpawnedEnemyEvents += action;
+        }
+
+        /// <summary>OB-9. An enemy's HP was rescaled after its spawn message had already been sent.</summary>
+        public static void OnEnemyMaxHpScaled(EnemyMaxHpScaled enemyMaxHpScaled)
+        {
+            MainThreadDispatcher.Enqueue(() =>
+            {
+                EnemyMaxHpScaledEvents?.Invoke(enemyMaxHpScaled);
+            });
+        }
+
+        public static void SubscribeEnemyMaxHpScaledEvents(Action<EnemyMaxHpScaled> action)
+        {
+            EnemyMaxHpScaledEvents += action;
         }
 
         public static void SubscribeSelectedCharacterEvents(Action<SelectedCharacter> action)

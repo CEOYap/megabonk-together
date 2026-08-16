@@ -74,6 +74,9 @@ namespace MegabonkTogether.Services
         public bool HasNetplaySessionStarted();
         public bool HasNetplaySessionInitialized();
 
+        /// <summary>OB-9. Host only. Replicates an enemy's HP after a post-spawn rescale.</summary>
+        public void OnEnemyHpRescaled(Enemy enemy);
+
         public void Reset();
 
         public bool IsLoading();
@@ -228,6 +231,7 @@ namespace MegabonkTogether.Services
             EventManager.SubscribeSpawnedObjectsEvents(OnNewObjectToSpawn);
             EventManager.SubscribePlayerUpdatesEvents(OnPlayerUpdate);
             EventManager.SubscribeSpawnedEnemyEvents(OnReceivedSpawnedEnemy);
+            EventManager.SubscribeEnemyMaxHpScaledEvents(OnReceivedEnemyMaxHpScaled);
             EventManager.SubscribeSelectedCharacterEvents(OnReceivedSelectedCharacter);
             EventManager.SubscribeEnemiesUpdateEvents(OnReceivedEnemiesUpdate);
             EventManager.SubscribeEnemyDiedEvents(OnReceivedEnemyDied);
@@ -364,6 +368,12 @@ namespace MegabonkTogether.Services
 
             shrineChargingPlayers.Clear();
             pylonChargingPlayers.Clear();
+
+            // OB-9: a correction whose spawn never arrived — the enemy was removed before it was
+            // registered, say — would otherwise sit here for the process lifetime. It cannot be
+            // misapplied, because AddSpawnedEnemy hands out ids by Interlocked.Increment and never
+            // reuses one, so this is a leak rather than a correctness problem. Cleared anyway.
+            pendingRescaledHp.Clear();
 
             // Same reason as the barrier state below: a session that ended after a boss died would
             // otherwise leave this latched, and the next session's first portal would never open.
@@ -1316,6 +1326,86 @@ namespace MegabonkTogether.Services
             udpClientService.SendToAllClients(message, NetDelivery.ReliableUnordered);
         }
 
+        #region OB-9 — HP rescaled after the spawn message went out
+
+        /// <summary>
+        /// OB-9. A correction that arrived before the spawn it corrects, keyed by netplay enemy id.
+        ///
+        /// <para><b>This race is real, not defensive padding.</b> Both messages go out
+        /// <c>ReliableUnordered</c>, which guarantees delivery but explicitly not order, and the
+        /// scaler runs within the same frame as the spawn — so the two are always in flight
+        /// together. Dropping an early correction would leave exactly the bug this fixes, and it
+        /// would do so intermittently, which is worse than doing so consistently.</para>
+        /// </summary>
+        private readonly Dictionary<uint, float> pendingRescaledHp = [];
+
+        /// <summary>
+        /// OB-9. Host side. See <c>EnemyPatch.SetSwarmMultiplierHp_Postfix</c> for why this hooks the
+        /// scaler rather than each of its five callers.
+        /// </summary>
+        public void OnEnemyHpRescaled(Enemy enemy)
+        {
+            var registered = enemyManagerService.GetEnemyByReference(enemy);
+            if (registered.Value == null)
+            {
+                // Not ours to replicate — no spawn message was sent for it either.
+                return;
+            }
+
+            IGameNetworkMessage message = new EnemyMaxHpScaled
+            {
+                Id = registered.Key,
+                Hp = enemy.hp
+            };
+
+            // Reliable because this is a one-shot transition: applied zero times is a permanently
+            // wrong health bar, and no later message supersedes it — the 40 Hz delta carries current
+            // HP only, which is precisely why the maximum never self-corrected.
+            udpClientService.SendToAllClients(message, NetDelivery.ReliableUnordered);
+        }
+
+        /// <summary>OB-9. Client side.</summary>
+        private void OnReceivedEnemyMaxHpScaled(EnemyMaxHpScaled scaled)
+        {
+            var enemy = enemyManagerService.GetEnemyById(scaled.Id);
+            if (enemy == null)
+            {
+                pendingRescaledHp[scaled.Id] = scaled.Hp;
+                return;
+            }
+
+            ApplyRescaledHp(enemy, scaled.Hp);
+        }
+
+        /// <summary>
+        /// OB-9. Writes the same four fields the spawn path writes. <c>maxHp</c> is the one that was
+        /// wrong; the others are set with it because a rescale happens on a freshly spawned enemy,
+        /// where current and maximum are equal.
+        /// </summary>
+        private static void ApplyRescaledHp(Enemy enemy, float hp)
+        {
+            enemy.hp = hp;
+            enemy.controlHp = hp;
+            enemy.maxHp = hp;
+            enemy._hp_k__BackingField = hp;
+        }
+
+        /// <summary>
+        /// OB-9. Called once an enemy is registered, to apply a correction that outran its spawn.
+        /// </summary>
+        private void ApplyPendingRescaledHp(uint netplayId, Enemy enemy)
+        {
+            if (!pendingRescaledHp.TryGetValue(netplayId, out var hp))
+            {
+                return;
+            }
+
+            pendingRescaledHp.Remove(netplayId);
+            ApplyRescaledHp(enemy, hp);
+        }
+
+        #endregion
+
         private void OnReceivedSpawnedEnemy(SpawnedEnemy spawnedEnemy)
         {
             if (!HasNetplaySessionStarted())
@@ -1460,6 +1550,11 @@ namespace MegabonkTogether.Services
             var interpolator = enemy.gameObject.AddComponent<EnemyInterpolator>();
             interpolator.Initialize(enemy);
             enemyManagerService.SetSpawnedEnemy(spawnedEnemy.Id, enemy);
+
+            // OB-9: a rescale correction can outrun the spawn it corrects — both go out
+            // ReliableUnordered, which guarantees delivery but not order. Applied here, immediately
+            // after registration, so the enemy never keeps the unscaled maximum.
+            ApplyPendingRescaledHp(spawnedEnemy.Id, enemy);
 
             DynamicData.For(enemy).Set("targetId", spawnedEnemy.TargetId);
 

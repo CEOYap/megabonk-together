@@ -83,6 +83,9 @@ namespace MegabonkTogether.Services
                 case SpawnedEnemy spawnedEnemy:
                     EventManager.OnSpawnedEnemy(spawnedEnemy);
                     break;
+                case EnemyMaxHpScaled enemyMaxHpScaled:
+                    EventManager.OnEnemyMaxHpScaled(enemyMaxHpScaled);
+                    break;
                 case AbstractSpawnedProjectile spawnedProjectile:
                     EventManager.OnSpawnedProjectile(spawnedProjectile);
                     break;
