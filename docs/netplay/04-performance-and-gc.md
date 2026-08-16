@@ -429,7 +429,26 @@ That was the O(enemies × players) half, on the death and disconnect paths.
 
 ## 5. Network payload
 
-**Status:** CONFIRMED (thresholds), UNVERIFIED (byte counts — nothing measures them today)
+**Status:** CONFIRMED (thresholds). **Partly superseded — see the box below before acting on this
+section.**
+
+> **Three of this section's recommendations have since landed** and were left standing here long
+> enough to be misleading. Corrected 2026-08-16:
+>
+> | This section says | Actually |
+> |---|---|
+> | "enemy positions are full-precision `float`… send `short` quantized values" | **Done.** `EnemyModel.Position` is `QuantizedVector3` and `Yaw` is `QuantizedRotation`. |
+> | "nothing measures byte counts today" / "add byte counters" | **Done.** `[Diagnostics] LogBandwidth` reports per-message-type bytes and per-peer link state every 10 s. |
+> | (not anticipated here) | A **budgeted priority stream** now caps the enemy tick — `MAX_ENEMY_TICK_BYTES = 3600`, `ENEMY_MODEL_WIRE_BYTES = 15`, so `MAX_ENEMIES_PER_TICK = 240`, with `ENEMY_REFRESH_PERIOD_TICKS = 40` bounding staleness. Oversized ticks are also split to sub-MTU datagrams. |
+>
+> **What that makes the current ceiling.** At `ENEMY_UPDATE_TICK_RATE = 40` Hz the enemy stream is
+> capped at 3600 B × 40 ≈ **144 KB/s** — and `SendToAllClients` sends that to *each* client, so the
+> host's upload is ~144 KB/s at 2 players and ~720 KB/s (≈5.8 Mbit/s) at 6. That scaling is the
+> argument for per-peer culling below, and it is also why the problem is invisible at the two-player
+> testing maximum.
+>
+> Still outstanding from this section: **`POSITION_TRESHOLD` tuning** and **per-peer distance
+> culling**.
 
 The dominant traffic is the per-tick enemy delta from `SendEnemiesUpdate`.
 
@@ -446,18 +465,22 @@ Raising `POSITION_TRESHOLD` is the cheapest bandwidth lever available and carrie
 correctness risk** — the tradeoff is purely visual smoothness on clients, and the
 interpolators (`EnemyInterpolator`) already smooth between updates.
 
-**Quantization** — enemy positions are full-precision `float`. Multibonk sends `short`
-quantized values: 6 bytes per position instead of 12. Halving the dominant payload is a
-larger win than anything the Sea-Bass branch attempted, and it costs no reliability.
+~~**Quantization**~~ — **done**, see the box above. Positions and yaw are quantized on the wire.
 
 **Distance culling** — `bd9518c` added a `DistanceThrottler`. Extend it to be *per-peer*:
 an enemy 200 units from client B does not need per-tick updates sent to B. Requires
 `SendToAllClients` to become a per-peer loop, which is a real refactor — but it is the change
 with the largest headroom at 6 players.
 
-**Before tuning any of this, add byte counters.** `UdpClientService` already tracks latency
-(`GetLatency(uint connectionId)`); add per-message-type byte totals so changes can be
-measured rather than guessed.
+**Still outstanding, and note the measurement problem it carries.** `DistanceThrottler.ShouldUpdate`
+takes an `isServer` flag, not a peer identity, so today the decision is global. The win scales with
+player count — and **two players is the testing maximum**, so this is the one item on the list whose
+benefit cannot be observed in-house. Weigh that before spending the refactor.
+
+~~**Before tuning any of this, add byte counters.**~~ — **done.** `[Diagnostics] LogBandwidth`
+reports per-message-type byte totals and per-peer link quality every 10 s. Tuning is now measurable
+rather than guessed, which makes `POSITION_TRESHOLD` the cheapest next lever: it is measurable at two
+players, and raising it carries no correctness risk.
 
 ---
 
@@ -477,11 +500,21 @@ measured rather than guessed.
 
 Before claiming any of this works:
 
-1. **Unity Profiler → GC Alloc**, host machine, final swarm at 4+ players. Record bytes/frame
-   before and after each change individually.
-2. **Deep Profile** for one capture to attribute costs to `TargetSwitcher.Update` vs
-   `SendEnemiesUpdate` vs game code. Deep profiling distorts absolute numbers — use it for
-   attribution only.
+> **Items 1 and 2 cannot be done on this game.** The Unity Profiler attaches only to a *development*
+> player and Megabonk ships a retail IL2CPP build. `Services/AllocationDiagnostics` exists because of
+> that — it samples the mod's own CoreCLR allocation rate instead. Use item 1' below.
+
+1. ~~**Unity Profiler → GC Alloc**~~ — impossible here. Instead: **`[Diagnostics] LogAllocationRate`
+   on the host**, on a run that reaches a final swarm. It reports every 10 s while a session is
+   running, and it measures **the mod's** allocations only — game-side IL2CPP churn is invisible to
+   it, which is the point.
+   - **The number alone means nothing; the contrast does.** Compare samples during the swarm against
+     samples outside it. A rate that does not move with enemy count is not the enemy stream.
+   - It is a cheap counter read (`GC.GetTotalAllocatedBytes`), so it can ride along with any other
+     run rather than needing its own — including a lossy one, since packet loss does not change
+     allocation.
+2. ~~**Deep Profile**~~ — same reason. Attribution has to come from reading the send path and from
+   `LogBandwidth`'s per-message-type split.
 3. **Frame-time histogram, not average.** Micro-stutter is a p99 problem; a mean FPS number
    will hide it entirely.
 4. **Bandwidth counters** per message type, both directions, at 2 / 4 / 6 players.
