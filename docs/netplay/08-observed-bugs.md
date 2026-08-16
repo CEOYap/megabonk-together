@@ -94,7 +94,7 @@ but the collision path was not traced.
 ---
 
 <a name="ob-2"></a>
-## OB-2 — Ghost item's summons appear for players who do not have the item — CONFIRMED, cause exact
+## OB-2 — Ghost item's summons appear for players who do not have the item — CONFIRMED, **FIXED, unverified**
 
 **Reported:** when either peer holds the Ghost item — which summons ghosts on interacting with pots,
 shrines and similar — the other player sees the ghosts too, without owning the item. Whether the
@@ -150,15 +150,48 @@ sibling `IsANetPlayerAbility` is used exactly this way in
 `OnInteracted_Prefix` should take `ItemGhost __instance` and return `false` when the instance is
 remote, mirroring that patch.
 
-**Not yet known:** whether the non-owner's ghosts also *deal* damage on their machine, or whether the
-owner's own ghosts are additionally suppressed anywhere. `damageSource` is carried per-instance, so
-credit attribution is worth checking once the guard lands.
+### The fix has landed
 
-**Separately, and regardless of the above:** the existing patch
-[`Patches/Items/ItemGhost.cs`](../../src/plugin/Patches/Items/ItemGhost.cs) has **no
+`OnInteracted_Prefix` now takes `ItemGhost __instance` and returns `false` when
+`IsRemoteItem(__instance)`, mirroring `PassiveAbilityBullseyePatches`. The same commit closes the
+standing-rule violation noted below — the patch had neither a session guard nor an ownership check.
+
+Two deliberate details:
+
+- **The `!success` branch stays first and stays ungated.** It is a crash guard, not netplay logic,
+  and must keep applying in singleplayer. The session check sits after it, so the ownership test
+  cannot alter singleplayer — where there are no remote items anyway.
+- **`IsRemoteItem` is null-hardened**, because it moved from unused to on a gameplay path.
+  `NetPlayer` receives its `Inventory` in a later lifecycle step than its spawn, and an exception
+  there would be thrown inside a Harmony prefix. Its `netPlayer == null` check uses Unity's operator
+  on purpose: a destroyed avatar is non-null managed-side, so `?.` would not catch it.
+
+**Verified without a playtest:** it builds against the real install's interop, and `OnInteracted`'s
+parameter is named `success` in the proxy — which Harmony's by-name binding needs, and which fails
+at patch time and only in the startup log when it is wrong.
+
+**Unverified — not run in-game:**
+
+| Question | How it would show |
+|---|---|
+| Do ghosts now appear only for the player who owns the item? | the direct check; interact on each peer in turn |
+| Did the non-owner's ghosts also *deal* damage? | if so, this changes damage numbers and not only visuals |
+| Does anything still fire per-interaction that should not? | `damageSource` is per-instance, so credit attribution is worth a look |
+
+**A follow-up this exposes rather than causes.** Ghosts are not replicated at all — there is no
+message for them. Before the fix, each peer spawned a set locally from whatever instances it held;
+after it, each peer spawns only its owner's set, which is strictly more correct but means **a
+client's ghosts are gameplay actors that exist only on the client**. Whether their damage registers
+on the host is a separate open question, on the same footing as any other client-side damage source.
+It is not made worse by this fix, and it was not visible before it.
+
+**Separately, and regardless of the above — now fixed in the same commit:**
+[`Patches/Items/ItemGhost.cs`](../../src/plugin/Patches/Items/ItemGhost.cs) had **no
 `HasNetplaySessionStarted()` guard and no ownership check**, contrary to the standing rule in
-`CLAUDE.md`. It only suppresses the original when `success` is false, so it is probably harmless
-today — but it changes singleplayer, which that rule exists to prevent.
+`CLAUDE.md`. It only suppressed the original when `success` was false, so it was probably harmless
+today — but it changed singleplayer, which that rule exists to prevent. It was also, as it turned
+out, the exact patch that needed the ownership check for the bug above: the missing guard and the
+reported symptom were the same gap seen from two ends.
 
 ---
 
