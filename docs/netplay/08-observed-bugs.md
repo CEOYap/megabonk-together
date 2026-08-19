@@ -612,7 +612,7 @@ fine, and widening the fix to a path with no reported symptom risks changing som
 ---
 
 <a name="ob-10"></a>
-## OB-10 — Clients emit ~1,800 "Only host can perform this action" warnings per run — CONFIRMED
+## OB-10 — Clients emit host-only-send warnings by the thousand — CONFIRMED, **wrong source recorded; now attributed**
 
 Not player-visible, found in the logs. The client emitted **1,841** of these in one session, first
 at line 4149 and continuing to the end of the run.
@@ -632,7 +632,32 @@ say which caller it caught — the warning has no context at all.
 nothing at runtime) and re-run. That converts 1,841 anonymous lines into a ranked list of ungated
 paths, which is a far better starting point than reading every call site.
 
-**Do not silence it.** A guard firing 1,841 times is information; the fix is upstream of the guard.
+### 2026-08-17 — the recorded source is not the one firing, and it is 11x worse
+
+`UdpClientService.EnsureIsHost` logged **zero** in the run. The count came from the Steam
+transport's own copy of the guard, `SteamNetTransport.EnsureIsHost`, whose message reads
+`[steam-net] Only the host can perform this action.` — **20,078 of them on the client**, against the
+1,841 recorded here from the matchmaker transport. `UseSteamTransport` is now the default, so this
+entry was describing the guard that no longer runs.
+
+**The recorded next step would not have helped.** `[CallerMemberName]` on the guard names one of
+four send methods — `SendToAllClients`, `SendToAllClientsExcept`, `SendToClient`,
+`SendToAllClients(byte[])` — and this entry already lists all four. It would have converted 20,078
+anonymous lines into 20,078 lines saying something known.
+
+**What was done instead.** Both transports now record `transport / sendMethod / messageType` into
+`Services/HostGuardDiagnostics`, which reports a ranked, throttled summary. **The message type is the
+identifier that matters**: `SpawnedEnemy x1200` names the gameplay path, and therefore the patch
+missing its ownership check, which no method name can.
+
+**Aggregating is not silencing**, and this entry's warning against silencing still stands. Nothing is
+suppressed, the count is reported in full, and it now says *what* was rejected. What is removed is
+20,078 individual log writes on a path that runs several times a second — a per-frame cost the
+performance doc and the BepInEx guidance both treat as real. A healthy session prints nothing,
+because it rejects nothing.
+
+**Next step is unchanged in spirit:** read the ranked `[host-guard]` line from the next run, then fix
+the named paths upstream of the guard.
 
 
 ---
@@ -1280,9 +1305,29 @@ established that `SetStackTraceLogType(ScriptOnly)` on both peers still produced
 which points at native game code rather than managed mod code. That remains the obstacle: **the
 count is now measured on both ends, and the thrower is still unidentified.**
 
-**Next step, and it is not another grep.** Bisect by correlation instead: the `[pause]` timeline is
-already in the log, so counting NREs in the N seconds after each encounter close versus a matched
-window elsewhere tests the lead above cheaply against a capture that already exists.
+### 2026-08-17 — the lead is weak, and the real blocker is which file gets copied
+
+**The encounter-window correlation was tested against the capture and does not hold up.** Only
+**28.4%** of the 7,927 exceptions fall within 40 lines of a window close, and there are **433 bursts
+against 221 closes** — far more bursts than there are windows. The rate is event-driven and
+load-correlated rather than tied to one path: 127 of 235 ten-second windows carry exceptions, median
+35, peak 392. The storm begins mid-run and ends only when the run does.
+
+**The blocker is procedural, not technical.** `[unity-exc] Script stack traces enabled` is present in
+the capture, so the traces were switched on. But the file supplied as the client's log is BepInEx's
+`LogOutput.log`, which **keeps the exception message and discards the stack by design**. The traces
+exist; they are in Unity's player log, which was not copied.
+
+**This is the second run lost to it.** Run 1 could not attribute 1,716 exceptions for exactly this
+reason, and this document said so at the time. Run 2 could not attribute 7,927.
+
+**So the mod now says where to look, twice.** `UnityExceptionDiagnostics` prints the *resolved*
+player-log path — from `Application.persistentDataPath`, not as prose — at startup, and again when a
+session ends, because that is the moment somebody is about to copy their logs and the startup line is
+thousands of lines behind them.
+
+**What this bug needs is one file**: the client's `Player.log` from a run with an exception storm.
+No further code is useful until then.
 
 ---
 
