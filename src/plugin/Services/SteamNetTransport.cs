@@ -985,7 +985,7 @@ namespace MegabonkTogether.Services
 
         public void SendToAllClients<T>(T data, NetDelivery delivery) where T : IGameNetworkMessage
         {
-            if (!EnsureIsHost())
+            if (!EnsureIsHost(HostGuardMessageName(data)))
             {
                 return;
             }
@@ -997,7 +997,7 @@ namespace MegabonkTogether.Services
 
         public void SendToAllClients(byte[] data, NetDelivery delivery, string messageTypeName = null)
         {
-            if (!EnsureIsHost())
+            if (!EnsureIsHost(HostGuardMessageName(data, messageTypeName)))
             {
                 return;
             }
@@ -1009,7 +1009,7 @@ namespace MegabonkTogether.Services
 
         public void SendToAllClientsExcept<T>(uint excludedConnectionId, T data) where T : IGameNetworkMessage
         {
-            if (!EnsureIsHost())
+            if (!EnsureIsHost(HostGuardMessageName(data)))
             {
                 return;
             }
@@ -1028,7 +1028,7 @@ namespace MegabonkTogether.Services
 
         public void SendToClient<T>(uint connectionId, T data) where T : IGameNetworkMessage
         {
-            if (!EnsureIsHost())
+            if (!EnsureIsHost(HostGuardMessageName(data)))
             {
                 return;
             }
@@ -1484,11 +1484,27 @@ namespace MegabonkTogether.Services
             };
         }
 
-        private bool EnsureIsHost()
+
+        /// <summary>
+        /// OB-10. The identifier a rejected host-only send is worth recording under. Falls back to
+        /// the runtime type when the caller only had an explicit name, and tolerates null on both.
+        /// </summary>
+        private static string HostGuardMessageName(object data, string messageTypeName = null)
+        {
+            return !string.IsNullOrEmpty(messageTypeName) ? messageTypeName : data?.GetType().Name;
+        }
+        /// <summary>
+        /// OB-10. <paramref name="messageTypeName"/> is what makes a rejection actionable — the
+        /// caller name alone is always one of four send methods and says nothing about which
+        /// gameplay path is missing its ownership check.
+        /// </summary>
+        private bool EnsureIsHost(
+            string messageTypeName = null,
+            [System.Runtime.CompilerServices.CallerMemberName] string sendMethod = null)
         {
             if (isHost != true)
             {
-                Plugin.Log.LogWarning("[steam-net] Only the host can perform this action.");
+                HostGuardDiagnostics.Record("steam-net", sendMethod, messageTypeName);
                 return false;
             }
 

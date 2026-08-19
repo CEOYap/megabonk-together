@@ -954,7 +954,7 @@ namespace MegabonkTogether.Services
         {
             var deliveryMethod = ToLiteNetLib(delivery);
 
-            if (!EnsureIsHost())
+            if (!EnsureIsHost(HostGuardMessageName(data)))
             {
                 return;
             }
@@ -1045,7 +1045,7 @@ namespace MegabonkTogether.Services
         /// </summary>
         public void SendToClient<T>(uint connectionId, T data) where T : IGameNetworkMessage
         {
-            if (!EnsureIsHost())
+            if (!EnsureIsHost(HostGuardMessageName(data)))
             {
                 return;
             }
@@ -1086,16 +1086,31 @@ namespace MegabonkTogether.Services
             BandwidthDiagnostics.Record(data.GetType().Name, msgBytes.Length, 1);
         }
 
-        private bool EnsureIsHost()
+
+        /// <summary>
+        /// OB-10. The identifier a rejected host-only send is worth recording under. Falls back to
+        /// the runtime type when the caller only had an explicit name, and tolerates null on both.
+        /// </summary>
+        private static string HostGuardMessageName(object data, string messageTypeName = null)
+        {
+            return !string.IsNullOrEmpty(messageTypeName) ? messageTypeName : data?.GetType().Name;
+        }
+        /// <summary>
+        /// OB-10. See the note on the Steam transport's copy: the message type is the identifier
+        /// worth having, because the caller is always one of four send methods.
+        /// </summary>
+        private bool EnsureIsHost(
+            string messageTypeName = null,
+            [System.Runtime.CompilerServices.CallerMemberName] string sendMethod = null)
         {
             if (isHost == null)
             {
-                Plugin.Log.LogWarning("IsHost not set yet");
+                HostGuardDiagnostics.Record("udp/is-host-unset", sendMethod, messageTypeName);
                 return false;
             }
             if (!isHost.Value)
             {
-                Plugin.Log.LogWarning("Only host can perform this action");
+                HostGuardDiagnostics.Record("udp", sendMethod, messageTypeName);
                 return false;
             }
             return true;
@@ -1194,7 +1209,7 @@ namespace MegabonkTogether.Services
         /// </summary>
         public void SendToAllClientsExcept<T>(uint excludedConnectionId, T data) where T : IGameNetworkMessage
         {
-            if (!EnsureIsHost())
+            if (!EnsureIsHost(HostGuardMessageName(data)))
             {
                 return;
             }
@@ -1310,7 +1325,7 @@ namespace MegabonkTogether.Services
         {
             var deliveryMethod = ToLiteNetLib(delivery);
 
-            if (!EnsureIsHost())
+            if (!EnsureIsHost(HostGuardMessageName(data, messageTypeName)))
             {
                 return;
             }

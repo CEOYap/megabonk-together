@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 
 namespace MegabonkTogether.Services
 {
@@ -66,6 +66,54 @@ namespace MegabonkTogether.Services
             Application.SetStackTraceLogType(LogType.Error, StackTraceLogType.ScriptOnly);
 
             Plugin.Log.LogInfo("[unity-exc] Script stack traces enabled for Unity exceptions and errors.");
+
+            // OB-15. The traces are enabled but they do NOT land in the file most people copy.
+            // BepInEx's LogOutput.log keeps the exception message and discards the stack; only
+            // Unity's own player log carries it. Two playtests have now been spent on this exact
+            // mistake -- run 1 (2026-08-15) and run 2 (2026-08-17) both came back with the client's
+            // LogOutput.log named as if it were the player log, and neither could attribute the
+            // client's exception storm as a result.
+            //
+            // Printing the resolved path, rather than describing it, is the point: it is correct
+            // per-machine and can be copied straight out of the log.
+            Plugin.Log.LogWarning(
+                "[unity-exc] Stack traces go to Unity's player log, NOT to LogOutput.log. " +
+                $"To attribute an exception storm, copy this file: {ResolvePlayerLogPath()}");
+        }
+
+        /// <summary>
+        /// OB-15. Where Unity writes the log that actually contains stack traces, resolved on this
+        /// machine rather than described in prose.
+        /// </summary>
+        internal static string ResolvePlayerLogPath()
+        {
+            try
+            {
+                // Application.persistentDataPath is <LocalLow>/<company>/<product>; the player log
+                // sits beside it under the same company/product pair.
+                var persistent = Application.persistentDataPath;
+                if (!string.IsNullOrEmpty(persistent))
+                {
+                    return System.IO.Path.Combine(persistent, "Player.log");
+                }
+            }
+            catch
+            {
+                // Falls through to the documented default below.
+            }
+
+            return @"%USERPROFILE%\AppData\LocalLow\Ved\Megabonk\Player.log";
+        }
+
+        /// <summary>
+        /// OB-15. Repeats the player-log path when a session ends, which is the moment somebody is
+        /// about to copy their logs. The startup line is thousands of lines away by then.
+        /// </summary>
+        internal static void RemindWhereTracesAre()
+        {
+            Plugin.Log.LogWarning(
+                "[unity-exc] Session ended. If this run had an exception storm, the stack traces " +
+                $"are ONLY in: {ResolvePlayerLogPath()} — LogOutput.log does not contain them.");
         }
 
         /// <summary>Nothing per-session to clear; kept so the call in NetworkHandler stays valid.</summary>
