@@ -799,7 +799,7 @@ exists to prevent — and the same reasoning that makes `SpawnBoss_Prefix` suppr
 ---
 
 <a name="ob-12"></a>
-## OB-12 — The run's interactable counters diverge, except charge shrines — re-diagnosed, **FIXED (attempt 2), unverified**
+## OB-12 — The run's interactable counters diverge, except charge shrines — **attempt 2 WORKS for 7 of 9 rows (2026-08-17)**
 
 ### RE-DIAGNOSED 2026-08-17 — the fix was applied to branches your config never reaches
 
@@ -879,9 +879,50 @@ does not need that reasoning to be right.
 cannot legitimately differ. If chests and pots now agree too, the whole class is fixed.
 
 **Watch for the opposite failure.** If a counter now reads *higher* than the map total — `50/46` —
-the comparison is failing and something is counting twice. That is the exact hazard the measured
-shape exists to prevent, so it would mean the read is returning null or the wrong key rather than
-that the design is wrong.
+the comparison is failing and something is counting twice.
+
+### Result 2026-08-17 — it works, except for the two types the code already calls out
+
+Both peers, sampled at two points in one run:
+
+| Counter | early: A / B | late: A / B | |
+|---|---|---|---|
+| Boss Curses | 4/4 · 4/4 | 4/4 · 4/4 | agree |
+| Charge Shrines | 15/15 · 15/15 | 15/15 · 15/15 | agree |
+| Chests | 15/46 · 15/46 | 17/46 · 17/46 | agree |
+| Greed Shrines | 7/8 · 7/8 | 8/8 · 8/8 | agree |
+| Magnet Shrines | 1/3 · 1/3 | 2/3 · 2/3 | agree |
+| Moais | 5/5 · 5/5 | 5/5 · 5/5 | agree |
+| Pots | 45/55 · 45/55 | 49/55 · 49/55 | agree |
+| **Microwaves** | **0/2 · 1/2** | 1/2 · 1/2 | lagged, then converged |
+| **Shady Guy** | **2/2 · 4/2** | **2/2 · 4/2** | **over-counts, and exceeds its own total** |
+
+**Seven of nine rows now track exactly, including chests and pots**, which were the worst offenders
+(2/46 against 6/46 before). The measured before/after approach did what it was meant to.
+
+**The two that fail are the two the code already flags.** `OnInteractableUsed`'s send path contains:
+
+```csharp
+if (!instance.name.Contains("ShadyGuy") && !instance.name.Contains("Microwave"))
+{
+    logger.LogWarning("Interactable does not have a netplayId ...");
+}
+return;   // ← both types leave here without a netplayId
+```
+
+with the comment *"those guys are so shady that they don't work on client side for some reason"*.
+They travel differently from every other interactable, so it is unsurprising they are the two the
+counter fix does not reach.
+
+**Shady Guy reads 4 of 2** — double-counted, and past its own denominator. `InteractablesStatus` has
+a dedicated `OnShadyGuyUsed()` handler alongside `OnInteractableUse`, and the helper's own note says
+`OnInteractableUse` "skips the types that have their own handlers". So the likely shape is that the
+shady guy is counted by its own handler *and* again by ours — the before/after comparison cannot see
+it, because the second increment happens through a path the snapshot does not bracket.
+
+**Next step is narrow:** exclude the types with dedicated handlers from
+`CountIfDispatchDidNot`, or bracket the snapshot around their handler too. Both are small; which is
+right depends on whether `OnShadyGuyUsed` raises `numUsed` on the same key.
 
 > **Resolved 2026-08-15.** The counter was found and the fix is in. It is **not** `RunStats` —
 > that was this entry's one wrong turn, and the detour is kept below because the reasoning that
@@ -1271,7 +1312,7 @@ misassigned too** rather than only the end screen. Worth checking before this is
 ---
 
 <a name="ob-15"></a>
-## OB-15 — The client's NullReferenceException storm is not the button bug — CONFIRMED, cause open
+## OB-15 — The client's NullReferenceException storm — **CAUSE FOUND 2026-08-17**
 
 **The hypothesis carried since 2026-08-15 is refuted.** The client's exception storm was recorded as
 "consistent with the custom-button null-background bug but not proven". The button bug is fixed and
@@ -1328,6 +1369,92 @@ thousands of lines behind them.
 
 **What this bug needs is one file**: the client's `Player.log` from a run with an exception storm.
 No further code is useful until then.
+
+### SOLVED — the file arrived and named the thrower
+
+`client_Player.log`, 2026-08-17. **All 13,878 exceptions have one stack, and it is the same one every
+time:**
+
+```
+NullReferenceException: Object reference not set to an instance of an object.
+  at InteractableShrineChallenge.EnemyDied (Assets.Scripts.Actors.Enemies.Enemy enemy)
+  at Assets.Scripts.Actors.Enemies.Enemy.ReleaseToPool ()
+```
+
+**That explains every observation at once.** It fires on *enemy release to pool*, so the rate tracks
+enemy deaths — which is why the reporter saw it during "Swarm Incoming", why it is load-correlated,
+why it peaked at 392 in a ten-second window, and why it stopped only when the run ended. It has
+nothing to do with buttons or with encounter windows; both earlier hypotheses are dead, and the
+28.4% window correlation was coincidence from enemies dying near windows.
+
+**It is the same shape as [OB-2](#ob-2).** A global event — `Enemy.ReleaseToPool` — invokes an
+*instance* handler on an `InteractableShrineChallenge` whose state this peer never initialised,
+because challenges are host-authoritative and the client's copy never started one. Decompiled
+(`InteractableShrineChallenge$$EnemyDied`, VA `0x1804CDFE0`), the body walks
+`this.enemies` (a `HashSet<Enemy>` at `0x78`) and then dereferences `EffectManager.Instance` and
+`enemy` on the completion path — any of which is null on a peer that is not running that challenge.
+
+**Fix shape, not yet written.** A prefix on `InteractableShrineChallenge.EnemyDied` that returns
+false when this peer is not the one running the challenge — the same guard shape as
+`ItemGhostPatches` after OB-2, and the same reason. **Do not guard on the null itself**: that would
+suppress the symptom while leaving a client-side challenge that silently never completes.
+
+**And it is two bugs, not one.** The host's own log from the same run has **63** exceptions, none of
+them this one — see [OB-17](#ob-17).
+
+---
+
+<a name="ob-16"></a>
+## OB-16 — Desert final-boss pylon charge throws on the host — CONFIRMED, cause exact
+
+**Reported 2026-08-17** alongside a fresh pylon problem, and the host's `Player.log` caught it:
+
+```
+NullReferenceException: Object reference not set to an instance of an object.
+  at FinalFightController.OnPylonCharged (BossPylon pylon)
+  at BossPylon.Complete ()
+  at BossPylon.ChargeUpdate ()
+  at BossPylon.Update ()
+```
+
+**Once, on the host** — at the moment a pylon finished charging. `FinalFightController.OnPylonCharged`
+is at VA `0x180493C90`.
+
+**Why this is very likely the same root as [OB-7](#ob-7).** That entry records that Desert pylons do
+not exist for clients because their ids are *derived* rather than replicated.
+`FinalFightController.boss` is assigned by the mod only on the receive path
+(`if (enemy.IsFinalBoss()) MusicController.Instance.finalFightController.boss = enemy;`), so the two
+ends disagree about which pylons and which boss the controller knows. A pylon completing against a
+controller whose state was never populated is exactly an NRE at `OnPylonCharged`.
+
+**This makes OB-7 and OB-8 testable again**, which they were not: they were held pending an in-game
+check, and this is the first hard evidence from a log rather than a report. Decompiling
+`OnPylonCharged` is the next step and it is one lookup.
+
+---
+
+<a name="ob-17"></a>
+## OB-17 — The host throws in MinimapCamera.UpdateArrows — CONFIRMED, low severity
+
+**2026-08-17 host `Player.log`: 62 occurrences**, per-frame while they last:
+
+```
+  at Assets.Scripts.Camera.MinimapCamera.UpdateArrows ()
+  at Assets.Scripts.Camera.MinimapCamera.Update ()
+```
+
+**Distinct from [OB-15](#ob-15)**, which is the client's and has a different stack entirely. Filed
+separately so the two are not merged again — the previous merge of "the client's storm" with "the
+host's 7" cost two sessions.
+
+**The mod already touches this.** `PlayerManagerService` carries a comment about *"the ordering
+mistake StartGame already made once with the minimap arrow"*, so the minimap arrow is known
+mod-adjacent territory rather than untouched game code. `MyPlayer` has both `minimapCamera` and
+`minimapCameraScript` fields, and a `NetPlayer` avatar built without one would leave
+`UpdateArrows` iterating something with a hole in it.
+
+**Low severity and bounded** — 62 lines against the client's 13,878, cosmetic as far as anyone has
+observed. Worth fixing after OB-15, not before.
 
 ---
 
