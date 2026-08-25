@@ -234,6 +234,22 @@
         internal const float MIN_BOSS_RING_RADIUS = 20f;
 
         /// <summary>
+        /// Ceiling for the re-rolled ring radius, in world units.
+        ///
+        /// <para><b>Added 2026-08-17 because the derivation has no upper bound and needs one.</b>
+        /// The radius is taken from how far the game's own chosen position sits from the host — which
+        /// is a sensible ring distance on the <c>EventMiniboss</c> path, and meaningless on every
+        /// other one. A coffin passes its own transform as the spawn position, so the "radius" became
+        /// the distance from the host to that coffin: the run logged 287, 424, 428, 443, 534, 657 and
+        /// 658 units. Searching a band that wide around a player finds nothing, and all of those
+        /// placements failed.</para>
+        ///
+        /// <para>60 matches <see cref="DISTANCE_MEDIUM"/>, which is the distance at which this
+        /// project already considers an entity far enough away to stop updating every tick.</para>
+        /// </summary>
+        internal const float MAX_BOSS_RING_RADIUS = 60f;
+
+        /// <summary>
         /// Width of the re-rolled ring, as a fraction of its radius.
         ///
         /// <para>Widened from 0.1 to 0.35 after the 2026-08-17 run failed 9 of 9 placements. The

@@ -591,9 +591,19 @@ namespace MegabonkTogether.Services
             var dx = pos.x - localPosition.x;
             var dz = pos.z - localPosition.z;
             var radius = Mathf.Sqrt((dx * dx) + (dz * dz));
+            // Clamped at BOTH ends. The floor covers pos == the host's own position (the game's
+            // own all-attempts-failed fallback). The ceiling covers the far commoner case the
+            // 2026-08-17 run exposed: `pos` is only a ring position around the player on the
+            // EventMiniboss path, and a coffin passes its own transform instead — which produced
+            // derived "radii" of 287, 424, 428, 443, 534, 657 and 658 units, every one of which
+            // failed to place. An unclamped derivation was the bug, not the placement call.
             if (radius < Tunables.MIN_BOSS_RING_RADIUS)
             {
                 radius = Tunables.MIN_BOSS_RING_RADIUS;
+            }
+            else if (radius > Tunables.MAX_BOSS_RING_RADIUS)
+            {
+                radius = Tunables.MAX_BOSS_RING_RADIUS;
             }
 
             // onlyGround MUST stay false. It selects the layer mask: true gives
@@ -603,31 +613,54 @@ namespace MegabonkTogether.Services
             // canChooseObject: true). Passing true here asked for somewhere strictly stricter than
             // the game will place an enemy itself, and the 2026-08-17 run failed all 9 of 9
             // placements because of it.
-            var recentred = SpawnPositions.GetEnemySpawnPositionAroundPoint(
-                target,
-                radius * (1f - Tunables.BOSS_RING_BAND),
-                radius * (1f + Tunables.BOSS_RING_BAND),
-                Tunables.BOSS_RING_ATTEMPTS,
-                false,
-                999f);
+            var recentred = TryPlaceAround(target, radius, Tunables.BOSS_RING_BAND);
 
-            // The game signals "no position found" by returning INVALID_POS rather than by failing,
-            // and EventMiniboss itself compares against it with an epsilon rather than for equality.
-            var invalid = SpawnPositions.INVALID_POS;
-            var offset = recentred - invalid;
-            if (offset.sqrMagnitude < 0.01f)
+            // Second chance with a deliberately generous band before giving up. Nine of the
+            // 2026-08-17 failures were at the radius floor, where a narrow annulus around a peer
+            // standing near terrain simply has nowhere to put a boss; a wider ring costs only
+            // variance in distance, and the alternative is falling back to the host every time.
+            if (IsInvalid(recentred))
+            {
+                recentred = TryPlaceAround(target, radius, WIDE_BOSS_RING_BAND);
+            }
+
+            if (IsInvalid(recentred))
             {
                 // Carries the radius because that is the input most likely to be wrong next time:
                 // `pos` is a ring position around the player only on the EventMiniboss path, while
                 // a coffin passes its own transform, so the derived radius is whatever that
                 // happens to be. A silent "it failed" cost a whole playtest to diagnose once.
                 logger.LogDebug(
-                    $"OB-11: no valid miniboss position within {radius:F1}u of the chosen peer; " +
-                    "keeping the host-centred one.");
+                    $"OB-11: no valid miniboss position within {radius:F1}u of {target} " +
+                    "(tried a narrow then a wide ring); keeping the host-centred one.");
                 return pos;
             }
 
             return recentred;
+        }
+
+        /// <summary>Fallback ring width once the derived one has failed. See the retry above.</summary>
+        private const float WIDE_BOSS_RING_BAND = 0.7f;
+
+        private static Vector3 TryPlaceAround(Vector3 target, float radius, float band)
+        {
+            return SpawnPositions.GetEnemySpawnPositionAroundPoint(
+                target,
+                radius * (1f - band),
+                radius * (1f + band),
+                Tunables.BOSS_RING_ATTEMPTS,
+                false,
+                999f);
+        }
+
+        /// <summary>
+        /// The game signals "no position found" by returning <c>INVALID_POS</c> rather than by
+        /// failing. It is (69.6978, 69.6978, 69.6978) from the cctor — a specific sentinel, so an
+        /// exact-ish match cannot fire by accident.
+        /// </summary>
+        private static bool IsInvalid(Vector3 candidate)
+        {
+            return (candidate - SpawnPositions.INVALID_POS).sqrMagnitude < 0.01f;
         }
 
         #endregion
