@@ -920,9 +920,25 @@ a dedicated `OnShadyGuyUsed()` handler alongside `OnInteractableUse`, and the he
 shady guy is counted by its own handler *and* again by ours — the before/after comparison cannot see
 it, because the second increment happens through a path the snapshot does not bracket.
 
-**Next step is narrow:** exclude the types with dedicated handlers from
-`CountIfDispatchDidNot`, or bracket the snapshot around their handler too. Both are small; which is
-right depends on whether `OnShadyGuyUsed` raises `numUsed` on the same key.
+### Shady guy fixed — and the comment that hid it is corrected
+
+`OnShadyGuyUsed` runs **outside** the dispatch the before/after snapshot brackets, so the comparison
+saw no change, counted, and the game counted afterwards. Two increments per shady guy, hence 4 of 2.
+
+**The helper's own documentation is what made this invisible.** It claimed `OnInteractableUse`
+"skips the types that have their own handlers". Decompiled (VA `0x18051B1D0`), it skips **exactly one
+type — `InteractableMicrowave`** — by an explicit `GetType()` comparison. Shady guy passes straight
+through it. The comment is now corrected, because believing it is why the double path was not
+anticipated.
+
+Shady guys are excluded from the counter helper. Their own handler already counts them on both
+peers, which is why the host read 2/2 throughout while only the client inflated.
+
+**Microwave needs nothing:** `OnInteractableUse` genuinely skips it, so the helper was always a
+no-op there — its count comes solely from `OnMicrowaveExplode`, which is why the row lagged and then
+converged rather than doubling.
+
+**Confirms as** Shady Guy reading **2/2 on both peers**.
 
 > **Resolved 2026-08-15.** The counter was found and the fix is in. It is **not** `RunStats` —
 > that was this entry's one wrong turn, and the detour is kept below because the reasoning that
@@ -1490,7 +1506,7 @@ the normal spawn path. **It does** — `EnemyManager.SpawnBoss`, which itself ca
 ---
 
 <a name="ob-17"></a>
-## OB-17 — The host throws in MinimapCamera.UpdateArrows — CONFIRMED, low severity
+## OB-17 — The host throws in MinimapCamera.UpdateArrows — CONFIRMED, **FIXED, unverified**
 
 **2026-08-17 host `Player.log`: 62 occurrences**, per-frame while they last:
 
@@ -1509,8 +1525,25 @@ mod-adjacent territory rather than untouched game code. `MyPlayer` has both `min
 `minimapCameraScript` fields, and a `NetPlayer` avatar built without one would leave
 `UpdateArrows` iterating something with a hole in it.
 
-**Low severity and bounded** — 62 lines against the client's 13,878, cosmetic as far as anyone has
-observed. Worth fixing after OB-15, not before.
+### Fixed
+
+Decompiled (`MinimapCamera$$UpdateArrows`, VA `0x1804B2D60`): it enumerates `arrowDict.Values` and
+reads **`MyPlayer.Instance.transform.position` per entry, with no null check**. Called from
+`Update`, so a null local player throws every frame until one exists — a teardown/respawn window.
+
+A prefix now skips the update while `MyPlayer.Instance` is null.
+
+**This is a null guard, which [OB-15](#ob-15) refused — the difference matters.** There, a guard
+would have hidden a client-side challenge that could never complete: a lie worth not telling. Here
+there is no lie. Placing an arrow relative to a player that does not exist is not a meaningful
+operation, the arrows are re-placed on the next frame that has one, and nothing is skipped. **Guard
+the null when the operation is genuinely undefined; suppress the caller when the state is missing
+because this peer was never supposed to compute it.**
+
+**Not established:** whether the mod widens the window by holding arrows for remote players across a
+transition where singleplayer would have had an empty dictionary. The guard is correct either way.
+
+**Confirms as** the host's `Player.log` losing its `UpdateArrows` lines, with arrows still drawn.
 
 ---
 
