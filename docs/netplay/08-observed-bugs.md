@@ -1312,7 +1312,7 @@ misassigned too** rather than only the end screen. Worth checking before this is
 ---
 
 <a name="ob-15"></a>
-## OB-15 — The client's NullReferenceException storm — **CAUSE FOUND 2026-08-17**
+## OB-15 — The client's NullReferenceException storm — cause found, **FIXED, unverified**
 
 **The hypothesis carried since 2026-08-15 is refuted.** The client's exception storm was recorded as
 "consistent with the custom-button null-background bug but not proven". The button bug is fixed and
@@ -1394,10 +1394,30 @@ because challenges are host-authoritative and the client's copy never started on
 `this.enemies` (a `HashSet<Enemy>` at `0x78`) and then dereferences `EffectManager.Instance` and
 `enemy` on the completion path — any of which is null on a peer that is not running that challenge.
 
-**Fix shape, not yet written.** A prefix on `InteractableShrineChallenge.EnemyDied` that returns
-false when this peer is not the one running the challenge — the same guard shape as
-`ItemGhostPatches` after OB-2, and the same reason. **Do not guard on the null itself**: that would
-suppress the symptom while leaving a client-side challenge that silently never completes.
+### Fixed — and the mod was closing the chain itself
+
+`Patches/Interactables/InteractableShrineChallenge.cs` suppresses `EnemyDied` on a client, in the
+same shape as `ItemGhostPatches` after OB-2.
+
+**The last link found while writing it.** `EnemyDied` returns early unless `done` is set — and
+`OnReceivedInteractableUsed` sets exactly that flag on a client as its cosmetic shortcut:
+
+```csharp
+if (isHost) shrineChallenge.Interact();   // host runs the real challenge
+else { shrineChallenge.done = true; shrineChallenge.fx.SetActive(true); ... }
+```
+
+So the client never populates `enemies`, and the shortcut removes the guard that would have made
+`EnemyDied` a no-op. **The mod turned a harmless handler into a null walk on every enemy death.**
+
+**Suppressed rather than null-guarded**, deliberately: a null check would silence the exception and
+leave a client-side challenge that can never complete — symptom gone, lie intact. Challenges are
+host-authoritative and the completion already reaches the client as replicated spawns plus that
+shortcut, so there is nothing for a client to compute here.
+
+**Confirms as:** the client's `Player.log` going from 13,878 exception lines to **none**, with the
+challenge shrine still showing completed on that peer. The second half matters as much as the first
+— it is what distinguishes a fix from a mute.
 
 **And it is two bugs, not one.** The host's own log from the same run has **63** exceptions, none of
 them this one — see [OB-17](#ob-17).
