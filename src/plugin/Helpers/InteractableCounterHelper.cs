@@ -1,3 +1,4 @@
+﻿using Assets.Scripts.Inventory__Items__Pickups.Items;
 using UnityEngine;
 
 namespace MegabonkTogether.Helpers
@@ -19,7 +20,10 @@ namespace MegabonkTogether.Helpers
     ///
     /// <para><b>Why calling the game's own handler rather than incrementing the field.</b>
     /// <c>OnInteractableUse</c> resolves the debug name through the interactable's own virtual
-    /// <c>GetDebugName</c>, skips the types that have their own handlers, and raises
+    /// <c>GetDebugName</c>, skips <c>InteractableMicrowave</c> — exactly that one type, by an
+    /// explicit <c>GetType()</c> comparison, and NOT "types that have their own handlers", which is
+    /// what this comment claimed until 2026-08-17 and is what let a shady guy be counted twice —
+    /// and raises
     /// <c>A_InteractableUsed</c> so the panel redraws. Reaching into
     /// <c>interactablesByName</c> directly would reimplement the first two and skip the third.
     /// Decompiled before being called (VA <c>0x18051B1D0</c>, cached under
@@ -61,6 +65,21 @@ namespace MegabonkTogether.Helpers
 
             var interactable = interactableObj.GetComponentInChildren<BaseInteractable>();
             if (interactable == null)
+            {
+                return new Snapshot(null, null);
+            }
+
+            // OB-12. A shady guy counts itself, late, through its own handler, and the before/after
+            // comparison cannot see that: InteractablesStatus.OnShadyGuyUsed does not run inside the
+            // dispatch this snapshot brackets. So the comparison saw no change, counted, and then the
+            // game counted too -- the client read Shady Guy 4 of 2 on 2026-08-17, past its own
+            // denominator.
+            //
+            // Note this is NOT the type OnInteractableUse skips. Decompiled (VA 0x18051B1D0) it
+            // skips exactly one, InteractableMicrowave, by an explicit GetType() comparison -- not
+            // "types that have their own handlers", which is what this file used to claim. Shady guy
+            // therefore passes straight through it and is counted twice.
+            if (interactableObj.GetComponentInChildren<InteractableShadyGuy>() != null)
             {
                 return new Snapshot(null, null);
             }
