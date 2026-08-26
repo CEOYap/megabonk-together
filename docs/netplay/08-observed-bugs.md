@@ -920,25 +920,39 @@ a dedicated `OnShadyGuyUsed()` handler alongside `OnInteractableUse`, and the he
 shady guy is counted by its own handler *and* again by ours — the before/after comparison cannot see
 it, because the second increment happens through a path the snapshot does not bracket.
 
-### Shady guy fixed — and the comment that hid it is corrected
+### Shady guy — the peers were recorded the wrong way round
 
-`OnShadyGuyUsed` runs **outside** the dispatch the before/after snapshot brackets, so the comparison
-saw no change, counted, and the game counted afterwards. Two increments per shady guy, hence 4 of 2.
+**Corrected by the reporter: the HOST reads 4/2; the CLIENT reads 2/2.** The first write-up here had
+them inverted, and a fix was built on that inversion and then reverted.
 
-**The helper's own documentation is what made this invisible.** It claimed `OnInteractableUse`
-"skips the types that have their own handlers". Decompiled (VA `0x18051B1D0`), it skips **exactly one
-type — `InteractableMicrowave`** — by an explicit `GetType()` comparison. Shady guy passes straight
-through it. The comment is now corrected, because believing it is why the double path was not
-anticipated.
+**What the correct attribution implies.** The acting peer never receives its own `InteractableUsed`,
+so `InteractableCounterHelper` never runs on it. The host used the shady guys, therefore:
 
-Shady guys are excluded from the counter helper. Their own handler already counts them on both
-peers, which is why the host read 2/2 throughout while only the client inflated.
+- the **host's 4 is entirely game-side** — nothing the mod's counter does can reach it;
+- the **client's 2/2 is correct**, and it is correct *because* the helper counts the replicated
+  interaction.
 
-**Microwave needs nothing:** `OnInteractableUse` genuinely skips it, so the helper was always a
-no-op there — its count comes solely from `OnMicrowaveExplode`, which is why the row lagged and then
-converged rather than doubling.
+Excluding shady guys from the helper — the reverted change — would have left the client at **0/2**
+with the host still at 4/2. Strictly worse than the reported state.
 
-**Confirms as** Shady Guy reading **2/2 on both peers**.
+**Two candidate causes for the host's double, and they point opposite ways:**
+
+1. **The game counts a shady guy twice per use.** `OnInteractableUse` does *not* skip
+   `InteractableShadyGuy` — decompiled (VA `0x18051B1D0`) it skips exactly one type,
+   `InteractableMicrowave`, by an explicit `GetType()` comparison. So a shady guy plausibly reaches
+   both `OnInteractableUse` and its own `OnShadyGuyUsed`. If so this is vanilla and the client's 2 is
+   the anomaly, not the host's 4.
+2. **A shady guy is usable more than once**, so 4 uses across 2 objects is the numerator counting
+   *uses* against a denominator counting *objects*. Then the host is right and the client is
+   undercounting, because only one use per shady guy is being replicated.
+
+**The check that separates them needs no code and no second machine: play singleplayer, use one
+shady guy twice, and read the row.** If it climbs past its own total there, it is the game's
+behaviour and out of scope. If it stays at 1/2, the double is netplay-specific and candidate 1 is
+live.
+
+**Do not change the counter helper before that check.** This row has now had a fix built on a wrong
+premise once.
 
 > **Resolved 2026-08-15.** The counter was found and the fix is in. It is **not** `RunStats` —
 > that was this entry's one wrong turn, and the detour is kept below because the reasoning that
