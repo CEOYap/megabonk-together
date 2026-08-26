@@ -109,7 +109,7 @@ namespace MegabonkTogether.Patches.Enemies
         /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(EnemyManager.SpawnBoss))]
-        public static bool SpawnBoss_Prefix(ref Vector3 pos)
+        public static bool SpawnBoss_Prefix(ref Vector3 pos, EEnemyFlag enemyFlag)
         {
             if (!synchronizationService.HasNetplaySessionStarted())
             {
@@ -120,6 +120,23 @@ namespace MegabonkTogether.Patches.Enemies
             if (!isServer)
             {
                 return false;
+            }
+
+            // OB-16 / OB-11 scope correction. Arena bosses must spawn where the map put them.
+            // FinalFightController.SpawnBoss calls this with flag 0x24 -- FinalBoss (32) plus
+            // StageBoss (4) -- after resolving bossSpawnPoint and raycasting it to ground, and it
+            // assigns the *return value* to FinalFightController.boss. Re-centring that position on
+            // a random player moved the final boss out of its arena, and a SpawnEnemy that then
+            // fails returns null, which leaves `boss` null and throws later at
+            // FinalFightController.OnPylonCharged when the last pylon charges -- observed once on
+            // the host, 2026-08-17.
+            //
+            // OB-11 is about minibosses roaming to the host; it was never about arena bosses, and
+            // the original patch was simply too broad.
+            const EEnemyFlag arenaBossFlags = EEnemyFlag.FinalBoss | EEnemyFlag.StageBoss;
+            if ((enemyFlag & arenaBossFlags) != 0)
+            {
+                return true;
             }
 
             // The try is here rather than inside the service on purpose: a MissingMethodException
