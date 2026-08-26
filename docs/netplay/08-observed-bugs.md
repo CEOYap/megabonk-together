@@ -1165,7 +1165,7 @@ disagrees. It is a scoreboard bug, not a world-state one, and nothing downstream
 ---
 
 <a name="ob-13"></a>
-## OB-13 — Enemies keep taking projectile damage while an encounter window has the game paused — CONFIRMED, **leading cause REFUTED by measurement (2026-08-17)**
+## OB-13 — Enemies keep taking damage while an encounter window has the game paused — CONFIRMED, **FIXED at the damage path, unverified**
 
 **Reported (2026-08-16):** with the game paused by an encounter window, bosses and enemies still
 receive damage from projectiles. **Refined by the reporter: it happens only when shared experience is
@@ -1252,6 +1252,39 @@ every injected `MonoBehaviour` ticks straight through the pause — `ProjectileI
 foremost, which keeps teleporting replicated projectiles to host snapshots. Start there.
 
 **Do not re-run the pause log.** It has answered its question; keeping it on is now noise.
+
+### Fixed by gating the damage path, not by finding the source
+
+Reported again on 2026-08-18, still under shared experience, and now explicitly for bosses. Rather
+than keep hunting the un-gated component, the fix sits where every damage source converges:
+`Enemy.DamageFromPlayerWeapon`, `DamageFromPlayerOther` and `DamageExternal` are prefixed and return
+early while `MyTime.paused`.
+
+**That covers the source without knowing it**, along with weapons, auras, damage-over-time and the
+mod's own replicated damage. It also covers every pausing window — level-up, chest, microwave, moai,
+shady guy — because all of them reach `MyTime.Pause()`, so the flag is read instead of the windows
+being enumerated.
+
+**`Enemy.MakeInvulnerable` was the obvious lever and is the wrong one.** Decompiled (VA
+`0x1804AED80`) it calls `EnemyRenderer.SetInvulnerable`, which visibly tints every enemy, and
+`QueueClearAllDebuffs`, which would **strip poison and burn stacks off the entire field every time a
+reward window opened**. It also would not have worked: the flag it sets is read by
+`Enemy.CanTakeDamage`, and an xref gives that exactly one caller — `KillEnemyTrigger.OnTriggerEnter`
+— so it never touches weapon damage.
+
+**Gated on shared experience.** Only that mode pauses every peer together. With it off just the
+acting peer pauses, and damage is host-authoritative, so a host paused in its own chest window would
+freeze damage for a teammate still fighting — a worse bug than this one.
+
+**Stateless, which is the safety argument.** Nothing is written to an enemy and nothing has to be
+cleared, so a missed unpause, a dropped peer or an exception cannot strand the field invulnerable.
+
+**Confirms as** a boss's health bar holding still for a whole reward window on both peers.
+**Watch for the opposite failure:** damage that never resumes after the window closes.
+
+**The un-gated component is still unidentified**, and this fix does not find it. That remains open —
+`ProjectileInterpolator.Update` is the standing suspect — but it no longer costs health while a
+window is up.
 
 ### Superseded — the plan that produced the measurement above
 
