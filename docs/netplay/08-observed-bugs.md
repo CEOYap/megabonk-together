@@ -1425,7 +1425,7 @@ them this one — see [OB-17](#ob-17).
 ---
 
 <a name="ob-16"></a>
-## OB-16 — Desert final-boss pylon charge throws on the host — CONFIRMED, cause exact
+## OB-16 — Desert final-boss pylon charge throws on the host — **self-inflicted by OB-11; FIXED, unverified**
 
 **Reported 2026-08-17** alongside a fresh pylon problem, and the host's `Player.log` caught it:
 
@@ -1447,9 +1447,45 @@ not exist for clients because their ids are *derived* rather than replicated.
 ends disagree about which pylons and which boss the controller knows. A pylon completing against a
 controller whose state was never populated is exactly an NRE at `OnPylonCharged`.
 
-**This makes OB-7 and OB-8 testable again**, which they were not: they were held pending an in-game
-check, and this is the first hard evidence from a log rather than a report. Decompiling
-`OnPylonCharged` is the next step and it is one lookup.
+### Decompiled — and the cause is very likely this branch's own OB-11 patch
+
+`FinalFightController.OnPylonCharged` (VA `0x180493C90`) decodes to:
+
+```csharp
+activePylons.Remove(pylon);
+if (activePylons.Count < 1)
+{
+    boss.MakeInvulnerable(false);   // ← throws when boss is null
+    GiveWeaponBack();
+}
+```
+
+Ghidra's field names are a slot out again and were checked against `dump.cs`: printed
+`.orbFollowing` (`0x40`) is `activePylons` (`0x38`), printed `.pylons` (`0x30`) is `boss` (`0x28`).
+
+**Where `boss` comes from.** `FinalFightController.SpawnBoss` (VA `0x180493EC0`) assigns it from the
+**return value** of `EnemyManager.SpawnBoss`, called with flag **`0x24` = `FinalBoss` (32) |
+`StageBoss` (4)** at `bossSpawnPoint` raycast to ground.
+
+**And `EnemyManager.SpawnBoss` is exactly what OB-11's patch hooks.** That prefix re-centred `pos` on
+a random player for *every* call — including this one. Moving the final boss out of its arena gives
+`SpawnEnemy` a position it can fail to place, a failed place returns null, and null propagates
+straight into `boss`. The run that produced this exception was the first to carry the OB-11 patch.
+
+**OB-11 was about minibosses roaming to the host and was never about arena bosses.** The patch was
+too broad from its first version; it now skips `FinalBoss` and `StageBoss`.
+
+> **The general lesson, and it is not the first time on this branch.** A fix aimed at one spawn path
+> was applied at a funnel that carries several. The same mistake in the other direction produced
+> [OB-12](#ob-12) — counting added to branches the live configuration never reaches. **Check what
+> else goes through a funnel before patching it.**
+
+### It also answers OB-8's open question in passing
+
+[OB-8](#ob-8) has been waiting on one lookup: whether `FinalFightController.SpawnBoss` routes through
+the normal spawn path. **It does** — `EnemyManager.SpawnBoss`, which itself calls
+`EnemyManager.SpawnEnemy`. That is the branch OB-8 predicted would mean the cause is the client's
+`SpawnBoss_Prefix` returning false, and it can be re-read on that basis now rather than left held.
 
 ---
 
