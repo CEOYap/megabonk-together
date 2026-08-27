@@ -1,4 +1,4 @@
-using HarmonyLib;
+﻿using HarmonyLib;
 using MegabonkTogether.Services;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -47,7 +47,12 @@ namespace MegabonkTogether.Patches.Interactables
         [HarmonyPatch(nameof(InteractableShrineChallenge.EnemyDied))]
         public static bool EnemyDied_Prefix()
         {
-            if (!synchronizationService.HasNetplaySessionStarted())
+            // Initialized, NOT Started. The first version used HasNetplaySessionStarted and left
+            // 394 exceptions behind on 2026-08-18, all of them during a level transition: the
+            // session state leaves Started while the world is being torn down and rebuilt, so the
+            // guard opened at exactly the moment enemies were being released to the pool. A match
+            // having been found stays true across a transition, which is the window that matters.
+            if (!synchronizationService.HasNetplaySessionInitialized())
             {
                 return true;
             }

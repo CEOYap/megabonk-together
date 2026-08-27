@@ -259,6 +259,15 @@
         /// </summary>
         internal const float BOSS_RING_BAND = 0.35f;
 
+        /// <summary>
+        /// Largest absolute world coordinate treated as a real place on the map.
+        ///
+        /// <para>A sanity bound, not a tuning knob. The 2026-08-18 run failed every miniboss
+        /// placement against anchors like <c>(0, -1376975, 0)</c> — a peer avatar free-falling
+        /// because its interpolator had no snapshot yet. Any real map sits far inside this.</para>
+        /// </summary>
+        internal const float MAX_PLAUSIBLE_WORLD_COORDINATE = 100000f;
+
         /// <summary>Placement attempts for the re-rolled ring. Matches what the game itself passes.</summary>
         internal const int BOSS_RING_ATTEMPTS = 50;
 

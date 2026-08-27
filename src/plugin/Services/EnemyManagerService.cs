@@ -566,7 +566,24 @@ namespace MegabonkTogether.Services
                     continue;
                 }
 
-                bossSpawnCandidates.Add(netPlayer.transform.position);
+                // Prefer the replicated position over the avatar transform. The 2026-08-18 run
+                // failed every placement with targets like (0, -1376975, 0): the NetPlayer's
+                // transform can sit at the origin and free-fall when its interpolator has not
+                // received a snapshot yet, and no amount of ring tuning finds ground a million
+                // units below the map. `model.Position` is what the peer actually reported.
+                var anchor = model.Position != null
+                    ? Quantizer.Dequantize(model.Position)
+                    : netPlayer.transform.position;
+
+                if (!IsPlausibleSpawnAnchor(anchor))
+                {
+                    logger.LogDebug(
+                        $"OB-11: skipping peer {netPlayer.ConnectionId} as a spawn anchor; " +
+                        $"position {anchor} is not on the map.");
+                    continue;
+                }
+
+                bossSpawnCandidates.Add(anchor);
             }
 
             if (bossSpawnCandidates.Count == 0)
@@ -658,6 +675,29 @@ namespace MegabonkTogether.Services
         /// failing. It is (69.6978, 69.6978, 69.6978) from the cctor — a specific sentinel, so an
         /// exact-ish match cannot fire by accident.
         /// </summary>
+        /// <summary>
+        /// OB-11. Rejects an anchor that cannot be a real place on the map.
+        ///
+        /// <para>Added after every placement in the 2026-08-18 run failed against targets of the
+        /// shape (0, -1376975, 0). A peer whose avatar is mid-fall, unspawned or mid-transition is
+        /// not somewhere a miniboss can be put, and spending 100 raycasts discovering that is worse
+        /// than skipping it — the fallback to the host's own position is the honest answer.</para>
+        /// </summary>
+        private static bool IsPlausibleSpawnAnchor(Vector3 candidate)
+        {
+            if (float.IsNaN(candidate.x) || float.IsNaN(candidate.y) || float.IsNaN(candidate.z)
+                || float.IsInfinity(candidate.x) || float.IsInfinity(candidate.y) || float.IsInfinity(candidate.z))
+            {
+                return false;
+            }
+
+            // Generous: any real Megabonk map sits far inside this, and the observed failures were
+            // six orders of magnitude outside it.
+            return Mathf.Abs(candidate.x) < Tunables.MAX_PLAUSIBLE_WORLD_COORDINATE
+                && Mathf.Abs(candidate.y) < Tunables.MAX_PLAUSIBLE_WORLD_COORDINATE
+                && Mathf.Abs(candidate.z) < Tunables.MAX_PLAUSIBLE_WORLD_COORDINATE;
+        }
+
         private static bool IsInvalid(Vector3 candidate)
         {
             return (candidate - SpawnPositions.INVALID_POS).sqrMagnitude < 0.01f;
