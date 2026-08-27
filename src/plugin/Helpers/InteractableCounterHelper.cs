@@ -62,14 +62,31 @@ namespace MegabonkTogether.Helpers
                 return new Snapshot(null, null);
             }
 
-            var interactable = interactableObj.GetComponentInChildren<BaseInteractable>();
+            var interactable = ResolveInteractable(interactableObj);
             if (interactable == null)
             {
                 return new Snapshot(null, null);
             }
 
             var name = interactable.GetDebugName();
-            return new Snapshot(name, ReadUsedCount(name));
+            var used = ReadUsedCount(name);
+
+            // OB-12. The challenge-shrine row is still out of sync after the counter fix and the
+            // reason is not visible offline: InteractablesStatus.Init subscribes to
+            // DetectInteractables, BaseInteractable, ChargeShrine, InteractableMicrowave and
+            // InteractableShadyGuy -- nothing challenge-specific -- so a challenge shrine counts
+            // through the same OnInteractableUse path this helper already calls, and should have
+            // worked. Naming the key and its value is what separates "wrong key", "key absent" and
+            // "counted but by something else" on the next run. Debug level: one line per replicated
+            // interaction, not per frame.
+            // Logs the GameObject's name rather than the component's type: GetType() on an
+            // Il2CppInterop proxy reports the managed wrapper, which is the trap this branch has
+            // paid for more than once, whereas the object name is what it is.
+            Plugin.Log.LogDebug(
+                $"OB-12: snapshot '{name}' from object '{interactableObj.name}' reads " +
+                $"{(used.HasValue ? used.Value.ToString() : "<no key>")}.");
+
+            return new Snapshot(name, used);
         }
 
         /// <summary>
@@ -113,7 +130,25 @@ namespace MegabonkTogether.Helpers
                 return;
             }
 
+            Plugin.Log.LogDebug($"OB-12: counting '{before.Name}' -- the dispatch did not.");
             CountAsUsed(interactableObj);
+        }
+
+        /// <summary>
+        /// Resolves the interactable the same way the dispatch does: the component on the object
+        /// itself first, children only as a fallback.
+        ///
+        /// <para><b>Why this matters.</b> <c>OnReceivedInteractableUsed</c> reaches for its types
+        /// with <c>GetComponent&lt;T&gt;()</c>, while this helper used
+        /// <c>GetComponentInChildren&lt;BaseInteractable&gt;()</c>. On a prefab whose first
+        /// <c>BaseInteractable</c> in the hierarchy is not the one the dispatch acts on, the two
+        /// disagree — the snapshot would then watch one row while the count landed on another, which
+        /// reads exactly like an interactable that is never counted.</para>
+        /// </summary>
+        private static BaseInteractable ResolveInteractable(GameObject interactableObj)
+        {
+            var onSelf = interactableObj.GetComponent<BaseInteractable>();
+            return onSelf != null ? onSelf : interactableObj.GetComponentInChildren<BaseInteractable>();
         }
 
         /// <summary>
