@@ -467,7 +467,7 @@ same latent bug.
 ---
 
 <a name="ob-8"></a>
-## OB-8 — The Desert final boss does not move for clients — LIKELY, one decompile settles it
+## OB-8 — The Desert final boss does not move for clients — **decompile done 2026-08-17**, cause narrowed, no fix
 
 **Reported:** alongside OB-7, the Desert final boss was completely static on the non-host peer.
 Forest's final boss behaved correctly.
@@ -488,7 +488,13 @@ netplay id and broadcast `SpawnedEnemy` — then the boss is never registered in
 `EnemyManagerService`, never appears in `GetAllEnemiesDeltaAndUpdate`, and never receives a position
 update on the client. A boss that is present but frozen is exactly what that produces.
 
-**The one lookup that decides it.** Decompile `FinalFightController.SpawnBoss` and check whether it
+> **Answered 2026-08-17 while diagnosing [OB-16](#ob-16).** `FinalFightController.SpawnBoss`
+> (VA `0x180493EC0`) **does** route through `EnemyManager.SpawnBoss`, which calls
+> `EnemyManager.SpawnEnemy`. That is the branch this entry predicted would mean the cause is the
+> client's `SpawnBoss_Prefix` returning false. **Re-read the section below on that basis** — the
+> lookup it asks for is no longer outstanding, and no fix has been written.
+
+**The one lookup that decided it.** Decompile `FinalFightController.SpawnBoss` and check whether it
 calls `EnemyManager.SpawnEnemy` or instantiates a prefab directly:
 
 ```bash
