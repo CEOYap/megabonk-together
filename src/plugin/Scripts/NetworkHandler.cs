@@ -315,6 +315,7 @@ namespace MegabonkTogether.Scripts
             Services.HostGuardDiagnostics.Reset();
             Services.PickupLifetimeDiagnostics.Reset();
             playerStatsSyncService?.Reset();
+            Patches.WeaponInventoryPatches.ResetForeignInventoryReport();
             Services.UnityExceptionDiagnostics.RemindWhereTracesAre();
             Services.UnityExceptionDiagnostics.Reset();
 
