@@ -1,4 +1,4 @@
-using BepInEx.Logging;
+﻿using BepInEx.Logging;
 using MegabonkTogether.Common.Messages;
 using MegabonkTogether.Common.Messages.GameNetworkMessages;
 using MegabonkTogether.Extensions;
@@ -85,6 +85,9 @@ namespace MegabonkTogether.Services
                     break;
                 case EnemyMaxHpScaled enemyMaxHpScaled:
                     EventManager.OnEnemyMaxHpScaled(enemyMaxHpScaled);
+                    break;
+                case PlayerStatsChanged playerStatsChanged:
+                    EventManager.OnPlayerStatsChanged(playerStatsChanged);
                     break;
                 case AbstractSpawnedProjectile spawnedProjectile:
                     EventManager.OnSpawnedProjectile(spawnedProjectile);
@@ -291,6 +294,11 @@ namespace MegabonkTogether.Services
                 case WeaponAdded weaponAdded:
                     EventManager.OnWeaponAdded(weaponAdded);
                     Transport.SendToAllClientsExcept(weaponAdded.OwnerId, weaponAdded);
+                    break;
+                // OB-1. Applied here and relayed on, so a third peer learns this player's stats too.
+                case PlayerStatsChanged playerStatsChanged:
+                    EventManager.OnPlayerStatsChanged(playerStatsChanged);
+                    Transport.SendToAllClientsExcept(playerStatsChanged.OwnerId, playerStatsChanged);
                     break;
                 case InteractableUsed interactableUsed:
                     EventManager.OnInteractableUsed(interactableUsed);

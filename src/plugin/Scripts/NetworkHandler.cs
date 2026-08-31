@@ -45,6 +45,15 @@ namespace MegabonkTogether.Scripts
         private ISynchronizationService synchronizationService;
         private IWebsocketClientService websocketClientService;
         private IPlayerManagerService playerManagerService;
+        private IPlayerStatsSyncService playerStatsSyncService;
+
+        /// <summary>
+        /// OB-1. Globals move on level-up and item pickup, so 2 Hz is far faster than they change
+        /// and costs five stat reads a second. Polled rather than hooked because the game raises
+        /// stat changes through several paths and missing one is this bug's existing failure mode.
+        /// </summary>
+        private const float statsCheckInterval = 0.5f;
+        private float statsCheckAccumulator = 0f;
 
         public bool? IsConnectedToMatchMaker => isConnectedToMatchMaker;
         public string MatchMakerFailureMessage => matchMakerFailureMessage;
@@ -59,6 +68,11 @@ namespace MegabonkTogether.Scripts
         {
             websocketClientService = Plugin.Services.GetRequiredService<IWebsocketClientService>();
             playerManagerService = Plugin.Services.GetRequiredService<IPlayerManagerService>();
+
+            // OB-1. Subscribed here rather than in the service's constructor: DI builds services
+            // lazily, so a service nobody has resolved yet would never receive anything.
+            playerStatsSyncService = Plugin.Services.GetRequiredService<IPlayerStatsSyncService>();
+            EventManager.SubscribePlayerStatsChangedEvents(playerStatsSyncService.ApplyRemote);
 
             EventManager.SubscribeGameStartedEvents(OnGameStarted);
             EventManager.SubscribePortalOpenedEvents(OnPortalOpened);
@@ -128,6 +142,14 @@ namespace MegabonkTogether.Scripts
                 if (GameManager.Instance == null || GameManager.Instance.player == null || GameManager.Instance.player.inventory == null) return;
 
                 Services.AllocationDiagnostics.Sample(ModConfig.LogAllocationRate.Value);
+
+                // OB-1.
+                statsCheckAccumulator += Time.deltaTime;
+                if (statsCheckAccumulator >= statsCheckInterval)
+                {
+                    statsCheckAccumulator = 0f;
+                    playerStatsSyncService?.SendIfChanged();
+                }
 
                 // OB-13. Edge-triggered, so a well-behaved window costs two lines for the whole
                 // window rather than one per frame or per second. It has to be sampled every frame
@@ -292,6 +314,7 @@ namespace MegabonkTogether.Scripts
             Services.TrackerAttributionDiagnostics.Reset();
             Services.HostGuardDiagnostics.Reset();
             Services.PickupLifetimeDiagnostics.Reset();
+            playerStatsSyncService?.Reset();
             Services.UnityExceptionDiagnostics.RemindWhereTracesAre();
             Services.UnityExceptionDiagnostics.Reset();
 

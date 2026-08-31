@@ -270,6 +270,7 @@ namespace MegabonkTogether
                 services.AddSingleton<IStateBroadcastService, StateBroadcastService>();
                 services.AddSingleton<IPlayerManagerService, PlayerManagerService>();
                 services.AddSingleton<IEnemyManagerService, EnemyManagerService>();
+                services.AddSingleton<IPlayerStatsSyncService, PlayerStatsSyncService>();
                 services.AddSingleton<IProjectileManagerService, ProjectileManagerService>();
                 services.AddSingleton<ISynchronizationService, SynchronizationService>();
                 services.AddSingleton<IPickupManagerService, PickupManagerService>();

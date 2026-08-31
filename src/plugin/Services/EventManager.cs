@@ -12,6 +12,7 @@ namespace MegabonkTogether.Services
         private static event Action<SpawnedObject> SpawnedObjectsEvents;
         private static event Action<SpawnedEnemy> SpawnedEnemyEvents;
         private static event Action<EnemyMaxHpScaled> EnemyMaxHpScaledEvents;
+        private static event Action<PlayerStatsChanged> PlayerStatsChangedEvents;
         private static event Action<PlayerUpdate> PlayerUpdatesEvents;
         private static event Action<SelectedCharacter> SelectedCharacterEvents;
         private static event Action<IEnumerable<EnemyModel>> EnemiesUpdateEvents;
@@ -127,6 +128,20 @@ namespace MegabonkTogether.Services
         public static void SubscribeEnemyMaxHpScaledEvents(Action<EnemyMaxHpScaled> action)
         {
             EnemyMaxHpScaledEvents += action;
+        }
+
+        /// <summary>OB-1. A peer's global stat block changed.</summary>
+        public static void OnPlayerStatsChanged(PlayerStatsChanged playerStatsChanged)
+        {
+            MainThreadDispatcher.Enqueue(() =>
+            {
+                PlayerStatsChangedEvents?.Invoke(playerStatsChanged);
+            });
+        }
+
+        public static void SubscribePlayerStatsChangedEvents(Action<PlayerStatsChanged> action)
+        {
+            PlayerStatsChangedEvents += action;
         }
 
         public static void SubscribeSelectedCharacterEvents(Action<SelectedCharacter> action)
