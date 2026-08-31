@@ -18,7 +18,7 @@ rendezvous path. OB-13 was reported on **2026-08-16** and has no capture attache
 ---
 
 <a name="ob-1"></a>
-## OB-1 — Aegis shield shows a different orbit count on every peer — CONFIRMED
+## OB-1 — Remote players' attacks render with the *observer's* stats — CONFIRMED, scope widened 2026-08-18
 
 **Reported:** the number of shield projectiles around a player differs between host and client.
 
@@ -43,6 +43,51 @@ Everyone therefore sees their own shield correctly and everyone else's as a perm
 lines below, and every `EWeapon` in that switch has its `FixedUpdate` suppressed the same way. Any
 constant attack whose visual depends on mutable state has this bug; Aegis is just the one where the
 count is countable by eye.
+
+### Scope widened 2026-08-18 — it is not only the shield count
+
+**Reported: aura *size* is wrong too, and anything tied to "projectile count" or "size".** That is
+the same defect and the decompile explains why — every `WeaponUtility` stat accessor has the same
+shape:
+
+```
+GetAttackQuantity(weaponBase)       VA 0x1804346F0
+  = weaponStats[EStat.Projectiles(16)]  + PlayerStats.GetStat(16)
+
+GetAttackSizeMultiplier(weaponBase) VA 0x1804347A0
+  = weaponStats[EStat.SizeMultiplier(9)] + PlayerStats.GetStat(9)
+```
+
+**`PlayerStats.GetStat` is static and takes no player.** It reads whoever's machine is asking. So
+any value of the form *per-weapon stat + global stat* is computed with the **observer's** global
+stat when rendering somebody else's attack.
+
+**The general statement, which is what should have been written the first time:**
+
+> A remote player's attack is drawn using their weapon and **your** player stats. Every visual
+> derived from a `PlayerStats` global is wrong by the difference between your stat and theirs.
+
+That covers the shield count, aura size, projectile count and projectile size at once, and predicts
+the rest: anything reading `SizeMultiplier`, `Projectiles`, `DurationMultiplier`,
+`ProjectileSpeedMultiplier` or `AttackSpeed` on a remote attack has it.
+
+**It also explains why it looks fine at first.** Both players start with identical globals, so the
+numbers agree until somebody takes an upgrade — which is exactly the trap noted below about a
+playtest plausibly passing this.
+
+### What the fix has to cover, now that the scope is known
+
+The hardcoded `currentAmount = 2` is one symptom, not the bug. Replicating a shield count alone
+would fix the countable case and leave aura size wrong.
+
+**What has to be replicated is the owner's relevant `PlayerStats` globals**, so a remote attack can
+be built from *their* numbers. A per-visual message per stat does not scale; a small block of the
+owner's globals, sent when they change, does — they change only on level-up and item pickup, which
+is rare.
+
+**Still unchosen, and now the choice is different from what this entry originally proposed.** The
+"new union tag carrying `ownerId` + `eWeapon` + `currentAmount`" below is the narrow version and is
+no longer sufficient on its own.
 
 **Game-side facts** (buildid 21750826, from `dump.cs` — not decompiled bodies):
 
@@ -75,10 +120,9 @@ Worse, it would look correct in testing: while both players have the base Projec
 derived number matches, and it only diverges once somebody takes the upgrade. A playtest would
 plausibly pass it.
 
-**So OB-1 needs replication.** A new append-only union tag carrying `ownerId` + `eWeapon` +
-`currentAmount`, at a low rate — it changes rarely. Replicating the owner's Projectiles stat instead
-would also work and is not obviously cheaper, since the count still has to be pushed on every
-`A_Used` / `A_Regen` to stay live.
+**So OB-1 needs replication.** ~~A new append-only union tag carrying `ownerId` + `eWeapon` +
+`currentAmount`~~ — see the scope note above: that is the narrow fix and covers only the shield
+count. Replicating the owner's stat block is the one that also fixes aura and projectile size.
 
 > **Two Ghidra field names in this chain are off by one slot**, in the same direction, and both were
 > caught against `dump.cs` offsets rather than trusted. `GetMaxShields` prints `.shieldUseSfx`
