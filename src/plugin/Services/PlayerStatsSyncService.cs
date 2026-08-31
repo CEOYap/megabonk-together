@@ -1,4 +1,4 @@
-using Assets.Scripts.Inventory.Stats;
+﻿using Assets.Scripts.Inventory.Stats;
 using Assets.Scripts.Menu.Shop;
 using MegabonkTogether.Common.Messages;
 using MegabonkTogether.Common.Messages.GameNetworkMessages;
@@ -51,13 +51,19 @@ namespace MegabonkTogether.Services
         ///
         /// <para><b>Projectiles and SizeMultiplier are measured</b> — they are what
         /// <c>GetAttackQuantity</c> and <c>GetAttackSizeMultiplier</c> read, decompiled at
-        /// VA <c>0x1804346F0</c> and <c>0x1804347A0</c>. The rest are predicted from the same shape
-        /// and cost nothing to carry; a stat that turns out not to matter is a few bytes a run.</para>
+        /// VA <c>0x1804346F0</c> and <c>0x1804347A0</c>, joined by <c>ProjectileBounces</c> at
+        /// <c>0x180435930</c> for OB-18. The rest are predicted from the same shape and cost nothing
+        /// to carry; a stat that turns out not to matter is a few bytes a run.</para>
+        ///
+        /// <para><b>This list is meant to grow.</b> The message carries a keyed dictionary rather
+        /// than named fields precisely so a stat can be added without a protocol change — adding one
+        /// here is the whole edit.</para>
         /// </summary>
         internal static readonly int[] TrackedStats =
         [
             (int)EStat.Projectiles,               // 16 — measured
             (int)EStat.SizeMultiplier,            // 9  — measured
+            (int)EStat.ProjectileBounces,         // 45 — measured (OB-18)
             (int)EStat.DurationMultiplier,        // 10
             (int)EStat.ProjectileSpeedMultiplier, // 11
             (int)EStat.AttackSpeed,               // 15

@@ -1,4 +1,4 @@
-using Assets.Scripts.Inventory.Stats;
+﻿using Assets.Scripts.Inventory.Stats;
 using Assets.Scripts.Menu.Shop;
 using Assets.Scripts.Inventory__Items__Pickups.Weapons;
 using HarmonyLib;
@@ -96,6 +96,39 @@ namespace MegabonkTogether.Patches.Weapons
             {
                 __result = corrected;
             }
+        }
+
+        /// <summary>
+        /// OB-18. Same correction as the two above: <c>GetProjectileBounces</c> (VA
+        /// <c>0x180435930</c>) is <c>weaponStats[ProjectileBounces] + PlayerStats.GetStat(45)</c>,
+        /// so a remote player's projectile bounced the observer's number of times.
+        ///
+        /// <para><b>This does not address OB-18 as reported.</b> That report is the stat panel
+        /// showing the <i>local</i> player's own bounces as zero, which nothing here touches — the
+        /// correction only ever applies to a weapon owned by somebody else. It is included because
+        /// bounces is demonstrably in the same class as quantity and size, and leaving one member of
+        /// a class uncorrected is how the next report gets filed.</para>
+        /// </summary>
+        [HarmonyPostfix]
+        [HarmonyPatch(nameof(WeaponUtility.GetProjectileBounces))]
+        public static void GetProjectileBounces_Postfix(WeaponBase weaponBase, ref int __result)
+        {
+            var owner = ResolveRemoteOwner(weaponBase);
+            if (owner == null)
+            {
+                return;
+            }
+
+            var ownerStat = playerStatsSyncService.GetRemoteStat(owner.Value, (int)EStat.ProjectileBounces);
+            if (ownerStat == null)
+            {
+                return;
+            }
+
+            var corrected = __result - (int)PlayerStats.GetStat(EStat.ProjectileBounces) + (int)ownerStat.Value;
+
+            // Zero bounces is a real, common value; negative is not.
+            __result = corrected < 0 ? 0 : corrected;
         }
 
         /// <summary>
