@@ -73,6 +73,14 @@ namespace MegabonkTogether.Patches.Projectiles
             if (isServer)
             {
                 var owner = playerManagerService.GetNetPlayerByWeapon(__instance.weaponBase);
+
+                // OB-14. A null lookup leaves the hit attributed to whoever the tracker already
+                // had -- on the host, the host -- which is how a teammate's weapon ends up in the
+                // host's damage panel. The existing anomaly counters cannot see this: a null sets
+                // nothing, so it is not a pairing anomaly, and the 2026-08-17 host log reported
+                // zero anomalies while the panel was demonstrably wrong.
+                TrackerAttributionDiagnostics.RecordWeaponOwnerLookup(owner != null);
+
                 if (owner != null)
                 {
                     trackerService.SetCurrentPlayerId(owner.ConnectionId);

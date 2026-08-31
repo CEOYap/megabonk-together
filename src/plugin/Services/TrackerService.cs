@@ -67,6 +67,51 @@ namespace MegabonkTogether.Services
 
         private static int crossThreadCalls;
 
+        /// <summary>
+        /// OB-14. Hits whose weapon could not be resolved to any spawned peer.
+        ///
+        /// <para><b>Why this is not covered by the counters above.</b> They count set/unset
+        /// <i>pairing</i> anomalies. A lookup that returns null <b>sets nothing at all</b>, so it is
+        /// not an anomaly by that definition and is invisible to every one of them — the 2026-08-17
+        /// host log reported zero anomalies while the damage panel was demonstrably crediting the
+        /// host with a teammate's weapons. The diagnostic was measuring the wrong half.</para>
+        ///
+        /// <para><b>Split deliberately.</b> A hit on a weapon nobody owns and a hit correctly
+        /// attributed are both "no id set", and only the first is a defect. Counting them together
+        /// would reproduce the same blindness one level up.</para>
+        /// </summary>
+        private static int unresolvedWeaponHits;
+
+        /// <summary>OB-14. Hits where the weapon resolved to a peer, for the ratio.</summary>
+        private static int resolvedWeaponHits;
+
+        /// <summary>
+        /// OB-14. Called from <c>ProjectileBasePatches.HitEnemy_Prefix</c> on the host, once per
+        /// hit, saying whether <c>GetNetPlayerByWeapon</c> found an owner.
+        ///
+        /// <para><b>The ratio is the answer, not the count.</b> "The lookup never matches" and "it
+        /// matches for most weapons and fails for a class of them" want different fixes: the first
+        /// points at the lookup itself, the second at a parent/child mismatch of the kind
+        /// <c>RocketPatches</c> already documents, where the fix is to key on the <c>ownerId</c>
+        /// written into <c>DynamicData</c> at spawn.</para>
+        ///
+        /// <para><b>A null lookup is not automatically wrong.</b> The local player's own weapon
+        /// resolves to no <i>net</i> player, and leaving the tracker alone is correct there. What
+        /// the ratio shows is whether the unresolved share is plausibly "the host's own shots" or
+        /// far larger than that.</para>
+        /// </summary>
+        internal static void RecordWeaponOwnerLookup(bool resolved)
+        {
+            if (resolved)
+            {
+                Interlocked.Increment(ref resolvedWeaponHits);
+            }
+            else
+            {
+                Interlocked.Increment(ref unresolvedWeaponHits);
+            }
+        }
+
         private static string lastOverwrite = "none";
 
         internal static void RecordSet(uint? previous, uint incoming)
@@ -151,8 +196,11 @@ namespace MegabonkTogether.Services
             var strayUnsets = Interlocked.Exchange(ref unsetWhileClear, 0);
             var unbalanced = Interlocked.Exchange(ref unbalancedUnset, 0);
             var crossThread = Interlocked.Exchange(ref crossThreadCalls, 0);
+            var unresolved = Interlocked.Exchange(ref unresolvedWeaponHits, 0);
+            var resolved = Interlocked.Exchange(ref resolvedWeaponHits, 0);
 
-            if ((overwrites | redundant | strayUnsets | unbalanced | crossThread) == 0)
+            if ((overwrites | redundant | strayUnsets | unbalanced | crossThread) == 0
+                && unresolved == 0)
             {
                 return; // nothing to say; do not spam a healthy session
             }
@@ -163,9 +211,13 @@ namespace MegabonkTogether.Services
                 $"overwrite-while-set: {overwrites} (last {lastOverwrite}), " +
                 $"unset-while-clear: {strayUnsets}, " +
                 $"redundant-set: {redundant}, " +
-                $"cross-thread: {crossThread}. " +
+                $"cross-thread: {crossThread}, " +
+                $"UNRESOLVED-WEAPON: {unresolved} of {unresolved + resolved} hit(s). " +
                 "Only UNBALANCED-UNSET and overwrite-while-set misattribute credit. " +
-                "See P1-5 in docs/netplay/01-critical-fixes.md.");
+                "UNRESOLVED-WEAPON is OB-14: the hit stayed attributed to whoever the tracker " +
+                "already had, which on the host is the host. Some are expected -- the host's own " +
+                "weapons resolve to no net player -- so read the share, not the count. " +
+                "See P1-5 in docs/netplay/01-critical-fixes.md and OB-14 in 08-observed-bugs.md.");
         }
 
         /// <summary>Clears counters and the throttle so each session starts from zero.</summary>
@@ -173,6 +225,8 @@ namespace MegabonkTogether.Services
         {
             Interlocked.Exchange(ref lastReportTicks, 0);
             Interlocked.Exchange(ref firstThreadId, 0);
+            Interlocked.Exchange(ref unresolvedWeaponHits, 0);
+            Interlocked.Exchange(ref resolvedWeaponHits, 0);
             Interlocked.Exchange(ref overwriteWhileSet, 0);
             Interlocked.Exchange(ref redundantSet, 0);
             Interlocked.Exchange(ref unsetWhileClear, 0);
