@@ -59,6 +59,10 @@ namespace MegabonkTogether.Services
                 return 0;
             }
 
+            // OB-5: remembers the id even after the pickup is consumed, so a later "not found" can
+            // say whether this peer ever knew it.
+            PickupLifetimeDiagnostics.RecordRegistered(newId);
+
             return newId;
         }
 
@@ -71,6 +75,11 @@ namespace MegabonkTogether.Services
             {
                 Plugin.Log.LogWarning($"Attempted to add an pickup that already exists. PickupId: {pickupId}");
             }
+
+            // OB-5. Recorded even when TryAdd loses: the id IS known to this peer either way, and
+            // the question the diagnostic answers is "was it ever known", not "did we add it twice".
+            // This is the client-side path, which is where the 184 failures were seen.
+            PickupLifetimeDiagnostics.RecordRegistered(pickupId);
         }
 
         public KeyValuePair<uint, Pickup> GetPickupByReference(Pickup pickup)

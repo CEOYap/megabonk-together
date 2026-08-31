@@ -291,6 +291,7 @@ namespace MegabonkTogether.Scripts
             Patches.Unity.TransformFallbackDiagnostics.Reset();
             Services.TrackerAttributionDiagnostics.Reset();
             Services.HostGuardDiagnostics.Reset();
+            Services.PickupLifetimeDiagnostics.Reset();
             Services.UnityExceptionDiagnostics.RemindWhereTracesAre();
             Services.UnityExceptionDiagnostics.Reset();
 

@@ -196,7 +196,7 @@ reported symptom were the same gap seen from two ends.
 ---
 
 <a name="ob-3"></a>
-## OB-3 — "Waiting for other player(s) choices…" reappears every ~20 s — CONFIRMED
+## OB-3 — "Waiting for other player(s) choices…" reappears every ~20 s — **not reproducing (2026-08-18)**
 
 **Reported:** the waiting message appeared repeatedly for no obvious reason.
 
@@ -270,7 +270,7 @@ exact rather than heuristic.
 ---
 
 <a name="ob-5"></a>
-## OB-5 — A client's magnet pull often does nothing — CONFIRMED, cause narrowed
+## OB-5 — A client's magnet pull often does nothing — **symptom gone (2026-08-18)**, residual drops now instrumented
 
 **Reported:** power-up magnets picked up by clients sometimes do not work at all.
 
@@ -323,6 +323,39 @@ silently rather than warn.
 
 **Do not fix by making the message unreliable or by suppressing the warning.** The warning is the
 only visibility this path has.
+
+### 2026-08-18 — the symptom is gone, and the residual is now classified rather than counted
+
+**The reporter says the magnet pull works**, with occasional drops still logged. So this stopped
+being "a client's pull often does nothing" and became "some instructions still name ids this peer
+cannot resolve". Those are different bugs and the second may not be one at all.
+
+`Services/PickupLifetimeDiagnostics` implements this entry's own recommended next step: a set of
+every id ever registered this session, consulted in each of the four "not found" branches. Each miss
+is now classified and reported on a throttle:
+
+```
+[pickup] 12 unresolved pickup instruction(s) in the last ~10s —
+  NEVER-REGISTERED 0 [none],
+  registered-then-removed 12 [OnReceivedPickupFollowingPlayer x12]. …
+```
+
+**Read it as follows, and the two answers want opposite work:**
+
+| Reading | Meaning | Action |
+|---|---|---|
+| **NEVER-REGISTERED > 0** | the spawn never reached this peer | a real replication gap — chase it |
+| **registered-then-removed only** | the pickup was consumed before the instruction landed | **expected**; the fix is to drop the warning to debug, not to change the netcode |
+
+**The second is the likely answer now that the pull works**, and if the capture confirms it this
+entry closes as "working as intended, warning too loud" rather than as a defect.
+
+The four sites are reported separately because the original capture's split was itself a clue: 184
+in `OnReceivedPickupFollowingPlayer` against 14 in `OnReceivedPickupApplied`.
+
+**Not behind a config flag**, deliberately: two counter increments and a set lookup on a path that
+was already building a warning string. Gating it would mean the next capture arrives without it,
+which is how this entry stayed open for five sessions.
 
 ---
 
@@ -387,7 +420,7 @@ the shrine was reported.
 ---
 
 <a name="ob-7"></a>
-## OB-7 — Desert final-boss pylons do not exist for clients — CONFIRMED, cause exact
+## OB-7 — Desert final-boss pylons do not exist for clients — **FIXED, confirmed in play (2026-08-18)**
 
 **Reported:** on the Desert final boss the pylons do not appear or work for non-host clients. **The
 Forest final boss is fine.** That contrast is the whole diagnosis.
@@ -467,7 +500,7 @@ same latent bug.
 ---
 
 <a name="ob-8"></a>
-## OB-8 — The Desert final boss does not move for clients — **decompile done 2026-08-17**, cause narrowed, no fix
+## OB-8 — The Desert final boss does not move for clients — **FIXED, confirmed in play (2026-08-18)**
 
 **Reported:** alongside OB-7, the Desert final boss was completely static on the non-host peer.
 Forest's final boss behaved correctly.

@@ -2457,7 +2457,7 @@ namespace MegabonkTogether.Services
             (var pickupId, var pickupSpawned) = pickupManagerService.GetPickupByReference(instance);
             if (pickupSpawned == null)
             {
-                logger.LogWarning($"Pickup {pickupId} not found in PickupManagerService when processing OnPickupApplied. Deleting");
+                PickupLifetimeDiagnostics.RecordMiss("OnPickupApplied", pickupId);
                 DynamicData.For(instance).Data.Clear();
                 PickupManager.Instance.DespawnPickup(instance);
 
@@ -2489,7 +2489,7 @@ namespace MegabonkTogether.Services
             var pickup = pickupManagerService.GetSpawnedPickupById(applied.PickupId);
             if (pickup == null)
             {
-                logger.LogWarning($"Pickup {applied.PickupId} for owner {applied.OwnerId} not found in PickupManagerService when processing OnReceivedPickupApplied.");
+                PickupLifetimeDiagnostics.RecordMiss("OnReceivedPickupApplied", applied.PickupId);
                 return;
             }
 
@@ -2576,7 +2576,7 @@ namespace MegabonkTogether.Services
             var pickup = pickupManagerService.GetSpawnedPickupById(player.PickupId);
             if (pickup == null)
             {
-                logger.LogWarning($"Pickup {player.PickupId} not found in PickupManagerService when processing OnReceivedPickupFollowingPlayer by player {player.PlayerId}.");
+                PickupLifetimeDiagnostics.RecordMiss("OnReceivedPickupFollowingPlayer", player.PickupId);
                 return;
             }
 
@@ -2635,7 +2635,7 @@ namespace MegabonkTogether.Services
             var pickup = pickupManagerService.GetSpawnedPickupById(pickupId);
             if (pickup == null)
             {
-                logger.LogWarning($"Pickup {pickupId} not found in PickupManagerService when processing HandleWantToStartFollowingPickup.");
+                PickupLifetimeDiagnostics.RecordMiss("HandleWantToStartFollowingPickup", pickupId);
                 return;
             }
 
