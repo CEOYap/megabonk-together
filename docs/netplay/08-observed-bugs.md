@@ -360,7 +360,7 @@ which is how this entry stayed open for five sessions.
 ---
 
 <a name="ob-6"></a>
-## OB-6 — A shrine's charge *value* is never transmitted — CONFIRMED, cause exact
+## OB-6 — A shrine's charge *value* is never transmitted — CONFIRMED, **WON'T FIX (2026-08-18)**
 
 **Reported:** shrine counters are not in sync between all players.
 
@@ -373,6 +373,19 @@ which is how this entry stayed open for five sessions.
 >
 > Everything below stands as an analysis of the charge value. What is no longer claimed is that it is
 > what players were seeing in the counter list.
+
+> **Closed as won't-fix, 2026-08-18, by the project owner.** The defect below is real and the
+> analysis stands — the charge value genuinely never crosses the wire. It is closed because **it has
+> never been observed in play**: it was found by reading the protocol, not by anyone noticing a
+> shrine behave oddly, across every session this project has run. The cost of fixing it is a new
+> union tag or a completion-event replication; the observed benefit is zero.
+>
+> **Reopen it if this is ever seen:** a charge shrine completing and paying out for one player
+> noticeably before the other's bar fills. That is the symptom the analysis predicts, and it is the
+> only thing that would make this worth the wire change.
+>
+> The `ChargeShrine` rate lookup below is therefore **not** outstanding work. Do not spend a
+> decompile on it unless the symptom above shows up.
 
 **Cause, exactly: the charge value is never transmitted.** The two messages that exist carry
 identity only —
