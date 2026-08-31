@@ -1690,6 +1690,77 @@ transition where singleplayer would have had an empty dictionary. The guard is c
 
 ---
 
+<a name="ob-18"></a>
+## OB-18 — "Projectile Bounces" stays 0 for the whole run — UNVERIFIED
+
+**Reported 2026-08-18, with a screenshot.** The stat panel reads `Projectile Bounces 0` all run.
+Same panel shows `Projectile Count 1`, `Size 1.0x`, `Duration 1.0x` — those are the base values, and
+the run was level 6 with several items.
+
+### First, whether this is a bug at all
+
+**0 is the correct value for a player with no bounce source.** Nothing in the screenshot shows a
+bounce-granting item, so a panel reading 0 may simply be reporting the truth.
+
+**The check that settles it, and it needs no second machine:** take a bounce item in
+**singleplayer** and watch the row.
+
+| Singleplayer | Meaning |
+|---|---|
+| rises | netplay-specific — this entry is real, read on |
+| stays 0 | the game's own behaviour, or the item does not grant what it appears to; **not ours** |
+
+**Do not write a fix before that check.** This is the same trap [OB-6](#ob-6) sat in for weeks: a
+protocol-level analysis of something nobody had confirmed was visible.
+
+### The accessor is the same shape as OB-1's
+
+```
+GetProjectileBounces(weaponBase)  VA 0x180435930
+  = weaponStats[EStat.ProjectileBounces(45)] + PlayerStats.GetStat(45)
+```
+
+Identical to `GetAttackQuantity` and `GetAttackSizeMultiplier` — so bounces is in
+**[OB-1](#ob-1)'s class**, and the stat-block replication added for OB-1 should carry it. It does
+not today: `TrackedStats` in `PlayerStatsSyncService` lists Projectiles, SizeMultiplier,
+DurationMultiplier, ProjectileSpeedMultiplier and AttackSpeed. **Adding `ProjectileBounces` (45) is
+one line** and needs no protocol change, because the message carries a keyed dictionary precisely so
+the tracked set can grow.
+
+**But that fixes a different symptom than the one reported.** OB-1 is about a *remote* player's
+attack drawn with the observer's stats. This report is the panel showing the **local** player's own
+stat, which OB-1's correction never touches. Adding the stat to the block is worth doing anyway and
+would not, on its own, make this row move.
+
+### The one mod-side mechanism that could actually zero it
+
+`Plugin.SavePlayerInventoryActions` **nulls the game's own stat-update handler**:
+
+```csharp
+originalStatUpdateAction = PlayerStatsNew.A_StatUpdate;
+WeaponInventory.A_WeaponAdded = null;
+PlayerStatsNew.A_StatUpdate = null;      // ← the game stops reacting to stat changes
+```
+
+restored in a `finally`. It is used in two places — `NetPlayer` construction and
+`SynchronizationService` — both while building a *remote* player's inventory, so the game does not
+react to the fake inventory being assembled.
+
+**The hazard: it is a global static, and the local player's stat changes are just as suppressed
+during that window.** A stat granted while a remote player's inventory is being built would not be
+reacted to. Whether the derived value is ever recomputed afterwards, or is only computed in that
+handler, is **not established** — and that is what decides whether this mechanism can produce a
+permanent 0.
+
+**Next step if singleplayer says it is ours:** log `PlayerStats.GetStat(45)` alongside the suppression
+window and see whether a bounce pickup lands inside one.
+
+**Not established:** whether the panel reads `GetProjectileBounces` at all, or reads
+`PlayerStats.GetStat(45)` directly. They differ by the per-weapon half, and if the panel takes the
+second path then the weapon's contribution was never in the number to begin with.
+
+---
+
 ## Not in this file
 
 - Client `NullReferenceException` storm — live lead in
