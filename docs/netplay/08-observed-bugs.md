@@ -1761,6 +1761,81 @@ second path then the weapon's contribution was never in the number to begin with
 
 ---
 
+<a name="ob-19"></a>
+## OB-19 — Final-boss weapon return gives a player somebody else's weapon — LIKELY, mechanism identified
+
+**Reported 2026-08-18.** The Desert final boss takes the players' weapons and returns them as its
+phases progress. After a return, **a player gains the visual for a weapon they never owned** — P1 had
+Aura, P2 did not, and after the return P2 had the Aura visual too.
+
+**Only during the final fight**, which is the clue rather than a coincidence: it is the one moment
+weapons are removed and re-added *en masse*, so a latent hole in the add path surfaces there and
+nowhere else.
+
+### The mechanism, from code rather than inference
+
+`FinalFightController.GiveWeaponBack` (VA `0x1804929E0`) restores to **`MyPlayer.Instance`** — the
+local player. That much is correct by construction: each peer restores its own. **Neither
+`TakeWeapon` nor `GiveWeaponBack` is patched or replicated by the mod**, so both simply run on each
+peer.
+
+The hole is in the add path they run through:
+
+```csharp
+// Patches/Inventories/WeaponInventory.cs — AddWeapon_Post
+if (!synchronizationService.HasNetplaySessionStarted()) return;
+if (!Plugin.CAN_SEND_MESSAGES) return;
+synchronizationService.OnWeaponAdded(__instance, weaponData, upgradeOffer);
+```
+
+```csharp
+// SynchronizationService.OnWeaponAdded
+OwnerId = playerManagerService.GetLocalPlayer().ConnectionId,   // ← always the local player
+```
+
+**The postfix fires for *any* `WeaponInventory` and the message is stamped with the local player's
+id regardless of whose inventory `__instance` actually is.** Remote players are not abstract here:
+`NetPlayer.Inventory.weaponInventory` holds real inventories on this machine —
+`GetNetPlayerByWeapon` exists precisely because it does. So an `AddWeapon` on a *remote* player's
+replicated inventory is broadcast as though the local player had gained that weapon, and the
+receiving peer applies it to the wrong player.
+
+**This patch is missing its ownership check**, which is the standing rule in `CLAUDE.md`: session
+guard *and* ownership check. It has the first. `CAN_SEND_MESSAGES` suppresses the echo when applying
+a received message, which is why this does not loop — but it does nothing about *whose* inventory
+was added to.
+
+**It is the third instance of one pattern on this branch.** [OB-2](#ob-2) was remote players'
+`ItemGhost` instances firing on a global event; [OB-15](#ob-15) was a remote challenge shrine's
+handler running on a peer that never populated it. All three are *real game objects belonging to
+another player, living on this machine, reached by a path that assumes "local"*.
+
+### Fix shape
+
+Gate `AddWeapon_Post` on `__instance` being the local player's inventory — compare against
+`GameManager.Instance.player.inventory.weaponInventory`, or reject it when
+`GetAllSpawnedNetPlayers()` holds it, the way `IsRemoteItem` does for OB-2. The second reuses an
+existing shape; the first is cheaper and does not enumerate.
+
+**Do not fix by suppressing the final fight specifically.** The final fight is where it was seen, not
+what causes it — any future path that adds a weapon to a replicated inventory has the same hole.
+
+### Status LIKELY, and what would settle it
+
+The code path is read and the stamp is provably unconditional. What is **not** established is that
+the final fight actually calls `AddWeapon` on a remote player's inventory — that is the step joining
+a real hole to the reported symptom.
+
+**One log line settles it:** in `AddWeapon_Post`, log whether `__instance` is the local player's
+inventory, and play to the final boss. A single "false" during the weapon return confirms the chain.
+
+**Not established:** whether the effect is visual only. The reporter says "likely visual", but the
+message carries `upgradeOffer` and the receiver applies a real weapon, so the wrongly-added weapon
+may also *fire*. Worth watching the damage panel for a source that player never had — which is the
+same reading [OB-14](#ob-14) needs.
+
+---
+
 ## Not in this file
 
 - Client `NullReferenceException` storm — live lead in
