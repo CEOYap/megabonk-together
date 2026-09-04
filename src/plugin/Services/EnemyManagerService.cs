@@ -502,7 +502,7 @@ namespace MegabonkTogether.Services
         // the correction would reproduce the bug on somebody else.
 
         /// <summary>Reused across calls — boss spawns are rare, but this costs nothing to keep.</summary>
-        private readonly List<Vector3> bossSpawnCandidates = [];
+        private readonly List<(uint ConnectionId, Vector3 Anchor)> bossSpawnCandidates = [];
 
         /// <summary>
         /// OB-11: pick a player at random and re-centre a miniboss spawn on them.
@@ -577,17 +577,20 @@ namespace MegabonkTogether.Services
 
                 if (!IsPlausibleSpawnAnchor(anchor))
                 {
-                    logger.LogDebug(
+                    logger.LogInfo(
                         $"OB-11: skipping peer {netPlayer.ConnectionId} as a spawn anchor; " +
                         $"position {anchor} is not on the map.");
                     continue;
                 }
 
-                bossSpawnCandidates.Add(anchor);
+                bossSpawnCandidates.Add((netPlayer.ConnectionId, anchor));
             }
 
             if (bossSpawnCandidates.Count == 0)
             {
+                logger.LogInfo(
+                    "OB-11: no eligible peer to re-centre on (none spawned, all dead, or all " +
+                    "anchors implausible); keeping the host-centred position.");
                 return pos;
             }
 
@@ -597,10 +600,13 @@ namespace MegabonkTogether.Services
             var pick = UnityEngine.Random.Range(0, bossSpawnCandidates.Count + 1);
             if (pick == bossSpawnCandidates.Count)
             {
+                logger.LogInfo(
+                    $"OB-11: drew the host's own slot out of {bossSpawnCandidates.Count + 1}; " +
+                    "keeping the host-centred position.");
                 return pos;
             }
 
-            var target = bossSpawnCandidates[pick];
+            var (targetId, target) = bossSpawnCandidates[pick];
 
             // Reuse the distance the game just chose rather than inventing one: it scales with run
             // time through constants that were not decompiled, and copying the result preserves that
@@ -647,11 +653,15 @@ namespace MegabonkTogether.Services
                 // `pos` is a ring position around the player only on the EventMiniboss path, while
                 // a coffin passes its own transform, so the derived radius is whatever that
                 // happens to be. A silent "it failed" cost a whole playtest to diagnose once.
-                logger.LogDebug(
-                    $"OB-11: no valid miniboss position within {radius:F1}u of {target} " +
-                    "(tried a narrow then a wide ring); keeping the host-centred one.");
+                logger.LogInfo(
+                    $"OB-11: no valid miniboss position within {radius:F1}u of peer {targetId} " +
+                    $"at {target} (tried a narrow then a wide ring); keeping the host-centred one.");
                 return pos;
             }
+
+            logger.LogInfo(
+                $"OB-11: re-centred a boss spawn on peer {targetId} — {pos} -> {recentred} " +
+                $"({radius:F1}u ring, {bossSpawnCandidates.Count + 1} slots).");
 
             return recentred;
         }

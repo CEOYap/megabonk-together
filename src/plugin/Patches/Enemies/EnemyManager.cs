@@ -136,8 +136,17 @@ namespace MegabonkTogether.Patches.Enemies
             const EEnemyFlag arenaBossFlags = EEnemyFlag.FinalBoss | EEnemyFlag.StageBoss;
             if ((enemyFlag & arenaBossFlags) != 0)
             {
+                Plugin.Log.LogInfo(
+                    $"OB-11: leaving an arena boss where the map put it (flag {(int)enemyFlag}).");
                 return true;
             }
+
+            // Logged unconditionally, at Info, because this line is the only thing that
+            // distinguishes "the re-centring ran and chose the host" from "the patch never fired".
+            // Two runs were called fixed on the strength of a counter that only counted exceptions,
+            // and neither log contained a single OB-11 line of any kind. SpawnBoss is called a
+            // handful of times per run, so there is no volume argument against it.
+            Plugin.Log.LogInfo($"OB-11: re-centring a boss spawn (flag {(int)enemyFlag}) from {pos}.");
 
             // The try is here rather than inside the service on purpose: a MissingMethodException
             // from an interop signature that did not resolve is raised when the *containing* method
