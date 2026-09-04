@@ -759,7 +759,7 @@ the named paths upstream of the guard.
 ---
 
 <a name="ob-11"></a>
-## OB-11 — Minibosses always spawn near the host — CONFIRMED, **first fix FAILED in play; corrected, unverified**
+## OB-11 — Minibosses always spawn near the host — CONFIRMED, **still reported after two fixes; instrumented 2026-09-04**
 
 **Reported:** minibosses appear next to the host rather than somewhere between the players. A client
 playing away from the host sees them arrive on top of their teammate, never near themselves.
@@ -895,6 +895,50 @@ exists to prevent — and the same reasoning that makes `SpawnBoss_Prefix` suppr
 ---
 
 <a name="ob-12"></a>
+### 2026-09-04 — third report, and why the previous two "confirmations" were worthless
+
+Reported again: minibosses still spawn near the host.
+
+**The 0-failures figure that closed this twice does not mean anything.** OB-11's only log
+statements were one `LogWarning` on the exception path — which correctly never fired — and two
+`LogDebug` lines, which do not reach `LogOutput.log` at the default level. Grepping all three logs
+from the 2026-09-04 run for `OB-11` returns **zero lines on every peer**. There has never been
+evidence the re-centring ran, only evidence that it did not throw.
+
+This is the "a diagnostic that cannot run is worse than none" trap, in its most expensive form: it
+did not merely fail to help, it produced a number that read as a pass.
+
+**Four things checked before touching the logic, so they are not re-checked:**
+
+| Question | Answer |
+|---|---|
+| Does the OB-16 arena exclusion swallow minibosses? | No. `SummonerMiniboss` is **16**; the exclusion is `FinalBoss\|StageBoss` = **36**. |
+| Do minibosses even reach `EnemyManager.SpawnBoss`? | Yes. `SummonerController.EventMiniboss` (VA `0x180487240`, decompiled) calls it with flag `0x10`, passing the position by pointer — so a `ref` prefix is the correct interception point. |
+| Does Harmony's by-name binding resolve? | Yes. The game's signature is `SpawnBoss(EEnemy eEnemy, int summonerId, EEnemyFlag enemyFlag, Vector3 pos, float extraSizeMultiplier)`. |
+| Does the placement call match? | Yes. `GetEnemySpawnPositionAroundPoint(Vector3 pos, float minRadius, float maxRadius, int attempts, bool onlyGround, float fromHeight)`. |
+
+`EventMiniboss` also spawns in a loop — `GameManager.Instance.<+0x60> + 1` minibosses per event —
+so an event produces a burst, not one.
+
+**Second cause, independent of whether the code works.** The slot was picked with
+`Random.Range(0, Count + 1)`. That is fair over many draws and useless as a test: with two players
+it is a coin flip, and a coin flip produces runs of three and four consecutive host-side spawns
+routinely. A working fix and a dead one look identical from inside the game — which is very likely
+what all three reports have actually been describing.
+
+**Both addressed:**
+
+1. Every branch now logs at `Info` — prefix entry with flag and incoming position, arena exclusion,
+   no eligible peer, rotation landing on the host's slot, placement failure, and success with the
+   peer id and before/after positions.
+2. The random draw is now a **rotation** over the same slots, so consecutive minibosses alternate
+   and the intended behaviour is checkable by eye in one level without reading a log.
+
+**What settles it:** play one level with a miniboss event and read the `OB-11` lines on the host.
+Their absence means the patch never fires and the next step is patch-time resolution, not placement.
+A `re-centred a boss spawn on peer N` line whose miniboss still appears next to the host means the
+position is being overwritten downstream of the prefix, which nothing has yet looked for.
+
 ## OB-12 — The run's interactable counters diverge, except charge shrines — **attempt 2 WORKS for 7 of 9 rows (2026-08-17)**
 
 ### RE-DIAGNOSED 2026-08-17 — the fix was applied to branches your config never reaches
