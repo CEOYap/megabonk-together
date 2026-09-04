@@ -930,6 +930,13 @@ namespace MegabonkTogether.Services
                     PrepareForNextLevel();
                     Plugin.Instance.ClearPrefabs();
                     Plugin.Instance.RestoreDeath(false);
+
+                    // OB-20: after RestoreDeath, not before. RestoreDeath resets the camera to the
+                    // local player as part of tearing the spectator view down; reviving first would
+                    // re-enable the renderer and then hand the camera back over a player who is
+                    // already alive, which is the same end state by a noisier route.
+                    ReviveLocalPlayerIfDeadForNextLevel();
+
                     CoroutineRunner.Instance.Stop(LevelUpScreenPatches.CurrentRoutine);
                     //CoroutineRunner.Instance.Stop(EncounterUiPatches.CurrentRoutine);
                     CoroutineRunner.Instance.Stop(ChestWindowUiPatches.CurrentRoutine);
@@ -5336,13 +5343,7 @@ namespace MegabonkTogether.Services
             }
             else
             {
-                GameManager.Instance.player.transform.position = position;
-                GameManager.Instance.player.inventory.playerHealth.hp = GameManager.Instance.player.inventory.playerHealth.maxHp;
-                var localPlayer = playerManagerService.GetLocalPlayer();
-                localPlayer.Hp = localPlayer.MaxHp;
-                playerManagerService.UpdatePlayer(localPlayer);
-                Plugin.Instance.CameraSwitcher.ResetToLocalPlayer();
-                GameManager.Instance.player.playerRenderer.gameObject.SetActive(true);
+                ReviveLocalPlayer(position);
             }
 
             IGameNetworkMessage message = new PlayerRespawned
@@ -5364,16 +5365,74 @@ namespace MegabonkTogether.Services
             }
             else
             {
-                GameManager.Instance.player.transform.position = Quantizer.Dequantize(respawned.Position);
-                GameManager.Instance.player.inventory.playerHealth.hp = GameManager.Instance.player.inventory.playerHealth.maxHp;
+                ReviveLocalPlayer(Quantizer.Dequantize(respawned.Position));
+            }
+        }
 
-                var localPlayer = playerManagerService.GetLocalPlayer();
+        /// <summary>
+        /// OB-20: the one place that brings the local player back from the dead. Was duplicated
+        /// verbatim in <see cref="OnRespawn"/> and <see cref="OnReceivedPlayerRespawned"/>; the
+        /// level transition needs it too, and three copies of a five-step routine is how a step
+        /// goes missing.
+        /// <para><paramref name="position"/> is null when the caller has no business placing the
+        /// player — at a level transition the game does that itself, and forcing the previous
+        /// level's coordinate would be worse than leaving it alone.</para>
+        /// <para>Restores to full HP because that is what the reviver coffin has always done. If
+        /// dying is meant to cost something across a transition, this is the line to change.</para>
+        /// </summary>
+        private void ReviveLocalPlayer(Vector3? position)
+        {
+            var player = GameManager.Instance.player;
+
+            if (position.HasValue)
+            {
+                player.transform.position = position.Value;
+            }
+
+            player.inventory.playerHealth.hp = player.inventory.playerHealth.maxHp;
+
+            var localPlayer = playerManagerService.GetLocalPlayer();
+            if (localPlayer != null)
+            {
                 localPlayer.Hp = localPlayer.MaxHp;
                 playerManagerService.UpdatePlayer(localPlayer);
+            }
 
-                Plugin.Instance.CameraSwitcher.ResetToLocalPlayer();
+            Plugin.Instance.CameraSwitcher.ResetToLocalPlayer();
 
-                GameManager.Instance.player.playerRenderer.gameObject.SetActive(true);
+            player.playerRenderer.gameObject.SetActive(true);
+        }
+
+        /// <summary>
+        /// OB-20: a peer who died stays dead through the portal unless somebody revives them, and
+        /// nothing did — the transition restored the game's death handler and reset the camera
+        /// and left hp at 0. Every peer reaches PortalOpened behind the readiness barrier, so each
+        /// one running this for itself needs no message and no new union tag; the restored HP
+        /// reaches the others through the existing PlayerUpdate.
+        /// <para>Guarded on actually being dead: full-healing a living player at every portal is a
+        /// far larger change than the one this fixes.</para>
+        /// </summary>
+        private void ReviveLocalPlayerIfDeadForNextLevel()
+        {
+            try
+            {
+                var player = GameManager.Instance?.player;
+                if (player == null || player.inventory == null || player.inventory.playerHealth == null)
+                {
+                    return;
+                }
+
+                if (player.inventory.playerHealth.hp > 0)
+                {
+                    return;
+                }
+
+                ReviveLocalPlayer(null);
+                logger.LogInfo("OB-20: local player was dead at the portal; revived for the next level.");
+            }
+            catch (System.Exception ex)
+            {
+                logger.LogWarning($"OB-20: could not revive the local player at the transition: {ex.Message}");
             }
         }
 
