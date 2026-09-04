@@ -1338,6 +1338,55 @@ one too high. That is the better failure and it is what vanilla does, but it is 
 
 **Still open on this bug:** the challenge-shrine row, untouched by this.
 
+### 2026-09-04 — the challenge shrine is **not** the shady-guy shape, and what that turned up
+
+Decompiled on the hypothesis that it resolves through the same deferred pathway. It does not, and
+each step is recorded so the hypothesis is not retried.
+
+| Checked | VA | Result |
+|---|---|---|
+| `InteractableShrineChallenge.Interact` | `0x1804CE250` | **Returns `true`** — spawns the challenge wave, activates `fx`, destroys both icons. The opposite of shady guy. |
+| `InteractablesStatus.Init` | `0x18051A4F0` | Touches `BaseInteractable`, `ChargeShrine`, `InteractableMicrowave`, `InteractableShadyGuy`, `MapGenerationController`, `GameManager` — and **nothing challenge-specific**. `A_Completed` has no subscriber here. |
+| `BaseInteractable.OnDestroy` | `0x1804BFAA0` | → `DetectInteractables.InteractableDestroyed` → `StopHovering`. **Does not touch either counter.** So the host/client asymmetry in the dispatch cannot move `numTotal`. |
+| Container layout | — | `+0x10` is `numTotal` (spawn `+1`, disable `−1`); `+0x14` is `numUsed`. |
+
+Read the field names in `Interact` with care: Ghidra's applied names are **one slot late** throughout
+it. The byte tested and set at the top is `done` (`0x68`), printed as `fx`; the `HashSet<Enemy>`
+assigned is `enemies` (`0x78`), printed as `hasGivenReward`; the object given `SetActive(true)` is
+`fx` (`0x70`), printed as `enemies`. Offsets from `dump.cs` are authoritative.
+
+#### The finding that matters more than the hypothesis
+
+`InteractablesStatus.OnInteractableUse` is subscribed to **`DetectInteractables.A_Interacted`** — a
+static `Action<BaseInteractable, bool>` on the *player's own interaction detector*, raised by
+`DetectInteractables.TryInteract()`.
+
+**So calling `interactable.Interact()` from code never raises it and never counts.** That holds for
+every branch of the replication dispatch, on every peer.
+
+Two consequences:
+
+1. `CountIfDispatchDidNot`'s before/after comparison is doing nothing for any row except shady guy.
+   Its answer is always "the dispatch did not count". That is not a bug — the count it then performs
+   is correct, and the comparison is the right shape to keep, because it is exactly what caught the
+   shady guy's *deferred* count. But it should not be read as evidence that the other rows were
+   measured.
+2. The host branch calling `shrineChallenge.Interact()` and the client branch running a cosmetic
+   shortcut end at the **same** counter value: neither counts, and the helper adds one on both.
+   The asymmetry is real for gameplay — only the host spawns the challenge wave — but it is not the
+   counter divergence.
+
+#### Where this stops
+
+The 2026-09-04 host log shows `OB-12: counting 'Challenges' -- the dispatch did not.` **twice**, so
+the path fires and counts on the host. Establishing that the client disagrees needs the client's
+**`LogOutput.log`**; the client files supplied for that run were Unity player logs, which carry no
+BepInEx lines. That is the third run this has cost.
+
+**Next run needs `BepInEx/LogOutput.log` from *both* machines**, with a challenge shrine used by each
+peer at least once. Until then the challenge-shrine divergence has no evidence behind it beyond the
+on-screen reading.
+
 ## OB-13 — Enemies keep taking damage while an encounter window has the game paused — CONFIRMED, **FIXED at the damage path, unverified**
 
 **Reported (2026-08-16):** with the game paused by an encounter window, bosses and enemies still
