@@ -68,6 +68,43 @@ namespace MegabonkTogether.Helpers
                 return new Snapshot(null, null);
             }
 
+            // OB-12, shady guy. The one interactable whose count lands *asynchronously*, which is
+            // what defeats the measure-then-count shape everything else uses.
+            //
+            // Decompiled rather than reasoned about, because the last three attempts at OB-12
+            // failed by reasoning:
+            //   InteractableShadyGuy.Interact()  (VA 0x1804CD400) sets a static "current shady
+            //     guy", calls UpdatePrices, opens the shop through
+            //     EncounterWindows.AddEncounter(7) -- and returns FALSE.
+            //   InteractablesStatus.OnInteractableUse (VA 0x18051B1D0) opens with
+            //     `if (!success) return;`, so vanilla's generic path never counts a shady guy.
+            //   InteractableShadyGuy.OnShadyGuyDone (VA 0x1804CD5F0) runs when the shop is
+            //     finished, guarded on the static still being this instance, and raises the
+            //     Action<InteractableShadyGuy> that InteractablesStatus.Init subscribes
+            //     OnShadyGuyUsed (VA 0x18051B4A0) to. That handler does numUsed += 1.
+            //
+            // So a shady guy is counted exactly once in vanilla, by a dedicated path, when the
+            // window closes -- not when Interact() is called.
+            //
+            // The replication dispatch replays shadyGuy.Interact() on the receiving peer, so that
+            // peer's own window will eventually close and the game will count it. But
+            // CountIfDispatchDidNot compares numUsed immediately, sees it unchanged -- because the
+            // real count is still minutes away -- and adds one. The window then closes and the game
+            // adds another. Two per replicated shady guy on the receiver, one on the sender: which
+            // is exactly the reported "host 4 of 2, client 2 of 2".
+            //
+            // Excluded here rather than in CountIfDispatchDidNot so the snapshot and the count can
+            // never disagree about it. Resolved with GetComponentInChildren, matching the dispatch
+            // exactly, so the two agree on what a shady guy is. Not `is`/`as`: those test the
+            // managed wrapper on an Il2CppInterop proxy, not the object.
+            if (interactableObj.GetComponentInChildren<InteractableShadyGuy>() != null)
+            {
+                Plugin.Log.LogDebug(
+                    "OB-12: leaving a shady guy to the game's own OnShadyGuyUsed; its count " +
+                    "arrives when the shop window closes, not now.");
+                return new Snapshot(null, null);
+            }
+
             var name = interactable.GetDebugName();
             var used = ReadUsedCount(name);
 
