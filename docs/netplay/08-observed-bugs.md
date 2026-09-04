@@ -1305,6 +1305,39 @@ disagrees. It is a scoreboard bug, not a world-state one, and nothing downstream
 ---
 
 <a name="ob-13"></a>
+### 2026-09-04 — the shady-guy row, solved by decompiling instead of reasoning
+
+**Mechanism, from four bodies:**
+
+| Method | VA | What it does |
+|---|---|---|
+| `InteractableShadyGuy.Interact` | `0x1804CD400` | Sets a static "current shady guy", `UpdatePrices()`, opens the shop via `EncounterWindows.AddEncounter(7)` — and **returns `false`** |
+| `InteractablesStatus.OnInteractableUse` | `0x18051B1D0` | Opens with `if (!success) return;` — so the generic path **never** counts a shady guy |
+| `InteractableShadyGuy.OnShadyGuyDone` | `0x1804CD5F0` | Runs when the shop finishes, guarded on the static still being this instance; raises `Action<InteractableShadyGuy>` |
+| `InteractablesStatus.OnShadyGuyUsed` | `0x18051B4A0` | Subscribed to that action by `Init`; does `numUsed += 1` |
+
+**Vanilla counts a shady guy exactly once, by a dedicated path, when the shop window closes.** The
+`false` return from `Interact()` is deliberate: the interaction is not finished when the window
+opens, so the generic counter is told it did not succeed.
+
+**Why the mod doubled it.** The replication dispatch replays `shadyGuy.Interact()` on the receiving
+peer, so that peer's window eventually closes and the game counts it. But `CountIfDispatchDidNot`
+compares `numUsed` *immediately* — the real count is still pending — sees it unchanged, and adds
+one. The window then closes and the game adds another.
+
+Two per replicated shady guy on the receiver, one on the sender. With the client using both, the
+host reads **4 of 2** and the client **2 of 2** — the reported figures exactly.
+
+**Shady guy is the one row where measure-then-count cannot work**, because that shape assumes the
+game counts synchronously during the dispatch. Every other row does. Excluded from `Take()`, so the
+snapshot and the count can never disagree about it, and left to the game's own path.
+
+**Stated trade-off:** the count now depends on the receiving peer's shop window actually completing.
+A peer that dismisses it without reaching `OnShadyGuyDone` leaves the row one too *low* rather than
+one too high. That is the better failure and it is what vanilla does, but it is not verified.
+
+**Still open on this bug:** the challenge-shrine row, untouched by this.
+
 ## OB-13 — Enemies keep taking damage while an encounter window has the game paused — CONFIRMED, **FIXED at the damage path, unverified**
 
 **Reported (2026-08-16):** with the game paused by an encounter window, bosses and enemies still
