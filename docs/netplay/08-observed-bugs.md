@@ -1836,6 +1836,89 @@ same reading [OB-14](#ob-14) needs.
 
 ---
 
+## OB-20 — A player who dies stays dead through the level transition and ends the run — CONFIRMED
+
+**Reported 2026-09-04, Desert Tier 1, two peers.** The host died early, spectated for roughly half
+the level, and at the portal the run ended for both players rather than continuing on level 2.
+
+**Expected:** every peer crosses the portal, and any peer who is dead is revived on arrival so the
+run continues.
+
+### What already works, and is not the bug
+
+Dying mid-level is handled. `Plugin.PreventDeath` swaps `PlayerHealth.A_Died` for
+[`OnPlayerDied`](../../src/plugin/Plugin.cs), which does not end the run — it switches the camera to
+a living peer. That is the spectator state the reporter was in, and it behaved correctly for the
+whole level. `InteractableReviver` is the intended way back: a peer kills the coffin enemy, the host
+calls `OnRespawn`, and the dead player is fully restored.
+
+`IsGameOver()` is `players.Values.All(p => p.Hp == 0)` and is **not** the trigger — one player was
+alive throughout.
+
+### Mechanism
+
+The level transition lifts death prevention and restores nothing else.
+[`SynchronizationService.cs:932`](../../src/plugin/Services/SynchronizationService.cs), on
+`GameEvent.PortalOpened`:
+
+```csharp
+playerManagerService.ResetForNextLevel();
+PrepareForNextLevel();
+Plugin.Instance.ClearPrefabs();
+Plugin.Instance.RestoreDeath(false);      // hands PlayerHealth.A_Died back to the game
+```
+
+Compare that against the local branch of `OnRespawn`, which is the mod's own complete
+revive routine and does **five** things:
+
+| # | `OnRespawn` (working revive) | `PortalOpened` |
+|---|---|---|
+| 1 | `player.transform.position = position` | — (the game places them on the new level) |
+| 2 | `playerHealth.hp = playerHealth.maxHp` | **missing** |
+| 3 | `localPlayer.Hp = localPlayer.MaxHp` + `UpdatePlayer` | **missing** |
+| 4 | `CameraSwitcher.ResetToLocalPlayer()` | done, inside `RestoreDeath` |
+| 5 | `playerRenderer.gameObject.SetActive(true)` | **missing** |
+
+So the transition performs step 4 alone. The dead player arrives on the next level with `hp == 0`,
+their renderer still disabled, and their mirrored `Player.Hp` still 0 — `ResetForNextLevel` clears
+`IsReady` and the spawned avatars but never touches `Hp`. Death prevention is meanwhile *off*: it is
+re-armed only at the end of `SpawnPlayers` on the new level, and re-arming replaces the death
+*handler*, it does not resurrect somebody already dead.
+
+**The remote side self-heals and needs nothing.** `ResetForNextLevel` calls `spawnedPlayers.Clear()`
+and `SpawnPlayers` rebuilds every `NetPlayer` on the new level, so the latched `isDead` flag set by
+`NetPlayer.OnDied` is discarded with the old object. Only the local player is left broken — which is
+why the symptom is per-peer rather than a desync.
+
+### Fix shape
+
+Revive the local player at `PortalOpened`, reusing steps 2, 3 and 5 above. Every peer runs this for
+itself; the readiness barrier already guarantees all peers reach `PortalOpened`, so no message and
+no new union tag is needed, and the restored HP propagates through the existing `PlayerUpdate`.
+
+Extract the local branch of `OnRespawn` into `ReviveLocalPlayer(Vector3? position)` and call it with
+`null` from both sites — `OnRespawn` and `OnReceivedPlayerRespawned` already duplicate that block
+verbatim, so this removes a copy rather than adding one. Skip the position: the game places the
+player on the new level, and forcing a stale coordinate there would be worse than doing nothing.
+
+**Guard it on actually being dead.** Unconditionally setting `hp = maxHp` at every portal would full-heal
+a living player each level, which is a much larger balance change than the one being asked for.
+
+### Open design question — not answerable from the code
+
+Reviving at every transition makes death cost nothing beyond the remainder of the current level, and
+makes `InteractableReviver` mostly redundant. Full HP, or a fraction? That is a balance call for the
+reporter, not something the code implies.
+
+### Also seen, benign
+
+The host log ends with `Death not prevented` from `RestoreDeath`. That is the return-to-menu path
+([`WindowManager.cs:55`](../../src/plugin/Patches/WindowManager.cs)) calling `RestoreDeath` after the
+`GameOver` path already did. The method is idempotent and the warning is the guard working. Not
+related to this bug — noted so it is not chased again.
+
+---
+
 ## Not in this file
 
 - Client `NullReferenceException` storm — live lead in
