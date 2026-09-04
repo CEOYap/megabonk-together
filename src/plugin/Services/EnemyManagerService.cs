@@ -505,6 +505,22 @@ namespace MegabonkTogether.Services
         private readonly List<(uint ConnectionId, Vector3 Anchor)> bossSpawnCandidates = [];
 
         /// <summary>
+        /// OB-11: which slot the next boss goes to. Round-robin rather than random.
+        ///
+        /// <para>A uniform draw over N slots is fair in the long run and useless as a test. With
+        /// two players it is a coin flip, and a coin flip produces runs of three and four
+        /// host-side spawns often enough that a working fix and a dead one look identical from
+        /// inside the game — which is how this bug survived two rounds of "still not working".
+        /// Rotating makes the intended behaviour something a player can check by eye in one level:
+        /// consecutive minibosses should alternate.</para>
+        ///
+        /// <para>It never resets. Carrying the rotation across levels is the point: a run that
+        /// ends mid-cycle should start the next level where it left off rather than re-drawing
+        /// slot 0 every time.</para>
+        /// </summary>
+        private int bossSpawnRotation = 0;
+
+        /// <summary>
         /// OB-11: pick a player at random and re-centre a miniboss spawn on them.
         ///
         /// <para><b>The cause is confirmed by decompile, not inferred.</b>
@@ -597,11 +613,20 @@ namespace MegabonkTogether.Services
             // The local player is one candidate among the peers, so with N players each takes a 1/N
             // share of minibosses. Index Count is the local player's slot: drawing it means the
             // game's own host-centred position was the right answer this time and nothing is done.
-            var pick = UnityEngine.Random.Range(0, bossSpawnCandidates.Count + 1);
+            // Count + 1 slots: one per eligible peer, plus the host's own. Modulo of an
+            // ever-increasing counter, so a peer joining or dying mid-run shifts the cycle rather
+            // than breaking it. Unchecked because the counter is only ever read modulo something.
+            var slots = bossSpawnCandidates.Count + 1;
+            var pick = (int)((uint)bossSpawnRotation % (uint)slots);
+            unchecked
+            {
+                bossSpawnRotation++;
+            }
+
             if (pick == bossSpawnCandidates.Count)
             {
                 logger.LogInfo(
-                    $"OB-11: drew the host's own slot out of {bossSpawnCandidates.Count + 1}; " +
+                    $"OB-11: rotation reached the host's own slot ({pick} of {slots}); " +
                     "keeping the host-centred position.");
                 return pos;
             }
@@ -661,7 +686,7 @@ namespace MegabonkTogether.Services
 
             logger.LogInfo(
                 $"OB-11: re-centred a boss spawn on peer {targetId} — {pos} -> {recentred} " +
-                $"({radius:F1}u ring, {bossSpawnCandidates.Count + 1} slots).");
+                $"({radius:F1}u ring, slot {pick} of {slots}).");
 
             return recentred;
         }
