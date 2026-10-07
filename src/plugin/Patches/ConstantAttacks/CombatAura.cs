@@ -24,8 +24,56 @@ namespace MegabonkTogether.Patches.ConstantAttacks
                 return true;
             }
 
+            // OB-20. A player who is dead keeps damaging things with their aura.
+            //
+            // Death is prevented rather than processed in a netplay session -- PreventDeath swaps
+            // the game's A_Died handler for one that only moves the camera -- so a dead player's
+            // object stays alive and every ConstantAttack hanging off it keeps ticking. The host
+            // runs FixedUpdate for ALL auras, its own and every peer's, which is why this cannot
+            // just ask whether the local player is dead: that would stop a living client's aura
+            // whenever the host died.
+            //
+            // Ownership comes from ConstantAttack.weaponBase through the same resolver
+            // WeaponUtility already uses for OB-1, so there is no second notion of "whose attack
+            // is this" to keep in step.
+            if (IsOwnerDead(__instance))
+            {
+                return false;
+            }
+
             var isHost = synchronizationService.IsServerMode() ?? false;
             return isHost;
+        }
+
+        /// <summary>
+        /// True when the player this aura belongs to is dead. A <c>NetPlayer</c> match means a
+        /// remote peer, answered from the replicated model; no match means the local player.
+        /// </summary>
+        private static bool IsOwnerDead(CombatAura aura)
+        {
+            var weaponBase = aura == null ? null : aura.weaponBase;
+            if (weaponBase == null)
+            {
+                return false;
+            }
+
+            var netPlayer = playerManagerService.GetNetPlayerByWeapon(weaponBase);
+            if (netPlayer != null)
+            {
+                var owner = playerManagerService.GetPlayer(netPlayer.ConnectionId);
+
+                // A peer we have no record for is not treated as dead: suppressing on a lookup
+                // miss would silently delete a living player's damage, which is the worse error.
+                return owner != null && owner.Hp == 0;
+            }
+
+            var gameManager = GameManager.Instance;
+            if (gameManager == null || gameManager.player == null)
+            {
+                return false;
+            }
+
+            return gameManager.player.IsDead();
         }
     }
 }
