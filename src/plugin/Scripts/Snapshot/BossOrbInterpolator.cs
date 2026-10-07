@@ -31,6 +31,16 @@ namespace MegabonkTogether.Scripts.Snapshot
 
         public void AddSnapshot(BossOrbSnapshot snapshot)
         {
+            // Same ordering guard as EnemyInterpolator. These streams are unreliable, so a late
+            // packet can arrive after a newer one, and the pair scan and the front-pruning below
+            // both assume the buffer is sorted by timestamp. Out of order the interpolator walks
+            // backwards and the remote object visibly snaps back.
+            if (snapshotsBuffer.Count > 0
+                && snapshot.Timestamp <= snapshotsBuffer[snapshotsBuffer.Count - 1].Timestamp)
+            {
+                return;
+            }
+
             snapshotsBuffer.Add(snapshot);
 
             if (snapshotsBuffer.Count > maxBufferSize)

@@ -48,6 +48,15 @@ namespace MegabonkTogether.Scripts.Snapshot
                 snapshotsBuffers[snapshot.Id] = buffer;
             }
 
+            // Same ordering guard as EnemyInterpolator. These streams are unreliable, so a late
+            // packet can arrive after a newer one, and the pair scan and the front-pruning below
+            // both assume the buffer is sorted by timestamp. Out of order the interpolator walks
+            // backwards and the remote object visibly snaps back.
+            if (buffer.Count > 0 && snapshot.Timestamp <= buffer[buffer.Count - 1].Timestamp)
+            {
+                return;
+            }
+
             buffer.Add(snapshot);
 
             if (buffer.Count > maxBufferSize)
