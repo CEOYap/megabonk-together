@@ -2269,11 +2269,23 @@ namespace MegabonkTogether.Services
 
             using (Plugin.SuppressOutbound())
             {
+                // try/finally, not a straight line. EnemyDied runs the game's whole death sequence
+                // -- loot, procs, pooling -- and any of it can throw. The unset used to sit after
+                // the call, so a throw left the tracker latched on the dead enemy's killer and
+                // every later kill on this peer was credited to them until something else set it.
+                // That is exactly OB-14's UNBALANCED-UNSET counter, which is watching for this and
+                // has read 0 so far; this makes it structurally impossible rather than merely
+                // unobserved.
                 trackerService.SetCurrentPlayerId(died.DiedByOwnerId);
 
-                enemy.EnemyDied(damageContainer);
-
-                trackerService.UnsetCurrentPlayerId();
+                try
+                {
+                    enemy.EnemyDied(damageContainer);
+                }
+                finally
+                {
+                    trackerService.UnsetCurrentPlayerId();
+                }
             }
 
             var isHost = IsServerMode() ?? false;
