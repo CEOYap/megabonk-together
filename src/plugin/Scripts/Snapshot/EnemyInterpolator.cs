@@ -64,6 +64,25 @@ namespace MegabonkTogether.Scripts.Snapshot
 
         public void AddSnapshot(EnemySnapshot snapshot)
         {
+            // The enemy stream is `Unreliable, chunked` at 40 Hz, so it has no ordering guarantee
+            // and a late chunk can arrive after a newer one. Everything below this line assumes the
+            // buffer is sorted by timestamp: FindSnapshotPair scans linearly for a bracketing pair,
+            // and the prune drops from the FRONT. An out-of-order insert breaks both.
+            //
+            // It also un-kills enemies. PerformInterpolation writes `enemy.hp = newer.Hp`
+            // unconditionally, so a stale pair restores health the enemy has already lost -- the
+            // client sees a health bar jump back up, and with HP_TRESHOLD = 1 driving the delta
+            // stream that stale value can persist until the next change.
+            //
+            // Dropping a stale snapshot is what `Sequenced` would do at the transport level, and it
+            // is the correct answer for state that is superseded every tick: the next snapshot is
+            // 25 ms away.
+            if (snapshotsBuffer.Count > 0
+                && snapshot.Timestamp <= snapshotsBuffer[snapshotsBuffer.Count - 1].Timestamp)
+            {
+                return;
+            }
+
             snapshotsBuffer.Add(snapshot);
 
             if (snapshotsBuffer.Count > maxBufferSize)
