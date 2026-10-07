@@ -66,6 +66,11 @@ namespace MegabonkTogether.Services
         /// </summary>
         private readonly HashSet<ulong> failed = [];
 
+        /// <summary>When each account was last handed to <c>RequestUserInformation</c>.</summary>
+        private readonly Dictionary<ulong, float> lastUserInformationRequest = [];
+
+        private const float UserInformationRetrySeconds = 1f;
+
         public Texture2D TryGetAvatar(ulong steamId)
         {
             if (steamId == 0UL || !steamService.IsAvailable || failed.Contains(steamId))
@@ -101,6 +106,30 @@ namespace MegabonkTogether.Services
 
             textures.Clear();
             failed.Clear();
+            lastUserInformationRequest.Clear();
+        }
+
+        /// <summary>
+        /// Asks Steam to cache a user, at most once every
+        /// <see cref="UserInformationRetrySeconds"/> per account.
+        ///
+        /// <para>The retry has to be throttled rather than removed. The lobby panel rebinds its
+        /// rows on a refresh, so an unthrottled retry would call into Steam once per row per
+        /// refresh for every account whose avatar has not arrived yet — which is the cost the
+        /// `failed` latch was reaching for when it latched the wrong value.</para>
+        /// </summary>
+        private void RequestUserInformationThrottled(ulong steamId)
+        {
+            var now = Time.unscaledTime;
+
+            if (lastUserInformationRequest.TryGetValue(steamId, out var last)
+                && now - last < UserInformationRetrySeconds)
+            {
+                return;
+            }
+
+            lastUserInformationRequest[steamId] = now;
+            SteamFriends.RequestUserInformation(new CSteamID(steamId), bRequireNameOnly: false);
         }
 
         private Texture2D Build(ulong steamId)
@@ -111,19 +140,33 @@ namespace MegabonkTogether.Services
                 // units tall; small is 32 and visibly soft once the canvas scales it up.
                 var handle = SteamFriends.GetMediumFriendAvatar(new CSteamID(steamId));
 
-                // 0 means Steam does not have it yet and is now fetching it; a later call answers.
-                // Negative means it will never answer for this account.
-                if (handle == 0)
+                // These two were the wrong way round, and it is why a peer could show every
+                // avatar but its own lobby partner's. Per the Steamworks reference for
+                // ISteamFriends (GetLargeFriendAvatar states it explicitly; the Medium entry is
+                // abbreviated but behaves the same way):
+                //
+                //   0  — no avatar is set for that user.
+                //   -1 — the image data HAS NOT LOADED YET. Steam now starts downloading it and
+                //        raises AvatarImageLoaded_t; call again after that.
+                //
+                // This code read -1 as "will never answer" and latched it into `failed`, which is
+                // checked before anything else and is cleared only at session teardown. So the
+                // ordinary first answer for somebody Steam has not cached — which the same
+                // reference says is everyone who is not a friend, not on a requested leaderboard
+                // and not yet known through a shared lobby — permanently disabled that avatar for
+                // the rest of the session. Observed 2026-10-07: the host showed no avatar for the
+                // client all session while the client, which already had the host cached, showed
+                // both.
+                //
+                // Neither value is a failure now. Both ask Steam for the user and come back later;
+                // `failed` is left to mean what its own comment says it means — a read that threw
+                // or returned garbage.
+                if (handle <= 0)
                 {
-                    // Nudges Steam into fetching the persona and its avatar for someone who is not
-                    // a friend — which every stranger in a lobby is.
-                    SteamFriends.RequestUserInformation(new CSteamID(steamId), bRequireNameOnly: false);
-                    return null;
-                }
-
-                if (handle < 0)
-                {
-                    failed.Add(steamId);
+                    // The same reference says this is the required call for a user the local
+                    // client does not already know about, which in a lobby of strangers is the
+                    // normal case rather than the exception.
+                    RequestUserInformationThrottled(steamId);
                     return null;
                 }
 
