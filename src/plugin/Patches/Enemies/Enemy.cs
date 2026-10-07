@@ -200,11 +200,34 @@ namespace MegabonkTogether.Patches.Enemies
         /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(Enemy.Damage))]
-        public static bool Damage_Prefix(Enemy __instance, DamageContainer damageContainer)
+        public static bool Damage_Prefix(Enemy __instance, DamageContainer damageContainer, out bool __state)
         {
+            // __state = "this damage was suppressed". The postfix below still runs when this
+            // prefix returns false -- Harmony does not skip postfixes -- and it broadcasts the hit,
+            // so without this it would announce damage that never happened.
+            __state = false;
+
             if (!synchronizationService.HasNetplaySessionStarted())
             {
                 return true;
+            }
+
+            // OB-13, at the real funnel. The first fix gated DamageFromPlayerWeapon,
+            // DamageFromPlayerOther and DamageExternal, and decompiling them shows all three do
+            // nothing but call this private method -- but they are not the only way in. Our own
+            // OnReceivedEnemyDamaged calls enemy.Damage(...) DIRECTLY (Il2CppInterop exposes
+            // private members as public), so every hit replicated from the other peer walked past
+            // all three gates and landed while the game was paused. An xref on Damage
+            // (VA 0x1804AC7B0) gives exactly four callers: those three and Kill. This covers all
+            // of them and ours.
+            //
+            // That route matters most under OB-21's phase slip, where the other peer was usually
+            // NOT actually paused at the barrier and kept fighting through this peer's window.
+            if (EnemyDamageWhilePausedPatches.IsSuppressedForPause())
+            {
+                __state = true;
+                EnemyDamageWhilePausedPatches.RecordSuppressed();
+                return false;
             }
 
             var isServer = synchronizationService.IsServerMode() ?? false;
@@ -227,9 +250,16 @@ namespace MegabonkTogether.Patches.Enemies
 
         [HarmonyPostfix]
         [HarmonyPatch(nameof(Enemy.Damage))]
-        public static void Damage_Postfix(Enemy __instance, DamageContainer damageContainer)
+        public static void Damage_Postfix(Enemy __instance, DamageContainer damageContainer, bool __state)
         {
             if (!synchronizationService.HasNetplaySessionStarted())
+            {
+                return;
+            }
+
+            // Suppressed by the OB-13 pause gate in the prefix: no damage was applied, so there is
+            // nothing to replicate.
+            if (__state)
             {
                 return;
             }

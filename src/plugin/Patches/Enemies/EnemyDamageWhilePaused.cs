@@ -70,18 +70,63 @@ namespace MegabonkTogether.Patches.Enemies
         /// <summary>False suppresses the damage. See the class remarks for why each check is here.</summary>
         private static bool AllowDamage()
         {
+            if (IsSuppressedForPause())
+            {
+                RecordSuppressed();
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// The OB-13 rule, shared with <c>Enemy.Damage_Prefix</c> so the gate at the funnel and the
+        /// gates at the three entry points can never disagree.
+        /// </summary>
+        internal static bool IsSuppressedForPause()
+        {
             if (!synchronizationService.HasNetplaySessionStarted())
             {
-                return true;
+                return false;
             }
 
             // Only the mode where every peer is paused together. See the class remarks.
             if (!synchronizationService.IsSharedExperienceEnabled())
             {
-                return true;
+                return false;
             }
 
-            return !MyTime.paused;
+            return MyTime.paused;
+        }
+
+        private static int suppressedSinceReport = 0;
+        private static float lastReportTime = -999f;
+        private const float ReportIntervalSeconds = 2f;
+
+        /// <summary>
+        /// Counts suppressed hits and reports them at Info, throttled.
+        ///
+        /// <para>The first version of this fix logged nothing, so "still not working" could not be
+        /// told apart from "never fired" -- the same trap OB-11 fell into. A window that opens with
+        /// no line here means the gate is not being reached at all; a window with lines and health
+        /// still dropping means the damage has found a fifth way in. Unscaled time, because the game
+        /// clock is stopped while this is firing.</para>
+        /// </summary>
+        internal static void RecordSuppressed()
+        {
+            suppressedSinceReport++;
+
+            var now = UnityEngine.Time.unscaledTime;
+            if (now - lastReportTime < ReportIntervalSeconds)
+            {
+                return;
+            }
+
+            Plugin.Log.LogInfo(
+                $"OB-13: suppressed {suppressedSinceReport} enemy hit(s) while paused " +
+                $"(host: {synchronizationService.IsServerMode() ?? false}).");
+            suppressedSinceReport = 0;
+            lastReportTime = now;
         }
     }
 }
