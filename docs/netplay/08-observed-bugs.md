@@ -759,7 +759,7 @@ the named paths upstream of the guard.
 ---
 
 <a name="ob-11"></a>
-## OB-11 — Minibosses always spawn near the host — CONFIRMED, **still reported after two fixes; instrumented 2026-09-04**
+## OB-11 — Minibosses always spawn near the host — CONFIRMED, **re-centring proven live 2026-10-07; rotation unverified**
 
 **Reported:** minibosses appear next to the host rather than somewhere between the players. A client
 playing away from the host sees them arrive on top of their teammate, never near themselves.
@@ -934,7 +934,24 @@ what all three reports have actually been describing.
 2. The random draw is now a **rotation** over the same slots, so consecutive minibosses alternate
    and the intended behaviour is checkable by eye in one level without reading a log.
 
-**What settles it:** play one level with a miniboss event and read the `OB-11` lines on the host.
+### 2026-10-07 — the instrumentation answered it on the first run
+
+```
+OB-11: re-centring a boss spawn (flag 16) from (-127.07, 31.41, 91.09).
+OB-11: re-centred a boss spawn on peer 82462037 — (-127.07, 31.41, 91.09)
+       -> (369.25, 25.32, -38.03) (20.0u ring, slot 0 of 2).
+```
+
+Flag 16 is `SummonerMiniboss`. The prefix fires, the anchor is plausible, the placement succeeds,
+and the miniboss moved roughly 500 units onto the **client**. That is the first evidence in three
+reports that any of this runs at all — and it vindicates instrumenting before changing more logic,
+since the code had been correct for two of those reports.
+
+**Still unverified:** the rotation. The run ended at the [OB-21](#ob-21) freeze after a single
+miniboss event, so `slot 0 of 2` was observed once and alternation was not. Two or more events in
+one level are needed for that.
+
+**What settled the earlier question:** play one level with a miniboss event and read the `OB-11` lines on the host.
 Their absence means the patch never fires and the next step is patch-time resolution, not placement.
 A `re-centred a boss spawn on peer N` line whose miniboss still appears next to the host means the
 position is being overwritten downstream of the prefix, which nothing has yet looked for.
