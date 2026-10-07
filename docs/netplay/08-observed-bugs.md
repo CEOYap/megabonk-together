@@ -1416,6 +1416,14 @@ Dropping the echo also prevents something worse than a miscount on the branches 
 interaction: the `Interact` branch would run the real interaction a second time on the peer that
 just performed it — for a challenge shrine, a second wave of challenge enemies.
 
+**Correction (2026-10-08): the cited route was wrong.** That run used **Steam transport**
+(`[steam-net]` throughout the host log), and under Steam `SendToAllClientsExcept` never touches
+`RelayEnvelope` — the empty-filter fallback quoted above belongs to the UDP relay path. Under Steam,
+the sender only gets its own message back if `peerHandlesByConnectionId` has **no entry** for its
+`OwnerId`, in which case nobody is excluded. Why that lookup would miss is not established. The guard
+is correct whichever way it resolves, and its `OB-12: dropping our own InteractableUsed` line now
+settles whether an echo happens at all: it fires on the peer receiving one.
+
 **Not explained:** why only this row showed it. The `Pots` rows differ between the peers (12 against
 15), which is consistent with genuinely different uses rather than echoes. Whether the echo is
 universal or conditional on the relay filter missing is still open; the guard is correct either way.
