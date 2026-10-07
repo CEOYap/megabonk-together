@@ -5603,30 +5603,37 @@ namespace MegabonkTogether.Services
             // leaving every peer paused behind a barrier that had already been satisfied.
             var encounterWindows = UiManager.Instance == null ? null : UiManager.Instance.encounterWindows;
 
-            // Unconditionally, and before the branch. Reaching here means a release for this round
-            // has been applied, so this peer is no longer waiting on the barrier whichever branch
-            // runs next -- and only one of the two branches used to say so.
-            //
-            // That asymmetry is the 2026-10-07 freeze. ClearClosedEncounters is the only thing that
-            // resets the failsafe clock, and it is reached only from the else branch below. A peer
-            // holding an open reward window takes the RewardFinished() branch, leaves waitingSince
-            // latched at the first round's start, and HasWaitedTooLong() is then true forever.
-            // EncounterWindows.LateUpdate checks it every frame and keeps running at timeScale 0,
-            // so the host fired the failsafe once per frame -- 5,480 warnings and 5,509 barrier
-            // rounds in 38 seconds at 144 FPS, against zero on the client, whose window was closed
-            // and which therefore took the branch that did reset. The growing "fired after 20.0s
-            // ... 58.5s" in that log is the un-reset clock, visible from the log alone.
-            encounterService.StopWaiting();
-
             if (encounterWindows != null && encounterWindows.encounterInProgress)
             {
                 encounterWindows.RewardFinished();
             }
             else
             {
-                encounterService.ClearClosedEncounters();
                 MyTime.Unpause();
             }
+
+            // Unconditional, and deliberately AFTER the branch rather than before it.
+            //
+            // Reaching this method means a release for the round has been applied, so every piece
+            // of per-round state is spent: the reports, the force flag and the failsafe clock. Only
+            // the else branch used to say so, and the consequences were two different bugs from one
+            // asymmetry (OB-21).
+            //
+            // It cannot move above the branch. Callers set forceClose immediately before calling
+            // here precisely so the re-entrant RewardFinished_Prefix sees IsClosable() and closes
+            // the window instead of reporting a second time. Clearing first would turn that close
+            // into a duplicate report.
+            //
+            // What the narrower StopWaiting() fix missed: RewardFinished_Prefix returns early when
+            // the reward queue is non-empty, before it reaches ClearClosedEncounters. So a peer
+            // holding a queued reward kept BOTH waitingSince and forceClose. The stale clock is the
+            // once-per-frame failsafe storm; the stale forceClose is worse and quieter -- the next
+            // round's RewardFinished_Prefix sees IsClosable() true, closes and unpauses without
+            // ever reporting, and that peer is now one encounter ahead of everyone else. The
+            // 2026-10-07 logs show it plainly: across 29 rounds the client entered the barrier-wait
+            // state once and the host twice, when it should have been every round.
+            encounterService.ClearClosedEncounters();
+
             //EncounterWindows.A_WindowClosed.Invoke();
         }
 
