@@ -138,6 +138,12 @@ but the collision path was not traced.
 ---
 
 <a name="ob-2"></a>
+### 2026-10-07 — checked against a third-party mod's 0.5 release
+
+Its answer is to force `GetAttackSizeMultiplier` to `1.0` for any weapon a remote player owns — every
+remote aura renders at base size regardless of upgrades. Ours replicates the owner's stat block and
+applies the exact correction, which is strictly more accurate. Nothing to take.
+
 ## OB-2 — Ghost item's summons appear for players who do not have the item — **FIXED and CONFIRMED in play (2026-08-17)**
 
 **Reported:** when either peer holds the Ghost item — which summons ghosts on interacting with pots,
@@ -404,6 +410,29 @@ which is how this entry stayed open for five sessions.
 ---
 
 <a name="ob-6"></a>
+### 2026-10-07 — a third candidate: pickup merging
+
+`PickupManager.SpawnPickup` (VA `0x1804DED60`, decompiled) calls `CheckOverlap` and, when a pickup
+of the same kind is already there, does `Pickup.AddValue` on the **existing** pickup and returns it.
+No new pickup exists. Our `SpawnPickup_Postfix` then clears that object's `pickupId` and
+`OnPickupSpawned` registers it again under a new id — **two ids, one host object**. The client
+replays the spawn through its own `SpawnPickup` and merges too, but only if its overlap check agrees
+with the host's.
+
+Where it does not, consuming the object under one id leaves the other dangling, and a pull on it does
+nothing. That would read to the existing diagnostic as **seen-then-removed** — the benign race whose
+recommended fix is to ignore it — so it would hide this rather than reveal it.
+
+**Not proven to matter**: the last two runs logged 0 unresolved pickups. Instrumented only:
+`OB-5: N pickup merge(s) re-registered under a new id` at Info, every 10 s, silent when nothing merges.
+
+**Separate, certain, and dormant:** with shared experience **off**, `OnPickupSpawned` sets
+`pickup.value = GetPickupXpValue()` — on a merge that overwrites the merged total with a single orb's
+worth, so merged XP is lost on the host. Unreachable in the shared-experience runs played so far.
+
+**Reference point:** a third-party mod's 0.5 release replicates merged values with a dedicated
+message. That is a wire change (a new union tag); not taken until the counter says merges are common.
+
 ## OB-6 — A shrine's charge *value* is never transmitted — CONFIRMED, **WON'T FIX (2026-08-18)**
 
 **Reported:** shrine counters are not in sync between all players.
@@ -2046,6 +2075,14 @@ may also *fire*. Worth watching the damage panel for a source that player never 
 same reading [OB-14](#ob-14) needs.
 
 ---
+
+### 2026-10-07 — checked against a third-party mod's 0.5 release
+
+Its `WeaponInventory.AddWeapon` postfix decides local-or-remote from an ambient "applying a remote
+player's action" flag and never checks whether `__instance` is the local inventory — the same hole this
+entry describes, and it names no final-boss weapon handling. The fix shape above (compare `__instance`
+against the local inventory's `Pointer`) remains the stronger one. Still waiting on a run that reaches
+the final boss for the `[weapon-owner]` line.
 
 ## OB-20 — A player who dies stays dead through the level transition and ends the run — CONFIRMED
 
