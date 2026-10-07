@@ -1443,7 +1443,7 @@ BepInEx lines. That is the third run this has cost.
 peer at least once. Until then the challenge-shrine divergence has no evidence behind it beyond the
 on-screen reading.
 
-## OB-13 — Enemies keep taking damage while an encounter window has the game paused — CONFIRMED, **FIXED at the damage path, unverified**
+## OB-13 — Enemies keep taking damage while an encounter window has the game paused — CONFIRMED, **first fix bypassed; re-gated at the funnel 2026-10-07, unverified**
 
 **Reported (2026-08-16):** with the game paused by an encounter window, bosses and enemies still
 receive damage from projectiles. **Refined by the reporter: it happens only when shared experience is
@@ -1587,6 +1587,35 @@ different axis and has not been examined before.
 ---
 
 <a name="ob-14"></a>
+### 2026-10-07 — the first fix was bypassed by our own code
+
+Reported still broken. The first fix gated `DamageFromPlayerWeapon`, `DamageFromPlayerOther` and
+`DamageExternal`, and logged nothing, so "not working" could not be told apart from "never fired".
+
+**Inside the game the gate was complete.** All three decompile to a single call to the private
+`Enemy.Damage`, and an xref on `Damage` (VA `0x1804AC7B0`) gives exactly four callers: those three
+and `Kill`.
+
+**Our code was the hole.** `OnReceivedEnemyDamaged` calls `enemy.Damage(...)` directly —
+Il2CppInterop exposes private members as public — so every hit replicated from the other peer walked
+past all three gates. That route was live, not theoretical: [OB-21](#ob-21)'s phase slip meant the
+other peer was usually *not* paused at the barrier and kept fighting through this peer's window.
+
+**Now gated in `Enemy.Damage_Prefix`**, which covers the game's four callers and ours. The rule
+lives in one method, `IsSuppressedForPause`, so the funnel and the entry gates cannot disagree.
+Harmony runs postfixes even when a prefix skips the original, and `Damage_Postfix` broadcasts the
+hit, so the prefix hands `__state` to the postfix to stop it announcing damage that never happened.
+
+**Observable now:** `OB-13: suppressed N enemy hit(s) while paused` at Info, every 2 s of unscaled
+time. A reward window with **no** such line means the gate is not reached; a window **with** lines
+and health still falling means a fifth way in.
+
+**Cost:** a hit already in flight when the window opens (~160 ms at the observed RTT) is dropped
+rather than deferred.
+
+**Two fixes may each be enough on their own.** If OB-21's barrier fix holds, the other peer is
+paused too and stops sending hits during the window. This gate is the backstop for when it is not.
+
 ## OB-14 — The end-of-run damage panel credits you with your teammate's weapons — LIKELY
 
 **Reported 2026-08-17, with screenshots.** The DAMAGE column on the summary screen lists ~23 damage
