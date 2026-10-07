@@ -2045,7 +2045,7 @@ related to this bug — noted so it is not chased again.
 
 ---
 
-## OB-21 — The run freezes at an encounter and the failsafe fires every frame — CONFIRMED, **amplifier FIXED, trigger open**
+## OB-21 — The run freezes at an encounter and the failsafe fires every frame — CONFIRMED, **both halves FIXED, unverified**
 
 **2026-10-07, Desert, two peers.** Neither player could finish a run. The host's log holds **5,480**
 `Shared-experience failsafe fired` warnings and **5,509** barrier rounds inside 38 seconds; the
@@ -2054,7 +2054,7 @@ encounter window that never closed.
 
 This is two separate defects stacked. Keeping them apart matters, because only one is fixed.
 
-### Part 1 — the trigger: a round opened for an encounter only one peer had — OPEN
+### Part 1 — the trigger: a stale `forceClose` runs one peer an encounter ahead — **FOUND and FIXED 2026-10-07**
 
 Rounds 0–28 are healthy: each shows `Report from <client> accepted for round N` then
 `Released round N`. **From round 29 there is not one report.**
@@ -2079,8 +2079,46 @@ immediately. If one peer has two rewards queued and the other has one, the peers
 diverge by one and the barrier can never complete. What the logs do **not** show is what put the
 extra reward on the host's queue.
 
-**To settle it:** a repro where one player banks two rewards close together — two chests, or a chest
-plus a level-up — while the other takes one.
+#### The mechanism, measured
+
+Both peers opened **29** encounter windows — they are not out by an encounter, they are out of
+*phase*. Aligning the logs by the constant **274.2 s** offset between the two clocks, every window
+pairs to within 0.03 s for 28 rounds and then stops:
+
+| Client | +274.2 | Host |
+|---|---|---|
+| 379.21 window opens | 653.4 | 653.42 window opens ✓ |
+| 381.88 window closes | 656.1 | 656.09 window closes ✓ |
+| — | — | **664.68 paused, no window** — host waiting at the barrier |
+| **391.22 window opens** | 665.4 | — host has nothing open |
+| 392.75 window closes | 667.0 | 666.96 release of round 28 |
+| — | — | **667.90 window opens** — alone, and this is round 29 |
+
+The client opened its next window **while the host was still waiting**, and the release for round 28
+killed it 1.53 s later. The host then opened the matching encounter at 667.90 with nobody left to
+report it, because the client had already burned it unseen.
+
+**Why the client never waits.** `RewardFinished_Prefix` returns early when the reward queue is
+non-empty — *before* it reaches `ClearClosedEncounters()`. A peer holding a queued reward therefore
+keeps **both** `waitingSince` and `forceClose`. The stale clock is Part 2's storm. The stale
+`forceClose` is the quieter half: the next round's `RewardFinished_Prefix` finds `IsClosable()`
+already true, closes the window and unpauses **without ever calling `RewardFinished()`** — no
+report, no wait. That peer is one encounter ahead from then on.
+
+The count settles it: **across 29 rounds the client entered the barrier-wait state once, and the
+host twice.** A working barrier puts both peers there every round.
+
+**This also explains lost picks nobody had filed.** A window open for 1.53 s and shut by an incoming
+release is a reward the player never got to choose.
+
+**Fixed** by calling `ClearClosedEncounters()` unconditionally *after* the branch in
+`OnCloseEncounter()`. It cannot move before the branch: callers set `forceClose` immediately
+beforehand so the re-entrant `RewardFinished_Prefix` takes the `IsClosable()` path and closes the
+window instead of reporting twice, and clearing first would turn that close into a duplicate report.
+
+**Correction to the first attempt.** The narrower `StopWaiting()` fix reset the clock but not the
+force flag, so it would have stopped the storm and left the phase slip — the symptom without the
+cause.
 
 ### Part 2 — the amplifier: the failsafe clock is reset on only one branch — FIXED
 
@@ -2113,8 +2151,8 @@ Fixed by `IEncounterService.StopWaiting()`, called unconditionally at the top of
 a release for the round was applied, so the wait is over on either branch, but the reports and the
 force flag are barrier state only the existing branch should rewrite.
 
-**This fix does not stop the stall.** It converts an unrecoverable freeze into the 20-second pause
-the failsafe was always meant to be.
+Superseded by the Part 1 fix, which resets the whole of the per-round state rather than only the
+clock. Both halves come from the same asymmetry.
 
 ---
 
