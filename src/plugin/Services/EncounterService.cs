@@ -23,6 +23,7 @@ namespace MegabonkTogether.Services
         public bool IsWaiting { get; }
 
         public float WaitedSeconds { get; }
+        void StopWaiting();
 
         /// <summary>True once a blocked round has outlived <see cref="WaitFailsafeSeconds"/>.</summary>
         public bool HasWaitedTooLong();
@@ -124,6 +125,23 @@ namespace MegabonkTogether.Services
             {
                 waitingSince = Time.unscaledTime;
             }
+        }
+
+        /// <summary>
+        /// Ends this peer's wait on the barrier without touching the reports or the force flag.
+        ///
+        /// <para>Deliberately narrower than <see cref="ClearClosedEncounters"/>: the 2026-10-07
+        /// freeze was caused by the clock being reset only on the branch of
+        /// <c>OnCloseEncounter</c> that does <i>not</i> have a reward window open. A peer whose
+        /// window was open took the <c>RewardFinished()</c> branch instead, left
+        /// <see cref="waitingSince"/> latched, and so stayed <see cref="HasWaitedTooLong"/> for the
+        /// rest of the run — firing the failsafe once per frame. This exists so the clock can be
+        /// reset on both branches without also rewriting barrier state that only one of them
+        /// should touch.</para>
+        /// </summary>
+        public void StopWaiting()
+        {
+            waitingSince = -1f;
         }
 
         public bool IsWaiting => waitingSince >= 0f;
