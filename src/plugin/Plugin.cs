@@ -520,11 +520,92 @@ namespace MegabonkTogether
             try
             {
                 GameManager.Instance.player.playerRenderer.gameObject.SetActive(true);
-                restored.Invoke();
             }
             catch (Exception ex)
             {
-                Log.LogWarning($"The game's death handler threw while being restored (invokeDeathEvent): {ex}");
+                Log.LogWarning($"Could not re-enable the player renderer before the death handler: {ex}");
+            }
+
+            // Each subscriber on its own, not one Invoke() on the multicast delegate.
+            //
+            // A_Died is a plain static Action the game's own types add themselves to, and a
+            // multicast Invoke stops at the first subscriber that throws -- every handler queued
+            // behind it is simply skipped. We already know one of them throws here: the
+            // NullReferenceException at Animator.set_speed noted above, every session on every
+            // peer. Whatever sits behind it in the list has therefore never run in a netplay
+            // session, and GameManager.OnDied (VA 0x180503950) is the method that sets overtime,
+            // raises GameManager's own static death action and starts the DoDeathAnimation
+            // coroutine -- i.e. the entire game-over sequence. If it is queued behind the thrower,
+            // the run never properly ends.
+            //
+            // Isolating the subscribers does not fix the throw; it stops one broken handler from
+            // taking the rest of the sequence with it, and it names which index failed.
+            //
+            // The try is around the CALL, not inside the callee, and that is deliberate.
+            // GetInvocationList crosses into Il2CppSystem and returns an Il2Cpp array, so if that
+            // member does not resolve against this build the MissingMethodException is raised when
+            // the containing method is JITted -- a try inside InvokeDeathSubscribersIsolated could
+            // not catch it. One level up can, and the fallback is the original single Invoke().
+            try
+            {
+                InvokeDeathSubscribersIsolated(restored);
+            }
+            catch (Exception ex)
+            {
+                Log.LogWarning(
+                    $"Could not split the death subscriber list ({ex.GetType().Name}: {ex.Message}); " +
+                    "falling back to a single invoke.");
+
+                try
+                {
+                    restored.Invoke();
+                }
+                catch (Exception inner)
+                {
+                    Log.LogWarning($"The game's death handler threw while being restored (invokeDeathEvent): {inner}");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Invokes every subscriber of the game's death action separately, so one that throws
+        /// cannot skip the ones behind it. Logs each failure with its position in the list.
+        ///
+        /// <para>Deliberately NOT calling <c>GameManager.OnDied</c> as a fallback when nothing in
+        /// the list appears to have run. It starts the <c>DoDeathAnimation</c> coroutine, and
+        /// calling it when the game already did would run the death animation twice. Establishing
+        /// whether it is a subscriber at all needs the invocation list read in play, which the
+        /// per-index logging below now provides.</para>
+        /// </summary>
+        private static void InvokeDeathSubscribersIsolated(Il2CppSystem.Action subscribers)
+        {
+            var invocationList = subscribers.GetInvocationList();
+
+            if (invocationList == null || invocationList.Length == 0)
+            {
+                subscribers.Invoke();
+                return;
+            }
+
+            for (var i = 0; i < invocationList.Length; i++)
+            {
+                // TryCast, never a C# cast: these are Il2CppInterop proxies and the managed wrapper
+                // is not the object.
+                var subscriber = invocationList[i]?.TryCast<Il2CppSystem.Action>();
+                if (subscriber == null)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    subscriber.Invoke();
+                }
+                catch (Exception ex)
+                {
+                    Log.LogWarning(
+                        $"Death subscriber {i + 1} of {invocationList.Length} threw; continuing with the rest: {ex}");
+                }
             }
         }
 
