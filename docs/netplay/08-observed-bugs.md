@@ -2045,6 +2045,131 @@ related to this bug — noted so it is not chased again.
 
 ---
 
+## OB-21 — The run freezes at an encounter and the failsafe fires every frame — CONFIRMED, **amplifier FIXED, trigger open**
+
+**2026-10-07, Desert, two peers.** Neither player could finish a run. The host's log holds **5,480**
+`Shared-experience failsafe fired` warnings and **5,509** barrier rounds inside 38 seconds; the
+client's holds **zero** warnings and 5,480 `Applied release` lines. The host stayed paused behind an
+encounter window that never closed.
+
+This is two separate defects stacked. Keeping them apart matters, because only one is fixed.
+
+### Part 1 — the trigger: a round opened for an encounter only one peer had — OPEN
+
+Rounds 0–28 are healthy: each shows `Report from <client> accepted for round N` then
+`Released round N`. **From round 29 there is not one report.**
+
+| Peer | At the stall |
+|---|---|
+| Host | `[pause] encounterWindow=False … t=666.96` → release of round 28 → `[pause] encounterWindow=True MyTime.paused=True t=667.90`, and **no further `[pause]` line for the rest of the log** |
+| Client | closed its window at its own `t=392.75`, then ~20s of ordinary play — `PlayerUpdate` at 60 Hz, two full bandwidth reports — with **no encounter window at all** |
+
+The link is closed, not lossy: `rtt 160 ms quality 100.0%/100.0%, pending 0 B, unacked 0 B` on both
+sides throughout, and the client applied every release the host sent.
+
+`BeginWaiting()` has exactly one caller, `RewardFinished()` — a peer starts its failsafe clock only
+when **its own** reward window finishes. A peer that never receives an encounter in a round has
+nothing to report *and no clock*, so it neither releases the barrier nor rescues itself. That is why
+the client logged zero failsafes: not that its failsafe worked, but that it never knew a round was
+open.
+
+**LIKELY mechanism, not established:** the host's window opened **0.94 s** after the previous round
+released, which is the signature of a second queued reward (`EncounterWindows.rewardQueue`) popping
+immediately. If one peer has two rewards queued and the other has one, the peers' round counters
+diverge by one and the barrier can never complete. What the logs do **not** show is what put the
+extra reward on the host's queue.
+
+**To settle it:** a repro where one player banks two rewards close together — two chests, or a chest
+plus a level-up — while the other takes one.
+
+### Part 2 — the amplifier: the failsafe clock is reset on only one branch — FIXED
+
+`ClearClosedEncounters()` is the only thing that resets `waitingSince`, and `OnCloseEncounter()`
+reaches it only on the branch taken when **no** reward window is open:
+
+```csharp
+if (encounterWindows != null && encounterWindows.encounterInProgress)
+    encounterWindows.RewardFinished();          // clock NOT reset
+else
+    { encounterService.ClearClosedEncounters(); MyTime.Unpause(); }   // clock reset
+```
+
+A peer holding an open window takes the first branch, keeps `waitingSince` latched at the first
+round's start, and is `HasWaitedTooLong()` from then on. `EncounterWindows.LateUpdate` tests it every
+frame **and keeps running at `timeScale 0`** — so the failsafe fires once per frame forever, each
+fire releasing a round and opening the next.
+
+Three things in the log confirm it without reading any code:
+
+1. The warning's own elapsed figure **climbs** — `after 20.0s` … `after 58.5s` — instead of
+   restarting per round. That is the un-reset clock, printed.
+2. 5,480 fires over 38.5 s is **142/s**, against the 144 FPS in the reporter's screenshot: one per
+   frame.
+3. The asymmetry names the branch. The host's window was open (first branch, no reset, 5,480 fires);
+   the client's was closed (second branch, reset, 0 fires).
+
+Fixed by `IEncounterService.StopWaiting()`, called unconditionally at the top of
+`OnCloseEncounter()`. Narrower than `ClearClosedEncounters()` on purpose: reaching that method means
+a release for the round was applied, so the wait is over on either branch, but the reports and the
+force flag are barrier state only the existing branch should rewrite.
+
+**This fix does not stop the stall.** It converts an unrecoverable freeze into the 20-second pause
+the failsafe was always meant to be.
+
+---
+
+## OB-22 — A peer's Steam avatar never appears for one side of the lobby — CONFIRMED, FIXED
+
+Reported 2026-10-07 with screenshots: the host's lobby showed no avatar for the client, while the
+client's showed both.
+
+`GetMediumFriendAvatar`'s two sentinels were read the wrong way round. Per the Steamworks
+`ISteamFriends` reference — `GetLargeFriendAvatar` states it explicitly, the Medium entry is
+abbreviated but behaves the same:
+
+| Value | Meaning | The code assumed |
+|---|---|---|
+| `0` | no avatar is set for that user | "fetching; ask again" |
+| `-1` | **not loaded yet** — Steam starts downloading and raises `AvatarImageLoaded_t` | "will never answer" |
+
+`-1` went into `failed`, which is tested before anything else and cleared only at session teardown.
+So the ordinary first answer for a user Steam has not cached permanently disabled that avatar for the
+whole session. The same reference says an uncached user is anyone who is not a friend, not on a
+requested leaderboard and not yet known through a shared lobby — the normal case in a lobby, not an
+edge case. Whichever peer has not cached the other loses the avatar, which is why it looked
+arbitrary and one-sided.
+
+Both sentinels are now retryable and call `RequestUserInformation`, throttled to once per second per
+account because the lobby panel rebinds its rows on every refresh. `failed` keeps its documented
+meaning: a read that threw or returned garbage.
+
+**Reproducing it needs two accounts that are not Steam friends and have not played together
+recently** — which is probably why it has not been seen before.
+
+---
+
+## OB-23 — The client's camera detaches from its character during the failsafe storm — OPEN, mechanism unknown
+
+Reported alongside [OB-21](#ob-21). Not explained, and recorded as unexplained rather than guessed.
+
+**Eliminated:**
+
+- **Not an exception.** The client's `Player.log` contains zero exceptions or errors for the whole
+  run, with Unity stack traces enabled.
+- **Not a death.** Neither peer died; `Death not prevented` appears once on each, from the
+  return-to-menu path already written up under [OB-20](#ob-20). So the spectator camera in
+  `Plugin.OnPlayerDied` was never armed.
+
+**What the client actually did** is run `OnCloseEncounter()` 5,480 times in 38 seconds, once per
+release applied. With no window open, each pass took the else branch: `ClearClosedEncounters()` and
+**`MyTime.Unpause()`** — several thousand unpauses against no pause, while the host was frozen and
+therefore publishing no authoritative state.
+
+That is a strong candidate and it is not evidence. **Re-test after the OB-21 fix before
+investigating further:** if the storm is what detached the camera, the storm is gone and so is this.
+If it recurs without a storm, it is a real and separate bug and this entry gets a mechanism.
+
+
 ## Not in this file
 
 - Client `NullReferenceException` storm — live lead in
