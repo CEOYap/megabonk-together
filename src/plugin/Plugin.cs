@@ -271,6 +271,7 @@ namespace MegabonkTogether
                 services.AddSingleton<IPlayerManagerService, PlayerManagerService>();
                 services.AddSingleton<IEnemyManagerService, EnemyManagerService>();
                 services.AddSingleton<IPlayerStatsSyncService, PlayerStatsSyncService>();
+                services.AddSingleton<IDesyncDetectorService, DesyncDetectorService>();
                 services.AddSingleton<IProjectileManagerService, ProjectileManagerService>();
                 services.AddSingleton<ISynchronizationService, SynchronizationService>();
                 services.AddSingleton<IPickupManagerService, PickupManagerService>();

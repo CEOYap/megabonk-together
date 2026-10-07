@@ -82,6 +82,7 @@ namespace MegabonkTogether.Common.Messages
     [MemoryPackUnion(75, typeof(LobbyStartRequested))]
     [MemoryPackUnion(76, typeof(EnemyMaxHpScaled))]
     [MemoryPackUnion(77, typeof(PlayerStatsChanged))]
+    [MemoryPackUnion(78, typeof(StateDigest))]
     public partial interface IGameNetworkMessage
     {
 

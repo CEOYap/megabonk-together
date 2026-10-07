@@ -13,6 +13,7 @@ namespace MegabonkTogether.Services
         private static event Action<SpawnedEnemy> SpawnedEnemyEvents;
         private static event Action<EnemyMaxHpScaled> EnemyMaxHpScaledEvents;
         private static event Action<PlayerStatsChanged> PlayerStatsChangedEvents;
+        private static event Action<StateDigest> StateDigestEvents;
         private static event Action<PlayerUpdate> PlayerUpdatesEvents;
         private static event Action<SelectedCharacter> SelectedCharacterEvents;
         private static event Action<IEnumerable<EnemyModel>> EnemiesUpdateEvents;
@@ -142,6 +143,20 @@ namespace MegabonkTogether.Services
         public static void SubscribePlayerStatsChangedEvents(Action<PlayerStatsChanged> action)
         {
             PlayerStatsChangedEvents += action;
+        }
+
+        /// <summary>Desync detector. The host's periodic view of the run.</summary>
+        public static void OnStateDigest(StateDigest stateDigest)
+        {
+            MainThreadDispatcher.Enqueue(() =>
+            {
+                StateDigestEvents?.Invoke(stateDigest);
+            });
+        }
+
+        public static void SubscribeStateDigestEvents(Action<StateDigest> action)
+        {
+            StateDigestEvents += action;
         }
 
         public static void SubscribeSelectedCharacterEvents(Action<SelectedCharacter> action)

@@ -20,6 +20,7 @@ namespace MegabonkTogether.Configuration
         public static ConfigEntry<bool> LogAllocationRate { get; private set; }
         public static ConfigEntry<bool> LogEncounterPause { get; private set; }
         public static ConfigEntry<bool> LogBandwidth { get; private set; }
+        public static ConfigEntry<bool> LogDesync { get; private set; }
         public static ConfigEntry<bool> LogSteamStatus { get; private set; }
         public static ConfigEntry<bool> SteamLobbySelfTest { get; private set; }
         public static ConfigEntry<bool> SteamNetSelfTest { get; private set; }
@@ -83,6 +84,17 @@ namespace MegabonkTogether.Configuration
                 "pop-up (OB-13): it prints one line whenever the window state, MyTime.paused or " +
                 "Physics.simulationMode changes, and flags any moment the window is open without " +
                 "the game being paused."
+            );
+            LogDesync = config.Bind(
+                "Diagnostics",
+                "LogDesync",
+                false,
+                "Compare the host's and each client's view of the run every 5 seconds and log what " +
+                "disagrees: enemy and pickup counts, player level, the shared-experience barrier " +
+                "round, and every interactable counter. Off by default. Turn it on on EVERY machine " +
+                "for a test session, and only when everyone runs the same build - an older build " +
+                "cannot read the message. Costs about 20 bytes per second. A mismatch is only " +
+                "reported if it persists across two comparisons, so in-flight spawns are not noise."
             );
             LogBandwidth = config.Bind(
                 "Diagnostics",

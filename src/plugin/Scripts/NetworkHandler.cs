@@ -46,6 +46,7 @@ namespace MegabonkTogether.Scripts
         private IWebsocketClientService websocketClientService;
         private IPlayerManagerService playerManagerService;
         private IPlayerStatsSyncService playerStatsSyncService;
+        private IDesyncDetectorService desyncDetectorService;
 
         /// <summary>
         /// OB-1. Globals move on level-up and item pickup, so 2 Hz is far faster than they change
@@ -73,6 +74,10 @@ namespace MegabonkTogether.Scripts
             // lazily, so a service nobody has resolved yet would never receive anything.
             playerStatsSyncService = Plugin.Services.GetRequiredService<IPlayerStatsSyncService>();
             EventManager.SubscribePlayerStatsChangedEvents(playerStatsSyncService.ApplyRemote);
+
+            // Same reason as above: subscribed here so the service exists before a digest arrives.
+            desyncDetectorService = Plugin.Services.GetRequiredService<IDesyncDetectorService>();
+            EventManager.SubscribeStateDigestEvents(desyncDetectorService.OnDigestReceived);
 
             EventManager.SubscribeGameStartedEvents(OnGameStarted);
             EventManager.SubscribePortalOpenedEvents(OnPortalOpened);
@@ -150,6 +155,9 @@ namespace MegabonkTogether.Scripts
                     statsCheckAccumulator = 0f;
                     playerStatsSyncService?.SendIfChanged();
                 }
+
+                // Desync detector. Returns on its first line when the switch is off.
+                desyncDetectorService?.Tick(Time.deltaTime);
 
                 // OB-13. Edge-triggered, so a well-behaved window costs two lines for the whole
                 // window rather than one per frame or per second. It has to be sampled every frame
@@ -315,6 +323,7 @@ namespace MegabonkTogether.Scripts
             Services.HostGuardDiagnostics.Reset();
             Services.PickupLifetimeDiagnostics.Reset();
             playerStatsSyncService?.Reset();
+            desyncDetectorService?.Reset();
             Patches.WeaponInventoryPatches.ResetForeignInventoryReport();
             Services.UnityExceptionDiagnostics.RemindWhereTracesAre();
             Services.UnityExceptionDiagnostics.Reset();

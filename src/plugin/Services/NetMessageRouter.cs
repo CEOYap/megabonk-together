@@ -89,6 +89,9 @@ namespace MegabonkTogether.Services
                 case PlayerStatsChanged playerStatsChanged:
                     EventManager.OnPlayerStatsChanged(playerStatsChanged);
                     break;
+                case StateDigest stateDigest:
+                    EventManager.OnStateDigest(stateDigest);
+                    break;
                 case AbstractSpawnedProjectile spawnedProjectile:
                     EventManager.OnSpawnedProjectile(spawnedProjectile);
                     break;

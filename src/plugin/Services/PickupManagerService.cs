@@ -15,6 +15,9 @@ namespace MegabonkTogether.Services
         public IEnumerable<PickupModel> GetAllPickups();
         public IEnumerable<(uint, Pickup)> GetAllPickupXp();
         public uint AddSpawnedPickup(Pickup pickup);
+
+        /// <summary>Desync detector. Entries in the registry; OB-5 merges can alias two ids to one object.</summary>
+        int TrackedPickupCount { get; }
         public void SetSpawnedPickup(uint pickupId, Pickup pickup);
         public Pickup GetPickupById(uint id);
         public KeyValuePair<uint, Pickup> GetPickupByReference(Pickup pickup);
@@ -26,6 +29,8 @@ namespace MegabonkTogether.Services
     internal class PickupManagerService : IPickupManagerService
     {
         private readonly ConcurrentDictionary<uint, Pickup> spawnedPickups = [];
+
+        public int TrackedPickupCount => spawnedPickups.Count;
         // FIX P0-3: see EnemyManagerService — int so allocation can go through Interlocked,
         // 0 stays reserved as the failure sentinel.
         private int currentPickupId = 0;

@@ -22,6 +22,9 @@ namespace MegabonkTogether.Services
         public IEnumerable<(uint, uint)> ReTargetEnemies(uint oldTargetId, IEnumerable<uint> currentPlayersExcludingOldOneId);
         public IEnumerable<EnemyModel> GetAllEnemiesDeltaAndUpdate();
         public uint AddSpawnedEnemy(Enemy enemy);
+
+        /// <summary>Desync detector. Entries in the registry, keyed by host id on every peer.</summary>
+        int TrackedEnemyCount { get; }
         public void SetSpawnedEnemy(uint enemyId, Enemy enemy);
         public Enemy GetEnemyById(uint id);
         public KeyValuePair<uint, Enemy> GetEnemyByReference(Enemy enemy);
@@ -51,6 +54,8 @@ namespace MegabonkTogether.Services
         }
 
         private readonly ConcurrentDictionary<uint, Enemy> spawnedEnemies = [];
+
+        public int TrackedEnemyCount => spawnedEnemies.Count;
         private readonly ConcurrentDictionary<Enemy, string> reviverEnemies_NetplayNames = [];
         private readonly ConcurrentDictionary<uint, int> reviverSpawnCountPerOwner = [];
         // FIX P0-3: int rather than uint so Interlocked.Increment can allocate ids atomically.
