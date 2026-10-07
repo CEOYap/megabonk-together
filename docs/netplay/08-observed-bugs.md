@@ -1336,7 +1336,46 @@ snapshot and the count can never disagree about it, and left to the game's own p
 A peer that dismisses it without reaching `OnShadyGuyDone` leaves the row one too *low* rather than
 one too high. That is the better failure and it is what vanilla does, but it is not verified.
 
-**Still open on this bug:** the challenge-shrine row, untouched by this.
+**Still open on this bug:** the challenge-shrine row, untouched by this — **resolved 2026-10-07, see
+below.**
+
+### 2026-10-07 — the challenge-shrine row is an echo
+
+The first run with a BepInEx log from **both** machines, which is what this was blocked on.
+
+One challenge shrine was used, and **both peers ran `OnReceivedInteractableUsed` for it**. The
+barrier rounds are the only clock the two peers share, and they put the event in the same slot on
+both sides:
+
+| Host | Client |
+|---|---|
+| `Released round 19` | `Applied release for round 19` |
+| **`snapshot 'Challenges' … reads 0`** → `counting 'Challenges'` | **`snapshot 'Challenges' … reads 0`** → `counting 'Challenges'` |
+| `Released round 20` | `Applied release for round 20` |
+
+One use, dispatched twice — not two uses. One of those peers is the one that used it, receiving its
+own message back.
+
+For a challenge shrine that is a visible divergence rather than a wasted call.
+`InteractableShrineChallenge.Interact()` returns `true`, so the using peer's own
+`DetectInteractables.A_Interacted` had already counted it; the echo adds a second count and that
+peer's row reads **one higher** than everyone else's for the rest of the run.
+
+`OnReceivedInteractableUsed` had **no owner check of any kind**. `OnReceivedChangeGold` already
+carries one, added for the stated reason that the host's exclusion runs through
+`SendToAllClientsExcept`, *"whose relay branch falls back to an EMPTY filter list on a lookup
+miss"* — and this session was relayed. The same guard is now on the interactable dispatch.
+
+Dropping the echo also prevents something worse than a miscount on the branches that replay the
+interaction: the `Interact` branch would run the real interaction a second time on the peer that
+just performed it — for a challenge shrine, a second wave of challenge enemies.
+
+**Not explained:** why only this row showed it. The `Pots` rows differ between the peers (12 against
+15), which is consistent with genuinely different uses rather than echoes. Whether the echo is
+universal or conditional on the relay filter missing is still open; the guard is correct either way.
+
+**Also confirmed in this run:** the shady-guy fix is live and behaving — `leaving a shady guy to the
+game's own OnShadyGuyUsed` appears twice on each peer, and no shady-guy row was double-counted.
 
 ### 2026-09-04 — the challenge shrine is **not** the shady-guy shape, and what that turned up
 
