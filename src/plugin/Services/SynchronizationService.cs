@@ -3178,6 +3178,38 @@ namespace MegabonkTogether.Services
 
         private void OnReceivedInteractableUsed(InteractableUsed used)
         {
+            // SE-11, applied to interactables. The same guard OnReceivedChangeGold already carries,
+            // and for the same stated reason: the host excludes the sender through
+            // SendToAllClientsExcept, whose relay branch falls back to an EMPTY filter list on a
+            // lookup miss, so on a relayed session a peer can receive its own message back.
+            //
+            // Measured on 2026-10-07 rather than assumed. One challenge shrine was used, and BOTH
+            // peers ran this dispatch for it -- at the identical position in the shared round
+            // sequence, between the release of round 19 and round 20, on both logs, each snapshot
+            // reading 0 before it counted. One of those two peers is the one that used it.
+            //
+            // For a challenge shrine that is a visible divergence rather than a wasted call:
+            // InteractableShrineChallenge.Interact() returns true (VA 0x1804CE250), so the using
+            // peer's own DetectInteractables.A_Interacted already counted it. The echo then adds a
+            // second count through InteractableCounterHelper, and that peer's row reads one higher
+            // than everybody else's for the rest of the run -- which is the challenge-shrine half of
+            // OB-12, open since the counter work began.
+            //
+            // The echo is worse than a miscount for the branches that replay the interaction: the
+            // Interact branch would run the real interaction a second time on the peer that just
+            // performed it, which for a challenge shrine means a second wave of challenge enemies.
+            //
+            // There is exactly one sender and it always stamps OwnerId with the local connection
+            // id, so there is no default-zero path for this comparison to catch by accident.
+            var localPlayerForEcho = playerManagerService.GetLocalPlayer();
+            if (localPlayerForEcho != null && used.OwnerId == localPlayerForEcho.ConnectionId)
+            {
+                logger.LogDebug(
+                    $"OB-12: dropping our own InteractableUsed coming back (owner {used.OwnerId}, " +
+                    $"action {used.Action}).");
+                return;
+            }
+
             if (used.IsPortal)
             {
                 var bossSpawner = spawnedObjectManagerService.GetSpecific<InteractableBossSpawner>();
