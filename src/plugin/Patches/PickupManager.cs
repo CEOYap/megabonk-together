@@ -54,13 +54,60 @@ namespace MegabonkTogether.Patches
                 return;
             }
 
+            var isServer = synchronizationService.IsServerMode() ?? false;
+
+            // OB-5 diagnostic. Read BEFORE the Clear below, which is what destroys the evidence.
+            //
+            // PickupManager.SpawnPickup (VA 0x1804DED60, decompiled) calls CheckOverlap and, when a
+            // pickup of the same kind is already there, does Pickup.AddValue on the EXISTING one and
+            // returns it -- no new pickup exists. A __result that already carries a pickupId is
+            // therefore a merge, and this postfix then wipes that id and OnPickupSpawned registers the
+            // same object a second time under a new one. Two ids, one host object: once it is
+            // consumed under one id the other dangles, and a client pulling it gets nothing -- the
+            // shape of OB-5's residual drops. Whether merges happen often enough to matter is what
+            // this counts; nothing is changed yet.
+            if (isServer)
+            {
+                var priorId = DynamicData.For(__result).Get<uint?>("pickupId");
+                if (priorId.HasValue)
+                {
+                    RecordMerge(priorId.Value, ePickup);
+                }
+            }
+
             DynamicData.For(__result).Data.Clear();
 
-            var isServer = synchronizationService.IsServerMode() ?? false;
             if (isServer)
             {
                 synchronizationService.OnPickupSpawned(__result, ePickup, pos, value);
             }
+        }
+
+        private static int mergesSinceReport = 0;
+        private static int mergesTotal = 0;
+        private static float lastMergeReport = -999f;
+
+        /// <summary>
+        /// Counts host-side pickup merges and reports at Info, at most every 10 s of unscaled time.
+        /// Silent when nothing merges, so a clean log is evidence rather than absence.
+        /// </summary>
+        private static void RecordMerge(uint priorId, EPickup ePickup)
+        {
+            mergesSinceReport++;
+            mergesTotal++;
+
+            var now = Time.unscaledTime;
+            if (now - lastMergeReport < 10f)
+            {
+                return;
+            }
+
+            Plugin.Log.LogInfo(
+                $"OB-5: {mergesSinceReport} pickup merge(s) re-registered under a new id " +
+                $"(latest: {ePickup} formerly id {priorId}; {mergesTotal} this session). " +
+                "Each leaves its old id pointing at the same object.");
+            mergesSinceReport = 0;
+            lastMergeReport = now;
         }
 
         /// <summary>
