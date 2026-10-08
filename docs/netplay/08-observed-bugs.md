@@ -1969,7 +1969,7 @@ transition where singleplayer would have had an empty dictionary. The guard is c
 ---
 
 <a name="ob-18"></a>
-## OB-18 — "Projectile Bounces" stays 0 for the whole run — UNVERIFIED
+## OB-18 — "Projectile Bounces" stays 0 for the whole run — **CLOSED: vanilla behaviour, not a bug (2026-10-08)**
 
 **Reported 2026-08-18, with a screenshot.** The stat panel reads `Projectile Bounces 0` all run.
 Same panel shows `Projectile Count 1`, `Size 1.0x`, `Duration 1.0x` — those are the base values, and
@@ -2040,6 +2040,19 @@ second path then the weapon's contribution was never in the number to begin with
 ---
 
 <a name="ob-19"></a>
+### 2026-10-08 — closed: the global stat is unused in the base game
+
+The global *Projectile Bounces* stat reads 0 in singleplayer too. Bounces exist only as **per-weapon**
+upgrades (Pistol and Lightning Staff among them), and nothing in the game raises the global stat —
+not items, tomes, Chaos Tome, the Dice character or shrines. Source: the Megabonk Steam community
+thread *"Whats the point of the Projectile Bounce stat?"*
+(https://steamcommunity.com/app/3405340/discussions/0/598540711282025719/), reported by the player.
+
+**Nothing to remove.** `ProjectileBounces` stays in OB-1's tracked stats: the correction is
+`result - observerGlobal + ownerGlobal`, which is `result - 0 + 0` while the global stat is unused, so
+per-weapon bounces pass through unchanged. If a future game update starts using the stat, the
+replication is already in place.
+
 ## OB-19 — Final-boss weapon return gives a player somebody else's weapon — LIKELY, mechanism identified
 
 **Reported 2026-08-18.** The Desert final boss takes the players' weapons and returns them as its
