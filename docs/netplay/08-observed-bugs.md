@@ -794,7 +794,7 @@ the named paths upstream of the guard.
 ---
 
 <a name="ob-11"></a>
-## OB-11 — Minibosses always spawn near the host — CONFIRMED, **re-centring proven live 2026-10-07; rotation unverified**
+## OB-11 — Minibosses always spawn near the host — **FIXED and CONFIRMED in play (2026-10-08)**
 
 **Reported:** minibosses appear next to the host rather than somewhere between the players. A client
 playing away from the host sees them arrive on top of their teammate, never near themselves.
@@ -990,6 +990,12 @@ one level are needed for that.
 Their absence means the patch never fires and the next step is patch-time resolution, not placement.
 A `re-centred a boss spawn on peer N` line whose miniboss still appears next to the host means the
 position is being overwritten downstream of the prefix, which nothing has yet looked for.
+
+### 2026-10-08 — rotation confirmed
+
+Three miniboss events in one run alternated exactly as designed: `slot 0 of 2` (client), then
+`host's own slot (1 of 2)`, then `slot 0 of 2` again. With the 2026-10-07 placement proof, both halves
+of OB-11 are now confirmed in play.
 
 ## OB-12 — The run's interactable counters diverge, except charge shrines — **FIXED and CONFIRMED in play (2026-10-08)**
 
