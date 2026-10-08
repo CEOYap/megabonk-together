@@ -5647,37 +5647,40 @@ namespace MegabonkTogether.Services
             // leaving every peer paused behind a barrier that had already been satisfied.
             var encounterWindows = UiManager.Instance == null ? null : UiManager.Instance.encounterWindows;
 
+            // OB-21, third version. Reaching here means a release for the round has been applied,
+            // so that round's reports, force flag and failsafe clock are all spent. They are cleared
+            // FIRST, before anything below can create state for the NEXT round.
+            //
+            // The second version cleared them AFTER the branch, and the 2026-10-08 run shows why
+            // that was wrong. The host's failsafe reaches here through ReleaseBarrier without the
+            // force flag set (the client's failsafe sets it; the host's never did). The re-entrant
+            // RewardFinished_Prefix therefore found the barrier not closable and, instead of
+            // closing the window, filed the host's report for the NEXT round and started its clock.
+            // The clear after the branch then wiped both. The host was left paused, window hidden,
+            // with no report and no clock: the client's report for round 48 was accepted twice with
+            // "closable: False", and the host's failsafe never fired again. A permanent stall.
+            encounterService.ClearClosedEncounters();
+
             if (encounterWindows != null && encounterWindows.encounterInProgress)
             {
+                // Forced for every caller, not just the ones that remembered to call Close() first,
+                // so the re-entrant RewardFinished_Prefix takes its IsClosable() branch and CLOSES
+                // this window rather than reporting a second time. This is what the client path has
+                // always done; the host failsafe path was the one that did not.
+                encounterService.Close();
+
                 encounterWindows.RewardFinished();
+
+                // Never let the force flag outlive this release. If RewardFinished_Prefix took its
+                // queued-reward branch it returned before clearing anything, and a force flag left
+                // set makes the NEXT round's window close without reporting -- which is exactly the
+                // phase slip that was OB-21's original trigger.
+                encounterService.Unclose();
             }
             else
             {
                 MyTime.Unpause();
             }
-
-            // Unconditional, and deliberately AFTER the branch rather than before it.
-            //
-            // Reaching this method means a release for the round has been applied, so every piece
-            // of per-round state is spent: the reports, the force flag and the failsafe clock. Only
-            // the else branch used to say so, and the consequences were two different bugs from one
-            // asymmetry (OB-21).
-            //
-            // It cannot move above the branch. Callers set forceClose immediately before calling
-            // here precisely so the re-entrant RewardFinished_Prefix sees IsClosable() and closes
-            // the window instead of reporting a second time. Clearing first would turn that close
-            // into a duplicate report.
-            //
-            // What the narrower StopWaiting() fix missed: RewardFinished_Prefix returns early when
-            // the reward queue is non-empty, before it reaches ClearClosedEncounters. So a peer
-            // holding a queued reward kept BOTH waitingSince and forceClose. The stale clock is the
-            // once-per-frame failsafe storm; the stale forceClose is worse and quieter -- the next
-            // round's RewardFinished_Prefix sees IsClosable() true, closes and unpauses without
-            // ever reporting, and that peer is now one encounter ahead of everyone else. The
-            // 2026-10-07 logs show it plainly: across 29 rounds the client entered the barrier-wait
-            // state once and the host twice, when it should have been every round.
-            encounterService.ClearClosedEncounters();
-
             //EncounterWindows.A_WindowClosed.Invoke();
         }
 
