@@ -144,6 +144,15 @@ Its answer is to force `GetAttackSizeMultiplier` to `1.0` for any weapon a remot
 remote aura renders at base size regardless of upgrades. Ours replicates the owner's stat block and
 applies the exact correction, which is strictly more accurate. Nothing to take.
 
+### 2026-10-08 — it has never sent anything over Steam
+
+`PlayerStatsSyncService` sent through `IUdpClientService`, which is always the LiteNetLib session.
+Only `INetTransport` is switched to Steam by `UseSteamTransport`, so under the default transport every
+stat block went into a LiteNetLib socket with no peers. Remote attacks have been corrected from no data
+at all, which is consistent with OB-1 never having been confirmed in play. Found because the desync
+detector copied the same pattern and logged nothing. Both now send through `INetTransport`.
+**The OB-1 feature is effectively untested from here.**
+
 ## OB-2 — Ghost item's summons appear for players who do not have the item — **FIXED and CONFIRMED in play (2026-08-17)**
 
 **Reported:** when either peer holds the Ghost item — which summons ghosts on interacting with pots,
