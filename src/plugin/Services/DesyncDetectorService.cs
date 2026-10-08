@@ -49,7 +49,11 @@ namespace MegabonkTogether.Services
         private const int COUNT_TOLERANCE_ABSOLUTE = 3;
         private const float COUNT_TOLERANCE_RATIO = 0.10f;
 
-        private readonly IUdpClientService udpClientService;
+        // INetTransport, NOT IUdpClientService. IUdpClientService is always the LiteNetLib session;
+        // only INetTransport is switched to the Steam transport by UseSteamTransport (Plugin.cs).
+        // Sending through IUdpClientService under Steam writes into a socket with no peers, and
+        // nothing ever leaves the machine -- which is how this sent nothing for whole sessions.
+        private readonly INetTransport transport;
         private readonly ISynchronizationService synchronizationService;
         private readonly IEnemyManagerService enemyManagerService;
         private readonly IPickupManagerService pickupManagerService;
@@ -65,15 +69,16 @@ namespace MegabonkTogether.Services
 
         private int digestsCompared = 0;
         private float lastInSyncSummary = -999f;
+        private float lastSentReport = -999f;
 
         public DesyncDetectorService(
-            IUdpClientService udpClientService,
+            INetTransport transport,
             ISynchronizationService synchronizationService,
             IEnemyManagerService enemyManagerService,
             IPickupManagerService pickupManagerService,
             IEncounterService encounterService)
         {
-            this.udpClientService = udpClientService;
+            this.transport = transport;
             this.synchronizationService = synchronizationService;
             this.enemyManagerService = enemyManagerService;
             this.pickupManagerService = pickupManagerService;
@@ -117,7 +122,17 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            udpClientService.SendToAllClients(digest, NetDelivery.ReliableOrdered);
+            transport.SendToAllClients(digest, NetDelivery.ReliableOrdered);
+
+            // The host side used to be silent on success, so on 2026-10-08 a detector that never
+            // sent anything (it was wired to the wrong transport) and one that sent fine looked
+            // identical in the host log. One line a minute closes that: no line means no digests.
+            var now = Time.unscaledTime;
+            if (now - lastSentReport >= IN_SYNC_SUMMARY_INTERVAL_SECONDS)
+            {
+                Plugin.Log.LogInfo($"[desync] host sent digest #{digest.Sequence} (sent every {DIGEST_INTERVAL_SECONDS:F0} s).");
+                lastSentReport = now;
+            }
         }
 
         private StateDigest BuildDigest()
@@ -289,6 +304,7 @@ namespace MegabonkTogether.Services
             currentMismatches.Clear();
             digestsCompared = 0;
             lastInSyncSummary = -999f;
+            lastSentReport = -999f;
         }
     }
 }

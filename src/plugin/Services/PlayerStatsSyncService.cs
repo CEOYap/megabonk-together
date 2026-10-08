@@ -69,17 +69,21 @@ namespace MegabonkTogether.Services
             (int)EStat.AttackSpeed,               // 15
         ];
 
-        private readonly IUdpClientService udpClientService;
+        // INetTransport, NOT IUdpClientService. IUdpClientService is always the LiteNetLib session;
+        // only INetTransport is switched to the Steam transport by UseSteamTransport (Plugin.cs).
+        // Sending through IUdpClientService under Steam writes into a socket with no peers, and
+        // nothing ever leaves the machine -- which is how this sent nothing for whole sessions.
+        private readonly INetTransport transport;
         private readonly IPlayerManagerService playerManagerService;
 
         private readonly Dictionary<int, float> lastSent = [];
         private readonly ConcurrentDictionary<uint, Dictionary<int, float>> remoteStats = [];
 
         public PlayerStatsSyncService(
-            IUdpClientService udpClientService,
+            INetTransport transport,
             IPlayerManagerService playerManagerService)
         {
-            this.udpClientService = udpClientService;
+            this.transport = transport;
             this.playerManagerService = playerManagerService;
         }
 
@@ -128,11 +132,11 @@ namespace MegabonkTogether.Services
             if (playerManagerService.IsLocalConnectionId(local.ConnectionId)
                 && (Plugin.Instance?.NetworkHandler?.IsHost ?? false))
             {
-                udpClientService.SendToAllClients(message, NetDelivery.ReliableOrdered);
+                transport.SendToAllClients(message, NetDelivery.ReliableOrdered);
             }
             else
             {
-                udpClientService.SendToHost(message, NetDelivery.ReliableOrdered);
+                transport.SendToHost(message, NetDelivery.ReliableOrdered);
             }
         }
 
