@@ -950,8 +950,55 @@ namespace MegabonkTogether.Services
             }
         }
 
+        private readonly HashSet<string> misroutedTypesReported = new();
+
+        /// <summary>
+        /// True, after a one-time warning per message type, when this LiteNetLib service is asked to
+        /// send while the session runs on the Steam transport.
+        ///
+        /// <para>Under Steam nothing legitimate reaches here. Gameplay traffic goes through
+        /// INetTransport, which the factory in Plugin.cs points at SteamNetTransport, and the
+        /// matchmaker has its own WebSocket client. A call arriving here comes from code that
+        /// injected IUdpClientService directly, and its send lands in a LiteNetLib socket with no
+        /// peers -- nothing leaves the machine and nothing reports it. That is how the desync
+        /// detector and OB-1's stat replication sent nothing for whole sessions, found only on
+        /// 2026-10-08 because the detector's silence was conspicuous.</para>
+        ///
+        /// <para>The send is dropped, which changes nothing: it was going nowhere. What changes is
+        /// that the next mistake of this kind names its message type in the log on its first
+        /// send.</para>
+        /// </summary>
+        private bool IsMisroutedUnderSteam(string messageTypeName)
+        {
+            if (!ModConfig.UseSteamTransport.Value)
+            {
+                return false;
+            }
+
+            bool firstTime;
+            lock (misroutedTypesReported)
+            {
+                firstTime = misroutedTypesReported.Add(messageTypeName ?? "unknown");
+            }
+
+            if (firstTime)
+            {
+                Plugin.Log.LogWarning(
+                    $"[transport] {messageTypeName} was sent through IUdpClientService while the Steam " +
+                    "transport is active, so it went nowhere. Whatever sent it should depend on " +
+                    "INetTransport instead. Reported once per message type.");
+            }
+
+            return true;
+        }
+
         public void SendToAllClients<T>(T data, NetDelivery delivery) where T : IGameNetworkMessage
         {
+            if (IsMisroutedUnderSteam(typeof(T).Name))
+            {
+                return;
+            }
+
             var deliveryMethod = ToLiteNetLib(delivery);
 
             if (!EnsureIsHost(HostGuardMessageName(data)))
@@ -994,6 +1041,11 @@ namespace MegabonkTogether.Services
 
         public void SendToHost<T>(T data, NetDelivery? delivery = null) where T : IGameNetworkMessage
         {
+            if (IsMisroutedUnderSteam(typeof(T).Name))
+            {
+                return;
+            }
+
             if (!EnsureIsClient())
             {
                 return;
@@ -1045,6 +1097,11 @@ namespace MegabonkTogether.Services
         /// </summary>
         public void SendToClient<T>(uint connectionId, T data) where T : IGameNetworkMessage
         {
+            if (IsMisroutedUnderSteam(typeof(T).Name))
+            {
+                return;
+            }
+
             if (!EnsureIsHost(HostGuardMessageName(data)))
             {
                 return;
@@ -1209,6 +1266,11 @@ namespace MegabonkTogether.Services
         /// </summary>
         public void SendToAllClientsExcept<T>(uint excludedConnectionId, T data) where T : IGameNetworkMessage
         {
+            if (IsMisroutedUnderSteam(typeof(T).Name))
+            {
+                return;
+            }
+
             if (!EnsureIsHost(HostGuardMessageName(data)))
             {
                 return;
@@ -1323,6 +1385,11 @@ namespace MegabonkTogether.Services
         /// </summary>
         public void SendToAllClients(byte[] data, NetDelivery delivery, string messageTypeName = null)
         {
+            if (IsMisroutedUnderSteam(messageTypeName ?? "raw payload"))
+            {
+                return;
+            }
+
             var deliveryMethod = ToLiteNetLib(delivery);
 
             if (!EnsureIsHost(HostGuardMessageName(data, messageTypeName)))
