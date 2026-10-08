@@ -2330,7 +2330,7 @@ into the next round. Host and client now take the same path.
 mapping every re-entrant path that creates it. The release path re-enters the report path; any change
 to either must be checked against both.
 
-## OB-22 — A peer's Steam avatar never appears for one side of the lobby — CONFIRMED, FIXED
+## OB-22 — A peer's Steam avatar never appears for one side of the lobby — CONFIRMED, **first fix insufficient; real cause fixed 2026-10-08, unverified**
 
 Reported 2026-10-07 with screenshots: the host's lobby showed no avatar for the client, while the
 client's showed both.
@@ -2359,6 +2359,32 @@ meaning: a read that threw or returned garbage.
 recently** — which is probably why it has not been seen before.
 
 ---
+
+### 2026-10-08 — still broken; the real cause was upstream of the avatar call
+
+Reported unchanged after the sentinel fix. On the host, the avatar lookup never ran at all.
+
+`SteamLobbyService.RefreshMembers` ran only from `ApplyLobbyCreated` and `ApplyLobbyEnter`, so a
+member who joined *later* was never in the cached member list. `LobbyView.ResolveSteamIds` then had no
+Steam account for their connection id, their row got SteamId `0`, and `TryGetAvatar(0)` returned null
+without a log line.
+
+| Peer | Cached member list | Result |
+|---|---|---|
+| Host | filled at creation, alone; never grows | client's row has SteamId 0, no avatar |
+| Client | filled on entry, host already present | host's row resolves, avatar shows |
+
+The host's *own* row reads `LocalSteamId` directly and never touched the list, which is why the host
+always saw its own face. The join key was checked and is not at fault: the client published
+`82462037` and the host knows it by the same id.
+
+**Fix:** refresh the list once a second from `Poll` while in a lobby, and log whenever the count
+changes. Polled rather than driven by `LobbyChatUpdate_t`, because broadcast callbacks through the
+game's interop are still unproven. The sentinel fix stands — it was a real bug — but could not have
+fixed this.
+
+**Confirms as:** `[steam-lobby] Member list now has 2 member(s) (was 1).` in the host log when the
+friend joins, and his avatar on the host's screen.
 
 ## OB-23 — The client's camera detaches from its character during the failsafe storm — OPEN, mechanism unknown
 
