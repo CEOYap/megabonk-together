@@ -373,6 +373,8 @@ namespace MegabonkTogether.Services
 
         public void Poll()
         {
+            RefreshMembersIfDue();
+
             if (!hasPendingCall || !steamService.IsAvailable)
             {
                 return;
@@ -896,6 +898,48 @@ namespace MegabonkTogether.Services
         /// rebuilt rather than diffed — the same call this project makes everywhere else at this
         /// scale.
         /// </summary>
+        private const float MEMBER_REFRESH_INTERVAL_SECONDS = 1f;
+        private float lastMemberRefresh = -999f;
+
+        /// <summary>
+        /// OB-22. Keeps the cached member list current while in a lobby.
+        ///
+        /// <para>RefreshMembers used to run only from ApplyLobbyCreated and ApplyLobbyEnter. A
+        /// member who joined AFTER this peer created or entered the lobby was therefore never in
+        /// the list, so ResolveSteamIds could not map their connection id to a Steam account, their
+        /// row got SteamId 0, and TryGetAvatar returned nothing without logging. That is exactly the
+        /// reported asymmetry: the host creates the lobby alone and never learns about the client,
+        /// while the client enters a lobby the host is already in and sees both.</para>
+        ///
+        /// <para>Polled rather than driven by LobbyChatUpdate_t on purpose. That is a broadcast
+        /// callback, and whether Callback&lt;T&gt; works through the game's interop is an open
+        /// question this service has avoided. GetNumLobbyMembers reads Steam's own local lobby
+        /// cache, which Steam keeps current regardless, so once a second costs nothing.</para>
+        /// </summary>
+        private void RefreshMembersIfDue()
+        {
+            if (State != SteamLobbyState.InLobby || !steamService.IsAvailable)
+            {
+                return;
+            }
+
+            var now = UnityEngine.Time.unscaledTime;
+            if (now - lastMemberRefresh < MEMBER_REFRESH_INTERVAL_SECONDS)
+            {
+                return;
+            }
+
+            lastMemberRefresh = now;
+
+            var before = members.Count;
+            RefreshMembers();
+
+            if (members.Count != before)
+            {
+                Plugin.Log.LogInfo($"[steam-lobby] Member list now has {members.Count} member(s) (was {before}).");
+            }
+        }
+
         private void RefreshMembers()
         {
             members.Clear();
