@@ -433,6 +433,12 @@ worth, so merged XP is lost on the host. Unreachable in the shared-experience ru
 **Reference point:** a third-party mod's 0.5 release replicates merged values with a dedicated
 message. That is a wire change (a new union tag); not taken until the counter says merges are common.
 
+### 2026-10-08 — merges are common and harmless
+
+158 host-side merges in one run, and **zero** failed pickup lookups on either peer. The client merges
+the same way the host does, so the aliased ids never dangle in practice. The merge lead is closed; the
+dormant shared-experience-off value bug noted above stands.
+
 ## OB-6 — A shrine's charge *value* is never transmitted — CONFIRMED, **WON'T FIX (2026-08-18)**
 
 **Reported:** shrine counters are not in sync between all players.
@@ -985,7 +991,7 @@ Their absence means the patch never fires and the next step is patch-time resolu
 A `re-centred a boss spawn on peer N` line whose miniboss still appears next to the host means the
 position is being overwritten downstream of the prefix, which nothing has yet looked for.
 
-## OB-12 — The run's interactable counters diverge, except charge shrines — **attempt 2 WORKS for 7 of 9 rows (2026-08-17)**
+## OB-12 — The run's interactable counters diverge, except charge shrines — **FIXED and CONFIRMED in play (2026-10-08)**
 
 ### RE-DIAGNOSED 2026-08-17 — the fix was applied to branches your config never reaches
 
@@ -1480,7 +1486,11 @@ BepInEx lines. That is the third run this has cost.
 peer at least once. Until then the challenge-shrine divergence has no evidence behind it beyond the
 on-screen reading.
 
-## OB-13 — Enemies keep taking damage while an encounter window has the game paused — CONFIRMED, **first fix bypassed; re-gated at the funnel 2026-10-07, unverified**
+### 2026-10-08 — confirmed
+
+Reported fixed by the player, challenge shrine and shady guy included.
+
+## OB-13 — Enemies keep taking damage while an encounter window has the game paused — **FIXED and CONFIRMED in play (2026-10-08)**
 
 **Reported (2026-08-16):** with the game paused by an encounter window, bosses and enemies still
 receive damage from projectiles. **Refined by the reporter: it happens only when shared experience is
@@ -1652,6 +1662,11 @@ rather than deferred.
 
 **Two fixes may each be enough on their own.** If OB-21's barrier fix holds, the other peer is
 paused too and stops sending hits during the window. This gate is the backstop for when it is not.
+
+### 2026-10-08 — confirmed
+
+Reported fixed by the player. The host log carries 53 `OB-13: suppressed N enemy hit(s) while paused`
+lines and the client 14, so the gate at `Enemy.Damage` is what held, not a coincidence of timing.
 
 ## OB-14 — The end-of-run damage panel credits you with your teammate's weapons — LIKELY
 
@@ -2175,7 +2190,7 @@ related to this bug — noted so it is not chased again.
 
 ---
 
-## OB-21 — The run freezes at an encounter and the failsafe fires every frame — CONFIRMED, **both halves FIXED, unverified**
+## OB-21 — The run freezes at an encounter and the failsafe fires every frame — CONFIRMED, **storm fixed and confirmed; host stall fixed 2026-10-08, unverified**
 
 **2026-10-07, Desert, two peers.** Neither player could finish a run. The host's log holds **5,480**
 `Shared-experience failsafe fired` warnings and **5,509** barrier rounds inside 38 seconds; the
@@ -2285,6 +2300,29 @@ Superseded by the Part 1 fix, which resets the whole of the per-round state rath
 clock. Both halves come from the same asymmetry.
 
 ---
+
+### 2026-10-08 — the storm is gone, but the second fix stranded the host
+
+**Confirmed:** 2 failsafe fires on the host and 1 on the client across 48 rounds, not 5,480. The
+phase slip did not recur.
+
+**New failure, caused by the fix:** the host stayed paused for good. The client's report for round 48
+was accepted twice — the second from its own failsafe — with `barrier closable: False`, which with
+two players means the host's own report was missing. The host never fired a third failsafe.
+
+The host failsafe reaches `OnCloseEncounter` through `ReleaseBarrier` **without the force flag** (the
+client's failsafe sets it; the host's never did). With a window open, the re-entrant
+`RewardFinished_Prefix` found the barrier not closable and filed the host's report for the *next*
+round, starting its clock — and the post-branch `ClearClosedEncounters` from the second fix then
+wiped both. Paused, window hidden, no report, no clock.
+
+**Third version:** clear the spent round first; set the force flag inside `OnCloseEncounter` for every
+caller so the re-entrant prefix closes the window; drop the flag straight afterwards so it cannot leak
+into the next round. Host and client now take the same path.
+
+**Lesson recorded:** two consecutive fixes here each changed *when* per-round state is reset without
+mapping every re-entrant path that creates it. The release path re-enters the report path; any change
+to either must be checked against both.
 
 ## OB-22 — A peer's Steam avatar never appears for one side of the lobby — CONFIRMED, FIXED
 
