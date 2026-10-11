@@ -138,6 +138,9 @@ namespace MegabonkTogether.Services
 
         /// <summary>OB-6. Host: broadcast that this shrine completed.</summary>
         public void OnChargeShrineCompleted(ChargeShrine shrine);
+
+        /// <summary>OB-6. Client: our bar filled first; ask the host to complete this shrine.</summary>
+        public void RequestChargeShrineCompletion(ChargeShrine shrine);
         public void OnChangeGold(int amount);
     }
     internal class SynchronizationService : ISynchronizationService
@@ -980,6 +983,7 @@ namespace MegabonkTogether.Services
 
             pendingEnemySpawns.Clear();
             enemiesDiedBeforeSpawn.Clear();
+            requestedShrineCompletions.Clear();
             Patches.Enemies.EnemyPatch.EnemiesDistanceThrottler.ClearAll();
 
             Plugin.Instance.NetPlayersDisplayer.ResetCards();
@@ -5825,6 +5829,27 @@ namespace MegabonkTogether.Services
             logger.LogInfo($"OB-6: shrine {shrineNetplayId.Value} completed on the host; told every client.");
         }
 
+        /// <summary>Shrines this client has already asked about, so a request is sent once.</summary>
+        private readonly HashSet<uint> requestedShrineCompletions = [];
+
+        public void RequestChargeShrineCompletion(ChargeShrine shrine)
+        {
+            if ((IsServerMode() ?? true) || shrine == null)
+            {
+                return;
+            }
+
+            var shrineNetplayId = MonoMod.Utils.DynamicData.For(shrine.gameObject).Get<uint?>("netplayId");
+            if (!shrineNetplayId.HasValue || !requestedShrineCompletions.Add(shrineNetplayId.Value))
+            {
+                return;
+            }
+
+            IGameNetworkMessage message = new ChargeShrineCompleted { ShrineNetplayId = shrineNetplayId.Value };
+            udpClientService.SendToHost(message, NetDelivery.ReliableOrdered);
+            logger.LogInfo($"OB-6: shrine {shrineNetplayId.Value} filled here first; asked the host to complete it.");
+        }
+
         private void OnReceivedChargeShrineCompleted(ChargeShrineCompleted message)
         {
             var shrineObj = spawnedObjectManagerService.GetSpawnedObject(message.ShrineNetplayId);
@@ -5843,6 +5868,18 @@ namespace MegabonkTogether.Services
             // Mirror the host's bar before completing, so ChargeShrine.Update takes its
             // "already full" early return instead of carrying on charging behind the completion.
             shrine.chargeProgress = 1f;
+
+            if (IsServerMode() ?? false)
+            {
+                // A client's bar filled first. The host accepts the earliest fill from anyone, so a
+                // player who fills a shrine and walks away is never left holding a full, unrewarded
+                // bar. Completing here runs the Complete postfix, which broadcasts the decision to
+                // every client, the requester included. Not inside SuppressOutbound: that broadcast
+                // is the point.
+                shrine.Complete();
+                logger.LogInfo($"OB-6: completed shrine {message.ShrineNetplayId} because a client's bar filled first.");
+                return;
+            }
 
             IsApplyingHostShrineCompletion = true;
             try

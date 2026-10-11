@@ -75,7 +75,17 @@ namespace MegabonkTogether.Patches
                 return true;
             }
 
-            return SynchronizationService.IsApplyingHostShrineCompletion;
+            if (SynchronizationService.IsApplyingHostShrineCompletion)
+            {
+                return true;
+            }
+
+            // Our own bar filled before the host's. Hold the completion, but tell the host: it
+            // completes the shrine for everyone on the earliest fill from any player. Without this
+            // a player who filled a shrine and left before the host's bar filled kept a full,
+            // unrewarded bar.
+            synchronizationService.RequestChargeShrineCompletion(__instance);
+            return false;
         }
 
         [HarmonyPostfix]

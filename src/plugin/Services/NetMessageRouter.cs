@@ -381,6 +381,10 @@ namespace MegabonkTogether.Services
                     EventManager.OnAddXp(addXp);
                     Transport.SendToAllClientsExcept(addXp.OwnerId, addXp);
                     break;
+                // OB-6. A client whose bar filled first; the host decides and broadcasts.
+                case ChargeShrineCompleted chargeShrineCompleted:
+                    EventManager.OnChargeShrineCompleted(chargeShrineCompleted);
+                    break;
                 case EncounterClosedStamped encounterClosedStamped:
                     OnEncounterClosedStamped(encounterClosedStamped);
                     break;
