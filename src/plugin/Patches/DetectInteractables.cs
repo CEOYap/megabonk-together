@@ -57,6 +57,18 @@ namespace MegabonkTogether.Patches
             var challengeShrine = interactable.GetComponentInChildren<InteractableShrineChallenge>();
             if (challengeShrine != null)
             {
+                // OB-12. Returning false below cancels DetectInteractables.TryInteract, and with it
+                // A_Interacted -> InteractablesStatus.OnInteractableUse, which is the ONLY place the
+                // game counts a challenge shrine. So a client never counted its own use, while the
+                // host counted it from the replicated message: the desync detector caught this on
+                // 2026-10-11 as "counter 'Challenges' host 1 / local 0", ending at 3 / 1.
+                //
+                // Counted here exactly as the game would have, before the shrine stops being
+                // interactable. The host never reaches this method (it returns above), and our own
+                // InteractableUsed coming back is dropped by the OB-12 echo guard, so this cannot
+                // double-count.
+                InteractableCounterHelper.CountAsUsed(interactable.gameObject);
+
                 challengeShrine.done = true;
                 challengeShrine.fx.SetActive(true);
                 GameObject.Destroy(challengeShrine.alertIcon);
