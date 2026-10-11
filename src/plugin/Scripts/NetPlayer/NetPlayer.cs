@@ -672,7 +672,36 @@ namespace MegabonkTogether.Scripts.NetPlayer
             {
 
                 var weapon = Inventory.weaponInventory.weapons[eWeapon];
-                Inventory.weaponInventory.ToggleWeapon(eWeapon, enabled);
+
+                // OB-19. WeaponInventory.A_WeaponToggled is a STATIC event: a toggle on ANY
+                // inventory notifies every listener, including the LOCAL player's AuraAttacks
+                // (OnWeaponToggle). So when the final boss gave this peer's weapon back and we
+                // replayed the toggle on their avatar, the local player was handed the visual of a
+                // weapon they never had -- the reported "both players received each other's stolen
+                // weapons". The [weapon-owner] diagnostic never fired because nothing was ADDED:
+                // FinalFightController.TakeWeapon / GiveWeaponBack (VA 0x180495340 / 0x1804929E0,
+                // decompiled) only ever call ToggleWeapon, and only on MyPlayer's own inventory.
+                //
+                // Silenced exactly as the add path already silences A_WeaponAdded, restored in a
+                // finally so a throw cannot leave the game's own toggle event dead.
+                var originalToggled = Assets.Scripts.Inventory__Items__Pickups.Weapons.WeaponInventory.A_WeaponToggled;
+                Assets.Scripts.Inventory__Items__Pickups.Weapons.WeaponInventory.A_WeaponToggled = null;
+                try
+                {
+                    Inventory.weaponInventory.ToggleWeapon(eWeapon, enabled);
+                }
+                finally
+                {
+                    Assets.Scripts.Inventory__Items__Pickups.Weapons.WeaponInventory.A_WeaponToggled = originalToggled;
+                }
+
+                // With the event silenced, this avatar's own constant attack (aura, aegis, ...) is
+                // shown or hidden here directly, so a stolen weapon actually disappears from this
+                // player on everyone else's screen and comes back with it.
+                if (constantAttacks.TryGetValue(eWeapon, out var constantAttack) && constantAttack != null)
+                {
+                    constantAttack.gameObject.SetActive(enabled);
+                }
 
                 if (!enabled)
                 {
