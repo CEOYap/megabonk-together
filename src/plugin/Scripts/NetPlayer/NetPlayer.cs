@@ -399,6 +399,53 @@ namespace MegabonkTogether.Scripts.NetPlayer
         //    }
         //}
 
+        /// <summary>
+        /// OB-1. Replays this player's changed global stats into their constant attacks, the way
+        /// PlayerStatsNew.A_StatUpdate does for the local player.
+        ///
+        /// <para>Without it, attacks that cache a stat -- ChunkersAttack.OnStatUpdate (VA
+        /// 0x180352590) is the only thing that re-reads its count and size -- kept the values they
+        /// were built with, the same defect as the Aegis count. Every OnStatUpdate this reaches was
+        /// decompiled or is already called by RefreshConstantAttack, and Aegis's only adjusts its
+        /// cooldown timers: no sound, no static event.</para>
+        /// </summary>
+        public void OnRemoteStatsChanged(System.Collections.Generic.List<int> changedStats)
+        {
+            if (constantAttacks == null || constantAttacks.Count == 0)
+            {
+                return;
+            }
+
+            playerManagerService.AddGetNetplayerPositionRequest(connectionId);
+            try
+            {
+                foreach (var constantAttack in constantAttacks.Values)
+                {
+                    if (constantAttack == null)
+                    {
+                        continue;
+                    }
+
+                    foreach (var stat in changedStats)
+                    {
+                        try
+                        {
+                            constantAttack.OnStatUpdate((Assets.Scripts.Menu.Shop.EStat)stat);
+                        }
+                        catch (System.Exception ex)
+                        {
+                            Plugin.Log.LogWarning(
+                                $"[netplayer] {connectionId}: OnStatUpdate({stat}) on {constantAttack.name} threw: {ex.Message}");
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                playerManagerService.UnqueueNetplayerPositionRequest();
+            }
+        }
+
         public void RefreshConstantAttack(Il2CppSystem.Collections.Generic.List<StatModifier> upgradeModifiers)
         {
             playerManagerService.AddGetNetplayerPositionRequest(connectionId);

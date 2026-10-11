@@ -147,7 +147,33 @@ namespace MegabonkTogether.Services
                 return;
             }
 
+            remoteStats.TryGetValue(message.OwnerId, out var previous);
             remoteStats[message.OwnerId] = new Dictionary<int, float>(message.Stats);
+
+            // Constant attacks that CACHE a stat (Chunkers caches its count and size; Aegis its
+            // cooldown) only refresh in OnStatUpdate. On the local player the game calls that from
+            // PlayerStatsNew.A_StatUpdate whenever a stat moves; on a remote avatar nothing did, so
+            // those stayed at the values they were built with. The values they recompute come from
+            // WeaponUtility, which the OB-1 postfixes already correct to this owner -- so telling
+            // them a stat changed is all that was missing.
+            var changed = new List<int>();
+            foreach (var stat in message.Stats)
+            {
+                if (previous == null
+                    || !previous.TryGetValue(stat.Key, out var old)
+                    || old != stat.Value)
+                {
+                    changed.Add(stat.Key);
+                }
+            }
+
+            if (changed.Count == 0)
+            {
+                return;
+            }
+
+            var netPlayer = playerManagerService.GetNetPlayerByNetplayId(message.OwnerId);
+            netPlayer?.OnRemoteStatsChanged(changed);
         }
 
         public float? GetRemoteStat(uint ownerId, int stat)
