@@ -51,9 +51,17 @@ namespace MegabonkTogether.Scripts.Snapshot
             EnemyInterpolatorManager.Unregister(this);
         }
 
+        /// <summary>
+        /// Whether this enemy can be shown in the boss health bar. Cached once: an enemy's flags
+        /// do not change after spawn, and this is read on every interpolation step.
+        /// </summary>
+        private bool raisesHealthChange;
+
         public void Initialize(Enemy enemy)
         {
             this.enemy = enemy;
+            raisesHealthChange = enemy != null
+                && (enemy.enemyFlag & Assets.Scripts.Actors.Enemies.EEnemyFlag.AnyBoss) != 0;
 
             // Belt-and-braces, exactly as TargetSwitcher.StartSwitching does: OnEnable is the
             // intended hook, but if Il2CppInterop does not wire it, nothing would ever register
@@ -101,7 +109,24 @@ namespace MegabonkTogether.Scripts.Snapshot
             if (!FindSnapshotPair(renderTime, out EnemySnapshot older, out EnemySnapshot newer))
                 return;
 
+            var previousHp = enemy.hp;
             enemy.hp = newer.Hp;
+
+            // The boss health bar never polls HP. TargetOfInterestPrefab.Update only fades and
+            // redraws debuffs; UpdateHp (the text and the bar) runs only from its OnDamage and
+            // OnHealthChange handlers, subscribed in Awake to the static Enemy.A_Damage and
+            // Enemy.A_HealthChange (all decompiled). A client applies a boss's HP here, by direct
+            // write, so neither event fired and the bar showed the spawn value for the whole fight
+            // -- reported 2026-10-11 as "6.2m / 6.2m" on the client against 7.9m / 8.4m on the
+            // host, and read as the client being unable to damage the boss.
+            //
+            // A_HealthChange is the event the game itself raises when health moves outside a hit,
+            // which is what this is. Bosses only, and only on a change: it is a global event and
+            // this runs for every remote enemy at the interpolation rate.
+            if (raisesHealthChange && previousHp != newer.Hp)
+            {
+                Enemy.A_HealthChange?.Invoke(enemy);
+            }
 
             float dist = Vector3.Distance(older.Position, newer.Position);
             if (dist > 2.0f)

@@ -1396,6 +1396,13 @@ namespace MegabonkTogether.Services
             enemy.controlHp = hp;
             enemy.maxHp = hp;
             enemy._hp_k__BackingField = hp;
+
+            // Same reason as EnemyInterpolator: the boss bar only redraws on an event, so a new
+            // maximum written here would otherwise never reach it.
+            if ((enemy.enemyFlag & Assets.Scripts.Actors.Enemies.EEnemyFlag.AnyBoss) != 0)
+            {
+                Enemy.A_HealthChange?.Invoke(enemy);
+            }
         }
 
         /// <summary>
