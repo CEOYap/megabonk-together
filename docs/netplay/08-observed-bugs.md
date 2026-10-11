@@ -2533,6 +2533,69 @@ outside a hit. Bosses only, and from the interpolator only on an actual change.
 fight, so some damage reached the boss, but the log cannot say whose.
 
 
+## OB-25 — `Look rotation viewing vector is zero` floods the client log while the host fires rockets — CONFIRMED, **cosmetic; parked for a design pass**
+
+**What it is.** A Unity warning, not an error: something called `Quaternion.LookRotation` with a
+zero-length direction. Unity returns the identity rotation and carries on, so at worst a projectile
+faces the default direction for one frame. No player has ever noticed anything in play.
+
+**Where it comes from: the host's rockets, on the client.** It appears only on clients (0 on the host
+in every run), and only in runs where the host fires rockets:
+
+| Run | `SpawnedRocketProjectile` in the host's `[bw]` samples | Warnings in the client log |
+|---|---|---|
+| earlier session (handover 13) | none | 0 |
+| earlier sessions (handovers 12-13) | present | 23,622 → 870 |
+| 2026-10-07 | present | 178 |
+| 2026-10-11 | 118 samples | **8,961** |
+| 2026-10-12 | none | **0** |
+
+Zero rockets has meant zero warnings every time it has been measured. The count scales with how much
+the host uses rocket weapons, not with session length.
+
+**Mechanism (LIKELY, not decompiled).** On a client, a remote rocket is a real game object that
+`ProjectileInterpolator` *teleports* to each snapshot position, while the game's own projectile code
+still runs on it. That code derives the rocket's facing from its movement; on a frame where the
+interpolator has not moved it, the movement is zero and the facing call logs. Two authorities on one
+transform: the interpolator owns position, the game owns everything else.
+
+**Not a missing guard in our code.** Every `LookRotation` call in the mod is accounted for: three are
+guarded against zero vectors (`NetPlayer.cs` x2, `ProjectileInterpolator.cs`), and the third
+`NetPlayer` site runs about twice a run. The calls that log are the game's, reacting to our teleports.
+
+**Cost today.** One log write per occurrence on the client's main thread: about 8,961 over a full run
+when the host is rocket-heavy. Not measurable in play, but it buries real warnings in the log.
+
+### Why it is parked
+
+Four separate patches to remote projectiles have already been made and each fixed a symptom of the
+same split authority (see handovers 12 and 13). The handover's instruction stands: *do not patch it a
+fifth time*. This wants a design decision.
+
+### Fix options for whoever picks this up
+
+1. **Inert visuals.** Spawn a client's remote projectiles as plain visual objects with the game's
+   projectile components removed or disabled, driven only by the interpolator. Removes the conflict
+   entirely. Risk: anything the client relies on from those components (hit effects, sounds,
+   expiry) has to be reproduced or replicated.
+2. **Give the interpolator the whole lifetime.** Keep the game components, but have the interpolator
+   also own expiry and facing (set rotation from the snapshot delta, skipping zero deltas), and stop
+   the game's own movement update on remote projectiles.
+3. **Send events, not transforms.** Replicate "fired, with this origin, direction and speed" and let
+   each client simulate the projectile locally, as the game would. Cheapest on bandwidth; risks
+   drift between peers for long-lived projectiles.
+
+**Before choosing, decompile first:** find which rocket method calls `LookRotation` (start from the
+rocket projectile class's `FixedUpdate` / `Update` in `dump.cs`) to confirm the mechanism above.
+
+**Cheap stopgap if the log noise ever matters:** a prefix on that one game method that skips the
+facing update when the movement delta is zero, on remote projectiles only. It silences the warning
+without touching the design question.
+
+**Confirms fixed as:** a run where the host fires rockets heavily and the client log has no
+`Look rotation viewing vector is zero` lines.
+
+
 ## Not in this file
 
 - Client `NullReferenceException` storm — live lead in
@@ -2543,7 +2606,7 @@ fight, so some damage reached the boss, but the log cannot say whose.
   now measured rather than assumed. `[unity-exc]` confirms `SetStackTraceLogType(..., ScriptOnly)`
   was applied on both peers and **still no managed frame appears**, which resolves the open
   either/or: the thrower is native game code, not managed mod code.
-- Remote projectile / rocket representation — same file, needs a design pass rather than a patch.
+- Remote projectile / rocket representation — now tracked as [OB-25](#ob-25), with evidence and fix options.
 - ~~Host BepInEx logging no Unity-sourced lines~~ — **fixed and confirmed.** It was
   `[Logging.Disk] WriteUnityLog`, which defaults to `false` and is a separate gate from
   `[Logging] UnityLogListening`. See [`05-local-testing.md`](05-local-testing.md).
