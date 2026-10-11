@@ -160,6 +160,11 @@ owner had more: our prefix blocks a remote Aegis's `FixedUpdate`, the only calle
 so the count never grew. Now set directly to `GetAttackQuantity` (already owner-corrected). Shows the
 owner's maximum; spent shields are not replicated.
 
+### 2026-10-12 — Chunkers confirmed
+
+Chunkers size and count matched on both screens after upgrades, confirming the stat-forwarding
+fix (`NetPlayer.OnRemoteStatsChanged`).
+
 ## OB-2 — Ghost item's summons appear for players who do not have the item — **FIXED and CONFIRMED in play (2026-08-17)**
 
 **Reported:** when either peer holds the Ghost item — which summons ghosts on interacting with pots,
@@ -336,7 +341,7 @@ exact rather than heuristic.
 ---
 
 <a name="ob-5"></a>
-## OB-5 — A client's magnet pull often does nothing — **symptom gone (2026-08-18)**, residual drops now instrumented
+## OB-5 — A client's magnet pull often does nothing — **CLOSED: working in play (2026-10-12)**
 
 **Reported:** power-up magnets picked up by clients sometimes do not work at all.
 
@@ -454,6 +459,11 @@ message. That is a wire change (a new union tag); not taken until the counter sa
 158 host-side merges in one run, and **zero** failed pickup lookups on either peer. The client merges
 the same way the host does, so the aliased ids never dangle in practice. The merge lead is closed; the
 dormant shared-experience-off value bug noted above stands.
+
+### 2026-10-12 — closed
+
+Working in play with no reported issues, and zero failed pickup lookups across the recent runs.
+Closed by the project owner. The merge counter can stay; it is silent when nothing merges.
 
 ## OB-6 — A shrine's charge *value* is never transmitted — **REOPENED and FIXED 2026-10-12 (host-authoritative completion), unverified**
 
