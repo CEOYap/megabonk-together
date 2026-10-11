@@ -92,6 +92,9 @@ namespace MegabonkTogether.Services
                 case StateDigest stateDigest:
                     EventManager.OnStateDigest(stateDigest);
                     break;
+                case ChargeShrineCompleted chargeShrineCompleted:
+                    EventManager.OnChargeShrineCompleted(chargeShrineCompleted);
+                    break;
                 case AbstractSpawnedProjectile spawnedProjectile:
                     EventManager.OnSpawnedProjectile(spawnedProjectile);
                     break;

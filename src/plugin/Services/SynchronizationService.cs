@@ -135,6 +135,9 @@ namespace MegabonkTogether.Services
 
         /// <summary>Breaks a stuck shared-experience barrier. See the audit doc.</summary>
         public void ForceCloseEncounter(string reason);
+
+        /// <summary>OB-6. Host: broadcast that this shrine completed.</summary>
+        public void OnChargeShrineCompleted(ChargeShrine shrine);
         public void OnChangeGold(int amount);
     }
     internal class SynchronizationService : ISynchronizationService
@@ -290,6 +293,7 @@ namespace MegabonkTogether.Services
             EventManager.SubscribeReadinessRoundReAskEvents(BroadcastReadinessRound);
             EventManager.SubscribeReleaseBarrierEvents(ReleaseBarrier);
             EventManager.SubscribeGoldChangedEvents(OnReceivedChangeGold);
+            EventManager.SubscribeChargeShrineCompletedEvents(OnReceivedChargeShrineCompleted);
 
             cancellationToken = cancellationTokenSource.Token;
             this.udpClientService = udpClientService;
@@ -5760,6 +5764,66 @@ namespace MegabonkTogether.Services
             {
                 udpClientService.SendToHost(message, NetDelivery.ReliableOrdered);
             }
+        }
+
+        /// <summary>
+        /// Set while a client applies the host's completion, so the ChargeShrine.Complete prefix lets
+        /// exactly that call through. Main thread only: both the prefix and this run there.
+        /// </summary>
+        public static bool IsApplyingHostShrineCompletion { get; private set; }
+
+        public void OnChargeShrineCompleted(ChargeShrine shrine)
+        {
+            if (!(IsServerMode() ?? false) || shrine == null)
+            {
+                return;
+            }
+
+            var shrineNetplayId = MonoMod.Utils.DynamicData.For(shrine.gameObject).Get<uint?>("netplayId");
+            if (!shrineNetplayId.HasValue)
+            {
+                logger.LogWarning("OB-6: a charge shrine completed with no netplay id; clients cannot be told.");
+                return;
+            }
+
+            IGameNetworkMessage message = new ChargeShrineCompleted { ShrineNetplayId = shrineNetplayId.Value };
+            udpClientService.SendToAllClients(message, NetDelivery.ReliableOrdered);
+            logger.LogInfo($"OB-6: shrine {shrineNetplayId.Value} completed on the host; told every client.");
+        }
+
+        private void OnReceivedChargeShrineCompleted(ChargeShrineCompleted message)
+        {
+            var shrineObj = spawnedObjectManagerService.GetSpawnedObject(message.ShrineNetplayId);
+            var shrine = shrineObj == null ? null : shrineObj.GetComponent<ChargeShrine>();
+            if (shrine == null)
+            {
+                logger.LogWarning($"OB-6: completion for unknown shrine {message.ShrineNetplayId} ignored.");
+                return;
+            }
+
+            if (shrine.completed)
+            {
+                return;
+            }
+
+            // Mirror the host's bar before completing, so ChargeShrine.Update takes its
+            // "already full" early return instead of carrying on charging behind the completion.
+            shrine.chargeProgress = 1f;
+
+            IsApplyingHostShrineCompletion = true;
+            try
+            {
+                using (Plugin.SuppressOutbound())
+                {
+                    shrine.Complete();
+                }
+            }
+            finally
+            {
+                IsApplyingHostShrineCompletion = false;
+            }
+
+            logger.LogInfo($"OB-6: completed shrine {message.ShrineNetplayId} on the host's word.");
         }
 
         private void OnReceivedChangeGold(GoldChanged changed)

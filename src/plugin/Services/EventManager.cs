@@ -14,6 +14,7 @@ namespace MegabonkTogether.Services
         private static event Action<EnemyMaxHpScaled> EnemyMaxHpScaledEvents;
         private static event Action<PlayerStatsChanged> PlayerStatsChangedEvents;
         private static event Action<StateDigest> StateDigestEvents;
+        private static event Action<ChargeShrineCompleted> ChargeShrineCompletedEvents;
         private static event Action<PlayerUpdate> PlayerUpdatesEvents;
         private static event Action<SelectedCharacter> SelectedCharacterEvents;
         private static event Action<IEnumerable<EnemyModel>> EnemiesUpdateEvents;
@@ -157,6 +158,20 @@ namespace MegabonkTogether.Services
         public static void SubscribeStateDigestEvents(Action<StateDigest> action)
         {
             StateDigestEvents += action;
+        }
+
+        /// <summary>OB-6. The host completed a charge shrine.</summary>
+        public static void OnChargeShrineCompleted(ChargeShrineCompleted message)
+        {
+            MainThreadDispatcher.Enqueue(() =>
+            {
+                ChargeShrineCompletedEvents?.Invoke(message);
+            });
+        }
+
+        public static void SubscribeChargeShrineCompletedEvents(Action<ChargeShrineCompleted> action)
+        {
+            ChargeShrineCompletedEvents += action;
         }
 
         public static void SubscribeSelectedCharacterEvents(Action<SelectedCharacter> action)
