@@ -153,6 +153,13 @@ at all, which is consistent with OB-1 never having been confirmed in play. Found
 detector copied the same pattern and logged nothing. Both now send through `INetTransport`.
 **The OB-1 feature is effectively untested from here.**
 
+### 2026-10-11 — size works; Aegis count fixed
+
+Confirmed in play for Aura and Frost Walker size. The Aegis showed one shield on the host while the
+owner had more: our prefix blocks a remote Aegis's `FixedUpdate`, the only caller of `AmplifyShield`,
+so the count never grew. Now set directly to `GetAttackQuantity` (already owner-corrected). Shows the
+owner's maximum; spent shields are not replicated.
+
 ## OB-2 — Ghost item's summons appear for players who do not have the item — **FIXED and CONFIRMED in play (2026-08-17)**
 
 **Reported:** when either peer holds the Ghost item — which summons ghosts on interacting with pots,
@@ -1006,7 +1013,7 @@ Three miniboss events in one run alternated exactly as designed: `slot 0 of 2` (
 `host's own slot (1 of 2)`, then `slot 0 of 2` again. With the 2026-10-07 placement proof, both halves
 of OB-11 are now confirmed in play.
 
-## OB-12 — The run's interactable counters diverge, except charge shrines — **FIXED and CONFIRMED in play (2026-10-08)**
+## OB-12 — The run's interactable counters diverge, except charge shrines — **challenge shrine regressed and re-fixed 2026-10-11, unverified**
 
 ### RE-DIAGNOSED 2026-08-17 — the fix was applied to branches your config never reaches
 
@@ -1504,6 +1511,17 @@ on-screen reading.
 ### 2026-10-08 — confirmed
 
 Reported fixed by the player, challenge shrine and shady guy included.
+
+### 2026-10-11 — the client never counted its own challenge shrine
+
+The desync detector's first working run caught it: `counter 'Challenges' host 1 / local 0` from
+digest #83, ending 3 / 1. On a client, `DetectInteractables.TryInteract_Prefix` fakes the shrine
+cosmetically and returns `false`, cancelling `TryInteract` and with it `A_Interacted`, the game's
+only count path. Now counted with `InteractableCounterHelper.CountAsUsed` before the cancel. Likely
+looked fixed on 2026-10-08 because no client used a challenge shrine that run.
+
+**Also caught, not yet reported by the player:** `Charge Shrines` held a steady **+1 on the client**
+(host 14 / local 15 at the end) for most of the run. Small and persistent; uninvestigated.
 
 ## OB-13 — Enemies keep taking damage while an encounter window has the game paused — **FIXED and CONFIRMED in play (2026-10-08)**
 
@@ -2053,7 +2071,7 @@ thread *"Whats the point of the Projectile Bounce stat?"*
 per-weapon bounces pass through unchanged. If a future game update starts using the stat, the
 replication is already in place.
 
-## OB-19 — Final-boss weapon return gives a player somebody else's weapon — LIKELY, mechanism identified
+## OB-19 — Final-boss weapon return gives a player somebody else's weapon — CONFIRMED, **mechanism corrected and FIXED 2026-10-11, unverified**
 
 **Reported 2026-08-18.** The Desert final boss takes the players' weapons and returns them as its
 phases progress. After a return, **a player gains the visual for a weapon they never owned** — P1 had
@@ -2134,6 +2152,17 @@ player's action" flag and never checks whether `__instance` is the local invento
 entry describes, and it names no final-boss weapon handling. The fix shape above (compare `__instance`
 against the local inventory's `Pointer`) remains the stronger one. Still waiting on a run that reaches
 the final boss for the `[weapon-owner]` line.
+
+### 2026-10-11 — not AddWeapon at all: a static toggle event
+
+Reproduced: both players received each other's stolen weapons. `[weapon-owner]` never fired, which
+disproved the AddWeapon hypothesis. Decompiled, `FinalFightController.TakeWeapon` and
+`GiveWeaponBack` only call `WeaponInventory.ToggleWeapon`, and only on `MyPlayer`'s own inventory.
+
+The leak was ours: `WeaponInventory.A_WeaponToggled` is a **static** event, so replaying a peer's
+toggle on their avatar notified the local player's `AuraAttacks.OnWeaponToggle` too. The add path
+already silences the sibling `A_WeaponAdded`; the toggle path now does the same, and shows or hides
+the avatar's own constant attack directly so a stolen aura disappears on other screens.
 
 ## OB-20 — A player who dies stays dead through the level transition and ends the run — CONFIRMED
 
@@ -2218,7 +2247,7 @@ related to this bug — noted so it is not chased again.
 
 ---
 
-## OB-21 — The run freezes at an encounter and the failsafe fires every frame — CONFIRMED, **storm fixed and confirmed; host stall fixed 2026-10-08, unverified**
+## OB-21 — The run freezes at an encounter and the failsafe fires every frame — **FIXED and CONFIRMED in play (2026-10-11)**
 
 **2026-10-07, Desert, two peers.** Neither player could finish a run. The host's log holds **5,480**
 `Shared-experience failsafe fired` warnings and **5,509** barrier rounds inside 38 seconds; the
@@ -2352,7 +2381,11 @@ into the next round. Host and client now take the same path.
 mapping every re-entrant path that creates it. The release path re-enters the report path; any change
 to either must be checked against both.
 
-## OB-22 — A peer's Steam avatar never appears for one side of the lobby — CONFIRMED, **first fix insufficient; real cause fixed 2026-10-08, unverified**
+### 2026-10-11 — confirmed
+
+A full run to the final boss with no stall reported.
+
+## OB-22 — A peer's Steam avatar never appears for one side of the lobby — **FIXED and CONFIRMED in play (2026-10-11)**
 
 Reported 2026-10-07 with screenshots: the host's lobby showed no avatar for the client, while the
 client's showed both.
@@ -2408,7 +2441,7 @@ fixed this.
 **Confirms as:** `[steam-lobby] Member list now has 2 member(s) (was 1).` in the host log when the
 friend joins, and his avatar on the host's screen.
 
-## OB-23 — The client's camera detaches from its character during the failsafe storm — OPEN, mechanism unknown
+## OB-23 — The client's camera detaches from its character during the failsafe storm — **not reproducing (2026-10-11)**
 
 Reported alongside [OB-21](#ob-21). Not explained, and recorded as unexplained rather than guessed.
 
@@ -2429,6 +2462,10 @@ That is a strong candidate and it is not evidence. **Re-test after the OB-21 fix
 investigating further:** if the storm is what detached the camera, the storm is gone and so is this.
 If it recurs without a storm, it is a real and separate bug and this entry gets a mechanism.
 
+
+### 2026-10-11
+
+Not seen in the first run after the OB-21 fixes. Consistent with it having been a side effect of the storm.
 
 ## Not in this file
 
