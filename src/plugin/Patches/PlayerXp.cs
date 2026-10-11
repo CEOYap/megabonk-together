@@ -13,9 +13,17 @@ namespace MegabonkTogether.Patches
         /// <summary>
         /// Synchronize XP changes in shared experience mode.
         /// </summary>
+        /// <summary>Records the total before the game adds to it, so the postfix can send the gain.</summary>
+        [HarmonyPrefix]
+        [HarmonyPatch(nameof(PlayerXp.AddXp))]
+        public static void AddXp_Prefix(PlayerXp __instance, out int __state)
+        {
+            __state = __instance.xp;
+        }
+
         [HarmonyPostfix]
         [HarmonyPatch(nameof(PlayerXp.AddXp))]
-        public static void AddXp_Postfix(PlayerXp __instance, int amount)
+        public static void AddXp_Postfix(PlayerXp __instance, int amount, int __state)
         {
             if (!synchronizationService.HasNetplaySessionStarted())
             {
@@ -32,7 +40,14 @@ namespace MegabonkTogether.Patches
                 return;
             }
 
-            synchronizationService.PlayerXpAddXp(__instance.xp, amount, __instance.leftOverXp);
+            // Shared XP is replicated as the GAIN, not the total. See OnReceivedAddXp.
+            var gained = __instance.xp - __state;
+            if (gained <= 0)
+            {
+                return;
+            }
+
+            synchronizationService.PlayerXpAddXp(__instance.xp, gained, __instance.leftOverXp);
         }
 
     }

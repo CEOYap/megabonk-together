@@ -5524,13 +5524,47 @@ namespace MegabonkTogether.Services
             }
         }
 
+        /// <summary>
+        /// Shared XP: adds the other player's GAIN to ours.
+        ///
+        /// <para>This used to overwrite our total with the sender's (playerXp.xp = xp.Xp). That loses
+        /// whatever this peer gained while the message was in flight: both players pick up an orb
+        /// at once, each sends its own total, and each overwrites the other's -- so each loses its
+        /// own pickup and the two totals end up different. During a swarm that happens constantly.
+        /// PlayerXp.AddXp (VA 0x1803C5440, decompiled) derives the level from the TOTAL and only
+        /// ever raises it, so a lost gain near a threshold leaves one player a level behind until
+        /// they farm the difference back: 2026-10-11, "level host 30 / local 31" for ~50 s, and
+        /// level-up reward windows opening seconds apart even while the levels matched.</para>
+        ///
+        /// <para>Additions commute, so two peers applying each other's gains in any order land on
+        /// the same total. Amount is the sender's post-multiplier gain (its XP-gain stat is already
+        /// applied, exactly as it was when the total was sent). Xp and LeftOverXp are no longer
+        /// applied: the fractional remainder belongs to the player whose multiplier produced it.</para>
+        ///
+        /// <para>Changes what an existing field means, which CLAUDE.md treats like a wire change: a
+        /// peer on an older build would read a gain as a total. Both peers must run this build,
+        /// which tags 78 and 79 already require.</para>
+        /// </summary>
         private void OnReceivedAddXp(AddXp xp)
         {
+            // SE-11 shape: never apply our own gain twice if it comes back.
+            var localPlayer = playerManagerService.GetLocalPlayer();
+            if (localPlayer != null && xp.OwnerId == localPlayer.ConnectionId)
+            {
+                return;
+            }
+
+            if (xp.Amount <= 0)
+            {
+                return;
+            }
+
             using (Plugin.SuppressOutbound())
             {
                 var playerXp = GameManager.Instance.player.inventory.playerXp;
-                playerXp.xp = xp.Xp;
-                playerXp.leftOverXp = xp.LeftOverXp;
+                playerXp.xp += xp.Amount;
+
+                // Amount 0 adds nothing; it is what runs the level-up check against the new total.
                 playerXp.AddXp(0);
             }
         }
