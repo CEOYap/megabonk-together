@@ -1785,7 +1785,10 @@ misassigned too** rather than only the end screen. Worth checking before this is
 ---
 
 <a name="ob-15"></a>
-## OB-15 — The client's NullReferenceException storm — cause found, **FIXED, unverified**
+## OB-15 — The client's NullReferenceException storm — **FIXED and CONFIRMED in play (2026-10-12)**
+
+> Confirmed by absence: zero exceptions on both peers across the 2026-10-07, 10-08, 10-11 and
+> 10-12 runs, two of which reached the Desert final boss.
 
 **The hypothesis carried since 2026-08-15 is refuted.** The client's exception storm was recorded as
 "consistent with the custom-button null-background bug but not proven". The button bug is fixed and
@@ -1898,7 +1901,10 @@ them this one — see [OB-17](#ob-17).
 ---
 
 <a name="ob-16"></a>
-## OB-16 — Desert final-boss pylon charge throws on the host — **self-inflicted by OB-11; FIXED, unverified**
+## OB-16 — Desert final-boss pylon charge throws on the host — **FIXED and CONFIRMED in play (2026-10-12)**
+
+> Confirmed by absence: zero exceptions on both peers across the 2026-10-07, 10-08, 10-11 and
+> 10-12 runs, two of which reached the Desert final boss.
 
 **Reported 2026-08-17** alongside a fresh pylon problem, and the host's `Player.log` caught it:
 
@@ -1963,7 +1969,10 @@ the normal spawn path. **It does** — `EnemyManager.SpawnBoss`, which itself ca
 ---
 
 <a name="ob-17"></a>
-## OB-17 — The host throws in MinimapCamera.UpdateArrows — CONFIRMED, **FIXED, unverified**
+## OB-17 — The host throws in MinimapCamera.UpdateArrows — **FIXED and CONFIRMED in play (2026-10-12)**
+
+> Confirmed by absence: zero exceptions on both peers across the 2026-10-07, 10-08, 10-11 and
+> 10-12 runs, two of which reached the Desert final boss.
 
 **2026-08-17 host `Player.log`: 62 occurrences**, per-frame while they last:
 
