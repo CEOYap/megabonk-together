@@ -18,7 +18,7 @@ rendezvous path. OB-13 was reported on **2026-08-16** and has no capture attache
 ---
 
 <a name="ob-1"></a>
-## OB-1 — Remote players' attacks render with the *observer's* stats — CONFIRMED, scope widened 2026-08-18
+## OB-1 — Remote players' attacks render with the *observer's* stats — **FIXED and CONFIRMED in play (2026-10-12)**
 
 **Reported:** the number of shield projectiles around a player differs between host and client.
 
@@ -455,7 +455,7 @@ message. That is a wire change (a new union tag); not taken until the counter sa
 the same way the host does, so the aliased ids never dangle in practice. The merge lead is closed; the
 dormant shared-experience-off value bug noted above stands.
 
-## OB-6 — A shrine's charge *value* is never transmitted — CONFIRMED, **WON'T FIX (2026-08-18)**
+## OB-6 — A shrine's charge *value* is never transmitted — **REOPENED and FIXED 2026-10-12 (host-authoritative completion), unverified**
 
 **Reported:** shrine counters are not in sync between all players.
 
@@ -528,6 +528,24 @@ the shrine was reported.
 ---
 
 <a name="ob-7"></a>
+### 2026-10-12 — reopened: the reopen condition was met
+
+The closure above named one condition for reopening: *a charge shrine completing and paying out for
+one player noticeably before the other's bar fills.* The 2026-10-11 run met it. The player reported
+repeated pauses tied to charge shrines, and the barrier log shows the client's reward window opening
+8-15 s before the host's in rounds 105-107; round 108 passed 20 s and fired the client's failsafe,
+which is the "stuck" game the player reported. The desync detector also showed the `Charge Shrines`
+row 1 apart for most of the run, i.e. one peer completed a shrine the other never did. The earlier
+scope note that this row "does agree" is no longer true.
+
+Decompiled `ChargeShrine.Update` (VA `0x1804C2E20`): each peer fills the bar on its own clock and
+calls `Complete` when its own bar is full, then opens the reward window with `AddEncounter(1)`.
+
+**Fix:** completion is now the host's decision. A client's `Complete` is held (its bar sits at full);
+the host's `Complete` postfix sends `ChargeShrineCompleted` (union tag **79**), and the client
+completes the same shrine on receipt. The counter follows, since `A_Charged` is raised inside
+`Complete`. Trade-off: a shrine a client fills and the host does not stays unrewarded on the client.
+
 ## OB-7 — Desert final-boss pylons do not exist for clients — **FIXED, confirmed in play (2026-08-18)**
 
 **Reported:** on the Desert final boss the pylons do not appear or work for non-host clients. **The
@@ -1013,7 +1031,7 @@ Three miniboss events in one run alternated exactly as designed: `slot 0 of 2` (
 `host's own slot (1 of 2)`, then `slot 0 of 2` again. With the 2026-10-07 placement proof, both halves
 of OB-11 are now confirmed in play.
 
-## OB-12 — The run's interactable counters diverge, except charge shrines — **challenge shrine regressed and re-fixed 2026-10-11, unverified**
+## OB-12 — The run's interactable counters diverge, except charge shrines — **FIXED and CONFIRMED in play (2026-10-12)**
 
 ### RE-DIAGNOSED 2026-08-17 — the fix was applied to branches your config never reaches
 
@@ -2164,7 +2182,7 @@ toggle on their avatar notified the local player's `AuraAttacks.OnWeaponToggle` 
 already silences the sibling `A_WeaponAdded`; the toggle path now does the same, and shows or hides
 the avatar's own constant attack directly so a stolen aura disappears on other screens.
 
-## OB-20 — A player who dies stays dead through the level transition and ends the run — CONFIRMED
+## OB-20 — A player who dies stays dead through the level transition and ends the run — **FIXED and CONFIRMED in play (2026-10-12)**
 
 **Reported 2026-09-04, Desert Tier 1, two peers.** The host died early, spectated for roughly half
 the level, and at the portal the run ended for both players rather than continuing on level 2.
@@ -2246,6 +2264,16 @@ The host log ends with `Death not prevented` from `RestoreDeath`. That is the re
 related to this bug — noted so it is not chased again.
 
 ---
+
+### 2026-10-12 — confirmed
+
+The host died on level 1, stayed dead, and arrived on level 2 fully revived; the host log shows
+`OB-20: local player was dead at the portal; revived for the next level.`
+
+**Side effect, not fixed:** for about 50 s after the revive the desync detector showed the client one
+level ahead (`level host 30 / local 31`, digests #194-#204). Likely XP that a dead player did not
+receive. It self-corrected, but while it lasted the client reached each level-up first and waited at the
+barrier for the host.
 
 ## OB-21 — The run freezes at an encounter and the failsafe fires every frame — **FIXED and CONFIRMED in play (2026-10-11)**
 
@@ -2466,6 +2494,25 @@ If it recurs without a storm, it is a real and separate bug and this entry gets 
 ### 2026-10-11
 
 Not seen in the first run after the OB-21 fixes. Consistent with it having been a side effect of the storm.
+
+## OB-24 — The client's boss health bar never moves — CONFIRMED, **FIXED 2026-10-12, unverified**
+
+**Reported 2026-10-11, final stage.** The client's bar read `6.2m / 6.2m` for the whole fight while
+the host's read `7.9m / 8.4m`, and the client appeared unable to damage the boss.
+
+The client's boss HP was being updated; the bar never redrew it. Decompiled `TargetOfInterestPrefab`:
+`Update` only fades the bar and redraws debuffs. `UpdateHp` (the text and the bar) runs only from
+`OnDamage` and `OnHealthChange`, which `Awake` subscribes to the static `Enemy.A_Damage` and
+`Enemy.A_HealthChange`. A client writes a boss's HP directly in `EnemyInterpolator`, and its maximum in
+`ApplyRescaledHp` (OB-9), so neither event fired and the bar kept its spawn values. That explains
+both numbers being frozen together.
+
+**Fix:** both writes raise `Enemy.A_HealthChange`, the event the game raises when health changes
+outside a hit. Bosses only, and from the interpolator only on an actual change.
+
+**Not established:** whether the client's hits also failed to land. The host's bar fell during the
+fight, so some damage reached the boss, but the log cannot say whose.
+
 
 ## Not in this file
 
