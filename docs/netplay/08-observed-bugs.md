@@ -1816,6 +1816,24 @@ to someone else; `CombatAura` now sets that attribution on the host for a teamma
 **Remaining gap:** the host's other constant attacks run for a teammate (Chunkers, Dragon's Breath,
 Space Noodle, Frostwalker) are not attributed yet, so their damage may still appear on the host's panel.
 
+### Related: OB-19, and kill and gold credit
+
+**Same pattern as [OB-19](#ob-19), different mechanism.** Both are a game-wide static event fired for a
+teammate's object on this machine, reaching a listener that assumes the local player: `Enemy.A_Damage`
+into `RunStats` here, `WeaponInventory.A_WeaponToggled` into `AuraAttacks` there (and earlier
+`A_WeaponAdded`, already silenced). They are separate defects: OB-19 only ever toggled visuals, and the
+panel's LVL 0 rows mean "not owned", so none of the panel's teammate rows came from OB-19.
+
+**Kill and gold credit** (noted from a third-party 0.5 changelog as unchecked in ours): already gated by
+the same tracker attribution before this fix -- `Enemy.EnemyDied_Prefix` registers a kill only when the
+hit is ours or unattributed. The 2026-10-11 end screens fit that (4,594 kills against 3,425). The
+`CombatAura` attribution added here moves a teammate's aura kills to them on the host; the same four
+unattributed constant attacks are the remaining gap for kills too.
+
+**The pattern to check for next:** any other static game event raised for a remote avatar's objects.
+`A_StatUpdate` is already silenced around remote inventories; `AegisAttack.A_Used` / `A_Regen` are
+avoided by blocking remote Aegis `FixedUpdate`.
+
 ## OB-15 — The client's NullReferenceException storm — **FIXED and CONFIRMED in play (2026-10-12)**
 
 > Confirmed by absence: zero exceptions on both peers across the 2026-10-07, 10-08, 10-11 and
