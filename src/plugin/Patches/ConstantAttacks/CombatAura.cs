@@ -9,6 +9,7 @@ namespace MegabonkTogether.Patches.ConstantAttacks
     {
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
+        private static readonly ITrackerService trackerService = Plugin.Services.GetService<ITrackerService>();
 
 
         /// <summary>
@@ -17,8 +18,10 @@ namespace MegabonkTogether.Patches.ConstantAttacks
 
         [HarmonyPrefix]
         [HarmonyPatch(nameof(CombatAura.FixedUpdate))]
-        public static bool FixedUpdate_Prefix(CombatAura __instance)
+        public static bool FixedUpdate_Prefix(CombatAura __instance, out bool __state)
         {
+            __state = false;
+
             if (!synchronizationService.HasNetplaySessionStarted())
             {
                 return true;
@@ -42,7 +45,32 @@ namespace MegabonkTogether.Patches.ConstantAttacks
             }
 
             var isHost = synchronizationService.IsServerMode() ?? false;
+
+            // OB-14. The host runs every player's aura, so a teammate's aura damage was applied
+            // with no attribution and RunStats filed it under the host. Tell the tracker whose aura
+            // this is for the duration of the tick, exactly as ProjectileBase.HitEnemy does for a
+            // teammate's projectiles; the finalizer clears it.
+            if (isHost && __instance.weaponBase != null)
+            {
+                var owner = playerManagerService.GetNetPlayerByWeapon(__instance.weaponBase);
+                if (owner != null)
+                {
+                    trackerService.SetCurrentPlayerId(owner.ConnectionId);
+                    __state = true;
+                }
+            }
+
             return isHost;
+        }
+
+        [HarmonyFinalizer]
+        [HarmonyPatch(nameof(CombatAura.FixedUpdate))]
+        public static void FixedUpdate_Finalizer(bool __state)
+        {
+            if (__state)
+            {
+                trackerService.UnsetCurrentPlayerId();
+            }
         }
 
         /// <summary>
