@@ -1729,7 +1729,7 @@ paused too and stops sending hits during the window. This gate is the backstop f
 Reported fixed by the player. The host log carries 53 `OB-13: suppressed N enemy hit(s) while paused`
 lines and the client 14, so the gate at `Enemy.Damage` is what held, not a coincidence of timing.
 
-## OB-14 — The end-of-run damage panel credits you with your teammate's weapons — LIKELY
+## OB-14 — The end-of-run damage panel credits you with your teammate's weapons — **CONFIRMED 2026-10-12, FIXED, unverified**
 
 **Reported 2026-08-17, with screenshots.** The DAMAGE column on the summary screen lists ~23 damage
 sources for a player whose inventory held **4 weapons and 4 tomes**. The extras are the other
@@ -1795,6 +1795,27 @@ misassigned too** rather than only the end screen. Worth checking before this is
 ---
 
 <a name="ob-15"></a>
+### 2026-10-12 — confirmed from both end screens, and fixed
+
+The panel's **LVL** column is the tell: it shows `0` for a source the viewer does not own. Each
+player's end screen from the 2026-10-11 run listed the other's weapons and items at LVL 0, with nearly
+their full damage:
+
+| Source | Host screen | Client screen | Owner |
+|---|---|---|---|
+| Wireless Dagger | LVL 0, 644.5K | LVL 10, 602.4K | client |
+| Lightning Staff | LVL 8, 1.2M | LVL 0, 1.1M | host |
+| Big Bonk, Slurp / Power Gloves | LVL 0 | LVL 1 | client |
+| Shattered Knowledge | LVL 1 | LVL 0 | host |
+
+`RunStats.OnEnemyDamaged` (VA `0x180411930`, decompiled) is a static handler on the global
+`Enemy.A_Damage` event that adds each hit to the panel's per-source table, and it ran for every hit
+applied on the machine, teammates' included. A prefix now skips it when the tracker attributes the hit
+to someone else; `CombatAura` now sets that attribution on the host for a teammate's aura.
+
+**Remaining gap:** the host's other constant attacks run for a teammate (Chunkers, Dragon's Breath,
+Space Noodle, Frostwalker) are not attributed yet, so their damage may still appear on the host's panel.
+
 ## OB-15 — The client's NullReferenceException storm — **FIXED and CONFIRMED in play (2026-10-12)**
 
 > Confirmed by absence: zero exceptions on both peers across the 2026-10-07, 10-08, 10-11 and
