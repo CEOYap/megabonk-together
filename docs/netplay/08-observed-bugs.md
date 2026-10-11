@@ -1813,8 +1813,11 @@ their full damage:
 applied on the machine, teammates' included. A prefix now skips it when the tracker attributes the hit
 to someone else; `CombatAura` now sets that attribution on the host for a teammate's aura.
 
-**Remaining gap:** the host's other constant attacks run for a teammate (Chunkers, Dragon's Breath,
-Space Noodle, Frostwalker) are not attributed yet, so their damage may still appear on the host's panel.
+**Gap closed:** Chunkers (`RotatingProjectiles.HitEnemy`), Frostwalker (`IceAura.FixedUpdate`), Dragon's
+Breath (`ProjectileDragonsBreath.HitEnemy`) and Space Noodle (`LaserBeamAttack.HitEnemy` / `StopLaser`)
+are now attributed the same way, per attack call. Not per hit: the game recycles one shared
+`DamageContainer` for every weapon hit (see P1-5). Damage-over-time that ticks after its attack has
+returned may still go unattributed; that can only leave a little teammate damage on a panel.
 
 ### Related: OB-19, and kill and gold credit
 
@@ -1827,8 +1830,8 @@ panel's LVL 0 rows mean "not owned", so none of the panel's teammate rows came f
 **Kill and gold credit** (noted from a third-party 0.5 changelog as unchecked in ours): already gated by
 the same tracker attribution before this fix -- `Enemy.EnemyDied_Prefix` registers a kill only when the
 hit is ours or unattributed. The 2026-10-11 end screens fit that (4,594 kills against 3,425). The
-`CombatAura` attribution added here moves a teammate's aura kills to them on the host; the same four
-unattributed constant attacks are the remaining gap for kills too.
+`CombatAura` attribution added here moves a teammate's aura kills to them on the host; the four other constant
+attacks are now attributed too, for kills as well as damage.
 
 **The pattern to check for next:** any other static game event raised for a remote avatar's objects.
 `A_StatUpdate` is already silenced around remote inventories; `AegisAttack.A_Used` / `A_Regen` are
