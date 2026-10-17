@@ -2654,6 +2654,60 @@ without touching the design question.
 `Look rotation viewing vector is zero` lines.
 
 
+## OB-26 — The players' Difficulty is not in sync — REPORTED 2026-10-18, **mechanism LIKELY, not fixed**
+
+**Reported by the project owner.** Each player's Difficulty stat is built from their own sources and
+the two machines disagree on it. The game's formula, from the in-game stat breakdown:
+
+`((baseValue + flatValues) × (1 + additionValues)) × multiplicationValues`
+
+**Sources that raise it** (all per-player): Shrine upgrade, Chaos Tome upgrade, Dicehead's passive,
+Cursed Tome, Cursed Grabbies, Skuleg, Sir Chadwell's passive, and Sir Chadwell's +10% base Difficulty.
+Character choice alone changes it: in the 2026-10-18 run the client played **Dicehead**, whose
+passive raises Difficulty, and the host played Megachad.
+
+### What the code shows
+
+- Difficulty is a per-player stat: `EStat.Difficulty = 38` in `dump.cs`.
+- **It is never replicated.** It is not in `PlayerStatsSyncService.TrackedStats` (OB-1's synced stat
+  block), and nothing else sends it.
+- **Unrelated to `GameBalanceService`'s "difficulty".** That is a player-count tier (`Duo`, `Trio`,
+  ...) the mod applies to spawn and HP multipliers; it does not read `EStat.Difficulty`.
+
+### Mechanism — LIKELY, not decompiled
+
+The game reads stats through `PlayerStats.GetStat`, which is static and answers for whichever player
+is asking: the same "local singleton" shape behind OB-1, OB-2 and OB-11. In netplay **only the host
+spawns and scales enemies**, so the enemies both players fight are most likely driven by the
+**host's** Difficulty alone. If so:
+
+- A client's Difficulty sources (Dicehead's passive, a Cursed Tome, Skuleg, ...) change the number on
+  the client's stat screen and **do nothing to the run**.
+- Picking a Difficulty-raising character or item as a client is a dead choice, which matters more
+  where Difficulty also feeds rewards.
+
+**Before fixing, decompile to confirm:** find which game methods read `GetStat(38)` (enemy HP and
+spawn scaling are the candidates) and whether any of them run on a client. Also check whether
+Difficulty feeds anything besides enemies (rewards, silver, drop rates), since that decides whether
+the client's own value matters locally.
+
+### Fix shape — needs a design decision first
+
+1. **Replicate it.** Add `EStat.Difficulty` to `TrackedStats`. No wire change: the stat block is keyed
+   by `EStat` as an int, so a new key travels in the existing `PlayerStatsChanged` message.
+2. **Decide how players combine.** The host must turn every player's Difficulty into one value for the
+   run. The choice is a balance call, not a technical one:
+   - **sum** of everyone's extra over base: every source counts, and two cursed players stack;
+   - **highest**: one cursed player sets the run for everyone;
+   - **average**: a cursed player is diluted by an uncursed one.
+3. **Feed it to the game** where the host reads Difficulty for enemy scaling, the same postfix
+   pattern OB-1 uses on `WeaponUtility`.
+
+**Confirms fixed as:** a client picking Dicehead or taking a Difficulty source visibly changes enemy
+HP and spawns for both players, and the desync detector (add Difficulty to the digest) shows the
+combined value agreeing on both machines.
+
+
 ## Confirmed in play 2026-10-18, outside the numbered entries
 
 - **Shared XP sent as gains** (no more level drift; see OB-20's side effect). No `level` disagreements.
