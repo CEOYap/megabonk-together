@@ -1837,6 +1837,22 @@ attacks are now attributed too, for kills as well as damage.
 `A_StatUpdate` is already silenced around remote inventories; `AegisAttack.A_Used` / `A_Regen` are
 avoided by blocking remote Aegis `FixedUpdate`.
 
+### 2026-10-18 — two gaps in the first fix, both closed
+
+**The client's panel lost its own damage** (eight rows, a few thousand each). The host forwards every
+hit it applies and stamped `AttackerId` as itself on all of them, including the client's own hits,
+which the client records only from that forward. Once `RunStats` skipped other players' hits, the
+client skipped its own. `AttackerId` now comes from the tracker.
+
+**The host's panel still listed the client's Dice and Slutty Rocket at LVL 0.** `Rocket.HitEnemy`
+and `ProjectileDice.Hitscan` override the hit method the projectile patch attributes; there are 33
+such hit sites. Attribution now happens where they all meet: a postfix on
+`GetDamageContainer(WeaponBase, ...)` notes a teammate weapon's owner, and an `Enemy.Damage` prefix
+scopes the tracker to exactly that hit. The per-attack patches stay, as narrower scopes.
+
+**Also fixed while comparing these screens:** the host's aura looked slightly smaller on the client.
+`GetAttackSizeMultiplier` multiplies (global × weapon) and our correction added; see OB-1.
+
 ## OB-15 — The client's NullReferenceException storm — **FIXED and CONFIRMED in play (2026-10-12)**
 
 > Confirmed by absence: zero exceptions on both peers across the 2026-10-07, 10-08, 10-11 and
