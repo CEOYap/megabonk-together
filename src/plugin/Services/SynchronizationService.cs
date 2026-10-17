@@ -2162,7 +2162,14 @@ namespace MegabonkTogether.Services
                 DamageElement = (int)damageContainer.element,
                 DamageFlags = (int)damageContainer.flags,
                 DamageKnockback = damageContainer.knockback,
-                AttackerId = playerManagerService.GetLocalPlayer().ConnectionId
+
+                // OB-14. The hit's real attacker, not the peer forwarding it. The host applies its
+                // teammates' hits (replayed, or from their weapons it simulates) and then forwards
+                // every hit to the clients; this used to stamp the HOST as attacker on all of them.
+                // Harmless until the damage panel began skipping other players' hits -- then the
+                // client skipped its own damage too, and its 2026-10-18 end screen held eight rows
+                // of a few thousand each. The tracker holds the attacker for exactly this hit.
+                AttackerId = trackerService.GetCurrentPlayerId() ?? playerManagerService.GetLocalPlayer().ConnectionId
             };
 
             var isHost = IsServerMode() ?? false;
