@@ -88,7 +88,31 @@ namespace MegabonkTogether.Patches.Weapons
                 return;
             }
 
-            var corrected = __result - PlayerStats.GetStat(EStat.SizeMultiplier) + ownerStat.Value;
+            // Recomputed the game's way. GetAttackSizeMultiplier (VA 0x1804347A0, decompiled) is
+            //   PlayerStats.GetStat(Size) * weaponStats[Size], capped at weaponData.maxSizeMultiplier
+            //   when that cap is above 1.
+            // It MULTIPLIES. The first version of this correction subtracted the observer's global
+            // and added the owner's, which is right only while the weapon's own Size stat is 1; with
+            // Size upgrades on the weapon the error grows with each one. Reported 2026-10-18: the
+            // host's aura looked slightly smaller on the client's screen than on the host's own.
+            //
+            // (The decompile names the cap field projectileSpeed. Ghidra's applied names slip on this
+            // struct; the field is used as "if 1 < x && x < size then size = x", which is
+            // maxSizeMultiplier, two fields earlier in the dump.cs layout.)
+            var weaponSize = 1f;
+            var weaponStats = weaponBase.weaponStats;
+            if (weaponStats != null && weaponStats.ContainsKey(EStat.SizeMultiplier))
+            {
+                weaponSize = weaponStats[EStat.SizeMultiplier];
+            }
+
+            var corrected = ownerStat.Value * weaponSize;
+
+            var weaponData = weaponBase.weaponData;
+            if (weaponData != null && weaponData.maxSizeMultiplier > 1f && corrected > weaponData.maxSizeMultiplier)
+            {
+                corrected = weaponData.maxSizeMultiplier;
+            }
 
             // A non-positive multiplier would collapse the attack to nothing, which is worse than
             // the wrong size this is fixing.
