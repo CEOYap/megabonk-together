@@ -28,8 +28,9 @@ namespace MegabonkTogether.Patches.Enemies
     /// the hit it forwards.</para>
     ///
     /// <para><b>Not on the hit object.</b> The game recycles one shared DamageContainer for every
-    /// weapon hit (P1-5), so the owner is held here, consumed once, and the next weapon hit always
-    /// overwrites it -- with null for our own weapons, so a note can never go stale onto our damage.
+    /// weapon hit (P1-5), so the owner is held here alongside that object, and Damage is attributed when
+    /// it carries the same object. The next weapon hit always overwrites the note -- with no owner for
+    /// our own weapons, so it can never go stale onto our damage.
     /// Hits already attributed by a narrower scope (a replayed hit, the per-attack patches) are left
     /// alone.</para>
     ///
@@ -41,28 +42,44 @@ namespace MegabonkTogether.Patches.Enemies
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
         private static readonly ITrackerService trackerService = Plugin.Services.GetService<ITrackerService>();
 
-        /// <summary>The teammate whose weapon built the hit about to be applied. Main thread only.</summary>
-        private static uint? pendingOwner;
+        /// <summary>The teammate whose weapon built the current weapon hit. Main thread only.</summary>
+        private static uint? notedOwner;
 
-        internal static void NoteWeapon(WeaponBase weaponBase)
+        /// <summary>The hit object that weapon returned. The game recycles one shared instance.</summary>
+        private static System.IntPtr notedHit;
+
+        internal static void NoteWeapon(WeaponBase weaponBase, DamageContainer hit)
         {
             if (!synchronizationService.HasNetplaySessionStarted() || !(synchronizationService.IsServerMode() ?? false))
             {
-                pendingOwner = null;
+                notedOwner = null;
+                notedHit = System.IntPtr.Zero;
                 return;
             }
 
             var owner = weaponBase == null ? null : playerManagerService.GetNetPlayerByWeapon(weaponBase);
-            pendingOwner = owner?.ConnectionId;
+            notedOwner = owner?.ConnectionId;
+            notedHit = hit == null ? System.IntPtr.Zero : hit.Pointer;
         }
 
         /// <summary>True when a scope was opened, which End must close.</summary>
-        internal static bool Begin()
+        /// <remarks>
+        /// Matched on the hit object rather than consumed once. An attack may build its hit once and
+        /// apply it to several enemies; every one of those Damage calls carries the same object and
+        /// gets the same owner. Damage built any other way -- an item proc, which passes its own
+        /// container to the other GetDamageContainer overload -- does not match and is left to
+        /// whatever scope it is already in. The next weapon hit always overwrites the note, with no
+        /// owner for our own weapons.
+        /// </remarks>
+        internal static bool Begin(DamageContainer hit)
         {
-            var owner = pendingOwner;
-            pendingOwner = null;
+            if (!notedOwner.HasValue || hit == null || hit.Pointer != notedHit)
+            {
+                return false;
+            }
 
-            if (!owner.HasValue || trackerService.GetCurrentPlayerId().HasValue)
+            var owner = notedOwner;
+            if (trackerService.GetCurrentPlayerId().HasValue)
             {
                 return false;
             }
@@ -86,19 +103,19 @@ namespace MegabonkTogether.Patches.Enemies
         [HarmonyPostfix]
         [HarmonyPatch(nameof(WeaponUtility.GetDamageContainer),
             new[] { typeof(WeaponBase), typeof(ProjectileBase), typeof(Enemy), typeof(Vector3), typeof(float) })]
-        public static void GetDamageContainer_Postfix(WeaponBase weaponBase)
-            => WeaponHitAttribution.NoteWeapon(weaponBase);
+        public static void GetDamageContainer_Postfix(WeaponBase weaponBase, DamageContainer __result)
+            => WeaponHitAttribution.NoteWeapon(weaponBase, __result);
     }
 
     [HarmonyPatch(typeof(Enemy))]
     internal static class WeaponHitAttributionScopePatches
     {
-        // First, so the note is always consumed even when a later prefix (the OB-13 pause gate)
-        // cancels the hit; otherwise it could carry over onto the next, unrelated damage.
+        // First, so the scope is open before any other prefix reads attribution.
         [HarmonyPrefix]
         [HarmonyPriority(Priority.First)]
         [HarmonyPatch(nameof(Enemy.Damage))]
-        public static void Damage_Prefix(out bool __state) => __state = WeaponHitAttribution.Begin();
+        public static void Damage_Prefix(DamageContainer damageContainer, out bool __state)
+            => __state = WeaponHitAttribution.Begin(damageContainer);
 
         [HarmonyFinalizer]
         [HarmonyPatch(nameof(Enemy.Damage))]
