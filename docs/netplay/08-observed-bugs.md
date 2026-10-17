@@ -465,7 +465,7 @@ dormant shared-experience-off value bug noted above stands.
 Working in play with no reported issues, and zero failed pickup lookups across the recent runs.
 Closed by the project owner. The merge counter can stay; it is silent when nothing merges.
 
-## OB-6 — A shrine's charge *value* is never transmitted — **REOPENED and FIXED 2026-10-12 (host-authoritative completion), unverified**
+## OB-6 — A shrine's charge *value* is never transmitted — **REOPENED, FIXED and CONFIRMED in play (2026-10-18)**
 
 **Reported:** shrine counters are not in sync between all players.
 
@@ -2166,7 +2166,7 @@ thread *"Whats the point of the Projectile Bounce stat?"*
 per-weapon bounces pass through unchanged. If a future game update starts using the stat, the
 replication is already in place.
 
-## OB-19 — Final-boss weapon return gives a player somebody else's weapon — CONFIRMED, **mechanism corrected and FIXED 2026-10-11, unverified**
+## OB-19 — Final-boss weapon return gives a player somebody else's weapon — **FIXED and CONFIRMED in play (2026-10-18)**
 
 **Reported 2026-08-18.** The Desert final boss takes the players' weapons and returns them as its
 phases progress. After a return, **a player gains the visual for a weapon they never owned** — P1 had
@@ -2347,7 +2347,7 @@ related to this bug — noted so it is not chased again.
 The host died on level 1, stayed dead, and arrived on level 2 fully revived; the host log shows
 `OB-20: local player was dead at the portal; revived for the next level.`
 
-**Side effect, not fixed:** for about 50 s after the revive the desync detector showed the client one
+**Side effect, since fixed:** for about 50 s after the revive the desync detector showed the client one
 level ahead (`level host 30 / local 31`, digests #194-#204). Likely XP that a dead player did not
 receive. It self-corrected, but while it lasted the client reached each level-up first and waited at the
 barrier for the host.
@@ -2572,7 +2572,7 @@ If it recurs without a storm, it is a real and separate bug and this entry gets 
 
 Not seen in the first run after the OB-21 fixes. Consistent with it having been a side effect of the storm.
 
-## OB-24 — The client's boss health bar never moves — CONFIRMED, **FIXED 2026-10-12, unverified**
+## OB-24 — The client's boss health bar never moves — **FIXED and CONFIRMED in play (2026-10-18)**
 
 **Reported 2026-10-11, final stage.** The client's bar read `6.2m / 6.2m` for the whole fight while
 the host's read `7.9m / 8.4m`, and the client appeared unable to damage the boss.
@@ -2653,6 +2653,11 @@ without touching the design question.
 **Confirms fixed as:** a run where the host fires rockets heavily and the client log has no
 `Look rotation viewing vector is zero` lines.
 
+
+## Confirmed in play 2026-10-18, outside the numbered entries
+
+- **Shared XP sent as gains** (no more level drift; see OB-20's side effect). No `level` disagreements.
+- **A dead player's aura** no longer deals damage — nothing observed; closed by the project owner.
 
 ## Not in this file
 
