@@ -2654,7 +2654,7 @@ without touching the design question.
 `Look rotation viewing vector is zero` lines.
 
 
-## OB-26 — The players' Difficulty is not in sync — REPORTED 2026-10-18, **mechanism LIKELY, not fixed**
+## OB-26 — The players' Difficulty is not in sync — CONFIRMED by decompile 2026-10-18, **not fixed (balance decision pending)**
 
 **Reported by the project owner.** Each player's Difficulty stat is built from their own sources and
 the two machines disagree on it. The game's formula, from the in-game stat breakdown:
@@ -2707,6 +2707,37 @@ the client's own value matters locally.
 HP and spawns for both players, and the desync detector (add Difficulty to the digest) shows the
 combined value agreeing on both machines.
 
+
+### 2026-10-18 — decompiled: the run is a hybrid of both players' Difficulty
+
+All 128 callers of `PlayerStats.GetStat` (VA `0x18042B6A0`) decompiled; **11 read Difficulty**
+(`GetStat(0x26)`). None touch rewards, silver, XP or drops:
+
+| What it scales | Readers | Runs on | So it follows |
+|---|---|---|---|
+| Enemy HP | `EnemyStats.GetHp`, `CombatScaling.GetHpMultiplierAddition`, `GetStageHpMultiplier` | host (spawns enemies; clients get HP in `SpawnedEnemy`) | **host only** |
+| Enemy speed | `EnemyStats.GetSpeed` ← `Enemy.GetSpeed` | host (simulates movement; clients interpolate) | **host only** |
+| Knockback resistance | `EnemyStats.GetKnockbackResistance` | host (applies hits) | **host only** |
+| Spawn count and rate | `BaseSummoner.GetMultiplier`, `StageSummoner.GetNumTargetEnemies`, `GetSummonInterval`, `SwarmSummoner.GetNumTargetEnemies` | host (only the host spawns) | **host only** |
+| **Damage enemies deal to a player** | `EnemyStats.GetDamage` ← `DamageUtility.GetPlayerDamage`, enemy special attacks | **the victim's own machine** | **each player's own** |
+| Achievements | `AchievementTracker.OnStatUpdate` | each machine | local, harmless |
+
+Damage to a player is computed on the victim's machine: health is owner-authoritative (each owner's HP
+is copied onto their avatar in `OnPlayerUpdate`), and no host path damages a teammate's avatar.
+
+Difficulty enters additively in both decompiled formulas: HP as `difficulty x k + ... + 1`, damage as
+`(difficulty + ... + 1) x ...`.
+
+**So the real behaviour:** enemies are as tough and as numerous as the **host's** Difficulty says, but
+each player is hit as hard as **their own** Difficulty says. A client who picks Dicehead or a Cursed
+Tome takes more damage and gains nothing in enemy numbers or toughness; a host who does raises
+enemy toughness for both while only the host takes harder hits.
+
+**Fix shape, unchanged in principle:** replicate `EStat.Difficulty` in `TrackedStats` (no wire change),
+then on every machine replace the value these readers see with one combined value, so enemies and
+incoming damage agree. Postfix the 11 readers' `GetStat(0x26)` via a single patch on
+`PlayerStats.GetStat` filtered to stat 38 -- every reader goes through it. The combining rule
+(sum of extras, highest, or average) is the decision still pending.
 
 ## Confirmed in play 2026-10-18, outside the numbered entries
 
