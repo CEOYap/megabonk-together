@@ -25,8 +25,8 @@ namespace MegabonkTogether.Services
     /// per-frame cost in its own right.</para>
     ///
     /// <para>Reports itself on a throttle rather than sitting behind a config flag, in the same
-    /// shape as the kill-attribution diagnostic: a healthy session says nothing, because a healthy
-    /// session never rejects a send.</para>
+    /// shape as the kill-attribution diagnostic. A healthy session prints only its end-of-session
+    /// total, <c>0</c>, because a healthy session never rejects a send.</para>
     /// </summary>
     internal static class HostGuardDiagnostics
     {
@@ -34,6 +34,7 @@ namespace MegabonkTogether.Services
 
         private static readonly ConcurrentDictionary<string, int> rejections = new();
         private static long lastReportTicks;
+        private static long sessionTotal;
 
         /// <summary>
         /// Records one rejected host-only send. <paramref name="messageTypeName"/> may be null when
@@ -46,6 +47,7 @@ namespace MegabonkTogether.Services
                 : $"{transport}/{sendMethod}/{messageTypeName}";
 
             rejections.AddOrUpdate(key, 1, (_, prev) => prev + 1);
+            Interlocked.Increment(ref sessionTotal);
 
             Report();
         }
@@ -73,6 +75,11 @@ namespace MegabonkTogether.Services
                 return; // first call only primes the throttle
             }
 
+            LogPending($"in the last ~{REPORT_INTERVAL_SECONDS:F0}s");
+        }
+
+        private static void LogPending(string window)
+        {
             var snapshot = rejections.ToArray();
             if (snapshot.Length == 0)
             {
@@ -91,15 +98,29 @@ namespace MegabonkTogether.Services
                 .Select(kv => $"{kv.Key} x{kv.Value}"));
 
             Plugin.Log.LogWarning(
-                $"[host-guard] {total} host-only send(s) rejected on this peer in the last " +
-                $"~{REPORT_INTERVAL_SECONDS:F0}s: {ranked}. " +
+                $"[host-guard] {total} host-only send(s) rejected on this peer {window}: {ranked}. " +
                 "Each names a path missing an ownership check — see OB-10. The send was dropped, " +
                 "so nothing is broken, but the work leading up to it was done for nothing.");
         }
 
-        /// <summary>Clears counters and the throttle so each session starts from zero.</summary>
+        /// <summary>
+        /// Flushes what the throttle is still holding, prints the session's total, then clears
+        /// counters and the throttle so each session starts from zero.
+        ///
+        /// <para><b>Why the flush.</b> <see cref="Report"/> prints only when a rejection arrives
+        /// after the interval, and the first one only primes it. A run with a handful of rejections,
+        /// or the last batch of any run, was therefore counted and never printed — so a log with no
+        /// <c>[host-guard]</c> line could not prove that nothing was rejected. The total line is
+        /// printed even when it is zero, for the same reason: absence of a line no longer means
+        /// anything, so a clean session says so.</para>
+        /// </summary>
         internal static void Reset()
         {
+            LogPending("since the last report, at session end");
+
+            var total = Interlocked.Exchange(ref sessionTotal, 0);
+            Plugin.Log.LogInfo($"[host-guard] session total: {total} host-only send(s) rejected on this peer.");
+
             rejections.Clear();
             Interlocked.Exchange(ref lastReportTicks, 0);
         }
