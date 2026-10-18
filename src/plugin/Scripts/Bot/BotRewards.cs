@@ -91,6 +91,52 @@ namespace MegabonkTogether.Scripts.Bot
             return false;
         }
 
+        /// <summary>
+        /// Last resort for a window <see cref="TryPick"/> could not close: take the chest item, skip
+        /// or leave a level-up, close the microwave, or take the first shrine offer. A window the bot
+        /// never closes holds the host on "Waiting for other player(s)" with shared experience on.
+        /// </summary>
+        internal static void Fallback(BaseEncounterWindow window)
+        {
+            if (window == null || Time.unscaledTime < nextActionTime)
+            {
+                return;
+            }
+
+            nextActionTime = Time.unscaledTime + 2f;
+
+            var chest = window.GetComponent<ChestWindowUi>();
+            if (chest != null)
+            {
+                Click(chest.b_take);
+                return;
+            }
+
+            var levelup = window.GetComponent<LevelupScreen>();
+            if (levelup != null)
+            {
+                if (!Click(levelup.b_skip))
+                {
+                    Click(levelup.b_leave);
+                }
+
+                return;
+            }
+
+            var microwave = window.GetComponent<MicrowaveUi>();
+            if (microwave != null)
+            {
+                microwave.CloseScreen();
+                return;
+            }
+
+            var encounter = window.GetComponent<EncounterUi>();
+            if (encounter != null && encounter.offers != null && encounter.offers.Length > 0)
+            {
+                encounter.ChooseOffer(0);
+            }
+        }
+
         private static bool ClickRandomUpgrade(UpgradePicker picker)
         {
             var buttons = picker != null ? picker.buttons : null;

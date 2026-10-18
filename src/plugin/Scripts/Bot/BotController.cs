@@ -1,3 +1,4 @@
+using Assets.Scripts.Utility;
 using Assets.Scripts.Inventory__Items__Pickups.Interactables;
 using Assets.Scripts.Actors.Player;
 using MegabonkTogether.Configuration;
@@ -45,6 +46,11 @@ namespace MegabonkTogether.Scripts.Bot
         // Rewarding.
         private BotState stateBeforeReward = BotState.Following;
         private bool actedOnWindow;
+        private float rewardStartTime;
+        private bool loggedRewardStall;
+
+        /// <summary>Seconds in one reward window before the bot falls back to taking or skipping.</summary>
+        private const float REWARD_STALL_SECONDS = 15f;
 
         // Detouring and reviving.
         private ISpawnedObjectManagerService spawnedObjectManagerService;
@@ -221,11 +227,29 @@ namespace MegabonkTogether.Scripts.Bot
             {
                 // Stage transition or loading screen: hold still, forget targets; new map next.
                 BotInput.Move = Vector2.zero;
+                BotInput.CancelInteract();
                 detect = null;
                 EndDetour();
                 EndRevive();
                 BotTargets.ResetStage();
                 return;
+            }
+
+            // Paused by any encounter window (MyTime.Pause freezes physics but not Time.time), or
+            // between Started states (loading, the ready barrier): no input is fed then, so nothing
+            // may count as "no progress". Hold still and restart the stuck and give-up clocks.
+            if (!synchronizationService.HasNetplaySessionStarted() || MyTime.paused)
+            {
+                BotInput.Move = Vector2.zero;
+                BotInput.CancelInteract();
+                DropTarget();
+                detourStartTime += Time.deltaTime;
+                return;
+            }
+
+            if (detect == null) // Unity's ==: a destroyed component reads as null and is fetched again
+            {
+                detect = me.GetComponentInChildren<DetectInteractables>();
             }
 
             switch (State)
@@ -267,7 +291,6 @@ namespace MegabonkTogether.Scripts.Bot
                 return;
             }
 
-            detect ??= me.GetComponentInChildren<DetectInteractables>();
             var detour = BotTargets.FindDetour(me.transform.position, owner, 3f * ModConfig.BotFollowDistance.Value, detect);
             if (detour != null)
             {
@@ -280,6 +303,13 @@ namespace MegabonkTogether.Scripts.Bot
 
             var target = BotSteering.PickFollowPoint(owner, me.transform.position, ModConfig.BotFollowDistance.Value, Time.time);
             SteerTo(me, target, owner);
+        }
+
+        /// <summary>The game's current interactable for the bot's player, by instance id; null when none.</summary>
+        internal int? CurrentInteractableId()
+        {
+            var current = detect != null ? detect.currentInteractable : null;
+            return current != null ? current.GetInstanceID() : null;
         }
 
         /// <summary>True when <paramref name="target"/> is the interactable the game would use on a press.</summary>
@@ -305,7 +335,8 @@ namespace MegabonkTogether.Scripts.Bot
 
             if (IsCurrentInteractable(detourTarget))
             {
-                BotInput.PressInteract();
+                BotInput.PressInteract(detourTarget.GetInstanceID());
+                BotInput.Move = Vector2.zero;
                 InteractablesUsed++;
                 Plugin.Log.LogInfo($"[bot] used {detourTarget.gameObject.name}.");
                 BotTargets.Blacklist(detourTarget);
@@ -388,10 +419,10 @@ namespace MegabonkTogether.Scripts.Bot
                 return;
             }
 
-            detect ??= me.GetComponentInChildren<DetectInteractables>();
             if (!pressedCoffin && coffin != null && coffin.CanInteract() && IsCurrentInteractable(coffin))
             {
-                BotInput.PressInteract();
+                BotInput.PressInteract(coffin.GetInstanceID());
+                BotInput.Move = Vector2.zero;
                 pressedCoffin = true;
                 Plugin.Log.LogInfo("[bot] used the owner's coffin; waiting for the revive fight.");
             }
@@ -408,6 +439,11 @@ namespace MegabonkTogether.Scripts.Bot
 
         private void EndRevive()
         {
+            if (!pressedCoffin)
+            {
+                BotInput.CancelInteract();
+            }
+
             coffin = null;
             pressedCoffin = false;
             if (State == BotState.Reviving)
@@ -485,8 +521,11 @@ namespace MegabonkTogether.Scripts.Bot
             }
 
             stateBeforeReward = State;
+            BotInput.CancelInteract();
             State = BotState.Rewarding;
             actedOnWindow = false;
+            rewardStartTime = Time.unscaledTime;
+            loggedRewardStall = false;
             BotInput.Move = Vector2.zero;
             BotRewards.OnWindowOpened();
             return true;
@@ -504,6 +543,19 @@ namespace MegabonkTogether.Scripts.Bot
 
                 State = stateBeforeReward;
                 DropTarget();
+                return;
+            }
+
+            if (Time.unscaledTime - rewardStartTime > REWARD_STALL_SECONDS)
+            {
+                if (!loggedRewardStall)
+                {
+                    loggedRewardStall = true;
+                    Plugin.Log.LogWarning($"[bot] reward window {window.gameObject.name} still open after {REWARD_STALL_SECONDS:F0}s; taking or skipping.");
+                }
+
+                BotRewards.Fallback(window);
+                actedOnWindow = true;
                 return;
             }
 

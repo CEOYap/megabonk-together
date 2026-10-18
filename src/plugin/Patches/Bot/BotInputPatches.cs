@@ -26,6 +26,15 @@ namespace MegabonkTogether.Patches.Bot
         private static string moveVertical;
         private static string interact;
 
+        /// <summary>
+        /// Installed only on a BotMode copy. Without this every player's copy paid a
+        /// native-to-managed trampoline, with a managed string copy, on every GetAxis and
+        /// GetButtonDown call, and a bot patch that failed to resolve would abort PatchAll for
+        /// everyone. Turning BotMode on therefore needs a restart.
+        /// </summary>
+        [HarmonyPrepare]
+        public static bool Prepare() => ModConfig.BotMode.Value;
+
         private static bool IsSteering()
         {
             if (!ModConfig.BotMode.Value || !synchronizationService.HasNetplaySessionStarted())
@@ -86,7 +95,7 @@ namespace MegabonkTogether.Patches.Bot
             }
 
             interact ??= MyInputManager.Interact;
-            if (action != interact || !BotInput.ConsumeInteract())
+            if (action != interact || !BotInput.ConsumeInteract(BotController.Instance.CurrentInteractableId()))
             {
                 return true;
             }

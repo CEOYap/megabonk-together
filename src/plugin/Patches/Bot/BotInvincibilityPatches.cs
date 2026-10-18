@@ -25,6 +25,13 @@ namespace MegabonkTogether.Patches.Bot
     {
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
 
+        /// <summary>
+        /// Installed only on a BotMode copy: otherwise every player's copy paid a trampoline and a
+        /// PlayerHealth wrapper on every damage check. Turning BotMode on needs a restart.
+        /// </summary>
+        [HarmonyPrepare]
+        public static bool Prepare() => ModConfig.BotMode.Value;
+
         private static bool IsBotsOwnHealth(PlayerHealth health)
         {
             if (!ModConfig.BotMode.Value || health == null || !synchronizationService.HasNetplaySessionStarted())

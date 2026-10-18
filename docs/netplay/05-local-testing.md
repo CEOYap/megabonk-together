@@ -55,13 +55,16 @@ In **each** copy's `BepInEx/config/MegabonkTogether.cfg`:
 ```ini
 [Network]
 ServerUrl = ws://127.0.0.1:5000
-UseSteamTransport = false  # required: the directly-started copy has no Steam, so both must use the matchmaker
+# Required: the directly-started copy has no Steam, so both copies must use the matchmaker.
+UseSteamTransport = false
 
 [Player]
-PlayerName = Host          # or "Client2" in the second copy — must differ, or the lobby is unreadable
+# Must differ between the copies (e.g. Host / Client2), or the lobby is unreadable.
+PlayerName = Host
 
 [Updates]
-CheckForUpdates = false    # stops the auto-updater replacing your test build
+# Stops the auto-updater replacing your test build.
+CheckForUpdates = false
 ```
 
 `CheckForUpdates = false` matters: `AutoUpdaterService` runs at startup and can overwrite the DLL

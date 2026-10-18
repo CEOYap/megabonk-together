@@ -366,7 +366,11 @@ namespace MegabonkTogether
             var goNetworkHandler = new GameObject("NetworkHandler");
             GameObject.DontDestroyOnLoad(goNetworkHandler);
             NetworkHandler = goNetworkHandler.AddComponent<NetworkHandler>();
-            goNetworkHandler.AddComponent<Scripts.Bot.BotController>();
+            // Test bot: only on a BotMode copy (read once at load; turning it on needs a restart).
+            if (Configuration.ModConfig.BotMode.Value)
+            {
+                goNetworkHandler.AddComponent<Scripts.Bot.BotController>();
+            }
 
             var goNetPlayersDisplayer = new GameObject("NetPlayersDisplayer");
             GameObject.DontDestroyOnLoad(goNetPlayersDisplayer);
