@@ -94,13 +94,14 @@ match, and loading state before it touches `GameManager.Instance`.
 ## Distance throttling
 
 `Helpers/DistanceThrottler.cs` classifies entities as `Close` / `Medium` / `Far` relative to the
-local player and both skips updates and toggles renderers:
+local player and skips updates. It does **not** hide anything (OB-30: hiding enemies past 60
+units was visible pop-in):
 
 | Distance | Client | Host (`isServer: true`) |
 |---|---|---|
-| `Far` | renderer off, no update | still updates |
-| `Medium` | renderer on, throttled to interval | updates every tick |
-| `Close` | renderer on, every tick | every tick |
+| `Far` | no update (still drawn; position comes from the interpolator) | still updates |
+| `Medium` | throttled to interval | updates every tick |
+| `Close` | every tick | every tick |
 
 Any new synchronized entity type with a per-frame cost should route through a `DistanceThrottler`
 instance. This mechanism was introduced in v3.0.0 specifically to fix FPS.

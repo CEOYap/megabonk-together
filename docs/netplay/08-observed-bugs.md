@@ -2997,7 +2997,7 @@ warnings.
 
 <a name="ob-30"></a>
 
-## OB-30 — Enemies vanish and reappear past a certain distance — **REPORTED 2026-10-19; cause LIKELY the mod's distance throttler, not fixed**
+## OB-30 — Enemies vanish and reappear past a certain distance — **FIXED 2026-10-19 (renderers no longer hidden), not yet confirmed in play**
 
 **Reported by the project owner.** In netplay, enemies disappear once they are some distance away
 and pop back in when they come closer. It looks like a render distance or LOD cutoff.
@@ -3050,6 +3050,25 @@ edge with no hysteresis, so an enemy moving along the boundary flickers.
 The update throttling on a client is a separate question: a skipped `MyUpdate` on a far client-side
 enemy may be harmless because the host simulates it and the client interpolates, but that has not
 been checked.
+
+### 2026-10-19 — fixed: stop hiding renderers, keep the update throttling
+
+Chosen by the project owner. `DistanceThrottler` no longer touches any renderer: the `Far` and
+`Medium`/`Close` branches now only decide whether the update runs. The CPU saving (skipped
+`MyUpdate`/`MyFixedUpdate` on a client) stays; the draw-call saving goes, and Unity's frustum
+culling still skips anything off-screen.
+
+**Client enemies past 60 still move.** Checked rather than assumed: their position is set by
+`EnemyInterpolatorManager.Update`, which ticks every registered `EnemyInterpolator` whatever its
+distance, not by the skipped `MyUpdate`. **UNVERIFIED:** whether anything visible besides position
+(facing, animation state, hit flashes) depends on `MyUpdate` and so now shows as frozen on a far
+enemy.
+
+**Watch for in play:** host and client FPS in heavy waves (more enemies drawn), and whether far enemies
+on the client look frozen apart from moving.
+
+**Not changed:** projectiles have their own far-distance handling (zero opacity, `ffb8c44`), which was
+not part of this report.
 
 ## Confirmed in play 2026-10-18, outside the numbered entries
 

@@ -80,6 +80,7 @@ not yet confirmed in play are listed separately, and are not counted as working.
 - Enemy HP is back to normal on the host. A bug in the team Difficulty change had removed the
   time-based HP scaling from every enemy the host spawned
 - No more minimap error flood after a boss dies
+- Enemies no longer vanish when they are more than a short distance away
 - Team Difficulty: enemy toughness and spawns follow the **average** of all players' Difficulty.
   Each player still takes damage according to their own Difficulty
 
