@@ -24,6 +24,7 @@ namespace MegabonkTogether.Patches.Bot
         // Cached: reading an IL2CPP static string marshals, and GetAxis runs several times a frame.
         private static string moveHorizontal;
         private static string moveVertical;
+        private static string interact;
 
         private static bool IsSteering()
         {
@@ -65,6 +66,33 @@ namespace MegabonkTogether.Patches.Bot
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// Decompiled: <c>PlayerInput.MovementInput</c> reads interact as
+        /// <c>GetButtonDown(MyInputManager.Interact)</c> once a frame, so one latched press from
+        /// <see cref="BotInput.PressInteract"/> lands as exactly one interact. The auto-updater prefix
+        /// on the same method (<c>Patches/MyInputManager.cs</c>) still runs; it only blocks input
+        /// while an update is pending.
+        /// </summary>
+        // Prefix-false on purpose: the bot presses interact itself.
+        [HarmonyPrefix]
+        [HarmonyPatch(nameof(MyInputManager.GetButtonDown))]
+        public static bool GetButtonDown_Prefix(string action, ref bool __result)
+        {
+            if (!IsSteering())
+            {
+                return true;
+            }
+
+            interact ??= MyInputManager.Interact;
+            if (action != interact || !BotInput.ConsumeInteract())
+            {
+                return true;
+            }
+
+            __result = true;
+            return false;
         }
     }
 }

@@ -24,6 +24,9 @@ namespace MegabonkTogether.Scripts.Interactables
         private uint reviverId;
         private uint ownerId;
 
+        /// <summary>The player this coffin revives. Read by the test bot to find the host's coffin.</summary>
+        internal uint OwnerId => ownerId;
+
 
         protected void Awake()
         {

@@ -1,3 +1,4 @@
+using Assets.Scripts.Inventory__Items__Pickups.Interactables;
 using Assets.Scripts.Actors.Player;
 using MegabonkTogether.Configuration;
 using MegabonkTogether.Services;
@@ -44,6 +45,17 @@ namespace MegabonkTogether.Scripts.Bot
         // Rewarding.
         private BotState stateBeforeReward = BotState.Following;
         private bool actedOnWindow;
+
+        // Detouring and reviving.
+        private ISpawnedObjectManagerService spawnedObjectManagerService;
+        private DetectInteractables detect;
+        private BaseInteractable detourTarget;
+        private float detourStartTime;
+        private Interactables.InteractableReviver coffin;
+        private Vector3 coffinPosition;
+        private bool pressedCoffin;
+        private float nextCoffinLookupTime;
+
         private bool announced;
         private float lastStatusTime = -999f;
 
@@ -57,6 +69,7 @@ namespace MegabonkTogether.Scripts.Bot
             playerManagerService = Plugin.Services.GetRequiredService<IPlayerManagerService>();
             netplaySessionService = Plugin.Services.GetRequiredService<INetplaySessionService>();
             lobbyViewService = Plugin.Services.GetRequiredService<ILobbyViewService>();
+            spawnedObjectManagerService = Plugin.Services.GetRequiredService<ISpawnedObjectManagerService>();
         }
 
         public void Update()
@@ -88,9 +101,11 @@ namespace MegabonkTogether.Scripts.Bot
                     TickLobby();
                     break;
                 case BotState.Following:
+                case BotState.Detouring:
+                case BotState.Reviving:
                     if (!TryEnterRewarding())
                     {
-                        TickFollow();
+                        TickInRun();
                     }
 
                     break;
@@ -170,6 +185,10 @@ namespace MegabonkTogether.Scripts.Bot
             OwnerPosition = null;
             ownerTransform = null;
             loggedNoOwner = false;
+            detect = null;
+            EndDetour();
+            EndRevive();
+            BotTargets.ResetStage();
             DropTarget();
         }
 
@@ -194,17 +213,37 @@ namespace MegabonkTogether.Scripts.Bot
             OwnerPosition = ownerTransform != null ? ownerTransform.position : null;
         }
 
-        private void TickFollow()
+        /// <summary>Following, Detouring and Reviving share the stage-transition handling.</summary>
+        private void TickInRun()
         {
             var me = LocalPlayer();
             if (me == null)
             {
-                // Stage transition or loading screen: hold still and forget the target.
+                // Stage transition or loading screen: hold still, forget targets; new map next.
                 BotInput.Move = Vector2.zero;
-                DropTarget();
+                detect = null;
+                EndDetour();
+                EndRevive();
+                BotTargets.ResetStage();
                 return;
             }
 
+            switch (State)
+            {
+                case BotState.Detouring:
+                    TickDetour(me);
+                    break;
+                case BotState.Reviving:
+                    TickRevive(me);
+                    break;
+                default:
+                    TickFollow(me);
+                    break;
+            }
+        }
+
+        private void TickFollow(MyPlayer me)
+        {
             RefreshOwner();
             if (!OwnerPosition.HasValue)
             {
@@ -221,8 +260,162 @@ namespace MegabonkTogether.Scripts.Bot
 
             loggedNoOwner = false;
             var owner = OwnerPosition.Value;
+
+            // Reviving the host outranks everything but a reward window.
+            if (TryStartRevive())
+            {
+                return;
+            }
+
+            detect ??= me.GetComponentInChildren<DetectInteractables>();
+            var detour = BotTargets.FindDetour(me.transform.position, owner, 3f * ModConfig.BotFollowDistance.Value, detect);
+            if (detour != null)
+            {
+                detourTarget = detour;
+                detourStartTime = Time.time;
+                State = BotState.Detouring;
+                DropTarget();
+                return;
+            }
+
             var target = BotSteering.PickFollowPoint(owner, me.transform.position, ModConfig.BotFollowDistance.Value, Time.time);
             SteerTo(me, target, owner);
+        }
+
+        /// <summary>True when <paramref name="target"/> is the interactable the game would use on a press.</summary>
+        private bool IsCurrentInteractable(BaseInteractable target)
+        {
+            var current = detect != null ? detect.currentInteractable : null;
+            return current != null && target != null && current.GetInstanceID() == target.GetInstanceID();
+        }
+
+        private void TickDetour(MyPlayer me)
+        {
+            RefreshOwner();
+            if (!OwnerPosition.HasValue || detourTarget == null || !detourTarget.CanInteract())
+            {
+                EndDetour();
+                return;
+            }
+
+            if (TryStartRevive())
+            {
+                return;
+            }
+
+            if (IsCurrentInteractable(detourTarget))
+            {
+                BotInput.PressInteract();
+                InteractablesUsed++;
+                Plugin.Log.LogInfo($"[bot] used {detourTarget.gameObject.name}.");
+                BotTargets.Blacklist(detourTarget);
+                EndDetour();
+                return;
+            }
+
+            if (Time.time - detourStartTime > 2f * ModConfig.BotStuckSeconds.Value)
+            {
+                Plugin.Log.LogInfo($"[bot] gave up on {detourTarget.gameObject.name}.");
+                BotTargets.Blacklist(detourTarget);
+                EndDetour();
+                return;
+            }
+
+            SteerTo(me, detourTarget.transform.position, OwnerPosition.Value);
+        }
+
+        private void EndDetour()
+        {
+            detourTarget = null;
+            if (State == BotState.Detouring)
+            {
+                State = BotState.Following;
+            }
+
+            DropTarget();
+        }
+
+        /// <summary>Switches to Reviving when the host is dead and their coffin can be used.</summary>
+        private bool TryStartRevive()
+        {
+            var host = playerManagerService.GetHost();
+            if (host == null || host.Hp > 0 || Time.unscaledTime < nextCoffinLookupTime)
+            {
+                return false;
+            }
+
+            nextCoffinLookupTime = Time.unscaledTime + 1f;
+            var found = BotTargets.FindOwnerCoffin(host.ConnectionId, spawnedObjectManagerService);
+            if (found == null)
+            {
+                return false;
+            }
+
+            detourTarget = null;
+            coffin = found;
+            coffinPosition = found.transform.position;
+            pressedCoffin = false;
+            State = BotState.Reviving;
+            Plugin.Log.LogInfo("[bot] owner is down, heading to their coffin.");
+            DropTarget();
+            return true;
+        }
+
+        /// <summary>
+        /// Walks to the coffin and presses interact. Reviving starts a fight (the reviver spawns an
+        /// enemy that must die first), so after the press the bot stays at the coffin until the host
+        /// is alive again.
+        /// </summary>
+        private void TickRevive(MyPlayer me)
+        {
+            RefreshOwner();
+            var host = playerManagerService.GetHost();
+            if (host == null)
+            {
+                EndRevive();
+                return;
+            }
+
+            if (host.Hp > 0)
+            {
+                if (pressedCoffin)
+                {
+                    Revives++;
+                    Plugin.Log.LogInfo("[bot] revived owner.");
+                }
+
+                EndRevive();
+                return;
+            }
+
+            detect ??= me.GetComponentInChildren<DetectInteractables>();
+            if (!pressedCoffin && coffin != null && coffin.CanInteract() && IsCurrentInteractable(coffin))
+            {
+                BotInput.PressInteract();
+                pressedCoffin = true;
+                Plugin.Log.LogInfo("[bot] used the owner's coffin; waiting for the revive fight.");
+            }
+
+            if (!pressedCoffin && (coffin == null || !coffin.CanInteract()))
+            {
+                // Someone else used it, or it is gone.
+                EndRevive();
+                return;
+            }
+
+            SteerTo(me, coffinPosition, OwnerPosition ?? coffinPosition);
+        }
+
+        private void EndRevive()
+        {
+            coffin = null;
+            pressedCoffin = false;
+            if (State == BotState.Reviving)
+            {
+                State = BotState.Following;
+            }
+
+            DropTarget();
         }
 
         /// <summary>Writes the stick input toward <paramref name="target"/> and watches for being stuck.</summary>
