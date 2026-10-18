@@ -787,7 +787,7 @@ fine, and widening the fix to a path with no reported symptom risks changing som
 ---
 
 <a name="ob-10"></a>
-## OB-10 — Clients emit host-only-send warnings by the thousand — CONFIRMED, **wrong source recorded; now attributed**
+## OB-10 — Clients emit host-only-send warnings by the thousand — **not reproducing (2026-10-18): zero in three runs; cause never identified**
 
 Not player-visible, found in the logs. The client emitted **1,841** of these in one session, first
 at line 4149 and continuing to the end of the run.
@@ -833,6 +833,36 @@ because it rejects nothing.
 
 **Next step is unchanged in spirit:** read the ranked `[host-guard]` line from the next run, then fix
 the named paths upstream of the guard.
+
+### 2026-10-18 — not reproducing: zero rejections in three runs, cause never identified
+
+**Every surviving log is clean.** Seven `LogOutput.log` files from the 2026-10-08, 10-11 and 10-18
+runs, three of them from the client (`Netplay loops started as CLIENT`), all MegabonkTogether 5.1.0
+built after the diagnostic landed (`d586b18`, 2026-08-19): **zero** `[host-guard]` lines. At the
+2026-08-17 rate (20,078 a run, continuous) the 10 s report would have printed many times, so the
+flood itself is gone.
+
+**What it was will not be known.** The 2026-08-17 log is no longer on disk, and its warning carried
+no message type anyway — that is why the diagnostic was built. No run between 2026-08-19 and
+2026-10-08 was kept. The likeliest cause is one of the fixes in that window that changed when a client
+runs host-side logic — the OB-11 / OB-15 transition guard (`5e292e4`), the OB-13 damage gate
+(`e4df8af`), the interpolator ordering guards (`41130f7`) — but that is **UNVERIFIED** inference from
+timing, not attribution.
+
+**Gap closed in the diagnostic.** `Report` prints only when a rejection arrives after its 10 s
+throttle, and the first call only primes it, so a few rejections in a run, or the last batch of any
+run, were counted and never printed. "No line" therefore could not prove "nothing rejected".
+`HostGuardDiagnostics.Reset` (called from `ResetNetworking` on session teardown) now flushes whatever
+is pending and always prints a total:
+
+`[host-guard] session total: 0 host-only send(s) rejected on this peer.`
+
+The total only prints when the session is torn down through the mod (leaving the lobby or returning
+to the menu); closing the game mid-run skips it.
+
+**Close as fixed when:** the client's log from a full run shows `session total: 0`. If it shows a
+non-zero total, the flushed `[host-guard] ... at session end` line ranks the message types — fix
+those paths upstream of the guard and reopen this entry.
 
 
 ---
