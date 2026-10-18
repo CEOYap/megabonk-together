@@ -1,6 +1,6 @@
 # Test bot — design
 
-Written 2026-10-19. Status: **design, not built.**
+Written 2026-10-19. Status: **built on branch `claude/test-bot` (Tasks 1–7), not yet run in-game.** Rulings made while building: `.superpowers/sdd/2026-10-19-test-bot/progress.md` (local) and the commit messages.
 
 ## Intent
 
