@@ -2793,6 +2793,33 @@ HarmonyX applies the finalizers on these static IL2CPP methods; and the felt eff
 toughness and spawns. **Confirms fixed as:** the host log line appears with the mean of both players,
 and swapping who plays Dicehead leaves enemy toughness unchanged for the same pair of builds.
 
+<a name="ob-27"></a>
+
+## OB-27 — Character select throws every frame once a friend joins — **FIXED 2026-10-18, not yet confirmed in play**
+
+**Reported 2026-10-18 (evening run).** "So many errors as soon as my friend joined." The host logged
+**4,362** `NullReferenceException`s, all from one line, `WindowManagerPatches.Update_Postix`
+(`WindowManager.cs:181`), starting the frame the host advanced both peers to character selection and
+running until the host left the lobby. The run never got past character select. The client threw
+once, in `CreateFriendliesInfoDisplay` (`WindowManager.cs:229`) as the same window opened.
+`Player.log` held no errors, so the fault was ours alone.
+
+**Cause — LIKELY.** Both sites read `b_confirm` off `window as CharacterMenu`. A C# `as` only checks
+the managed wrapper, and for a value typed `Window` Il2CppInterop often hands back a plain `Window`
+wrapper over a native `CharacterMenu`, so the cast returns null. `UiAssetService.ExtractPrefab`
+already documents the same trap for `GameObject`. Whether a derived wrapper is cached depends on what
+fetched the object earlier, which fits the facts: same game build (21750826, version 1.0.69), same
+startup and lobby path as the earlier 2026-10-18 run that passed character select, and none of this
+session's code touches the menu. Not proven: no log says which of the two nulls it was.
+
+**Fix.** `Helpers/WindowCast.AsCharacterMenu` falls back to `GetComponent<CharacterMenu>()`, which
+resolves the type on the native side. All seven `CharacterMenu` casts use it (`WindowManager.cs` x4,
+`Plugin.cs` x2 and `LobbyPanel.cs`, the last of which silently skipped preselecting a character), and the
+per-frame site now returns instead of throwing when either is null.
+
+**Confirms fixed as:** a friend joins, both reach character select, and neither log has a
+`WindowManager.cs:line` exception; the host's confirm button greys out alone and lights up with two.
+
 ## Confirmed in play 2026-10-18, outside the numbered entries
 
 - **Shared XP sent as gains** (no more level drift; see OB-20's side effect). No `level` disagreements.
