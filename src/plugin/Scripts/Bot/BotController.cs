@@ -1,3 +1,4 @@
+using Assets.Scripts.Actors.Player;
 using MegabonkTogether.Configuration;
 using MegabonkTogether.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -31,6 +32,14 @@ namespace MegabonkTogether.Scripts.Bot
         private float nextLobbyActionTime;
         private bool characterChosen;
         private int confirmPresses;
+
+        // Following.
+        private float nextOwnerLookupTime;
+        private Transform ownerTransform;
+        private bool loggedNoOwner;
+        private Vector3? steerTarget;
+        private float bestTargetDistance = float.MaxValue;
+        private float lastProgressTime;
         private bool announced;
         private float lastStatusTime = -999f;
 
@@ -73,6 +82,9 @@ namespace MegabonkTogether.Scripts.Bot
                 case BotState.Joining:
                 case BotState.InLobby:
                     TickLobby();
+                    break;
+                case BotState.Following:
+                    TickFollow();
                     break;
             }
 
@@ -145,6 +157,126 @@ namespace MegabonkTogether.Scripts.Bot
             confirmPresses = 0;
             BotInput.Clear();
             OwnerPosition = null;
+            ownerTransform = null;
+            loggedNoOwner = false;
+            DropTarget();
+        }
+
+        /// <summary>The bot's own player, or null between stages and on loading screens.</summary>
+        private static MyPlayer LocalPlayer()
+        {
+            var player = GameManager.Instance?.player;
+            return player != null && player.playerMovement != null && player.playerMovement.feet != null ? player : null;
+        }
+
+        /// <summary>Finds the host's avatar once a second; null when there is none.</summary>
+        private void RefreshOwner()
+        {
+            if (Time.unscaledTime >= nextOwnerLookupTime || ownerTransform == null)
+            {
+                nextOwnerLookupTime = Time.unscaledTime + 1f;
+                var host = playerManagerService.GetHost();
+                var netPlayer = host != null ? playerManagerService.GetNetPlayerByNetplayId(host.ConnectionId) : null;
+                ownerTransform = netPlayer != null && netPlayer.Model != null ? netPlayer.Model.transform : null;
+            }
+
+            OwnerPosition = ownerTransform != null ? ownerTransform.position : null;
+        }
+
+        private void TickFollow()
+        {
+            var me = LocalPlayer();
+            if (me == null)
+            {
+                // Stage transition or loading screen: hold still and forget the target.
+                BotInput.Move = Vector2.zero;
+                DropTarget();
+                return;
+            }
+
+            RefreshOwner();
+            if (!OwnerPosition.HasValue)
+            {
+                BotInput.Move = Vector2.zero;
+                DropTarget();
+                if (!loggedNoOwner)
+                {
+                    loggedNoOwner = true;
+                    Plugin.Log.LogInfo("[bot] no owner to follow.");
+                }
+
+                return;
+            }
+
+            loggedNoOwner = false;
+            var owner = OwnerPosition.Value;
+            var target = BotSteering.PickFollowPoint(owner, me.transform.position, ModConfig.BotFollowDistance.Value, Time.time);
+            SteerTo(me, target, owner);
+        }
+
+        /// <summary>Writes the stick input toward <paramref name="target"/> and watches for being stuck.</summary>
+        private void SteerTo(MyPlayer me, Vector3 target, Vector3 owner)
+        {
+            var toTarget = target - me.transform.position;
+            toTarget.y = 0f;
+            var distance = toTarget.magnitude;
+
+            BotInput.Move = distance < 1.5f
+                ? Vector2.zero
+                : BotSteering.ToInputAxes(toTarget, me.playerMovement.feet);
+
+            CheckStuck(me, target, distance, owner);
+        }
+
+        /// <summary>
+        /// Teleports next to the host after <c>BotStuckSeconds</c> without getting 1 unit closer to
+        /// the target. The follow point moves, so progress is measured against the best distance so
+        /// far, reset whenever the bot arrives. Also catches falling out of the map.
+        /// </summary>
+        private void CheckStuck(MyPlayer me, Vector3 target, float distance, Vector3 owner)
+        {
+            var now = Time.time;
+            if (!steerTarget.HasValue || distance < 1.5f)
+            {
+                steerTarget = target;
+                bestTargetDistance = distance;
+                lastProgressTime = now;
+                return;
+            }
+
+            steerTarget = target;
+            if (distance < bestTargetDistance - 1f)
+            {
+                bestTargetDistance = distance;
+                lastProgressTime = now;
+                return;
+            }
+
+            var stuckFor = now - lastProgressTime;
+            if (stuckFor < ModConfig.BotStuckSeconds.Value)
+            {
+                return;
+            }
+
+            var destination = owner + new Vector3(2f, 0.5f, 0f);
+            me.transform.position = destination;
+            var rb = me.playerMovement.rb;
+            if (rb != null)
+            {
+                rb.position = destination;
+                rb.velocity = Vector3.zero;
+            }
+
+            Teleports++;
+            Plugin.Log.LogInfo($"[bot] stuck {stuckFor:F0}s, teleported to owner.");
+            DropTarget();
+        }
+
+        private void DropTarget()
+        {
+            steerTarget = null;
+            bestTargetDistance = float.MaxValue;
+            lastProgressTime = Time.time;
         }
 
         /// <summary>Readies up in the lobby panel and picks a random usable character, once a second.</summary>
