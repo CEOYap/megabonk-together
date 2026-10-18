@@ -31,7 +31,25 @@ namespace MegabonkTogether.Patches
         }
 
         /// <summary>
-        /// Add spawned pylons to the spawned object manager so we can sync their state.
+        /// OB-7. Ids for the final fight's pylons, outside the range the shared counter hands out.
+        ///
+        /// <para><b>Why not <c>AddSpawnedObject</c>.</b> That counter is only advanced by the host
+        /// for everything the host spawns and replicates (tumbleweeds, revive coffins, ...), while
+        /// the client registers those with the host's id and leaves its own counter alone. Both
+        /// peers then took pylon ids from their <i>own</i> counter, so the ids agreed only when the
+        /// host had spawned nothing counted on the final stage before the pylons. That is how OB-7
+        /// was "confirmed fixed" on 2026-08-18 without any code change, and why on 2026-10-18 the
+        /// client could not find a single pylon the host charged.</para>
+        ///
+        /// <para><b>Why index is enough.</b> <c>pylons</c> is a serialized <c>BossPylon[]</c> on the
+        /// controller (<c>dump.cs</c>, offset <c>0x30</c>), so both peers walk the same array in the
+        /// same order. The base is far above anything the counter reaches in a stage, which
+        /// <c>ResetForNextLevel</c> sets back to zero.</para>
+        /// </summary>
+        private const uint PYLON_ID_BASE = 0x70000000;
+
+        /// <summary>
+        /// Register the pylons with fixed ids so every peer can resolve the host's charge messages.
         /// </summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(FinalFightController.StartPylons))]
@@ -42,12 +60,26 @@ namespace MegabonkTogether.Patches
                 return;
             }
 
-            //Since we are using a fixed seed, the pylons will always spawn in the same order
-            foreach (var pylon in __instance.pylons)
+            var pylons = __instance.pylons;
+            if (pylons == null)
             {
-                var netplayId = spawnedObjectManagerService.AddSpawnedObject(pylon.gameObject);
+                return;
+            }
+
+            for (var i = 0; i < pylons.Length; i++)
+            {
+                var pylon = pylons[i];
+                if (pylon == null)
+                {
+                    continue;
+                }
+
+                var netplayId = PYLON_ID_BASE + (uint)i;
+                spawnedObjectManagerService.SetSpawnedObject(netplayId, pylon.gameObject);
                 DynamicData.For(pylon.gameObject).Set("netplayId", netplayId);
             }
+
+            Plugin.Log.LogInfo($"OB-7: registered {pylons.Length} pylon(s) with fixed ids {PYLON_ID_BASE}+.");
         }
 
         /// <summary>
