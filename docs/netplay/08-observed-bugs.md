@@ -815,7 +815,7 @@ fine, and widening the fix to a path with no reported symptom risks changing som
 ---
 
 <a name="ob-10"></a>
-## OB-10 — Clients emit host-only-send warnings by the thousand — **not reproducing (2026-10-18): zero in three runs; cause never identified**
+## OB-10 — Clients emit host-only-send warnings by the thousand — **one source found and fixed 2026-10-18 (LightningStrike); not yet confirmed at zero**
 
 Not player-visible, found in the logs. The client emitted **1,841** of these in one session, first
 at line 4149 and continuing to the end of the run.
@@ -887,6 +887,17 @@ is pending and always prints a total:
 
 The total only prints when the session is torn down through the mod (leaving the lobby or returning
 to the menu); closing the game mid-run skips it.
+
+### 2026-10-18 evening — the session total paid off: 121, all `LightningStrike`
+
+The first run with the end-of-session total: host `0`, client **`121`**, every one
+`steam-net/SendToAllClients/LightningStrike`, spread across the whole run while the client held a
+**Lightning Orb**. `WeaponUtilityPatches.LightningStrike_Postfix` had a session check and a
+`CAN_SEND_MESSAGES` check but no host check, and `OnLightningStrike` broadcasts. Fixed by returning on
+a client. No behaviour change: a client's broadcast was always dropped.
+
+The 20,078 of 2026-08-17 were far more than this, so they were not only this path, but this is the
+only one still firing.
 
 **Close as fixed when:** the client's log from a full run shows `session total: 0`. If it shows a
 non-zero total, the flushed `[host-guard] ... at session end` line ranks the message types — fix
