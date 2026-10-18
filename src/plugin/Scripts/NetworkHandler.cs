@@ -46,6 +46,7 @@ namespace MegabonkTogether.Scripts
         private IWebsocketClientService websocketClientService;
         private IPlayerManagerService playerManagerService;
         private IPlayerStatsSyncService playerStatsSyncService;
+        private IEnemyManagerService enemyManagerService;
         private IDesyncDetectorService desyncDetectorService;
 
         /// <summary>
@@ -147,6 +148,15 @@ namespace MegabonkTogether.Scripts
                 if (GameManager.Instance == null || GameManager.Instance.player == null || GameManager.Instance.player.inventory == null) return;
 
                 Services.AllocationDiagnostics.Sample(ModConfig.LogAllocationRate.Value);
+
+                if (Services.FrameTimeDiagnostics.Sample(ModConfig.LogFrameTiming.Value))
+                {
+                    enemyManagerService ??= Plugin.Services.GetService<IEnemyManagerService>();
+                    Services.FrameTimeDiagnostics.Report(
+                        enemyManagerService?.TrackedEnemyCount ?? 0,
+                        playerManagerService.GetAllPlayers().Count(),
+                        IsHost);
+                }
 
                 // OB-1.
                 statsCheckAccumulator += Time.deltaTime;
@@ -321,6 +331,7 @@ namespace MegabonkTogether.Scripts
             Patches.Unity.TransformFallbackDiagnostics.Reset();
             Services.TrackerAttributionDiagnostics.Reset();
             Services.HostGuardDiagnostics.Reset();
+            Services.FrameTimeDiagnostics.Reset();
             Patches.RunStatsPatches.ResetDiagnostics();
             Services.PickupLifetimeDiagnostics.Reset();
             playerStatsSyncService?.Reset();

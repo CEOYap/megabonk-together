@@ -18,6 +18,7 @@ namespace MegabonkTogether.Configuration
         public static ConfigEntry<bool> EnabledSharedExperience { get; private set; }
         public static ConfigEntry<float> EncounterInputGraceSeconds { get; private set; }
         public static ConfigEntry<bool> LogAllocationRate { get; private set; }
+        public static ConfigEntry<bool> LogFrameTiming { get; private set; }
         public static ConfigEntry<bool> LogEncounterPause { get; private set; }
         public static ConfigEntry<bool> LogBandwidth { get; private set; }
         public static ConfigEntry<bool> LogDesync { get; private set; }
@@ -74,6 +75,17 @@ namespace MegabonkTogether.Configuration
                 "Log the mod's own managed allocation rate every 10 seconds during a session. Off " +
                 "by default. Turn it on when investigating stutter: the Unity Profiler cannot " +
                 "attach to a retail IL2CPP build, so this is how GC pressure gets measured here."
+            );
+            LogFrameTiming = config.Bind(
+                "Diagnostics",
+                "LogFrameTiming",
+                false,
+                "Log frame timing every 10 seconds during a session: average FPS, the 1% and 0.1% " +
+                "lows, the worst frame, how many frames took over 33 ms and over 100 ms, gen-2 " +
+                "garbage collections, and the enemy and player count at the time. Off by default. " +
+                "Turn it on for performance testing; the lows and the >100 ms count are what show " +
+                "stutter, which an average hides. Pairs with LogAllocationRate and LogBandwidth, " +
+                "which report over the same 10 seconds."
             );
             LogEncounterPause = config.Bind(
                 "Diagnostics",
