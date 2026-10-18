@@ -29,6 +29,16 @@ namespace MegabonkTogether.Patches
                 return;
             }
 
+            // OB-10. OnLightningStrike broadcasts with SendToAllClients, which only the host may do.
+            // Without this the client built the whole message for every strike and the transport
+            // dropped it: 121 rejections in the 2026-10-18 evening run, all LightningStrike, all
+            // while the client held a Lightning Orb. Nothing was lost -- a client can never
+            // broadcast -- so this removes wasted work rather than changing what peers see.
+            if (!(synchronizationService.IsServerMode() ?? false))
+            {
+                return;
+            }
+
             synchronizationService.OnLightningStrike(enemy, bounces, dc, bounceRange, bounceProcCoefficient);
         }
 
