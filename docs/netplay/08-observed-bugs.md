@@ -137,6 +137,9 @@ but the collision path was not traced.
 
 ---
 
+> **2026-10-18 evening: aura size confirmed in play** by the project owner after `4148e19` (the
+> remote aura's size is now the owner's global × weapon product).
+
 <a name="ob-2"></a>
 ### 2026-10-07 — checked against a third-party mod's 0.5 release
 
@@ -556,7 +559,7 @@ the host's `Complete` postfix sends `ChargeShrineCompleted` (union tag **79**), 
 completes the same shrine on receipt. The counter follows, since `A_Charged` is raised inside
 `Complete`. Trade-off: a shrine a client fills and the host does not stays unrewarded on the client.
 
-## OB-7 — Desert final-boss pylons do not exist for clients — **FIXED, confirmed in play (2026-08-18)**
+## OB-7 — Desert final-boss pylons do not exist for clients — **REOPENED 2026-10-18, now FIXED in code, not yet confirmed in play**
 
 **Reported:** on the Desert final boss the pylons do not appear or work for non-host clients. **The
 Forest final boss is fine.** That contrast is the whole diagnosis.
@@ -632,6 +635,31 @@ must not be load-bearing for identity.
 **A shared mutable counter used as an implicit protocol is the general defect here**, and pylons are
 just where it surfaced. Any future object registered with `AddSpawnedObject` on both peers has the
 same latent bug.
+
+### 2026-10-18 — reopened: it was never fixed, the 2026-08-18 run was luck
+
+The client could not see the pylons at all in the final fight. Its log has the same signature as
+2026-08-07: `Pylon object not found in SpawnedObjectManagerService when processing
+OnReceivedStartingToChargingPylon` and the `…Stopping…` equivalent, every time the host charged one
+(host: `stopping charging pylon 23 / 23 / 16`).
+
+**No code had ever changed.** Handover 15 already said so: "no `fix(...)` commit has ever touched
+pylons". `FinalFightController.StartPylons` still called `AddSpawnedObject` on both peers. The counter
+is reset by `ResetForNextLevel`, so on 2026-08-18 the host had happened to spawn nothing counted on the
+final stage before the pylons, and the ids agreed by coincidence.
+
+**Fixed as the fix shape above intended, without a protocol change.** Pylons now take
+`PYLON_ID_BASE (0x70000000) + index` and are registered with `SetSpawnedObject` on every peer.
+`pylons` is a serialized `BossPylon[]` on the controller (`dump.cs` offset `0x30`), so both peers walk
+the same array in the same order; the counter never comes near the base within a stage. Logs
+`OB-7: registered N pylon(s) with fixed ids 1879048192+.` on both peers.
+
+**Same latent shape, not fixed here:** `GraveyardBossRoom.Activate` numbers the lamps with
+`AddSpawnedObject` on the host and `SetSpawnedObjectAtLast` (max key + 1) on the client, which are two
+different counters again.
+
+**Confirms fixed as:** the client sees and can charge the pylons, and neither log has a `Pylon object
+not found` line.
 
 ---
 
@@ -1759,7 +1787,7 @@ paused too and stops sending hits during the window. This gate is the backstop f
 Reported fixed by the player. The host log carries 53 `OB-13: suppressed N enemy hit(s) while paused`
 lines and the client 14, so the gate at `Enemy.Damage` is what held, not a coincidence of timing.
 
-## OB-14 — The end-of-run damage panel credits you with your teammate's weapons — **CONFIRMED 2026-10-12, FIXED, unverified**
+## OB-14 — The end-of-run damage panel credits you with your teammate's weapons — **REOPENED 2026-10-18: still leaking after the hit-level fix**
 
 **Reported 2026-08-17, with screenshots.** The DAMAGE column on the summary screen lists ~23 damage
 sources for a player whose inventory held **4 weapons and 4 tomes**. The extras are the other
@@ -1882,6 +1910,40 @@ scopes the tracker to exactly that hit. The per-attack patches stay, as narrower
 
 **Also fixed while comparing these screens:** the host's aura looked slightly smaller on the client.
 `GetAttackSizeMultiplier` multiplies (global × weapon) and our correction added; see OB-1.
+
+### 2026-10-18 evening — the hit-level fix did not close it
+
+End screens from the first run with `fe94466` and `abdafe7`. Host played Roberto, client played
+Dicehead.
+
+| Source | Host screen | Client screen | Owner |
+|---|---|---|---|
+| Electric Plug | **LVL 0, 34.1K** | LVL 2, 408 | client (item) |
+| Cursed Doll | **LVL 0, 27.7K** | LVL 1, 14.9K | client (item) |
+| Bob (Dead) | **LVL 0, 23.6K** | LVL 2, 3,634 | client (item) |
+| Slutty Rocket | **LVL 0, 1,021** | LVL 4, 3,241 | client |
+| Wireless Dagger | **LVL 0, 554** | LVL 3, 379 | client |
+| Dice | **LVL 0, 453** | LVL 4, 4,486 | client |
+| Aura | LVL 8, 13.5K | **LVL 0, 2,331** | host |
+| Chunkers | LVL 5, 3,843 | **LVL 0, 946** | host |
+
+**Fixed:** the client's own rows are back at their real levels, which was the first of the two
+earlier 2026-10-18 gaps.
+
+**Still open, two different shapes:**
+
+1. **Items, on the host, larger than the owner's own number.** Electric Plug, Cursed Doll and Bob are
+   the client's *items*. The host credits itself with 34.1K Electric Plug against the client's own
+   408. The weapon-hit attribution notes only the weapon overload of `GetDamageContainer`; item
+   damage goes through the other overload (the static at `WeaponUtility+0x18`), which is never noted.
+   That the host's figure is *higher* than the owner's suggests the host also runs those items'
+   effects for the client's avatar. **UNVERIFIED**: the item proc path needs decompiling.
+2. **The host's constant attacks on the client** (Aura, Chunkers at LVL 0). The client records hits
+   from the host's forwards, and the `AttackerId` the host stamps for its own constant attacks is
+   evidently not reaching the client's `RunStats` filter as "someone else".
+
+The weapon leaks on the host (Rocket, Dagger, Dice) are small next to the items, so most of what is
+left is the item path.
 
 ## OB-15 — The client's NullReferenceException storm — **FIXED and CONFIRMED in play (2026-10-12)**
 
@@ -2684,7 +2746,7 @@ without touching the design question.
 `Look rotation viewing vector is zero` lines.
 
 
-## OB-26 — The players' Difficulty is not in sync — CONFIRMED by decompile 2026-10-18, **built 2026-10-18 (team average), not yet confirmed in play**
+## OB-26 — The players' Difficulty is not in sync — CONFIRMED by decompile 2026-10-18, **built 2026-10-18 (team average); average confirmed in play, enemy HP fix not yet**
 
 **Reported by the project owner.** Each player's Difficulty stat is built from their own sources and
 the two machines disagree on it. The game's formula, from the in-game stat breakdown:
@@ -2787,7 +2849,28 @@ shape above is superseded: incoming damage stays per-player on purpose.
 - Host log on every change of the mean, including the first:
   `OB-26: team Difficulty 0.20 (host 0.00, <id> 0.40) over 2 players`.
 
-**UNVERIFIED until played:** that the nine readers' `GetStat(0x26)` reaches `PlayerStatsNew.GetStat`
+### 2026-10-18 evening — the average works; one hook broke enemy HP on the host
+
+**The averaging is confirmed in play.** The host log tracks both players and the mean is right at
+every change: `0.00`, then `0.03 (host 0.00, client 0.05)`, up to `0.18 (host 0.21, client 0.15)`.
+
+**The hook on `CombatScaling.GetHpMultiplierAddition` broke that method.** It takes three
+`out float` parameters, and with a prefix and finalizer on it the native-to-managed trampoline threw
+a `NullReferenceException` on **every** call before reaching mod code: **2,659** on the host, with
+no managed frame in the stack. A trampoline that throws hands the game a default `0`, and
+`EnemyStats.GetHp` (decompiled) computes `hp × (1.1·D + addition + 1)`, so every enemy the host
+spawned lost its time, swarm and stage scaling. **That is the boss-health gap**: the Desert final boss
+had **52.0K** on the host against **5.0M** on the client. It is not the averaging (`D` is at most 0.2
+here); it is the missing `addition`.
+
+**Fixed** by removing that one hook. Its only decompiled caller is `EnemyStats.GetHp`, which keeps its
+own scope, so the team value still reaches it. Callers outside `GetHp`, if any, see the host's own
+Difficulty. **UNVERIFIED**, not decompiled.
+
+**Lesson for any future hook:** a prefix or finalizer on a method with `out`/`ref` value-type
+parameters needs one run to prove its trampoline works before anything depends on it.
+
+**Still UNVERIFIED until played:** that the nine readers' `GetStat(0x26)` reaches `PlayerStatsNew.GetStat`
 through `PlayerStats.GetStat` at run time (the decompiles show direct calls, not inlined bodies); that
 HarmonyX applies the finalizers on these static IL2CPP methods; and the felt effect on enemy
 toughness and spawns. **Confirms fixed as:** the host log line appears with the mean of both players,
@@ -2819,6 +2902,33 @@ per-frame site now returns instead of throwing when either is null.
 
 **Confirms fixed as:** a friend joins, both reach character select, and neither log has a
 `WindowManager.cs:line` exception; the host's confirm button greys out alone and lights up with two.
+
+<a name="ob-28"></a>
+
+## OB-28 — The client's minimap throws every frame after the boss dies — **FIXED 2026-10-18, not yet confirmed in play**
+
+**Seen in the 2026-10-18 evening client log**, never before in any log: **948**
+`ArgumentException: An item with the same key has already been added. Key: BossSpawner(Clone)`,
+from just after "Boss defeated, activating portal." on stage 2 until the stage ended.
+
+**Cause, from the decompiles.** `MinimapCamera.AddArrow` (VA `0x1804B16F0`) ends in an unchecked
+`arrowDict.Add`. `TrySpotBossSpawner` (VA `0x1804B2AE0`) calls it once the boss spawner is inside the
+minimap's range and sets `bossSpotted` only after it returns. The boss-defeated path had already
+added the spawner's arrow, and the client walked into range only after the host killed the boss.
+So `Add` threw, `bossSpotted` was never set, and it threw again every frame. Field names were
+confirmed against `dump.cs` (`bossSpotted` 0x50, `bossSpawner` 0x58, `arrowDict` 0x90); Ghidra's
+labels were off by a slot again.
+
+**Fix.** A prefix on `AddArrow` skips a target already in `arrowDict`, so `TrySpotBossSpawner` sets
+its flag and stops asking. **Confirms fixed as:** no `same key has already been added` lines.
+
+<a name="ob-29"></a>
+
+## OB-29 — The Shady Guy counter does not count the client's purchases on the host — **CONFIRMED 2026-10-18, not fixed**
+
+Both HUDs on 2026-10-18 evening: host `Shady Guy 1 / 2`, client `2 / 2`. The client's desync detector
+flagged it as soon as it happened (`counter 'Shady Guy' host 0 / local 1`, then `1 / 2`). Same family
+as OB-12, whose fix covers the other counters; the Shady Guy path has not been traced.
 
 ## Confirmed in play 2026-10-18, outside the numbered entries
 

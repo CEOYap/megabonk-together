@@ -45,8 +45,8 @@ below has been **played and confirmed in sync** in two-player online runs. Thing
 not yet confirmed in play are listed separately, and are not counted as working.
 
 **Combat and attacks**
-- Teammates' attacks look the same on every screen: shield orb count, projectile count and
-  projectile size use the owner's stats, not yours
+- Teammates' attacks look the same on every screen: shield orb count, aura size, projectile count
+  and projectile size use the owner's stats, not yours
 - Enemies stop taking damage while an encounter window has the game paused (shared experience)
 - Enemy and boss max health is the same for everyone. Summoned bosses (bush, bandit) and the final
   boss's health bar now move on every screen
@@ -66,8 +66,8 @@ not yet confirmed in play are listed separately, and are not counted as working.
 - XP is shared as gains, so players' levels no longer drift apart
 
 **Bosses**
-- Desert final boss: the pylons exist and can be charged for every player, the boss moves for
-  every player, and returned weapons go back to their real owner
+- Desert final boss: the boss moves for every player, and returned weapons go back to their real
+  owner
 
 **Lobby and runs**
 - A player who dies and spectates comes back at the next level. Their death no longer ends the run
@@ -75,10 +75,17 @@ not yet confirmed in play are listed separately, and are not counted as working.
 - No more client error flood (the old `NullReferenceException` storm) or host map-arrow errors
 
 **Built, waiting for a play test**
-- End-of-run damage panel and kill credit go to the right player
-- Teammates' aura size uses the owner's stats
+- Desert final-boss pylons show and can be charged for every player (an earlier "confirmed" turned
+  out to be luck; now fixed properly)
+- Enemy HP is back to normal on the host. A bug in the team Difficulty change had removed the
+  time-based HP scaling from every enemy the host spawned
+- No more minimap error flood after a boss dies
 - Team Difficulty: enemy toughness and spawns follow the **average** of all players' Difficulty.
   Each player still takes damage according to their own Difficulty
+
+**Known, not fixed yet**
+- The end-of-run damage panel still lists some of your teammate's weapons and items at LVL 0
+- The Shady Guy counter does not count the client's purchases on the host
 
 **Known and parked**
 - Clients log `Look rotation viewing vector is zero` warnings while the host fires rockets. This is
