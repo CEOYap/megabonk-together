@@ -186,8 +186,8 @@
         internal const float DISTANCE_CLOSE = 25f;
 
         /// <summary>
-        /// Beyond this distance an entity is <c>Far</c>: updates are dropped and its renderer is
-        /// disabled. Between this and <see cref="DISTANCE_CLOSE"/> it is <c>Medium</c> and throttled
+        /// Beyond this distance an entity is <c>Far</c>: updates are dropped on a client (the host
+        /// keeps simulating). It is still drawn (OB-30). Between this and <see cref="DISTANCE_CLOSE"/> it is <c>Medium</c> and throttled
         /// to <see cref="MEDIUM_DISTANCE_UPDATE_INTERVAL_SECONDS"/>.
         /// </summary>
         internal const float DISTANCE_MEDIUM = 60f;

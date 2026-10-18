@@ -4,10 +4,24 @@ using UnityEngine;
 
 namespace MegabonkTogether.Helpers
 {
+    /// <summary>
+    /// Throttles per-frame updates of far entities. It no longer hides them.
+    ///
+    /// <para><b>OB-30: renderers are left alone.</b> This used to set the first child
+    /// <c>Renderer</c>'s <c>enabled = false</c> beyond <see cref="Tunables.DISTANCE_MEDIUM"/>
+    /// (60 units) and back on inside it, so in netplay every non-boss enemy vanished past 60 units
+    /// and popped back in when it came closer, with a hard edge that flickered at the boundary. 60
+    /// units is inside what the camera shows, so the cutoff was visible. The update skip is where
+    /// the CPU saving is and it stays; the renderer toggle only saved draw calls, which Unity's own
+    /// frustum culling already handles for anything off-screen.</para>
+    ///
+    /// <para>Client enemies beyond 60 still move: their position comes from
+    /// <c>EnemyInterpolatorManager</c>, which ticks every enemy whatever its distance, not from the
+    /// skipped <c>MyUpdate</c>.</para>
+    /// </summary>
     public class DistanceThrottler(float mediumDistanceUpdateInterval = Tunables.MEDIUM_DISTANCE_UPDATE_INTERVAL_SECONDS)
     {
         private readonly Dictionary<int, float> lastUpdateTimes = [];
-        private readonly Dictionary<int, bool> rendererDisabledState = [];
         private readonly float mediumDistanceUpdateInterval = mediumDistanceUpdateInterval;
 
         public bool ShouldUpdate(GameObject gameObject, int instanceId, bool isServer = false)
@@ -21,12 +35,9 @@ namespace MegabonkTogether.Helpers
             switch (distance)
             {
                 case DistanceToPlayer.Far:
-                    SetRendererEnabled(gameObject, false, instanceId);
                     return isServer;
 
                 case DistanceToPlayer.Medium:
-                    SetRendererEnabled(gameObject, true, instanceId);
-
                     if (isServer)
                     {
                         return true;
@@ -44,46 +55,18 @@ namespace MegabonkTogether.Helpers
 
                 case DistanceToPlayer.Close:
                 default:
-                    SetRendererEnabled(gameObject, true, instanceId);
                     return true;
             }
         }
 
-        private void SetRendererEnabled(GameObject gameObject, bool enabled, int instanceId)
-        {
-            bool wasDisabled = rendererDisabledState.TryGetValue(instanceId, out bool state) && state;
-
-            if (!enabled && !wasDisabled)
-            {
-                var renderer = gameObject.GetComponentInChildren<Renderer>();
-
-                if (renderer != null)
-                {
-                    renderer.enabled = false;
-                    rendererDisabledState[instanceId] = true;
-                }
-            }
-            else if (enabled && wasDisabled)
-            {
-                var renderer = gameObject.GetComponentInChildren<Renderer>();
-
-                if (renderer != null)
-                {
-                    renderer.enabled = true;
-                    rendererDisabledState[instanceId] = false;
-                }
-            }
-        }
         public void Cleanup(int instanceId)
         {
             lastUpdateTimes.Remove(instanceId);
-            rendererDisabledState.Remove(instanceId);
         }
 
         public void ClearAll()
         {
             lastUpdateTimes.Clear();
-            rendererDisabledState.Clear();
         }
     }
 }
