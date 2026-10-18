@@ -25,9 +25,8 @@ namespace MegabonkTogether.Patches
     /// <c>PlayerStatsNew.GetStat</c>, which the mod already detours. Patching the static one would
     /// put a second native-to-managed trampoline on the game's hottest stat path.</para>
     ///
-    /// <para>A depth counter rather than a flag: <c>EnemyStats.GetHp</c> calls
-    /// <c>CombatScaling.GetHpMultiplierAddition</c>, and the inner finalizer must not close the
-    /// outer scope. Finalizers, not postfixes, so a throw cannot leave the scope open.</para>
+    /// <para>A depth counter rather than a flag: a scoped reader may call another, and the inner
+    /// finalizer must not close the outer scope. Finalizers, not postfixes, so a throw cannot leave the scope open.</para>
     /// </summary>
     internal static class TeamDifficulty
     {
@@ -118,13 +117,13 @@ namespace MegabonkTogether.Patches
     [HarmonyPatch(typeof(CombatScaling))]
     internal static class CombatScalingTeamDifficultyPatches
     {
-        [HarmonyPrefix]
-        [HarmonyPatch(nameof(CombatScaling.GetHpMultiplierAddition))]
-        public static void GetHpMultiplierAddition_Prefix(out bool __state) => __state = TeamDifficulty.Enter();
-
-        [HarmonyFinalizer]
-        [HarmonyPatch(nameof(CombatScaling.GetHpMultiplierAddition))]
-        public static void GetHpMultiplierAddition_Finalizer(bool __state) => TeamDifficulty.Exit(__state);
+        // GetHpMultiplierAddition is deliberately NOT hooked. It takes three `out float`
+        // parameters, and with a prefix and finalizer on it the native-to-managed trampoline threw
+        // a NullReferenceException on every call before reaching our code (2,659 on the host,
+        // 2026-10-18). The game then got 0 back, so every enemy the host spawned lost its time,
+        // swarm and stage HP scaling: the final boss had 52K HP on the host against 5.0M on the
+        // client. Its only decompiled caller, EnemyStats.GetHp, is already a scope below, so the
+        // team Difficulty still reaches it there.
 
         [HarmonyPrefix]
         [HarmonyPatch(nameof(CombatScaling.GetStageHpMultiplier))]
