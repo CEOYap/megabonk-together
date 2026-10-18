@@ -194,13 +194,18 @@ namespace MegabonkTogether.Services
 
             foreach (var row in host.InteractablesUsed)
             {
+                if (IsPerPlayerCounter(row.Key))
+                {
+                    continue;
+                }
+
                 localInteractables.TryGetValue(row.Key, out var local);
                 CheckExact($"counter '{row.Key}'", row.Value, local);
             }
 
             foreach (var row in localInteractables)
             {
-                if (!host.InteractablesUsed.ContainsKey(row.Key) && row.Value != 0)
+                if (!IsPerPlayerCounter(row.Key) && !host.InteractablesUsed.ContainsKey(row.Key) && row.Value != 0)
                 {
                     CheckExact($"counter '{row.Key}'", 0, row.Value);
                 }
@@ -271,6 +276,19 @@ namespace MegabonkTogether.Services
             var playerXp = gameManager.player.inventory.playerXp;
             return playerXp == null ? -1 : playerXp.level;
         }
+
+        /// <summary>
+        /// OB-29. Rows that count what each player did themselves, so the host and a client are
+        /// expected to differ.
+        ///
+        /// <para><b>Shady Guy.</b> The game counts a shady guy when that player's own shop window
+        /// closes (<c>OnShadyGuyUsed</c>, see <c>InteractableCounterHelper</c>), and a player who
+        /// bought nothing still has the shady guy available. On 2026-10-18 the host could not afford
+        /// anything and read <c>1 / 2</c> while the client, who bought, read <c>2 / 2</c>, which the
+        /// project owner confirmed is the intended per-player behaviour. Comparing it only produced a
+        /// warning every digest.</para>
+        /// </summary>
+        private static bool IsPerPlayerCounter(string key) => key == "Shady Guy";
 
         /// <summary>
         /// Copies numUsed for every row of the game's interactable counter into a managed
