@@ -266,7 +266,7 @@ namespace MegabonkTogether.Scripts.Modal
         {
             menu.GoToCharacterSelection();
 
-            var characterMenu = WindowManager.activeWindow as CharacterMenu;
+            var characterMenu = Helpers.WindowCast.AsCharacterMenu(WindowManager.activeWindow);
             if (characterMenu == null || characterMenu.characterButtons == null)
             {
                 return;

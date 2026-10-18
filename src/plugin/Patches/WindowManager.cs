@@ -128,9 +128,9 @@ namespace MegabonkTogether.Patches
         /// window is closing. A destroyed Unity object also compares equal to null here, which is
         /// the behaviour wanted: there is nothing to re-enable on a corpse.</para>
         ///
-        /// <para>The cast stays <c>as</c> rather than <c>TryCast</c>, which the interop surface
-        /// here does not expose on <c>Window</c>, and which the three sibling casts in this file
-        /// do not use either. Only the dereference was ever the fault.</para>
+        /// <para>The cast goes through <see cref="WindowCast.AsCharacterMenu"/>: a bare <c>as</c>
+        /// returns null whenever Il2CppInterop hands back a plain <c>Window</c> wrapper, which is
+        /// what threw 4,362 times on 2026-10-18 in <c>Update_Postix</c> below.</para>
         /// </summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(WindowManager.WindowClosed))]
@@ -143,7 +143,7 @@ namespace MegabonkTogether.Patches
                 return;
             }
 
-            var character = closedWindow as CharacterMenu;
+            var character = WindowCast.AsCharacterMenu(closedWindow);
             if (character == null || character.b_confirm == null)
             {
                 return;
@@ -169,16 +169,14 @@ namespace MegabonkTogether.Patches
 
             if (WindowManager.activeWindow?.name == "W_Character" && Plugin.Instance.Mode.Mode == NetworkModeType.Friendlies && Plugin.Instance.Mode.Role == Role.Host)
             {
-                if (playerManagerService.GetAllPlayers().Count() < 2)
+                // Every frame, so a null here must return rather than throw: it did, 4,362 times in
+                // one lobby, and each throw also skipped setting the button's state.
+                var character = WindowCast.AsCharacterMenu(WindowManager.activeWindow);
+                if (character != null && character.b_confirm != null)
                 {
-                    var character = WindowManager.activeWindow as CharacterMenu;
-                    character.b_confirm.state = MyButton.EButtonState.Inactive;
-                    character.b_confirm.RefreshState();
-                }
-                else
-                {
-                    var character = WindowManager.activeWindow as CharacterMenu;
-                    character.b_confirm.state = MyButton.EButtonState.Active;
+                    character.b_confirm.state = playerManagerService.GetAllPlayers().Count() < 2
+                        ? MyButton.EButtonState.Inactive
+                        : MyButton.EButtonState.Active;
                     character.b_confirm.RefreshState();
                 }
             }
@@ -225,8 +223,8 @@ namespace MegabonkTogether.Patches
 
         private static void CreateFriendliesInfoDisplay(Transform parent, Window newWindow)
         {
-            var menu = newWindow as CharacterMenu;
-            var btn = menu.b_confirm;
+            var menu = WindowCast.AsCharacterMenu(newWindow);
+            var btn = menu?.b_confirm;
             DestroyFriendliesInfoDisplay();
 
             var mainMenu = Plugin.Instance.GetMainMenu();
@@ -272,7 +270,8 @@ namespace MegabonkTogether.Patches
             text.fontSize = 36;
             text.color = Color.white;
 
-            if (Plugin.Instance.Mode.Role != Role.Host)
+            // The copy button is cloned from the confirm button; without one, show the text alone.
+            if (Plugin.Instance.Mode.Role != Role.Host || btn == null)
             {
                 return;
             }

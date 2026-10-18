@@ -668,7 +668,8 @@ namespace MegabonkTogether
         {
             if (GameManager.Instance == null || GameManager.Instance.player == null)
             {
-                if (WindowManager.activeWindow is CharacterMenu menu)
+                var menu = Helpers.WindowCast.AsCharacterMenu(WindowManager.activeWindow);
+                if (menu != null)
                 {
                     menu.b_back.button.onClick.Invoke();
                 }
@@ -676,7 +677,7 @@ namespace MegabonkTogether
                 if (WindowManager.activeWindow.name.Contains("Maps And Stats"))
                 {
                     WindowManager.activeWindow.allButtons.ToArray().FirstOrDefault(b => b.name == "B_Back")?.button.onClick.Invoke();
-                    (WindowManager.activeWindow as CharacterMenu)?.b_back.button.onClick.Invoke();
+                    Helpers.WindowCast.AsCharacterMenu(WindowManager.activeWindow)?.b_back.button.onClick.Invoke();
                 }
             }
             else
