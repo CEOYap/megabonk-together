@@ -85,7 +85,6 @@ not yet confirmed in play are listed separately, and are not counted as working.
 
 **Known, not fixed yet**
 - The end-of-run damage panel still lists some of your teammate's weapons and items at LVL 0
-- The Shady Guy counter does not count the client's purchases on the host
 
 **Known and parked**
 - Clients log `Look rotation viewing vector is zero` warnings while the host fires rockets. This is

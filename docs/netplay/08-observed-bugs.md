@@ -2924,11 +2924,21 @@ its flag and stops asking. **Confirms fixed as:** no `same key has already been 
 
 <a name="ob-29"></a>
 
-## OB-29 — The Shady Guy counter does not count the client's purchases on the host — **CONFIRMED 2026-10-18, not fixed**
+## OB-29 — The Shady Guy counter differs between host and client — **CLOSED 2026-10-18: per-player by design, not a bug**
 
 Both HUDs on 2026-10-18 evening: host `Shady Guy 1 / 2`, client `2 / 2`. The client's desync detector
 flagged it as soon as it happened (`counter 'Shady Guy' host 0 / local 1`, then `1 / 2`). Same family
 as OB-12, whose fix covers the other counters; the Shady Guy path has not been traced.
+
+**Closed by the project owner.** The host had no money to buy anything from the second shady guy,
+while the client bought from it. A player who has not used a shady guy keeps it available, so the
+host's `1 / 2` is telling the host there is still one to visit. That matches the decompile noted in
+`InteractableCounterHelper`: the game counts a shady guy in `OnShadyGuyUsed` when that player's own
+shop window closes, not when anyone interacts with it.
+
+**Desync detector change.** `DesyncDetectorService` now skips the `Shady Guy` row
+(`IsPerPlayerCounter`), because comparing a per-player count across peers can only produce false
+warnings.
 
 ## Confirmed in play 2026-10-18, outside the numbered entries
 
