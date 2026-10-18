@@ -2995,6 +2995,62 @@ shop window closes, not when anyone interacts with it.
 (`IsPerPlayerCounter`), because comparing a per-player count across peers can only produce false
 warnings.
 
+<a name="ob-30"></a>
+
+## OB-30 — Enemies vanish and reappear past a certain distance — **REPORTED 2026-10-19; cause LIKELY the mod's distance throttler, not fixed**
+
+**Reported by the project owner.** In netplay, enemies disappear once they are some distance away
+and pop back in when they come closer. It looks like a render distance or LOD cutoff.
+
+### Likely cause — the mod hides them, not the game
+
+`Helpers/DistanceThrottler.cs`, added in `ffb8c44` (2026-02-08, "Distance throttler for enemies"),
+runs from `EnemyPatch.MyUpdate_Prefix` and `MyFixedUpdate_Prefix` for every non-boss enemy, on
+**both** host and client, only in netplay:
+
+- `Plugin.GetDistanceToPlayer` measures from the local player, or from the spectate target while dead.
+- **Close** `< 25` (`Tunables.DISTANCE_CLOSE`): updates every tick, renderer on.
+- **Medium** `25–60`: renderer on; on a client, updates throttled to once per second
+  (`MEDIUM_DISTANCE_UPDATE_INTERVAL_SECONDS`).
+- **Far** `≥ 60` (`Tunables.DISTANCE_MEDIUM`): **`renderer.enabled = false`**. On a client the
+  enemy's update is skipped too; the host keeps simulating it.
+- Back inside 60 the renderer is switched on again.
+
+That is exactly "vanishes past a distance, reappears when closer", and the 60-unit cutoff is a hard
+edge with no hysteresis, so an enemy moving along the boundary flickers.
+
+### Details that make it worse
+
+1. **One renderer only.** `SetRendererEnabled` toggles `GetComponentInChildren<Renderer>()`, the
+   first renderer found. An enemy built from several renderers (body plus weapon, elite glow, shadow)
+   would lose only part of itself.
+2. **60 units is short for this game's camera.** The camera can see well past 60 units across open
+   ground, so the cutoff is inside the visible area rather than beyond it. **UNVERIFIED**: the
+   camera's actual visible range has not been measured.
+3. **Measured from one point.** Distance is from the local player, not the camera or its view, so an
+   enemy in plain sight down a slope or across a gap can be "far" and hidden.
+4. **Bosses are exempt** (`IsBoss` / `IsStageBoss` / `IsFinalBoss` return early), which fits
+   bosses never being reported as vanishing.
+
+### What would confirm it
+
+- It happens only in netplay, never in singleplayer (the throttler is behind
+  `HasNetplaySessionStarted`).
+- Enemies vanish at roughly the same distance every time, about 60 units, on both host and client.
+- Bosses never vanish.
+
+### Fix options (not chosen)
+
+- **Stop hiding renderers** and keep only the update throttling. The renderer toggle saves draw calls
+  but is the visible part; the update skip is where the CPU saving is.
+- **Raise the cutoff** past the camera's visible range, after measuring it.
+- **Add hysteresis** (for example hide at 70, show at 60) so the boundary cannot flicker.
+- **Use the camera's view**, not distance from the player, to decide what to hide.
+
+The update throttling on a client is a separate question: a skipped `MyUpdate` on a far client-side
+enemy may be harmless because the host simulates it and the client interpolates, but that has not
+been checked.
+
 ## Confirmed in play 2026-10-18, outside the numbered entries
 
 - **Shared XP sent as gains** (no more level drift; see OB-20's side effect). No `level` disagreements.
