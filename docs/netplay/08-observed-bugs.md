@@ -2654,7 +2654,7 @@ without touching the design question.
 `Look rotation viewing vector is zero` lines.
 
 
-## OB-26 — The players' Difficulty is not in sync — CONFIRMED by decompile 2026-10-18, **not fixed (balance decision pending)**
+## OB-26 — The players' Difficulty is not in sync — CONFIRMED by decompile 2026-10-18, **built 2026-10-18 (team average), not yet confirmed in play**
 
 **Reported by the project owner.** Each player's Difficulty stat is built from their own sources and
 the two machines disagree on it. The game's formula, from the in-game stat breakdown:
@@ -2738,6 +2738,30 @@ then on every machine replace the value these readers see with one combined valu
 incoming damage agree. Postfix the 11 readers' `GetStat(0x26)` via a single patch on
 `PlayerStats.GetStat` filtered to stat 38 -- every reader goes through it. The combining rule
 (sum of extras, highest, or average) is the decision still pending.
+
+### 2026-10-18 — built: team **average** for the shared world, own value for incoming damage
+
+The combining rule was decided as the **mean** of every connected player's Difficulty (why:
+[`16-session-handover.md`](16-session-handover.md)). The earlier "every machine, all 11 readers"
+shape above is superseded: incoming damage stays per-player on purpose.
+
+- `EStat.Difficulty` added to `PlayerStatsSyncService.TrackedStats` — travels in `PlayerStatsChanged`
+  (tag 77), no wire change.
+- `Patches/TeamDifficulty.cs`: a prefix/finalizer scope on the nine host readers, and a postfix on
+  **`PlayerStatsNew.GetStat`** (not `PlayerStats.GetStat`) that hands the team mean to stat 38 only
+  inside that scope, on the host, in netplay. Decompiled at `0x18042B6A0`, `PlayerStats.GetStat` is a
+  direct forward to the local player's `PlayerStatsNew.GetStat`, which the mod already detours — so
+  this adds no new trampoline to the hottest stat path.
+- `EnemyStats.GetDamage` and `AchievementTracker.OnStatUpdate` are deliberately outside the scope.
+- A teammate whose block has not arrived is left out of the mean; dead players are kept.
+- Host log on every change of the mean, including the first:
+  `OB-26: team Difficulty 0.20 (host 0.00, <id> 0.40) over 2 players`.
+
+**UNVERIFIED until played:** that the nine readers' `GetStat(0x26)` reaches `PlayerStatsNew.GetStat`
+through `PlayerStats.GetStat` at run time (the decompiles show direct calls, not inlined bodies); that
+HarmonyX applies the finalizers on these static IL2CPP methods; and the felt effect on enemy
+toughness and spawns. **Confirms fixed as:** the host log line appears with the mean of both players,
+and swapping who plays Dicehead leaves enemy toughness unchanged for the same pair of builds.
 
 ## Confirmed in play 2026-10-18, outside the numbered entries
 

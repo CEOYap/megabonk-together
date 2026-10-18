@@ -21,6 +21,13 @@ namespace MegabonkTogether.Services
         /// </summary>
         float? GetRemoteStat(uint ownerId, int stat);
 
+        /// <summary>
+        /// OB-26. The mean Difficulty of every connected player, for the host's shared-world readers.
+        /// <paramref name="localDifficulty"/> is the local player's own value, used until the 2 Hz
+        /// sample has taken one.
+        /// </summary>
+        float GetTeamDifficulty(float localDifficulty);
+
         void Reset();
     }
 
@@ -67,6 +74,7 @@ namespace MegabonkTogether.Services
             (int)EStat.DurationMultiplier,        // 10
             (int)EStat.ProjectileSpeedMultiplier, // 11
             (int)EStat.AttackSpeed,               // 15
+            (int)EStat.Difficulty,                // 38 — OB-26, read by the host for the team average
         ];
 
         // INetTransport, NOT IUdpClientService. IUdpClientService is always the LiteNetLib session;
@@ -78,6 +86,13 @@ namespace MegabonkTogether.Services
 
         private readonly Dictionary<int, float> lastSent = [];
         private readonly ConcurrentDictionary<uint, Dictionary<int, float>> remoteStats = [];
+
+        // OB-26. The readers that want the team average run per enemy, some per frame, so the mean
+        // is computed once a frame rather than once a read.
+        private int teamDifficultyFrame = -1;
+        private float teamDifficulty;
+        private float lastLoggedTeamDifficulty = float.NaN;
+        private int lastLoggedCount;
 
         public PlayerStatsSyncService(
             INetTransport transport,
@@ -187,10 +202,80 @@ namespace MegabonkTogether.Services
             return null;
         }
 
+        /// <summary>
+        /// <para><b>Mean, not sum or maximum</b> — the project's decision, see
+        /// <c>docs/netplay/16-session-handover.md</c>. The mod already scales enemy HP for player
+        /// count, so a sum would count players twice; a maximum imposes one player's curse on all.</para>
+        ///
+        /// <para><b>A teammate whose stat block has not arrived is left out</b> rather than counted
+        /// as zero, so a late block does not dip the run for a moment. <b>Dead players are kept</b>:
+        /// their build still defines the run, and dropping them would make a death soften the
+        /// world.</para>
+        ///
+        /// <para>The local value is the 2 Hz sample rather than a fresh read: this is called from
+        /// inside <c>PlayerStatsNew.GetStat</c>, and Difficulty moves only on pickups and level-ups.</para>
+        /// </summary>
+        public float GetTeamDifficulty(float localDifficulty)
+        {
+            var frame = UnityEngine.Time.frameCount;
+            if (frame == teamDifficultyFrame)
+            {
+                return teamDifficulty;
+            }
+
+            teamDifficultyFrame = frame;
+
+            var local = lastSent.TryGetValue((int)EStat.Difficulty, out var sampled) ? sampled : localDifficulty;
+            var sum = local;
+            var count = 1;
+
+            foreach (var player in playerManagerService.GetAllPlayersExceptLocal())
+            {
+                var remote = GetRemoteStat(player.ConnectionId, (int)EStat.Difficulty);
+                if (remote.HasValue)
+                {
+                    sum += remote.Value;
+                    count++;
+                }
+            }
+
+            teamDifficulty = sum / count;
+            LogTeamDifficultyIfChanged(local, count);
+            return teamDifficulty;
+        }
+
+        // Logged on change only, which is also the first use: the line proves the patch reaches
+        // the readers at all (handover trap 1), and Difficulty moves a handful of times a run.
+        // Compared as numbers before any string is built: this runs every frame a reader does.
+        private void LogTeamDifficultyIfChanged(float local, int count)
+        {
+            if (teamDifficulty == lastLoggedTeamDifficulty && count == lastLoggedCount)
+            {
+                return;
+            }
+
+            lastLoggedTeamDifficulty = teamDifficulty;
+            lastLoggedCount = count;
+
+            var parts = $"host {local:0.00}";
+            foreach (var player in playerManagerService.GetAllPlayersExceptLocal())
+            {
+                var remote = GetRemoteStat(player.ConnectionId, (int)EStat.Difficulty);
+                parts += remote.HasValue
+                    ? $", {player.ConnectionId} {remote.Value:0.00}"
+                    : $", {player.ConnectionId} unknown";
+            }
+
+            Plugin.Log.LogInfo($"OB-26: team Difficulty {teamDifficulty:0.00} ({parts}) over {count} players");
+        }
+
         public void Reset()
         {
             lastSent.Clear();
             remoteStats.Clear();
+            teamDifficultyFrame = -1;
+            lastLoggedTeamDifficulty = float.NaN;
+            lastLoggedCount = 0;
         }
     }
 }
