@@ -40,6 +40,10 @@ namespace MegabonkTogether.Scripts.Bot
         private Vector3? steerTarget;
         private float bestTargetDistance = float.MaxValue;
         private float lastProgressTime;
+
+        // Rewarding.
+        private BotState stateBeforeReward = BotState.Following;
+        private bool actedOnWindow;
         private bool announced;
         private float lastStatusTime = -999f;
 
@@ -84,7 +88,14 @@ namespace MegabonkTogether.Scripts.Bot
                     TickLobby();
                     break;
                 case BotState.Following:
-                    TickFollow();
+                    if (!TryEnterRewarding())
+                    {
+                        TickFollow();
+                    }
+
+                    break;
+                case BotState.Rewarding:
+                    TickRewarding();
                     break;
             }
 
@@ -270,6 +281,43 @@ namespace MegabonkTogether.Scripts.Bot
             Teleports++;
             Plugin.Log.LogInfo($"[bot] stuck {stuckFor:F0}s, teleported to owner.");
             DropTarget();
+        }
+
+        /// <summary>Switches to <see cref="BotState.Rewarding"/> when one of this copy's reward windows opens.</summary>
+        private bool TryEnterRewarding()
+        {
+            if (BotRewards.ActiveWindow() == null)
+            {
+                return false;
+            }
+
+            stateBeforeReward = State;
+            State = BotState.Rewarding;
+            actedOnWindow = false;
+            BotInput.Move = Vector2.zero;
+            BotRewards.OnWindowOpened();
+            return true;
+        }
+
+        private void TickRewarding()
+        {
+            var window = BotRewards.ActiveWindow();
+            if (window == null)
+            {
+                if (actedOnWindow)
+                {
+                    RewardsPicked++;
+                }
+
+                State = stateBeforeReward;
+                DropTarget();
+                return;
+            }
+
+            if (BotRewards.TryPick(window))
+            {
+                actedOnWindow = true;
+            }
         }
 
         private void DropTarget()
