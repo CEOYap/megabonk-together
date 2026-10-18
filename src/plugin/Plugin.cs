@@ -197,6 +197,7 @@ namespace MegabonkTogether
             ClassInjector.RegisterTypeInIl2Cpp<CoroutineRunner>();
             ClassInjector.RegisterTypeInIl2Cpp<MainThreadDispatcher>();
             ClassInjector.RegisterTypeInIl2Cpp<NetworkHandler>();
+            ClassInjector.RegisterTypeInIl2Cpp<Scripts.Bot.BotController>();
             ClassInjector.RegisterTypeInIl2Cpp<PlayerInterpolator>();
             ClassInjector.RegisterTypeInIl2Cpp<EnemyInterpolator>();
             ClassInjector.RegisterTypeInIl2Cpp<BossOrbInterpolator>();
@@ -365,6 +366,7 @@ namespace MegabonkTogether
             var goNetworkHandler = new GameObject("NetworkHandler");
             GameObject.DontDestroyOnLoad(goNetworkHandler);
             NetworkHandler = goNetworkHandler.AddComponent<NetworkHandler>();
+            goNetworkHandler.AddComponent<Scripts.Bot.BotController>();
 
             var goNetPlayersDisplayer = new GameObject("NetPlayersDisplayer");
             GameObject.DontDestroyOnLoad(goNetPlayersDisplayer);

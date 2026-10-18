@@ -19,6 +19,9 @@ namespace MegabonkTogether.Configuration
         public static ConfigEntry<float> EncounterInputGraceSeconds { get; private set; }
         public static ConfigEntry<bool> LogAllocationRate { get; private set; }
         public static ConfigEntry<bool> LogFrameTiming { get; private set; }
+        public static ConfigEntry<bool> BotMode { get; private set; }
+        public static ConfigEntry<float> BotFollowDistance { get; private set; }
+        public static ConfigEntry<float> BotStuckSeconds { get; private set; }
         public static ConfigEntry<bool> LogEncounterPause { get; private set; }
         public static ConfigEntry<bool> LogBandwidth { get; private set; }
         public static ConfigEntry<bool> LogDesync { get; private set; }
@@ -75,6 +78,28 @@ namespace MegabonkTogether.Configuration
                 "Log the mod's own managed allocation rate every 10 seconds during a session. Off " +
                 "by default. Turn it on when investigating stutter: the Unity Profiler cannot " +
                 "attach to a retail IL2CPP build, so this is how GC pressure gets measured here."
+            );
+            BotMode = config.Bind(
+                "Bot",
+                "BotMode",
+                false,
+                "Developer tool, leave off for normal play. Turns this copy of the game into a test " +
+                "bot that joins the host's lobby by itself, follows the host, cannot take damage, " +
+                "picks rewards at random, uses nearby chests and shrines, and revives the host. " +
+                "Meant for a second copy on the same PC (see docs/netplay/05-local-testing.md)."
+            );
+            BotFollowDistance = config.Bind(
+                "Bot",
+                "BotFollowDistance",
+                8f,
+                "Developer tool. How far, in world units, the bot may drift from the host it follows."
+            );
+            BotStuckSeconds = config.Bind(
+                "Bot",
+                "BotStuckSeconds",
+                6f,
+                "Developer tool. Seconds without progress toward its target before the bot " +
+                "teleports next to the host."
             );
             LogFrameTiming = config.Bind(
                 "Diagnostics",
