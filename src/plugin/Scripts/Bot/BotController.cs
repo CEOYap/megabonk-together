@@ -26,7 +26,11 @@ namespace MegabonkTogether.Scripts.Bot
         private ISynchronizationService synchronizationService;
         private IPlayerManagerService playerManagerService;
         private INetplaySessionService netplaySessionService;
+        private ILobbyViewService lobbyViewService;
         private float nextJoinCheckTime;
+        private float nextLobbyActionTime;
+        private bool characterChosen;
+        private int confirmPresses;
         private bool announced;
         private float lastStatusTime = -999f;
 
@@ -39,6 +43,7 @@ namespace MegabonkTogether.Scripts.Bot
             synchronizationService = Plugin.Services.GetRequiredService<ISynchronizationService>();
             playerManagerService = Plugin.Services.GetRequiredService<IPlayerManagerService>();
             netplaySessionService = Plugin.Services.GetRequiredService<INetplaySessionService>();
+            lobbyViewService = Plugin.Services.GetRequiredService<ILobbyViewService>();
         }
 
         public void Update()
@@ -58,9 +63,17 @@ namespace MegabonkTogether.Scripts.Bot
                 Plugin.Log.LogInfo("[bot] BotMode on: runInBackground, 30 FPS cap.");
             }
 
-            if (State == BotState.Idle)
+            UpdateSessionState();
+
+            switch (State)
             {
-                TryJoin();
+                case BotState.Idle:
+                    TryJoin();
+                    break;
+                case BotState.Joining:
+                case BotState.InLobby:
+                    TickLobby();
+                    break;
             }
 
             LogStatus();
@@ -91,6 +104,122 @@ namespace MegabonkTogether.Scripts.Bot
             State = BotState.Joining;
             Plugin.Log.LogInfo($"[bot] joining room {code}.");
             netplaySessionService.Join(code);
+        }
+
+        /// <summary>
+        /// Moves between the menu, lobby and run states from the session's own flags, so a dropped
+        /// session or a return to the menu always lands the bot back in <see cref="BotState.Idle"/>.
+        /// </summary>
+        private void UpdateSessionState()
+        {
+            var initialized = synchronizationService.HasNetplaySessionInitialized();
+            var started = synchronizationService.HasNetplaySessionStarted();
+
+            if (!initialized && !netplaySessionService.IsBusy && State != BotState.Idle)
+            {
+                if (State != BotState.Joining)
+                {
+                    Plugin.Log.LogInfo("[bot] session ended, back to idle.");
+                }
+
+                ResetRun();
+                State = BotState.Idle;
+                return;
+            }
+
+            if (State == BotState.Joining && initialized)
+            {
+                State = BotState.InLobby;
+            }
+
+            if (State == BotState.InLobby && started)
+            {
+                State = BotState.Following;
+                Plugin.Log.LogInfo("[bot] run started, following the host.");
+            }
+        }
+
+        private void ResetRun()
+        {
+            characterChosen = false;
+            confirmPresses = 0;
+            BotInput.Clear();
+            OwnerPosition = null;
+        }
+
+        /// <summary>Readies up in the lobby panel and picks a random usable character, once a second.</summary>
+        private void TickLobby()
+        {
+            if (Time.unscaledTime < nextLobbyActionTime)
+            {
+                return;
+            }
+
+            nextLobbyActionTime = Time.unscaledTime + 1f;
+
+            // The ready button lives on the lobby panel; on a path without one there is nothing to press.
+            if (Modal.LobbyPanel.Current != null && !lobbyViewService.IsLocalPlayerReady)
+            {
+                lobbyViewService.ToggleLocalReady();
+                Plugin.Log.LogInfo("[bot] ready.");
+                nextLobbyActionTime = Time.unscaledTime + 2f; // let the toggle round-trip before re-reading it
+                return;
+            }
+
+            var menu = Helpers.WindowCast.AsCharacterMenu(WindowManager.activeWindow);
+            if (menu == null)
+            {
+                return;
+            }
+
+            if (!characterChosen)
+            {
+                characterChosen = PickRandomCharacter(menu);
+                return;
+            }
+
+            // The confirm click may land before the menu accepts input; press it again a few times.
+            if (confirmPresses < 5 && menu.b_confirm != null && menu.b_confirm.button != null)
+            {
+                confirmPresses++;
+                menu.b_confirm.button.onClick.Invoke();
+            }
+        }
+
+        /// <summary>
+        /// Selects and confirms a random character through the menu's own handlers
+        /// (<c>OnSelectCharacter</c> / <c>OnConfirmCharacter</c>, VA <c>0x18054A290</c> /
+        /// <c>0x180549C90</c>), the path a click takes. Confirm on a character that cannot be used
+        /// shows a popup and returns, so only <c>canUseCharacter</c> buttons are candidates.
+        /// </summary>
+        private static bool PickRandomCharacter(CharacterMenu menu)
+        {
+            var buttons = menu.characterButtons;
+            if (buttons == null || buttons.Count == 0)
+            {
+                return false;
+            }
+
+            var usable = new System.Collections.Generic.List<MyButtonCharacter>();
+            foreach (var button in buttons)
+            {
+                if (button != null && button.canUseCharacter)
+                {
+                    usable.Add(button);
+                }
+            }
+
+            if (usable.Count == 0)
+            {
+                return false;
+            }
+
+            var pick = usable[Random.Range(0, usable.Count)];
+            menu.OnSelectCharacter(pick);
+            menu.OnConfirmCharacter(pick);
+            var name = pick.characterData != null ? pick.characterData.name : "?";
+            Plugin.Log.LogInfo($"[bot] picked {name}.");
+            return true;
         }
 
         private void LogStatus()
