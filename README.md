@@ -38,6 +38,54 @@ This mod feature:
 
 More info at [Notable Network Changes](./NETPLAY_CHANGES.md)
 
+## What's confirmed working (as of 2026-10-18)
+
+The rest of this README is older than the current build. This list is kept up to date. Everything
+below has been **played and confirmed in sync** in two-player online runs. Things that are built but
+not yet confirmed in play are listed separately, and are not counted as working.
+
+**Combat and attacks**
+- Teammates' attacks look the same on every screen: shield orb count, projectile count and
+  projectile size use the owner's stats, not yours
+- Enemies stop taking damage while an encounter window has the game paused (shared experience)
+- Enemy and boss max health is the same for everyone. Summoned bosses (bush, bandit) and the final
+  boss's health bar now move on every screen
+
+**Spawning and the world**
+- Minibosses appear near the players, not always next to the host
+- Ghost-item summons only appear for the player who owns the Ghost item
+- The run's interactable counters (chests, pots, greed shrines, moais, microwaves, boss curses)
+  agree between players
+- Charge shrines: the charge value is the same for every player
+- Magnet pickups work when a client collects them
+
+**Shared experience (pause and rewards)**
+- The failsafe no longer closes a window you are still using, and no longer freezes the run at an
+  encounter
+- The repeating "Waiting for other player(s) choices…" message has not come back since 2026-08-18
+- XP is shared as gains, so players' levels no longer drift apart
+
+**Bosses**
+- Desert final boss: the pylons exist and can be charged for every player, the boss moves for
+  every player, and returned weapons go back to their real owner
+
+**Lobby and runs**
+- A player who dies and spectates comes back at the next level. Their death no longer ends the run
+- Steam avatars show for every player in the lobby
+- No more client error flood (the old `NullReferenceException` storm) or host map-arrow errors
+
+**Built, waiting for a play test**
+- End-of-run damage panel and kill credit go to the right player
+- Teammates' aura size uses the owner's stats
+- Team Difficulty: enemy toughness and spawns follow the **average** of all players' Difficulty.
+  Each player still takes damage according to their own Difficulty
+
+**Known and parked**
+- Clients log `Look rotation viewing vector is zero` warnings while the host fires rockets. This is
+  cosmetic only
+
+The full per-issue history is in [`docs/netplay/08-observed-bugs.md`](docs/netplay/08-observed-bugs.md).
+
 ## Changelog
 
 <details>
