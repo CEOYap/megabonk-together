@@ -1945,6 +1945,50 @@ earlier 2026-10-18 gaps.
 The weapon leaks on the host (Rocket, Dagger, Dice) are small next to the items, so most of what is
 left is the item path.
 
+### 2026-10-18 — items: the host was running a second, live copy of the client's items
+
+Decompiled rather than reasoned about. **This was a damage bug, not only a panel bug.**
+
+- **The owner already runs and forwards its items.** A client applies nothing itself, but
+  `Enemy.Damage_Postfix` sends any hit whose source is in `AllowedDamageSource` (every `EItem` name),
+  and an item's source is exactly `EItem.ToString()` (`ItemElectricPlug..ctor`, VA `0x1804561A0`). The
+  client's 66 `[bw] EnemyDamaged` lines are those forwards. So the owner's copy reaches every peer.
+- **Every other peer also holds a live copy.** `NetPlayer.AddItem` adds each teammate item to a real
+  `ItemInventory`, so `Init` subscribes it to the game's static events. On the host,
+  `NetPlayer.Update` calls the teammate's `PlayerInventory.PhysicsTick` (VA `0x1804E0680`), which runs
+  `ItemInventory.Tick` (VA `0x180443500`) and so every item's `Tick`.
+  - **Electric Plug**: `Init` (VA `0x180455A20`) subscribes `OnPlayerHit` to the static `PlayerHealth`
+    hit event. The host's copy zapped enemies every time **the host** was hit: 34.1K, against the
+    owner's real 408. The client's copy of the host's plug would equally fire on the client's hits
+    and be forwarded as item damage.
+  - **Cursed Doll** damages cursed enemies in `Tick` (VA `0x18043FC70`); **Bob (Dead)** spawns ghosts
+    in `Tick` (VA `0x18043A5D0`).
+- So those three items hit enemies twice, and the second copy was unattributed, which put it on the
+  host's panel at LVL 0. Same family as OB-2 (`ItemGhost`).
+
+**Fixed** in `Patches/Items/RemoteItemCopies.cs`: `ItemElectricPlug.OnPlayerHit`, `ItemCursedDoll.Tick`
+and `ItemBobDead.Tick` return early when the item's own `itemInventoryRef` is not the local player's
+inventory (native pointer compare, so no search in a per-frame path). Only these three: some item ticks
+may do things only the host may do, and the host's copy is then the only one that works. **Other
+items with a static subscription or a damaging `Tick` have the same latent shape** and need the same
+check before being gated.
+
+**Aura and Chunkers on the client, not found offline.** Every path read attributes the host's own
+constant attacks to the host: `CombatAura.FixedUpdate` (VA `0x180352DC0`) builds each hit with the
+weapon overload of `GetDamageContainer`, which refreshes the hit-level note with no owner for a local
+weapon; the host stamps `AttackerId` from the tracker; the client replays with it. Instead of a guess,
+`RunStatsPatches` now logs, once per source, when the panel records a source the local player owns no
+weapon or item for, saying whether the hit was unattributed or attributed to us and whether it was a
+replay:
+
+`OB-14: recording 'Aura' as our damage, but we own no weapon or item by that name -- unattributed, replaying False, host False.`
+
+Status effects (Burn, Poison) are expected once each.
+
+**Confirms fixed as:** no LVL 0 Electric Plug / Cursed Doll / Bob (Dead) on the host's panel, those
+three roughly equal on both screens, and the client log's `OB-14: recording` lines naming the path for
+Aura and Chunkers.
+
 ## OB-15 — The client's NullReferenceException storm — **FIXED and CONFIRMED in play (2026-10-12)**
 
 > Confirmed by absence: zero exceptions on both peers across the 2026-10-07, 10-08, 10-11 and
