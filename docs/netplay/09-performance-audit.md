@@ -200,6 +200,31 @@ alone. If the rate at a full swarm sits near that and collapses when the swarm e
 models is worth doing. If it is an order of magnitude lower, the hypothesis is wrong and the effort
 belongs elsewhere.
 
+### Frame timing: `FrameTimeDiagnostics` (added 2026-10-19)
+
+`[Diagnostics] LogFrameTiming` (off by default) prints one line every 10 seconds of a netplay
+session, over the same window as `[alloc]` and `[bw]`:
+
+```
+[perf] 118 FPS avg, 1% low 61, 0.1% low 24, worst 52 ms over 1180 frames / 10.0s; 3 frame(s) >33 ms, 0 >100 ms; gen2 GC +0; 142 enemies, 2 player(s), host, paused 0%.
+```
+
+**How to read it:**
+
+- **The lows and the counts are the stutter, not the average.** A drop in `1% low` or a rising
+  `>100 ms` count is what players report as lag; `FPS avg` barely moves for a single 400 ms hitch.
+- **`gen2 GC +N` next to hitches points at the garbage collector.** Confirm with `[alloc]`, which
+  gives the allocation rate over the same 10 s.
+- **Compare like with like:** same build, map and player count, and the same moment of the run.
+  `enemies` is the tracked count, which is what the mod's per-frame cost scales with, so read FPS
+  against it. Ignore windows with a high `paused %`: an open encounter window is not gameplay.
+- **Host and client separately.** The host simulates every enemy and every player's weapons; the
+  client interpolates. Turn it on on both machines and compare the two lines from the same moment.
+- **It measures whole frames**, game and mod together. To attribute a cost to the mod, change one
+  thing (a tick rate, a patch, `DistanceThrottler`) and compare runs.
+
+Cost: one float into a preallocated ring per frame; the context and the sort happen once per window.
+
 ### For everything a log line cannot answer: UnityExplorer
 
 Already documented in
