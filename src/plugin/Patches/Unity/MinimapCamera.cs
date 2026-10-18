@@ -52,5 +52,37 @@ namespace MegabonkTogether.Patches.Unity
             // teardown half of the window this exists for.
             return MyPlayer.Instance != null;
         }
+
+        /// <summary>
+        /// Skips adding a minimap arrow for a target that already has one.
+        ///
+        /// <para><b>What threw.</b> <c>AddArrow</c> (VA <c>0x1804B16F0</c>, decompiled) ends in an
+        /// unchecked <c>arrowDict.Add(target, arrow)</c>. <c>TrySpotBossSpawner</c> (VA
+        /// <c>0x1804B2AE0</c>) calls it once the boss spawner is inside the minimap's range and sets
+        /// <c>bossSpotted</c> only <i>after</i> it returns. In netplay the boss spawner's arrow can
+        /// already be in the dictionary when that happens: the boss-defeated path adds it when the
+        /// boss dies, and on 2026-10-18 the client first walked within range of the spawner after the
+        /// host had already killed the boss. So <c>Add</c> threw, <c>bossSpotted</c> was never set,
+        /// and it threw again every frame: <b>948</b> <c>ArgumentException: An item with the same
+        /// key has already been added. Key: BossSpawner(Clone)</c> on the client, until the stage
+        /// ended.</para>
+        ///
+        /// <para>Returning early lets <c>TrySpotBossSpawner</c> set <c>bossSpotted</c>, so it stops
+        /// asking. The arrow that is already there stays, which is what the player should see.</para>
+        ///
+        /// <para><b>UNVERIFIED.</b> Not run in-game.</para>
+        /// </summary>
+        [HarmonyPrefix]
+        [HarmonyPatch(nameof(MinimapCamera.AddArrow))]
+        public static bool AddArrow_Prefix(MinimapCamera __instance, UnityEngine.Transform target)
+        {
+            if (!synchronizationService.HasNetplaySessionStarted())
+            {
+                return true;
+            }
+
+            var arrows = __instance.arrowDict;
+            return target == null || arrows == null || !arrows.ContainsKey(target);
+        }
     }
 }
