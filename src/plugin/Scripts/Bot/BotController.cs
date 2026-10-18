@@ -25,6 +25,8 @@ namespace MegabonkTogether.Scripts.Bot
 
         private ISynchronizationService synchronizationService;
         private IPlayerManagerService playerManagerService;
+        private INetplaySessionService netplaySessionService;
+        private float nextJoinCheckTime;
         private bool announced;
         private float lastStatusTime = -999f;
 
@@ -36,6 +38,7 @@ namespace MegabonkTogether.Scripts.Bot
             Instance = this;
             synchronizationService = Plugin.Services.GetRequiredService<ISynchronizationService>();
             playerManagerService = Plugin.Services.GetRequiredService<IPlayerManagerService>();
+            netplaySessionService = Plugin.Services.GetRequiredService<INetplaySessionService>();
         }
 
         public void Update()
@@ -55,7 +58,39 @@ namespace MegabonkTogether.Scripts.Bot
                 Plugin.Log.LogInfo("[bot] BotMode on: runInBackground, 30 FPS cap.");
             }
 
+            if (State == BotState.Idle)
+            {
+                TryJoin();
+            }
+
             LogStatus();
+        }
+
+        /// <summary>On the main menu, joins the room the host's copy wrote to the room-code file.</summary>
+        private void TryJoin()
+        {
+            if (Time.unscaledTime < nextJoinCheckTime)
+            {
+                return;
+            }
+
+            nextJoinCheckTime = Time.unscaledTime + 1f;
+
+            if (netplaySessionService.IsBusy || synchronizationService.HasNetplaySessionInitialized())
+            {
+                return;
+            }
+
+            var code = Helpers.BotRoomCodeFile.ReadFresh(System.TimeSpan.FromMinutes(10));
+            if (code == null)
+            {
+                return;
+            }
+
+            Helpers.BotRoomCodeFile.Delete();
+            State = BotState.Joining;
+            Plugin.Log.LogInfo($"[bot] joining room {code}.");
+            netplaySessionService.Join(code);
         }
 
         private void LogStatus()

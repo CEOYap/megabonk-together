@@ -31,7 +31,7 @@ launched directly. The install is ~669 MB.
 
 ```powershell
 $src = "C:\Program Files (x86)\Steam\steamapps\common\Megabonk"
-$dst = "D:\MegabonkTest2"
+$dst = "D:\Games\Megabonk - Copy"
 Copy-Item $src $dst -Recurse
 ```
 
@@ -55,6 +55,7 @@ In **each** copy's `BepInEx/config/MegabonkTogether.cfg`:
 ```ini
 [Network]
 ServerUrl = ws://127.0.0.1:5000
+UseSteamTransport = false  # required: the directly-started copy has no Steam, so both must use the matchmaker
 
 [Player]
 PlayerName = Host          # or "Client2" in the second copy — must differ, or the lobby is unreadable
@@ -68,6 +69,21 @@ you are trying to test.
 
 Note `ws://`, not `wss://` — there is no TLS on a local server.
 
+### 4. Optional: let a test bot play the second copy
+
+In the **second** copy only, add:
+
+```ini
+[Bot]
+BotMode = true
+```
+
+Run that copy windowed at a low resolution. When you host Friendlies in your own copy, it writes the
+room code to `%TEMP%\MegabonkTogether-bot-roomcode.txt`; the bot copy reads it on the main menu,
+joins, readies up and picks a random character by itself, then follows you through the run. It logs
+a `[bot]` status line every 10 seconds. Design:
+[`../superpowers/specs/2026-10-19-test-bot-design.md`](../superpowers/specs/2026-10-19-test-bot-design.md).
+
 ---
 
 ## Each test run
@@ -80,7 +96,7 @@ syncing, so a build-and-deploy step looks like:
 ```powershell
 dotnet build src/plugin/MegabonkTogether.Plugin.csproj -c Debug
 Copy-Item "$env:MegabonkPath\BepInEx\plugins\MegabonkTogether\*" `
-          "D:\MegabonkTest2\BepInEx\plugins\MegabonkTogether\" -Recurse -Force
+          "D:\Games\Megabonk - Copy\BepInEx\plugins\MegabonkTogether\" -Recurse -Force
 ```
 
 Forgetting the second half means testing two different builds against each other, which produces
@@ -95,7 +111,7 @@ reason the second copy exists.
 
 ```powershell
 # second copy only; launch the first from Steam
-& "D:\MegabonkTest2\Megabonk.exe"
+& "D:\Games\Megabonk - Copy\Megabonk.exe"
 ```
 
 `winhttp.dll` / Doorstop sits in each folder and loads with the process, so BepInEx injects
@@ -124,7 +140,7 @@ Each copy writes its own `BepInEx/LogOutput.log`. Tail both:
 
 ```powershell
 Get-Content "C:\Program Files (x86)\Steam\steamapps\common\Megabonk\BepInEx\LogOutput.log" -Wait -Tail 20
-Get-Content "D:\MegabonkTest2\BepInEx\LogOutput.log" -Wait -Tail 20
+Get-Content "D:\Games\Megabonk - Copy\BepInEx\LogOutput.log" -Wait -Tail 20
 ```
 
 ### Turn on Unity log capture — on **both** copies
