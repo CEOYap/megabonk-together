@@ -3586,3 +3586,47 @@ the god-mode plugin):
 - ~~Host BepInEx logging no Unity-sourced lines~~ — **fixed and confirmed.** It was
   `[Logging.Disk] WriteUnityLog`, which defaults to `false` and is a separate gate from
   `[Logging] UnityLogListening`. See [`05-local-testing.md`](05-local-testing.md).
+
+## OB-35 — Clients throw a NullReferenceException every frame from the tumbleweed interpolator — **FIXED 2026-10-19, not yet confirmed in play**
+
+**Observed 2026-10-19**, Desert, three players (host plus two test bots). Each client's log has about
+290 copies of one exception and the host's has none:
+
+```
+Il2CppInterop.Runtime.Il2CppException: System.NullReferenceException
+   at UnityEngine.GameObject.GetComponent[T]()
+   at TumbleWeedInterpolator.InterpolateSnapshot(...)
+   at TumbleWeedInterpolator.PerformInterpolation(...)
+   at TumbleWeedInterpolator.Update() line 28
+```
+
+The first copies appear right after the stage-2 boss died.
+
+**Cause, read from the code:**
+
+- **The interpolator outlives its tumbleweeds.** `SpawnedObjectManagerService` creates the
+  `TumbleWeedInterpolator` once and marks it `DontDestroyOnLoad`. The tumbleweeds it tracks are
+  ordinary scene objects.
+- **Nothing cleared it on a level change.** `ResetForNextLevel` cleared the service's own tables
+  but never the interpolator.
+- **An entry left for a destroyed tumbleweed throws.** Any tumbleweed destroyed without a
+  `TumbleWeedDespawned` message (a scene unload, or the game destroying it) stays registered. It is
+  Unity-null (the native object is gone but its managed proxy lives on), so `GetComponent` throws
+  every frame.
+- **Clients only.** Only clients register tumbleweeds for interpolation, which is why the host log
+  is clean.
+- **Ids restart too.** `ResetForNextLevel` also resets object ids to 0, so a stale entry could have
+  matched a new tumbleweed's id.
+
+**Fixed:**
+
+- **The interpolator is cleared on a level change.** `ResetForNextLevel` now calls `Clear()` on it.
+- **A destroyed tumbleweed is dropped as a backstop.** `Update` drops any entry whose tumbleweed is
+  Unity-null, using a reused list so it allocates nothing per frame. It logs this once per level:
+  `[tumbleweed] OB-35: dropped N destroyed tumbleweed(s) from interpolation`.
+- **`UnregisterTumbleWeed` no longer destroys an already-destroyed object.**
+
+**UNVERIFIED, not run in-game.** Confirmed when a Desert run reaches stage 3 with no
+`TumbleWeedInterpolator` exception on any client. A `[tumbleweed] OB-35: dropped` line means the
+backstop caught a tumbleweed destroyed mid-level without a despawn message, which is worth a look of
+its own.

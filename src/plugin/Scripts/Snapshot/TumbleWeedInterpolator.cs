@@ -11,12 +11,29 @@ namespace MegabonkTogether.Scripts.Snapshot
         protected float interpolationDelayMs = 0.1f;
         protected int maxBufferSize = 200;
 
+        /// <summary>Reused by Update so pruning allocates nothing per frame.</summary>
+        private readonly List<uint> destroyedIds = new List<uint>();
+
+        /// <summary>Whether the OB-35 prune has been logged since the last Clear.</summary>
+        private bool loggedPrune = false;
+
         protected void Update()
         {
             double renderTime = Time.timeAsDouble - interpolationDelayMs;
 
-            foreach (var tumbleWeedId in activeTumbleWeeds.Keys)
+            foreach (var kv in activeTumbleWeeds)
             {
+                var tumbleWeedId = kv.Key;
+
+                // OB-35. A tumbleweed destroyed natively (scene unload, or by the game) without a
+                // despawn message is Unity-null while its managed proxy lives on, and GetComponent on
+                // it threw every frame: ~290 NullReferenceExceptions per client on 2026-10-19.
+                if (kv.Value == null)
+                {
+                    destroyedIds.Add(tumbleWeedId);
+                    continue;
+                }
+
                 if (!snapshotsBuffers.TryGetValue(tumbleWeedId, out var buffer))
                     continue;
 
@@ -28,6 +45,34 @@ namespace MegabonkTogether.Scripts.Snapshot
                 PerformInterpolation(tumbleWeedId, buffer, renderTime);
                 CleanupOldSnapshots(buffer, renderTime);
             }
+
+            if (destroyedIds.Count > 0)
+            {
+                foreach (var id in destroyedIds)
+                {
+                    activeTumbleWeeds.Remove(id);
+                    snapshotsBuffers.Remove(id);
+                }
+
+                if (!loggedPrune)
+                {
+                    loggedPrune = true;
+                    Plugin.Log.LogInfo($"[tumbleweed] OB-35: dropped {destroyedIds.Count} destroyed tumbleweed(s) from interpolation (logged once per level).");
+                }
+
+                destroyedIds.Clear();
+            }
+        }
+
+        /// <summary>
+        /// OB-35. Forgets every tracked tumbleweed. Called on level change: this object is
+        /// DontDestroyOnLoad but the tumbleweeds are scene objects, and their ids restart from 0.
+        /// </summary>
+        public void Clear()
+        {
+            activeTumbleWeeds.Clear();
+            snapshotsBuffers.Clear();
+            loggedPrune = false;
         }
 
         public void UpdateTumbleWeeds(List<TumbleWeedSnapshot> tumbleWeedSnapshots)
@@ -140,7 +185,10 @@ namespace MegabonkTogether.Scripts.Snapshot
         {
             if (activeTumbleWeeds.TryGetValue(id, out var toDel))
             {
-                DestroyImmediate(toDel);
+                if (toDel != null)
+                {
+                    DestroyImmediate(toDel);
+                }
                 activeTumbleWeeds.Remove(id);
             }
 

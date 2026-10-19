@@ -140,6 +140,13 @@ namespace MegabonkTogether.Services
             previousTumbleWeedsDelta.Clear();
             //spawnedObjects.Values.ToList().ForEach(Object.Destroy);
             spawnedObjects.Clear();
+
+            // OB-35. The interpolator survives the scene load (DontDestroyOnLoad); the tumbleweeds it
+            // tracks do not. Ids also restart from 0 above, so a stale entry could alias a new one.
+            if (tumbleWeedInterpolator != null)
+            {
+                tumbleWeedInterpolator.Clear();
+            }
         }
 
         public uint? GetByReferenceInChildren<T>(GameObject obj) where T : MonoBehaviour
