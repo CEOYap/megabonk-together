@@ -664,7 +664,7 @@ not found` line.
 ---
 
 <a name="ob-8"></a>
-## OB-8 — The Desert final boss does not move for clients — **FIXED, confirmed in play (2026-08-18)**
+## OB-8 — The Desert final boss does not move for clients — **REOPENED 2026-10-19 as [OB-31](#ob-31): never fixed in code**
 
 **Reported:** alongside OB-7, the Desert final boss was completely static on the non-host peer.
 Forest's final boss behaved correctly.
@@ -3069,6 +3069,36 @@ on the client look frozen apart from moving.
 
 **Not changed:** projectiles have their own far-distance handling (zero opacity, `ffb8c44`), which was
 not part of this report.
+
+<a name="ob-31"></a>
+
+## OB-31 — Desert final boss: different HP on each peer, frozen for the client — **REPORTED 2026-10-19; diagnostic added, not fixed**
+
+**Reported 2026-10-19, first full run with the test bot (bot as client).** At the Desert final boss:
+host bar **6.8M / 6.8M**, client bar **5.5M / 5.5M**; neither moved, and on the client the boss did not
+move at all and was not where the host saw it.
+
+**OB-8 was never fixed.** Its entry ends "no fix has been written"; it was marked confirmed after the
+2026-08-18 run, the same luck that hid OB-7. What OB-8 did establish stands: the host's
+`FinalFightController.SpawnBoss` (VA `0x180493EC0`) goes through `EnemyManager.SpawnBoss` with flags
+`0x24` (FinalBoss | StageBoss), so the boss should reach the client as an ordinary replicated enemy.
+Decompiled again 2026-10-19: `SpawnBoss` changes no HP after the spawn (it stores the boss and sets
+the controller's timers; Ghidra labels the boss slot `pylons`, one slot off).
+
+**What the logs could not say.** Neither peer logged the final boss's spawn message, the HP it
+carried, any `EnemyMaxHpScaled` (OB-9), or its position. 6.8M / 5.5M = 1.24 matches neither the team
+Difficulty in play (0.29 average) nor the mod's 1.1 boss HP multiplier on its own.
+
+**Diagnostic added** (`Services/BossDiagnostics.cs`), always on, bosses only:
+
+- `[boss] host sent spawn (flag …): id N … hp …` and `[boss] client applied spawn …`
+- `[boss] host sent max-HP rescale …` / `client applied max-HP rescale …` (or `… before its spawn; held.`)
+- every 10 s on both peers: `[boss] host|client sees id N … hp X / Y at (x, y, z) flag …`
+
+**Next run:** compare the two logs' `[boss]` lines for the final boss's id. A different HP in
+"client applied spawn" than "host sent spawn" points at the message; equal spawn HP but a later host
+change with no rescale line points at an HP change OB-9 does not cover; a client position that never
+changes while the host's does points at the boss missing from the 40 Hz enemy stream.
 
 ## Confirmed in play 2026-10-18, outside the numbered entries
 

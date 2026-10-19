@@ -149,6 +149,13 @@ namespace MegabonkTogether.Scripts
 
                 Services.AllocationDiagnostics.Sample(ModConfig.LogAllocationRate.Value);
 
+                // OB-31. Bosses only, every 10 s.
+                enemyManagerService ??= Plugin.Services.GetService<IEnemyManagerService>();
+                if (enemyManagerService != null)
+                {
+                    Services.BossDiagnostics.Sample(enemyManagerService.GetAllRegisteredEnemies(), IsHost);
+                }
+
                 if (Services.FrameTimeDiagnostics.Sample(ModConfig.LogFrameTiming.Value))
                 {
                     enemyManagerService ??= Plugin.Services.GetService<IEnemyManagerService>();
@@ -332,6 +339,7 @@ namespace MegabonkTogether.Scripts
             Services.TrackerAttributionDiagnostics.Reset();
             Services.HostGuardDiagnostics.Reset();
             Services.FrameTimeDiagnostics.Reset();
+            Services.BossDiagnostics.Reset();
             Patches.RunStatsPatches.ResetDiagnostics();
             Services.PickupLifetimeDiagnostics.Reset();
             playerStatsSyncService?.Reset();

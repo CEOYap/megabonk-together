@@ -27,6 +27,9 @@ namespace MegabonkTogether.Services
         int TrackedEnemyCount { get; }
         public void SetSpawnedEnemy(uint enemyId, Enemy enemy);
         public Enemy GetEnemyById(uint id);
+
+        /// <summary>Every registered enemy, for diagnostics. A live view: do not hold it across frames.</summary>
+        public IEnumerable<KeyValuePair<uint, Enemy>> GetAllRegisteredEnemies();
         public KeyValuePair<uint, Enemy> GetEnemyByReference(Enemy enemy);
         public void RemoveEnemyById(uint id);
         public void ResetForNextLevel();
@@ -344,6 +347,8 @@ namespace MegabonkTogether.Services
                    yawDelta > Tunables.ENEMY_YAW_THRESHOLD ||
                    hpDelta > Tunables.ENEMY_HP_THRESHOLD;
         }
+
+        public IEnumerable<KeyValuePair<uint, Enemy>> GetAllRegisteredEnemies() => spawnedEnemies;
 
         public Enemy GetEnemyById(uint id)
         {

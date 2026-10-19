@@ -1347,6 +1347,11 @@ namespace MegabonkTogether.Services
             };
 
             udpClientService.SendToAllClients(message, NetDelivery.ReliableUnordered);
+
+            if (BossDiagnostics.IsBoss(enemy))
+            {
+                BossDiagnostics.LogEvent($"host sent spawn (flag {flag})", netplayId, enemy, enemy.hp);
+            }
         }
 
         #region OB-9 — HP rescaled after the spawn message went out
@@ -1381,6 +1386,11 @@ namespace MegabonkTogether.Services
                 Hp = enemy.hp
             };
 
+            if (BossDiagnostics.IsBoss(enemy))
+            {
+                BossDiagnostics.LogEvent("host sent max-HP rescale", registered.Key, enemy, enemy.hp);
+            }
+
             // Reliable because this is a one-shot transition: applied zero times is a permanently
             // wrong health bar, and no later message supersedes it — the 40 Hz delta carries current
             // HP only, which is precisely why the maximum never self-corrected.
@@ -1394,10 +1404,15 @@ namespace MegabonkTogether.Services
             if (enemy == null)
             {
                 pendingRescaledHp[scaled.Id] = scaled.Hp;
+                Plugin.Log.LogInfo($"[boss] client got max-HP rescale for id {scaled.Id} ({scaled.Hp:F0}) before its spawn; held.");
                 return;
             }
 
             ApplyRescaledHp(enemy, scaled.Hp);
+            if (BossDiagnostics.IsBoss(enemy))
+            {
+                BossDiagnostics.LogEvent("client applied max-HP rescale", scaled.Id, enemy, scaled.Hp);
+            }
         }
 
         /// <summary>
@@ -1513,6 +1528,11 @@ namespace MegabonkTogether.Services
             enemy.controlHp = spawnedEnemy.Hp;
             enemy.maxHp = spawnedEnemy.Hp;
             enemy._hp_k__BackingField = spawnedEnemy.Hp;
+
+            if (BossDiagnostics.IsBoss(enemy))
+            {
+                BossDiagnostics.LogEvent($"client applied spawn (flag {spawnedEnemy.Flag})", spawnedEnemy.Id, enemy, spawnedEnemy.Hp);
+            }
 
             if (enemy.IsFinalBoss())
             {
