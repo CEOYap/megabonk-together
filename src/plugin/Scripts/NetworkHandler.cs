@@ -235,6 +235,11 @@ namespace MegabonkTogether.Scripts
                     if (isHost && enemyUpdateAccumulator >= enemyUpdatetickInterval)
                     {
                         enemyUpdateAccumulator -= enemyUpdatetickInterval;
+
+                        // The tick's summed hits go out before its enemy delta, so a client
+                        // replays the damage (numbers, damage panel) before the HP that already
+                        // includes it arrives.
+                        synchronizationService.FlushEnemyDamage();
                         stateBroadcastService.UpdateEnemies();
                     }
 

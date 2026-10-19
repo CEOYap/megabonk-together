@@ -98,6 +98,9 @@ namespace MegabonkTogether.Services
         public void OnPickupSpawned(Pickup result, EPickup ePickup, Vector3 pos, int value);
         public void OnEnemyExploder(Enemy enemy);
         public void OnEnemyDamaged(Enemy instance, DamageContainer damageContainer);
+
+        /// <summary>Host: sends the enemy hits summed since the last call. Once per enemy tick.</summary>
+        public void FlushEnemyDamage();
         public void OnSpawnedEnemySpecialAttack(Enemy enemy, EnemySpecialAttack attack);
 
         public void PrepareForNextLevel();
@@ -168,6 +171,11 @@ namespace MegabonkTogether.Services
         private readonly ConcurrentBag<SpawnedObjectInCrypt> toUpdate = [];
         private readonly ConcurrentQueue<SpawnedEnemy> pendingEnemySpawns = new();
         private readonly HashSet<uint> enemiesDiedBeforeSpawn = [];
+
+        // Host only. Hits applied this enemy tick, summed per enemy, attacker, source and flags.
+        private readonly EnemyDamageAggregator enemyDamageAggregator = new();
+        private readonly Action<EnemyDamaged> sendEnemyDamagedToClients;
+
         private readonly Dictionary<EEnemy, Material> clonedExtraEnemyMaterials = [];
         private Coroutine newObjectToSpawnRoutine;
         private Coroutine pendingEnemySpawnRoutine;
@@ -234,6 +242,9 @@ namespace MegabonkTogether.Services
             this.lobbyViewService = lobbyViewService;
             this.trackerService = trackerService;
             this.logger = logger;
+
+            // Cached so a flush does not allocate a delegate per tick.
+            sendEnemyDamagedToClients = message => udpClientService.SendToAllClients(message, NetDelivery.Unreliable);
 
             EventManager.SubscribeSpawnedObjectsEvents(OnNewObjectToSpawn);
             EventManager.SubscribePlayerUpdatesEvents(OnPlayerUpdate);
@@ -383,6 +394,11 @@ namespace MegabonkTogether.Services
             // misapplied, because AddSpawnedEnemy hands out ids by Interlocked.Increment and never
             // reuses one, so this is a leak rather than a correctness problem. Cleared anyway.
             pendingRescaledHp.Clear();
+
+            // Hits summed for an enemy tick that never came. Ids are never reused, so a stale
+            // bucket could not damage the wrong enemy; dropped so it is not sent into the next
+            // session at all.
+            enemyDamageAggregator.Clear();
 
             // Same reason as the barrier state below: a session that ended after a boss died would
             // otherwise leave this latched, and the next session's first portal would never open.
@@ -983,6 +999,7 @@ namespace MegabonkTogether.Services
 
             spawnedObjectManagerService.ResetForNextLevel();
             enemyManagerService.ResetForNextLevel();
+            enemyDamageAggregator.Clear();
             projectileManagerService.ResetForNextLevel();
             pickupManagerService.ResetForNextLevel();
             chestManagerService.ResetForNextLevel();
@@ -2194,37 +2211,57 @@ namespace MegabonkTogether.Services
                 return; //Might already be dead
             }
 
+            // OB-14. The hit's real attacker, not the peer forwarding it. The host applies its
+            // teammates' hits (replayed, or from their weapons it simulates) and then forwards
+            // every hit to the clients; this used to stamp the HOST as attacker on all of them.
+            // Harmless until the damage panel began skipping other players' hits -- then the
+            // client skipped its own damage too, and its 2026-10-18 end screen held eight rows
+            // of a few thousand each. The tracker holds the attacker for exactly this hit.
+            var attackerId = trackerService.GetCurrentPlayerId() ?? playerManagerService.GetLocalPlayer().ConnectionId;
+            var damageSource = DamageSourceHelper.Normalize(damageContainer.damageSource);
+
+            var isHost = IsServerMode() ?? false;
+            if (isHost)
+            {
+                // OB-34 follow-up. Summed per enemy tick rather than sent per hit; flushed by
+                // FlushEnemyDamage from the enemy tick and, for one enemy, by OnEnemyDied just
+                // before its death. Why the sum replays the same: EnemyDamageAggregator.
+                enemyDamageAggregator.Add(
+                    enemySpawned.Key,
+                    attackerId,
+                    damageSource,
+                    damageContainer.damage,
+                    (int)damageContainer.damageEffect,
+                    damageContainer.damageBlockedByArmor,
+                    damageContainer.procCoefficient,
+                    (int)damageContainer.element,
+                    (int)damageContainer.flags,
+                    damageContainer.knockback,
+                    damageContainer.crit);
+                return;
+            }
+
             IGameNetworkMessage message = new EnemyDamaged
             {
                 EnemyId = enemySpawned.Key,
                 Damage = damageContainer.damage,
                 DamageEffect = (int)damageContainer.damageEffect,
                 DamageBlockedByArmor = damageContainer.damageBlockedByArmor,
-                DamageSource = DamageSourceHelper.Normalize(damageContainer.damageSource),
+                DamageSource = damageSource,
                 DamageIsCrit = damageContainer.crit,
                 DamageProcCoefficient = damageContainer.procCoefficient,
                 DamageElement = (int)damageContainer.element,
                 DamageFlags = (int)damageContainer.flags,
                 DamageKnockback = damageContainer.knockback,
-
-                // OB-14. The hit's real attacker, not the peer forwarding it. The host applies its
-                // teammates' hits (replayed, or from their weapons it simulates) and then forwards
-                // every hit to the clients; this used to stamp the HOST as attacker on all of them.
-                // Harmless until the damage panel began skipping other players' hits -- then the
-                // client skipped its own damage too, and its 2026-10-18 end screen held eight rows
-                // of a few thousand each. The tracker holds the attacker for exactly this hit.
-                AttackerId = trackerService.GetCurrentPlayerId() ?? playerManagerService.GetLocalPlayer().ConnectionId
+                AttackerId = attackerId
             };
 
-            var isHost = IsServerMode() ?? false;
-            if (isHost)
-            {
-                udpClientService.SendToAllClients(message, NetDelivery.Unreliable); //TODO: Can be unreliable i think ?
-            }
-            else
-            {
-                udpClientService.SendToHost(message, NetDelivery.ReliableOrdered);
-            }
+            udpClientService.SendToHost(message, NetDelivery.ReliableOrdered);
+        }
+
+        public void FlushEnemyDamage()
+        {
+            enemyDamageAggregator.Flush(sendEnemyDamagedToClients);
         }
 
         private void OnReceivedEnemyDamaged(EnemyDamaged damaged)
@@ -2302,6 +2339,10 @@ namespace MegabonkTogether.Services
             var isHost = IsServerMode() ?? false;
             if (isHost)
             {
+                // This enemy's hits still waiting for the tick go out first. A client drops a hit
+                // for an enemy it has already removed, so they would otherwise miss its damage
+                // panel -- for a swarm enemy killed within one tick, all of its damage.
+                enemyDamageAggregator.FlushEnemy(enemySpawned.Key, sendEnemyDamagedToClients);
                 udpClientService.SendToAllClients(message, NetDelivery.ReliableOrdered);
             }
             else
