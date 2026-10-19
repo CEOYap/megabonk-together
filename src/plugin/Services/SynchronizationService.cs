@@ -2308,6 +2308,18 @@ namespace MegabonkTogether.Services
             try
             {
                 enemy.Damage(damageContainer);
+
+                // OB-42. On the host this is a client's forwarded item hit (Cursed Doll, Bob, Holy
+                // Book...). In the game such a hit goes through DamageFromPlayerOther, which runs
+                // the attacker's on-hit items after Damage (proc coefficient 1 for the doll, 0.5
+                // for the book). The client no longer procs them itself (OB-37), so the host does,
+                // here, exactly once: the local PostDamage is redirected to the sender's items by
+                // HitItemOwnership, because the tracker holds the sender.
+                if ((IsServerMode() ?? false) && damageContainer.procCoefficient > 0f)
+                {
+                    damageContainer.enemy = enemy;
+                    GameManager.Instance?.player?.inventory?.itemInventory?.PostDamage(damageContainer);
+                }
             }
             finally
             {

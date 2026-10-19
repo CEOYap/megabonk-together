@@ -48,6 +48,8 @@ namespace MegabonkTogether.Patches.Items
         /// True when this item belongs to a teammate's inventory on this machine. Compared by native
         /// pointer: the item holds its own inventory, so no search is needed in a per-frame path.
         /// </summary>
+        internal static bool InSession => synchronizationService.HasNetplaySessionStarted();
+
         internal static bool IsTeammateCopy(ItemBase item)
         {
             if (item == null || !synchronizationService.HasNetplaySessionStarted())
@@ -94,5 +96,44 @@ namespace MegabonkTogether.Patches.Items
         [HarmonyPatch(nameof(ItemBobDead.Tick))]
         public static bool Tick_Prefix(ItemBobDead __instance)
             => !RemoteItemCopies.IsTeammateCopy(__instance);
+    }
+
+    /// <summary>
+    /// OB-42. Holy Book turns its player's healing into damage around that player
+    /// ("Healing will now radiate damage to nearby enemies": every 1.5 s, roughly
+    /// (8 + level) x 0.5 x healing received, radius (5 + copies) x Size).
+    ///
+    /// <para><b>Decompiled.</b> <c>OnHeal(PlayerHealth ph, float hpHealed, bool isShield)</c>
+    /// (VA 0x18045D100) is a static heal-event handler that adds <c>hpHealed</c> to
+    /// <c>healsThisTick</c> and never looks at <c>ph</c>: every copy counted every player's heals.
+    /// <c>Tick</c> (0x18045D250) then damages enemies around <c>MyPlayer.Instance</c>, reading
+    /// <c>MyPlayer.baseDamage</c> and the Size stat. So a teammate's copy on the host radiated the
+    /// host's (and everyone's) healing around the host, unattributed, as the host's damage; and the
+    /// owner's own copy also counted healing that was not theirs.</para>
+    ///
+    /// <para><b>Now</b> it matches Cursed Doll and Bob: only the owner's machine runs it, whose
+    /// damage reaches the host through the client's item forward, and it counts only its own
+    /// player's heals. <b>UNVERIFIED.</b></para>
+    /// </summary>
+    [HarmonyPatch(typeof(ItemHolyBook))]
+    internal static class ItemHolyBookPatches
+    {
+        // Prefix-false on purpose in both: the owner's machine runs this item.
+        [HarmonyPrefix]
+        [HarmonyPatch(nameof(ItemHolyBook.Tick))]
+        public static bool Tick_Prefix(ItemHolyBook __instance)
+            => !RemoteItemCopies.IsTeammateCopy(__instance);
+
+        [HarmonyPrefix]
+        [HarmonyPatch("OnHeal")]
+        public static bool OnHeal_Prefix(ItemHolyBook __instance, Assets.Scripts.Inventory__Items__Pickups.PlayerHealth ph)
+        {
+            if (RemoteItemCopies.IsTeammateCopy(__instance))
+            {
+                return false;
+            }
+
+            return !RemoteItemCopies.InSession || EventListenerOwnership.IsLocalHealth(ph);
+        }
     }
 }

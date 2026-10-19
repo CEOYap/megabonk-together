@@ -3949,6 +3949,51 @@ with the host's stats, items, lifesteal and kill credit.
   `[attribution] OB-41: a <projectile> hit has no owner -- weaponBase ...`, naming the projectile
   kind for the next fix.
 
-**Not covered.** A teammate's item `Tick` effects on the host (Cursed Doll, Bob, Holy Book and the
-like) still run unattributed; they are a separate path (`RemoteItemCopies`). **UNVERIFIED, not
-run in-game.**
+**Not covered, and corrected 2026-10-20.** This entry first listed Cursed Doll, Bob and Holy Book
+as running unattributed. Only Holy Book did; see [OB-42](#ob-42). **UNVERIFIED, not run in-game.**
+
+
+<a name="ob-42"></a>
+## OB-42 — Holy Book ran on every machine and counted every player's healing; forwarded item hits lost their procs — **FIXED 2026-10-20, not yet confirmed in play**
+
+**Sources.** The item pages on megabonkinfo.org (Cursed Doll, Bob (Dead), Holy Book) were read
+against the decompiled bodies, build 21750826:
+
+| Item | Page | Decompiled |
+|---|---|---|
+| Cursed Doll | curses random living enemies anywhere, 30% max HP/s (bosses: (8 + level) × 0.7); proc coefficient 1 | `Tick` (`0x18043FC70`); damage through `DamageFromPlayerOther` |
+| Bob (Dead) | a ghost per 14 units the player moves; 1.5 × (8 + level) × damage multiplier; can crit | `Tick` reads `MyPlayer`'s movement. `SpawnGhost` calls `EffectManager.SpawnGhostProjectile` (`0x180501370`) with `1.5 × baseDamage` and Duration × 10; the ghost is an `ItemProjectile`, a `MonoBehaviour` with its own hit, not a `ProjectileBase` |
+| Holy Book | healing received becomes damage around the player every 1.5 s; radius (5 + copies) × Size; proc 0.5 | `OnHeal` (`0x18045D100`) adds `hpHealed` and **ignores which player healed**; `Tick` (`0x18045D250`) damages around `MyPlayer.Instance`, scaled by `MyPlayer.baseDamage` and Size |
+
+**Where each one ran:**
+
+- **Cursed Doll and Bob are fine.** `RemoteItemCopies` already gates the teammate copies' `Tick`
+  on the host (2026-10-18). Only the owner's game runs them, with the owner's own stats, level and
+  movement. Their hits reach the host through the client's item forward, attributed to the
+  sender, so they were never unattributed.
+- **Holy Book was ungated:**
+  - **Your copy of a teammate's Holy Book.** It ran on the host and turned the host's healing
+    (and everyone's) into damage around the host, unattributed, as the host's damage.
+  - **Every copy.** Because `OnHeal` ignores its argument, every copy also counted healing that
+    was not its player's.
+
+**A regression found while reading this.** `caf8a18` (OB-37) stopped clients from running
+`PostDamage`. But a client's forwarded item hit is applied on the host with a bare `Enemy.Damage`,
+which never runs on-hit items. So since that commit, a teammate's Cursed Doll (proc coefficient 1),
+Bob and Holy Book (0.5) hits procced nothing.
+
+**Fixed:**
+
+- **Holy Book** (`RemoteItemCopies.ItemHolyBookPatches`). `Tick` and `OnHeal` skip a teammate's
+  copy, and `OnHeal` counts only the local player's own heals.
+- **Forwarded hits** (`SynchronizationService.OnReceivedEnemyDamaged`, host only). After applying a
+  client's forwarded hit with a proc coefficient above 0, the host calls `PostDamage`. OB-37
+  redirects that to the sender's items, because the tracker holds the sender. That matches what
+  the game's `DamageFromPlayerOther` does, exactly once per hit.
+
+**UNVERIFIED, not run in-game.** To confirm:
+
+- **Holy Book.** A teammate with Holy Book should deal damage around *themselves* when *they*
+  heal, and none around the host.
+- **Procs.** A teammate with Cursed Doll and an on-hit item (Ice Cube, Big Bonk) should see that
+  item's row grow on their end screen.
