@@ -233,11 +233,20 @@ namespace MegabonkTogether.Scripts.Bot
                 return;
             }
 
+            // The file is NOT deleted here: with two bots the first one to arrive used to delete it
+            // and the second never saw a code. The host deletes it when the run starts
+            // (SynchronizationService.StartGame), which is the moment no more joins make sense.
             if (State == BotState.Joining && initialized)
             {
                 State = BotState.InLobby;
-                Helpers.BotRoomCodeFile.Delete();
                 Plugin.Log.LogInfo("[bot] in the lobby.");
+            }
+            else if (State == BotState.Idle && initialized)
+            {
+                // A session this bot did not start (joined by hand, or by an invite). Without this the
+                // bot stayed Idle for the whole run: 2026-10-19, player 3, never readied or moved.
+                State = BotState.InLobby;
+                Plugin.Log.LogInfo("[bot] adopting a session it did not start; in the lobby.");
             }
             else if (State == BotState.Joining)
             {
