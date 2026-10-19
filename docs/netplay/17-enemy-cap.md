@@ -56,10 +56,13 @@ more of all three:
 |---|---|---|
 | `SpawnedEnemy` | ReliableUnordered | spawns (one per enemy) |
 | `EnemyDied` | ReliableOrdered | kills |
-| `EnemyDamaged` | Unreliable from the host | **every hit applied on the host, forwarded to every client** |
+| `EnemyDamaged` | Unreliable from the host | **enemies being hit at once**, one summed message per (enemy, attacker, source) per 40 Hz tick, forwarded to every client |
 
-`EnemyDamaged` is the one to watch. A 2026-10-18 log measured about 180 hits/s at ~10 KB/s on one link.
-It multiplies by player count, and a bigger swarm means more hits per second. Host upload at six
+`EnemyDamaged` is the one to watch. A 2026-10-18 log measured about 180 hits/s at ~10 KB/s on one link,
+and on 2026-10-19 the host sent ~33,000/s at god-mode damage. Since then the host sums hits per
+enemy per tick (OB-34, UNVERIFIED in play), which makes the rate track how many enemies are being
+hit rather than how many hits land. It still multiplies by player count. The `[bw]` aggregation
+line gives the hits-per-message ratio. Host upload at six
 players is `5 × (144 KB/s + event traffic)`.
 
 ### CPU — host first

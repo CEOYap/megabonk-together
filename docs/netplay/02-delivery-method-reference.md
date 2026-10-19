@@ -237,8 +237,11 @@ variation is entirely on the host half.
 |---|---|---|
 | `OnEnemyDamaged` | `EnemyDamaged` (20) | Superseded: `EnemyModel.Hp` rides the 40 Hz enemy delta stream, and `HP_TRESHOLD = 1` means an HP change marks the enemy as changed. The refresh sweep bounds the worst case at ~1 s regardless. |
 
-`SynchronizationService.cs:1653` still carries `//TODO: Can be unreliable i think ?` on a site
-that is already `Unreliable`. The TODO is stale; the answer is yes, for the reason above.
+Since 2026-10-19 the host does not send this per hit: `EnemyDamageAggregator` sums the hits per
+enemy, attacker, source and flags and sends each sum once per enemy tick, on the same `Unreliable`
+channel. The reason it is safe is unchanged, though a lost packet now drops a summed tick rather than
+one hit. See OB-34 in [`08-observed-bugs.md`](08-observed-bugs.md). The stale
+`//TODO: Can be unreliable i think ?` went with that change.
 
 ### Host half — `ReliableUnordered` (7 methods)
 
