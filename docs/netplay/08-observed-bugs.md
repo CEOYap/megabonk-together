@@ -3997,3 +3997,60 @@ Bob and Holy Book (0.5) hits procced nothing.
   heal, and none around the host.
 - **Procs.** A teammate with Cursed Doll and an on-hit item (Ice Cube, Big Bonk) should see that
   item's row grow on their end screen.
+
+
+<a name="ob-43"></a>
+## OB-43 — Item audit: every item now runs on one machine, as its owner — **FIXED 2026-10-20, not yet confirmed in play**
+
+**Method.** All 86 `ItemBase` subclasses in `dump.cs` were listed with their real (non-stub)
+method bodies. Every `Tick`, event handler and spawn body was decompiled (80 functions). The
+ambiguous ones were cross-checked against megabonkinfo.org: Cursed Doll, Bob (Dead), Holy Book,
+Kevin, Spiky Shield and Energy Core.
+
+**Two facts drive this.** Every machine holds a live copy of every player's items, subscribed to
+the game's static player events. The host also ticks every teammate's copy
+(`NetPlayer.Update` -> `PlayerInventory.PhysicsTick`), under the position-request queue that makes
+`MyPlayer`, `GameManager.GetPlayerInventory` and `PlayerStatsNew.GetStat` answer for that
+teammate.
+
+| Kind | Items | Where it runs now | Stats |
+|---|---|---|---|
+| Stat only | Battery, Beacon, Boss Buster, Brass Knuckles, Clover, Echo Shard, Forbidden Juice, Giant Fork, Golden Glove, Gym Sauce, Key, Medkit, Oats, Old Mask, Pot, Pumpkin, Skuleg, Slippery Ring, Tactical Glasses, Time Bracelet, Turbo Socks, Unstable Transfusion, Wizard's Hat, Wrench, Shattered Wisdom, Moldy Gloves | owner's stats, on the owner's game | owner's; the host reads the synced combat set (OB-38) |
+| On-hit / pre-attack (27 bodies) | Big Bonk, Bloody Cleaver, Dragonfire, Eagle Claw, Joe's Dagger, Giant Fork, the five Mitts, Grandma's Tonic, Ice Crystal, Ice Cube, Lightning Orb, Moldy Cheese, Phantom Shroud, Quin's Mask, Slutty Cannon, Snek, Spicy Meatball, Tactical Glasses, Unstable Transfusion, Weeb Headset, Boss Buster, Brass Knuckles | host, as the owner (OB-37); their ticks keep running on the host to reset proc caps | owner's, plus baseDamage, plus position (below) |
+| Hit or kill listeners | Demon Blade, Kevin, Demonic Soul and Blood (owner's game); Joe's Dagger, Borgor, Soul Harvester (host) | OB-39 | owner's |
+| Timed damage | Cursed Doll, Bob (Dead), Holy Book, Energy Core, Bob's Lantern, Electric Plug | owner's game only; hits forwarded and procced on the host (OB-42) | owner's (local) |
+| Reactions to the player | Cactus, Toxic Barrel, Golden Shield, Speed Boi, Cowards Cloak, Mirror, Phantom Shroud, Flappy Feathers, Scarf, Credit Card (both), Bloody Cleaver (lifesteal proc), Gasmask (stage start) | owner's copy only, and only for its own player's `PlayerHealth` | owner's (local) |
+| Player effects on a timer | Beefy Ring, Campfire, Idle Juice, Rollerblades, Golden Sneakers, Gamer Goggles, Sucky Hoof, Cowards Cloak, Phantom Shroud, Spiky Shield, Gasmask, Mirror, Kevin, Demonic Blood and Soul | owner's game only | owner's (local) |
+| Interaction | Ghost | OB-2 | — |
+
+**New in this pass:**
+
+- **Owner-only gates** (`Patches/Items/OwnerOnlyItems.cs`) for the "reactions to the player",
+  "player effects on a timer", Energy Core and Bob's Lantern rows.
+  - **What a teammate's copy used to do.** It reacted to *this* machine's player: a teammate's
+    Golden Shield paid the host gold, their Mirror could block the host's damage, their Cactus
+    retaliated for the host, and their Credit Card changed the host's chest prices.
+  - **What the timed-damage pair did.** Energy Core and Bob's Lantern fired a second set of hits
+    from the host.
+  - **Sucky Hoof** keeps working: a client's own pickup pull already asks the host
+    (`OnWantToStartFollowingPickup`).
+- **More stats substituted.** Thorns (3) is now synced; GetWeaponDamage reads it. Thorns, Size,
+  Duration and ProjectileSpeed join the substituted set, for the on-hit items the host runs.
+- **Position.** While the host runs a teammate's on-hit items, the teammate is pushed onto the
+  position-request queue. Slutty Cannon, Power Gloves, Big Bonk, Lightning Orb and Blood Mitts
+  then start from them, not from the host.
+- **Init-time size.** Spicy Meatball and Quin's Mask cache their size when initialised. On the
+  host's copy of a teammate's item, that now runs as the teammate.
+
+**What is still the host's, on purpose or by limitation:**
+
+- **Unattributed hits.** A hit the host cannot attribute to anyone still counts as the host's.
+  OB-41 now names these.
+- **Approximate stacking and caching.**
+  - A debuff stacked by several players credits the last one who applied it (OB-40).
+  - `GetNewDamage`'s item-modifier path is a ratio (OB-38).
+  - The init-time size of Spicy Meatball and Quin's Mask refreshes only when the item's amount
+    changes, not when the teammate's Size later changes.
+
+**UNVERIFIED, not run in-game.** First check: the BepInEx log at startup has no Harmony errors.
+This pass adds about 30 hooks, each checked against `dump.cs` names and parameters.

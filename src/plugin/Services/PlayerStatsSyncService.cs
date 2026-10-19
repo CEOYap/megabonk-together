@@ -93,6 +93,7 @@ namespace MegabonkTogether.Services
             (int)EStat.BurnChance,                // 42
             (int)EStat.FreezeChance,              // 43
             (int)EStat.PoisonDamageMultiplier,    // 56
+            (int)EStat.Thorns,                    // 3  -- OB-43, WeaponUtility.GetWeaponDamage
             BaseDamageKey,
         ];
 

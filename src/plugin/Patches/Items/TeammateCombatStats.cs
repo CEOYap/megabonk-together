@@ -64,6 +64,16 @@ namespace MegabonkTogether.Patches.Items
             (int)EStat.BurnChance,
             (int)EStat.FreezeChance,
             (int)EStat.PoisonDamageMultiplier,
+
+            // OB-43. Read by the on-hit items the host runs for their owner (Dragonfire 9 and 10,
+            // Lightning Orb and Grandma's Tonic 9, item projectiles 10 and 11) and by
+            // GetWeaponDamage (Thorns, 3). Already synced for OB-1; the OB-1 accessor corrections
+            // stay consistent under substitution (Size is rebuilt from the owner's value, the
+            // others subtract GetStat and add the owner's).
+            (int)EStat.Thorns,
+            (int)EStat.SizeMultiplier,
+            (int)EStat.DurationMultiplier,
+            (int)EStat.ProjectileSpeedMultiplier,
         ];
 
         // A weapon accessor's owner, from its argument. Active with a null owner means "the
@@ -166,6 +176,106 @@ namespace MegabonkTogether.Patches.Items
 
         private static bool IsHostSession()
             => synchronizationService.HasNetplaySessionStarted() && (synchronizationService.IsServerMode() ?? false);
+    }
+
+    /// <summary>
+    /// OB-43. The mod's existing "act as this teammate" switch: while a teammate is at the front of
+    /// the position-request queue, MyPlayer's transform, GameManager.GetPlayerInventory and
+    /// PlayerStatsNew.GetStat answer for them (UnityComponent, GameManager and PlayerStatsNew
+    /// patches). The queue is a FIFO peeked at its front, so a push is only safe when it is empty;
+    /// if the teammate is already in front there is nothing to do.
+    /// </summary>
+    internal static class PositionRequest
+    {
+        private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
+
+        internal static bool Enter(uint owner)
+        {
+            if (playerManagerService.PeakNetplayerPositionRequest().HasValue)
+            {
+                return false;
+            }
+
+            playerManagerService.AddGetNetplayerPositionRequest(owner);
+            return true;
+        }
+
+        internal static void Exit(bool pushed)
+        {
+            if (pushed)
+            {
+                playerManagerService.UnqueueNetplayerPositionRequest();
+            }
+        }
+    }
+
+    /// <summary>
+    /// OB-43. Spicy Meatball and Quin's Mask cache their explosion size from GetStat(Size) in
+    /// OnInitOrAmountChanged (decompiled). On the host that runs when a teammate's item is added to
+    /// their copy, with no teammate in scope, so the host's Size was cached. Run it as the owner.
+    /// </summary>
+    internal static class TeammateItemInit
+    {
+        private static readonly ITrackerService trackerService = Plugin.Services.GetService<ITrackerService>();
+
+        internal readonly struct Scope(bool tracker, bool position)
+        {
+            public bool Tracker { get; } = tracker;
+            public bool Position { get; } = position;
+        }
+
+        internal static Scope Enter(Assets.Scripts.Inventory__Items__Pickups.Items.ItemBase item)
+        {
+            if (!RemoteItemCopies.IsTeammateCopy(item))
+            {
+                return default;
+            }
+
+            var owner = EventListenerOwnership.OwnerOf(item);
+            if (!owner.HasValue)
+            {
+                return default;
+            }
+
+            var setTracker = !trackerService.GetCurrentPlayerId().HasValue;
+            if (setTracker)
+            {
+                trackerService.SetCurrentPlayerId(owner.Value);
+            }
+
+            return new Scope(setTracker, PositionRequest.Enter(owner.Value));
+        }
+
+        internal static void Exit(Scope scope)
+        {
+            PositionRequest.Exit(scope.Position);
+            if (scope.Tracker)
+            {
+                trackerService.UnsetCurrentPlayerId();
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(Assets.Scripts.Inventory__Items__Pickups.Items.ItemImplementations.ItemSpicyMeatball))]
+    internal static class ItemSpicyMeatballInitPatches
+    {
+        [HarmonyPrefix, HarmonyPatch("OnInitOrAmountChanged")]
+        public static void Prefix(Assets.Scripts.Inventory__Items__Pickups.Items.ItemImplementations.ItemSpicyMeatball __instance, out TeammateItemInit.Scope __state)
+            => __state = TeammateItemInit.Enter(__instance);
+
+        [HarmonyFinalizer, HarmonyPatch("OnInitOrAmountChanged")]
+        public static void Finalizer(TeammateItemInit.Scope __state) => TeammateItemInit.Exit(__state);
+    }
+
+    [HarmonyPatch(typeof(Assets.Scripts.Inventory__Items__Pickups.Items.ItemImplementations.ItemQuinsMask))]
+    internal static class ItemQuinsMaskInitPatches
+    {
+        [HarmonyPrefix, HarmonyPatch("OnInitOrAmountChanged")]
+        public static void Prefix(Assets.Scripts.Inventory__Items__Pickups.Items.ItemImplementations.ItemQuinsMask __instance, out TeammateItemInit.Scope __state)
+            => __state = TeammateItemInit.Enter(__instance);
+
+        [HarmonyFinalizer, HarmonyPatch("OnInitOrAmountChanged")]
+        public static void Finalizer(TeammateItemInit.Scope __state) => TeammateItemInit.Exit(__state);
     }
 
     [HarmonyPatch(typeof(PlayerStats))]

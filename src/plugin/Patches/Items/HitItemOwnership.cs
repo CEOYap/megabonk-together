@@ -121,6 +121,12 @@ namespace MegabonkTogether.Patches.Items
             // OB-38. Several on-hit items (Thunder, Cursed and Blood Mitts) scale by
             // MyPlayer.baseDamage, a raw field no GetStat postfix can reach.
             var savedBaseDamage = TeammateCombatStats.EnterBaseDamage(owner);
+
+            // OB-43. Slutty Cannon, Power Gloves, Big Bonk, Lightning Orb and Blood Mitts start
+            // their effect from MyPlayer's transform. The position-request queue is what redirects
+            // that (and GameManager.GetPlayerInventory) to a teammate, as for their item ticks. It
+            // is a FIFO peeked at its front, so only push when nobody else is at the front.
+            var pushedPosition = PositionRequest.Enter(owner);
             try
             {
                 // Re-enters this prefix with the teammate's inventory, which is not local, so it runs.
@@ -128,6 +134,7 @@ namespace MegabonkTogether.Patches.Items
             }
             finally
             {
+                PositionRequest.Exit(pushedPosition);
                 TeammateCombatStats.ExitBaseDamage(savedBaseDamage);
             }
 
