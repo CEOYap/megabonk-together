@@ -55,6 +55,12 @@
         /// <para>Lowering this is the bluntest bandwidth lever and costs smoothness everywhere at
         /// once. Prefer <see cref="ENEMY_POSITION_THRESHOLD"/> first: it sheds the enemies that are
         /// barely moving instead of degrading all of them.</para>
+        ///
+        /// <para><b>Also the host's <c>EnemyDamaged</c> cadence.</b> The host sums the hits it applies
+        /// per enemy, attacker and source and sends each sum once per enemy tick
+        /// (<c>EnemyDamageAggregator</c>), just before the delta. So this also caps that stream at
+        /// one message per bucket per tick, and sets how long a client's damage numbers lag the
+        /// hit: up to one tick, 25 ms at 40 Hz. Lower means fewer, larger damage numbers.</para>
         /// </summary>
         internal const float ENEMY_UPDATE_TICK_RATE = 40f;
 

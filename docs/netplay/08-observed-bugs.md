@@ -3497,6 +3497,76 @@ with the item.
 At god-mode damage that alone is tens of thousands per second; aggregating per enemy per tick is the
 lever (see `17-enemy-cap.md`).
 
+### 2026-10-19 — host `EnemyDamaged` summed per enemy per tick — **UNVERIFIED, not run in-game**
+
+**Change.** The host no longer sends one `EnemyDamaged` per hit. `EnemyDamageAggregator` sums the hits
+it applies per **(enemy, attacker, damage source, flags)** and `NetworkHandler` flushes each sum once
+per enemy tick (`Tunables.ENEMY_UPDATE_TICK_RATE`, 40 Hz), just before the enemy delta. The message
+and its fields are unchanged. Damage and armor-blocked damage are summed, crit is kept if any hit
+critted, knockback is the largest, effect, element and proc coefficient are the first hit's. Clients'
+own sends to the host are unchanged.
+
+**Why a sum is safe.** Decompiled on build 21750826: `Enemy.Damage` (VA `0x1804AC7B0`) scales the
+damage by a player stat and by `(1 − armor)` unless `(flags & 5) == 5`, subtracts it from HP and clamps;
+`RunStats.OnEnemyDamaged` (VA `0x180411930`) adds it to the source's total. Both are linear, so one
+replay of the sum gives the same totals as N replays. The flags pick the armor treatment, which is
+why they are part of the key. HP is superseded by `EnemyModel.Hp` on the delta either way.
+
+**What changes on a client.**
+
+- **Damage numbers.** `Enemy.Damage` calls `EffectManager.NewDamageNumbers` once per replay, so a
+  client sees one number per bucket per tick, showing the sum, instead of one per hit. A few large
+  numbers instead of a stream of small ones; they can lag a hit by up to one tick (25 ms).
+- **Damage panel (`RunStats`).** Same totals, since it sums. The attacker is part of the key, so
+  OB-14's attribution holds per bucket.
+- **`EnemyDied` is unchanged** and still `ReliableOrdered`. Before it sends one, the host flushes that
+  enemy's pending buckets. A client drops a hit for an enemy it has already removed, so without that a
+  swarm enemy killed within one tick would reach no client's damage panel. The killing hit itself was
+  never forwarded and still is not: `OnEnemyDied` unregisters the enemy before `Damage_Postfix` runs.
+- **Loss.** A dropped packet now loses a tick's sum for one bucket rather than one hit. The expected
+  loss is the same, but individual losses are larger. HP is unaffected.
+
+Pending buckets are dropped on a stage change (`PrepareForNextLevel`) and a session reset.
+
+**Measure.** With `LogBandwidth` on, the host's `[bw]` report has a new line:
+`EnemyDamaged aggregation: H hits/s -> M msgs/s, R hits per message`.
+
+**Check in a three-player run** (host + two bots, `LogBandwidth` on all three, a late-game swarm or
+the god-mode plugin):
+
+1. Host `[bw]`: the `EnemyDamaged` row's `/s` against the aggregation line. **M** should match that
+   row. **R** should be well above 1 at high damage. At the 2026-10-19 rate (~33k hits/s) expect M in
+   the low thousands at most, roughly 40 Hz × the number of enemies being hit at once.
+2. Host `[bw]` total KB/s compared with 2026-10-19's 2.6 MB/s at the same moment.
+3. Clients: damage numbers still appear on enemies the host and other players hit, fewer and larger.
+   Nothing looks missing.
+4. End screens: each client's damage panel for its own weapons is in line with the host's, as it was
+   before.
+5. Final boss and stage boss deaths reach every client (OB-34's original symptom), and no client's
+   `[boss]` HP drifts from the host's.
+
+**Seen while reading (UNVERIFIED, from code):**
+
+- **A client's item hit reached third peers twice — fixed 2026-10-19.** On the host,
+  `NetMessageRouter` rebroadcast a client's `EnemyDamaged` with `SendToAllClientsExcept(attacker)`
+  (ReliableOrdered), and the host's own replay of that hit went through `Damage_Postfix` →
+  `OnEnemyDamaged`, which forwards every hit it applies to every client. The origin got one copy,
+  each third peer two. The damage panel was not doubled: OB-14's `RunStats` prefix drops a
+  teammate's hits. The cost was two damage numbers per hit, plus a correctness risk. A replay that
+  drives the client's copy to 0 HP kills it, and `EnemyDied_Postfix` reports that death to the host,
+  so a doubled hit could end an enemy early for everyone. The rebroadcast also forwarded hits the
+  host never applied (paused by OB-13's gate, or already dead on the host). The router now only
+  applies the hit; the host's aggregated forward reaches every client, the origin included. The
+  origin needs that copy, because a client never applies its own hit. Confirms fixed as: in a
+  three-player run, a bot's item hit shows one damage number per tick on the other bot, not two,
+  and the host's `[bw]` `EnemyDamaged` sends/s equal the aggregation line's msgs/s. Before, the
+  rebroadcast added its own sends to that row.
+  Low rate since 3035c49, so this is hard to see by eye.
+- **Armor may be applied twice on a client.** `Enemy.Damage` writes the scaled damage back into the
+  container, so the postfix forwards the post-armor value and the client's replay scales it again.
+  Clients would then show smaller numbers and damage-panel totals than the host on armored enemies.
+  Not a new issue; aggregation neither causes nor fixes it.
+
 ## Confirmed in play 2026-10-18, outside the numbered entries
 
 - **Shared XP sent as gains** (no more level drift; see OB-20's side effect). No `level` disagreements.

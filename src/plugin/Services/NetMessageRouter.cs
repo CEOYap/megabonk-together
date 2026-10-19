@@ -321,8 +321,15 @@ namespace MegabonkTogether.Services
                     Transport.SendToAllClientsExcept(enemyExploder.SenderId, enemyExploder);
                     break;
                 case EnemyDamaged enemyDamaged:
+                    // Applied, not forwarded here. The host's replay goes through
+                    // Enemy.Damage_Postfix -> SynchronizationService.OnEnemyDamaged, which already
+                    // forwards the hit to every client, the origin included, since it never
+                    // applied its own hit. A second forward here gave every third peer the hit twice:
+                    // two damage numbers, and a client whose replay drives HP to 0 kills its
+                    // copy and reports EnemyDied, so a doubled hit could end an enemy early for
+                    // everyone. It also forwarded hits the host never applied (paused, or the
+                    // enemy already dead on the host).
                     EventManager.OnEnemyDamaged(enemyDamaged);
-                    Transport.SendToAllClientsExcept(enemyDamaged.AttackerId, enemyDamaged);
                     break;
                 case StartingChargingPylon startingChargingPylon:
                     EventManager.OnStartingChargingPylon(startingChargingPylon);

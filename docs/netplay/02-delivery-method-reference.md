@@ -237,8 +237,11 @@ variation is entirely on the host half.
 |---|---|---|
 | `OnEnemyDamaged` | `EnemyDamaged` (20) | Superseded: `EnemyModel.Hp` rides the 40 Hz enemy delta stream, and `HP_TRESHOLD = 1` means an HP change marks the enemy as changed. The refresh sweep bounds the worst case at ~1 s regardless. |
 
-`SynchronizationService.cs:1653` still carries `//TODO: Can be unreliable i think ?` on a site
-that is already `Unreliable`. The TODO is stale; the answer is yes, for the reason above.
+Since 2026-10-19 the host does not send this per hit: `EnemyDamageAggregator` sums the hits per
+enemy, attacker, source and flags and sends each sum once per enemy tick, on the same `Unreliable`
+channel. The reason it is safe is unchanged, though a lost packet now drops a summed tick rather than
+one hit. See OB-34 in [`08-observed-bugs.md`](08-observed-bugs.md). The stale
+`//TODO: Can be unreliable i think ?` went with that change.
 
 ### Host half — `ReliableUnordered` (7 methods)
 
@@ -289,7 +292,7 @@ performance and prevent desync issues"*. It is deliberate tuning; treat it as th
 
 When the host receives a client's event message, it republishes it locally through `EventManager`
 **and** forwards it to the other clients with `SendToAllClientsExcept`. That helper takes no
-delivery method: **every one of these 24 forwards is `ReliableOrdered`**, in both the direct and
+delivery method: **every one of these forwards is `ReliableOrdered`** (24, now 23: `EnemyDamaged` dropped 2026-10-19), in both the direct and
 the relay branch.
 
 This path was absent from the previous revision of this document entirely.
@@ -300,7 +303,7 @@ This path was absent from the previous revision of this document entirely.
 `SelectedCharacter` (5), `AbstractSpawnedProjectile` (7 and subtypes 33–38, 50, 51, 60, 61),
 `ProjectileDone` (8), `EnemyDied` (6), `PickupApplied` (11), `PickupFollowingPlayer` (12),
 `ChestOpened` (14), `WeaponAdded` (15), `InteractableUsed` (16), `EnemyExploder` (19),
-`EnemyDamaged` (20), `StartingChargingPylon` (22), `StoppingChargingPylon` (23),
+~~`EnemyDamaged` (20)~~ (no longer rebroadcast since 2026-10-19, see below), `StartingChargingPylon` (22), `StoppingChargingPylon` (23),
 `FinalBossOrbDestroyed` (25), `TomeAdded` (40), `ItemAdded` (52), `ItemRemoved` (53),
 `WeaponToggled` (54), `StartingChargingLamp` (56), `StoppingChargingLamp` (57), `TimerStarted`
 (58), `HatChanged` (59), `AddXp` (64), `GoldChanged` (67), `PlayerDisconnected` (31, via
@@ -315,10 +318,12 @@ switch: `SpawnedEnemySpecialAttack` (21), `FinalBossOrbSpawned` (24), `SpawnedOb
 
 Two consequences worth stating plainly:
 
-1. **`EnemyDamaged` (20) has two different channels depending on who originated it.** Host-origin
-   is `Unreliable`; a client's, forwarded, is `ReliableOrdered`. That is not a considered choice,
-   it is the exclusion helper having no parameter. It is the highest-rate message on this path
-   and therefore the one where the cost is real.
+1. ~~**`EnemyDamaged` (20) has two different channels depending on who originated it.**~~
+   **Resolved 2026-10-19.** The router's `ReliableOrdered` forward was a second copy: the host's
+   replay of a client's hit already reaches `OnEnemyDamaged`, which forwards it to every client on
+   `Unreliable`. Third peers got the hit twice. The router now only applies it, so tag 20 has one
+   channel, `Unreliable`, summed per tick. See OB-34 in [`08-observed-bugs.md`](08-observed-bugs.md).
+   UNVERIFIED in play.
 
 2. **Pylon and lamp charging start/stop are sent twice to every non-origin peer.** The receive
    switch forwards them with `SendToAllClientsExcept`, and the same message also reaches
@@ -410,7 +415,7 @@ rides, so a Phase 1 translation can be checked tag by tag.
 | 16 | `InteractableUsed` | both | `ReliableOrdered` |
 | 17, 18 | `StartingChargingShrine` / `StoppingChargingShrine` | both | `ReliableOrdered` |
 | 19 | `EnemyExploder` | both | `ReliableOrdered` |
-| 20 | `EnemyDamaged` | both | **`Unreliable` host-origin / `ReliableOrdered` rebroadcast** |
+| 20 | `EnemyDamaged` | both | `Unreliable` host forward, summed per tick (client → host `ReliableOrdered`); no rebroadcast since 2026-10-19 |
 | 21 | `SpawnedEnemySpecialAttack` | host | `ReliableOrdered` |
 | 22, 23 | `StartingChargingPylon` / `StoppingChargingPylon` | both | `ReliableOrdered`, **double-sent** |
 | 24 | `FinalBossOrbSpawned` | host | `ReliableUnordered` |
@@ -521,10 +526,9 @@ more specific.
    far from every player than whichever sort ordering lands last. `DistanceThrottler` already
    computes distance bands, but only on the receiving peer's `Enemy.MyUpdate` — it has never
    gated the host's send. This is a strict refinement of the existing ordering.
-3. **Give `SendToAllClientsExcept` a `DeliveryMethod` parameter.** It would let the forwarded
-   `EnemyDamaged` (tag 20) match the host-origin channel instead of paying `ReliableOrdered` for
-   the highest-rate message on that path. One signature change; every caller currently wants
-   `ReliableOrdered` except that one.
+3. ~~**Give `SendToAllClientsExcept` a `DeliveryMethod` parameter.**~~ Its one motivating caller,
+   the forwarded `EnemyDamaged` (tag 20), was removed on 2026-10-19 as a duplicate. Every remaining
+   caller wants `ReliableOrdered`.
 4. **Move independent one-shots from `ReliableOrdered` to `ReliableUnordered`.** Removes
    head-of-line blocking without giving up delivery. Safe for anything with no paired sibling —
    `OnItemAdded`, `OnHatChanged`, the remaining spawn notifications. **Not** for charging

@@ -55,6 +55,11 @@ namespace MegabonkTogether.Services
         private static readonly ConcurrentDictionary<string, Counter> counters = new();
 
         private static volatile bool enabled;
+
+        // The host's EnemyDamaged aggregation (EnemyDamageAggregator): hits summed into the
+        // messages actually sent. Kept apart from the per-type counters because a hit is not a send.
+        private static long aggregatedHits;
+        private static long aggregatedMessages;
         private static float lastReportTime = -999f;
         private static bool primed;
 
@@ -76,6 +81,21 @@ namespace MegabonkTogether.Services
             Interlocked.Increment(ref counter.Sends);
         }
 
+        /// <summary>
+        /// One aggregated <c>EnemyDamaged</c> sent by the host, carrying <paramref name="hits"/>
+        /// summed hits. Reported as the hits-per-message ratio under the per-type lines.
+        /// </summary>
+        internal static void RecordEnemyDamageAggregated(int hits)
+        {
+            if (!enabled)
+            {
+                return;
+            }
+
+            Interlocked.Add(ref aggregatedHits, hits);
+            Interlocked.Increment(ref aggregatedMessages);
+        }
+
         /// <summary>Called once per frame from the network tick, same shape as the allocation sampler.</summary>
         /// <summary>
         /// Takes the seam, not the LiteNetLib implementation. It used to take IUdpClientService, so
@@ -93,6 +113,7 @@ namespace MegabonkTogether.Services
                     // re-enable does not report a window that spans the gap.
                     enabled = false;
                     counters.Clear();
+                    ClearAggregation();
                     primed = false;
                 }
 
@@ -108,6 +129,7 @@ namespace MegabonkTogether.Services
                 primed = true;
                 lastReportTime = now;
                 counters.Clear();
+                ClearAggregation();
                 return;
             }
 
@@ -165,7 +187,37 @@ namespace MegabonkTogether.Services
                 Plugin.Log.LogInfo($"[bw]   {name} {rate} KB/s");
             }
 
+            ReportAggregation(elapsed);
+
             ReportLinkQuality(udpClientService, playerManagerService);
+        }
+
+        /// <summary>
+        /// Host only, and only once a hit has been summed: hits in, messages out, and the ratio.
+        /// The ratio is the measure of the OB-34 aggregation — 1.0 means it saved nothing, and at
+        /// late-game damage it should read well above that.
+        /// </summary>
+        private static void ReportAggregation(float elapsed)
+        {
+            var hits = Interlocked.Exchange(ref aggregatedHits, 0);
+            var messages = Interlocked.Exchange(ref aggregatedMessages, 0);
+            if (messages == 0)
+            {
+                return;
+            }
+
+            var hitsPerSecond = (hits / elapsed).ToString("F1");
+            var messagesPerSecond = (messages / elapsed).ToString("F1");
+            var ratio = ((double)hits / messages).ToString("F1");
+
+            Plugin.Log.LogInfo(
+                $"[bw]   EnemyDamaged aggregation: {hitsPerSecond} hits/s -> {messagesPerSecond} msgs/s, {ratio} hits per message");
+        }
+
+        private static void ClearAggregation()
+        {
+            Interlocked.Exchange(ref aggregatedHits, 0);
+            Interlocked.Exchange(ref aggregatedMessages, 0);
         }
 
         /// <summary>
@@ -202,6 +254,7 @@ namespace MegabonkTogether.Services
             primed = false;
             lastReportTime = -999f;
             counters.Clear();
+            ClearAggregation();
         }
     }
 }
