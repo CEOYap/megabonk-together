@@ -2871,6 +2871,31 @@ without touching the design question.
 **Confirms fixed as:** a run where the host fires rockets heavily and the client log has no
 `Look rotation viewing vector is zero` lines.
 
+### 2026-10-19 — decompiled: the caller is `Rocket.StepMovement`
+
+- `ProjectileRocket` itself moves nothing (its `StepMovement` / `MyUpdate` / `MyFixedUpdate` overrides
+  are the shared empty stub). Its `Rocket` component does: `Rocket.FixedUpdate` (VA `0x1804F3740`)
+  calls the virtual `Rocket.StepMovement` (VA `0x1804F44D0`) every physics tick unless paused.
+- `StepMovement` checks enemies in radius, calls `Rocket.GetMovementDirection` (VA `0x1804F3830`),
+  normalises the result, sphere-casts ahead, moves, and ends with
+  **`Quaternion.LookRotation(direction)`**. `GetMovementDirection` homes: it picks a target with
+  `EnemyTargeting.GetRandomEnemyInRadius` and steers toward it (Ghidra labels the target field
+  `currentDir`, one slot off).
+- So the warning fires whenever the direction is zero: the rocket on its target's position, or no
+  target and no stored direction. On a client a remote rocket runs this full homing and movement
+  **and** `ProjectileInterpolator` teleports it to the host's positions — the split authority the
+  entry suspected, now confirmed.
+- **Measuring gap:** the bot copy (`D:\Games\Megabonk`) has `[Logging.Disk] WriteUnityLog = false`, so
+  Unity warnings never reach its log; a "0" there means nothing. The host copy has it `true` and
+  logged 0 in the 2026-10-19 run.
+
+**Targeted form of option 2 now available:** a prefix on `Rocket.StepMovement` that returns false for
+a *remote* rocket on a client, leaving position and facing to the interpolator (which already guards
+its own `LookRotation`). Expiry still runs (`FixedUpdate` checks it after the call). **Cost:** the
+client stops running that rocket's own collision, so any hit or explosion visual it produced locally
+must come from the host's replicated `ProjectileDone` / hit messages instead. Check that in play.
+
+
 
 ## OB-26 — The players' Difficulty is not in sync — CONFIRMED by decompile 2026-10-18, **built 2026-10-18 (team average); average confirmed in play, enemy HP fix not yet**
 
