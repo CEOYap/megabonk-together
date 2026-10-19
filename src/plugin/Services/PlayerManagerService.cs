@@ -57,6 +57,12 @@ namespace MegabonkTogether.Services
         public void AddPlayerInventory(uint connectionId, PlayerInventory inventory);
         public PlayerInventory GetPlayerInventory(uint connectionId);
 
+        /// <summary>
+        /// Teammates' inventories. Unlike the spawned avatars these survive a level change, so
+        /// they answer "does a teammate hold this" during the transition too.
+        /// </summary>
+        public ICollection<PlayerInventory> GetRemoteInventories();
+
         public bool IsGameOver();
         public uint? GetRandomPlayerAliveConnectionId();
         public IEnumerable<(uint, Rigidbody)> GetConnectionIdsAndRigidBodies();
@@ -898,6 +904,11 @@ namespace MegabonkTogether.Services
             }
 
             return inventory;
+        }
+
+        public ICollection<PlayerInventory> GetRemoteInventories()
+        {
+            return playerInventories.Values;
         }
 
         public bool IsGameOver()

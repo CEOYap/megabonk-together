@@ -128,9 +128,12 @@ namespace MegabonkTogether.Patches
                 return false;
             }
 
-            foreach (var netPlayer in playerManagerService.GetAllSpawnedNetPlayers())
+            // The inventory store, not the spawned avatars: ResetForNextLevel clears the avatars at
+            // the portal, and a teammate's projectiles still in flight then landed with nobody to
+            // match. 2026-10-19: the host's panel kept a LVL 0 Wireless Dagger (24) from exactly
+            // that, logged right after "Cleared all player cards".
+            foreach (var inventory in playerManagerService.GetRemoteInventories())
             {
-                var inventory = netPlayer?.Inventory;
                 if (inventory == null || !Holds(inventory, parsed))
                 {
                     continue;
