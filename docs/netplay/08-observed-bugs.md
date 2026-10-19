@@ -3199,6 +3199,93 @@ the ghost during the revive fight. Separately worth a look: the ghost's HP scale
 revive count (`RebalanceIfNeededReviverEnemy`: x1/6, x1/3, x1/2 ...), 5.75M at the third final-stage
 revive, which may be a lot for one surviving player.
 
+<a name="ob-32"></a>
+
+## OB-32 — A Desert tumbleweed spawns on both peers in every stage's ready barrier — **FIXED 2026-10-19, not yet confirmed in play**
+
+Found by an audit, not a report: after OB-8 and OB-31, every Harmony patch that enforces host
+authority and opens with `if (!HasNetplaySessionStarted()) return true;` was checked for whether game
+code can reach it while a stage loads or the ready barrier is up.
+
+### 2026-10-19 — the window, and what can run in it
+
+`HasNetplaySessionStarted()` is `currentState == State.Started`, nothing more. A session is therefore
+"not started" in `Loading` (map generation), `Ready` (the barrier, "Lobby not ready yet, waiting..."),
+`LoadingNextLevel` (portal entered, next scene loading) and `Endgame`. In those states a patch with
+that guard runs vanilla on **both** peers, and a host-only send in its postfix stays silent.
+
+Decompiled, what does and does not keep running in the barrier:
+
+- **`MyTime.Pause` (VA `0x1803E5B20`) only sets `MyTime.paused` and switches physics to script
+  mode.** It does not touch `Time.timeScale`, so every MonoBehaviour `FixedUpdate`, `Update` and
+  coroutine keeps running. Physics (triggers, collisions) does not.
+- `MyTime.Update` (VA `0x1803E5E80`) stops advancing `MyTime.time` and `stageTimer` while paused, but
+  **`MyTime.time` is never reset per stage** (`OnNewStageStarted`, VA `0x1803E5940`, resets
+  `stageTimer`, not `time`). The client log shows `t=30.83` inside the first barrier.
+- `EnemyManager.FixedUpdate` (VA `0x180419820`) returns at once while `MyTime.paused`, and it is the
+  only caller of `SummonerController.Tick`, which drives every summoner and the stage timeline. So no
+  summoner spawns, timeline miniboss or stage boss can happen in the barrier.
+
+### The proven case: `EffectManager.SpawnTumbleWeeds`
+
+1. `MapEventsManager.Start` (VA `0x180499F00`) creates a `MapEventsDesert` when the current map is
+   Desert, and `MapEventsManager.FixedUpdate` (VA `0x180499EC0`) calls its `Tick` (vtable slot 4) on
+   every physics step.
+2. `MapEventsDesert.Tick` (VA `0x180473EB0`) does nothing on the final arena (`MapController.isFinalBossStage`),
+   and otherwise calls `EffectManager.SpawnTumbleWeeds(1)` when
+   `lastSpawnedTumbleweedTime + tumbleweedSpawnInterval <= MyTime.time`. The constructor (VA
+   `0x180474010`) sets the interval to 2.2 and leaves `lastSpawnedTumbleweedTime` at 0.
+3. With `MyTime.time` already past 2.2, **the first tick of every Desert stage spawns one tumbleweed
+   at once**, inside the barrier, on both peers. `SpawnTumbleWeeds_Prefix` returned true before
+   Started, and `InteractableTumbleWeed.OnEnable_Postfix` (the host's `TumbleWeedSpawned` send) is
+   silent before Started.
+4. Result: the host's tumbleweed is never replicated, and the client keeps a local one of its own,
+   which freezes when the session starts (`FixedUpdate_Prefix` returns false for a client) and can
+   never despawn (`Despawn_Prefix` returns false for a client).
+
+**The log agrees.** The 2026-10-19 host log has exactly one
+`TumbleWeed not found in SpawnedObjectManagerService when processing OnTumbleWeedDespawned.` after
+each of the three Desert stages' barriers, and none after the final arena's — the one stage where
+`Tick` returns early. The 2026-10-18 host log has it after two of its three Desert stages; the line
+appears only when that tumbleweed despawns, so a stage that ends first logs nothing.
+
+**Fix (`da6f2f0`).** `SpawnTumbleWeeds_Prefix` gates on `HasNetplaySessionInitialized`: a client in a
+session never spawns one (it instantiates the host's from `TumbleWeedSpawned` directly, not through
+this method); the host drops a spawn before Started. Dropping is enough: `Tick` has already moved
+`lastSpawnedTumbleweedTime` on, so the next one comes 2.2 s after the barrier releases and goes
+through the replicated path.
+
+**UNVERIFIED:** not run in-game. **Confirms fixed as:** no `TumbleWeed not found ...
+OnTumbleWeedDespawned` line in a Desert run's host log, and no motionless tumbleweed on the client.
+
+### The audit
+
+Every host-authority patch whose guard is `HasNetplaySessionStarted()`. "Barrier" means any of the
+not-Started states above. VAs are from `megabonk-re/build-21750826/dump.cs`.
+
+| Patch | Can it fire before Started? Evidence | Fix |
+|---|---|---|
+| `FinalFightController.SpawnBoss_Prefix` | **Yes** — the arena cinematic calls it ([OB-8](#ob-8)). | Fixed in `272e887` (OB-8). |
+| `EnemyManager.SpawnBoss_Prefix` | **Yes**, through the one above ([OB-8](#ob-8)). | Fixed in `272e887`: client gated on Initialized, host logs a pre-Started spawn. |
+| `PlayerXp.AddXp_Postfix` | **Yes** — XP gained in the barrier ([OB-31](#ob-31)). | Fixed earlier (OB-31). |
+| `EffectManager.SpawnTumbleWeeds_Prefix` | **Yes** — see above. CONFIRMED by decompile and the host log. | **Fixed in `da6f2f0`.** |
+| `InteractableTumbleWeed.OnEnable_Postfix`, `Despawn_Prefix`, `FixedUpdate_Prefix` | Only for a tumbleweed that exists before Started, and the spawn above was the only source. | None needed once the spawn is gated. |
+| `EffectManager.SpawnTornadoes_Prefix` / `_Postfix` | **Yes, and harmless.** `MapEventsManager.Start` → `MapEventsDesert.Init` (VA `0x1804734E0`) → `SpawnTornadoes(25)`, once per Desert stage at load, on both peers. Raw bytes at VA `0x180501BA0` read `mov rdi,[rbp+0x118]`, the `tornado` prefab (Ghidra prints `tumbleweed`, one slot off). | None. `TornadoesSpawned` carries only a count and the client instantiates its own, so both peers end with 25 local tornadoes either way. `Init` is the only caller, so the replicated path never runs in practice. |
+| `DesertStorm.FadeIn_Prefix` / `FadeOut_Prefix` | No. Only from `MapEventsDesert.TickStorms` (VA `0x180473C10`), which compares `nextStormTime` with `MyTime.stageTimer`; that does not advance while paused. LIKELY: a stale `stageTimer` before `OnNewStageStarted` resets it is not ruled out (call order not decompiled). | None. |
+| `EnemyManager.SpawnEnemy_Prefix` / `_Postfix`, `ChallengeSummoner.SpendCredits_Prefix` | No. Callers: the four `SpendCredits` (summoners, under `EnemyManager.FixedUpdate`, paused), `FinalFightController.SpawnGoons` (under `SpecialAttacks`, below), `SpawnBoss` (OB-8), `InteractableEgg/Gravestone.Interact` (player interaction). | None. |
+| `FinalFightController.SpecialAttacks_Prefix`, `SpawnOrbs*_Prefix` / `_Postfix` | No. Only from `FinalFightController.FixedUpdate` (VA `0x180492750`), which does nothing while `boss` is null (Ghidra labels the slot `pylons`), and after OB-8 the boss does not exist before Started on either peer. | None. |
+| `FinalFightController.StartPylons` (seed and OB-7 ids) | No. Callers `OnEnemyDamage` and `StartPhase` (data reference only) need the boss. The 2026-10-19 host log has `OB-7: registered 11 pylon(s)` after the final barrier released. | None. |
+| `EffectManager.CheckChestSpawn_Prefix`, `ExploderEnemy_*`, `SpawnPickupOrb_*`, `PickupManager.SpawnPickup_Prefix` | No. Callers are enemy death (`EffectManager/PickupManager.OnEnemyDied`), pots, tumbleweed interaction and `PickupOrb.OnCollisionEnter`. No enemy exists before Started (summoners paused, boss held), and collisions need physics. | None. |
+| `SpecialAttackController.UseSpecialAttack_Prefix`, `InteractableCharacterFight.SpawnEnemy_Prefix` | No. `UseSpecialAttack` only from `SpecialAttackController.Tick` (an enemy's); `InteractableCharacterFight.SpawnEnemy` has data references only (an interaction). | None. |
+| `ChargeShrine.Complete_Prefix`, `ChargeShrine/BossPylon/BossLamp.OnTrigger*` | No. `Complete` only from `ChargeShrine.Update` once charged, and charging and triggers need a player in a trigger, which needs physics. | None. |
+| Enemy, movement, projectile, weapon and aura patches (`Enemy.*`, `EnemyMovementRb.*`, `Projectile*`, `Rocket.*`, `WeaponInventory.Tick`, `CombatAura`, `PickupOrb`, `DetectInteractables.TryInteract`) | No world state for them to act on: no enemy exists before Started. UNVERIFIED per method — not decompiled one by one. | None. |
+| Map generation and placement (`GenerateTileObjects`, `SpawnInteractables`, `RandomObjectPlacer`, `MapGeneration/*`, `EffectManager.OnMapGenerationComplete`, `InteractableMicrowave/ShadyGuy.Start`, `BossLamp.Awake`, `GraveyardBossRoom.Activate`, `UnityObject.Instantiate` boss spawner) | Yes, by design — and these already gate on `HasNetplaySessionInitialized`. | None. |
+| `UnityObject.Instantiate` open-chest gate | No. The open-chest effect follows a chest interaction. | None. |
+
+**Not covered by this audit:** the `LoadingNextLevel` window (portal entered, old scene still
+alive for a few frames) and `Endgame` are also not-Started, so the same guard opens there; nothing
+there was looked at.
+
 ## Confirmed in play 2026-10-18, outside the numbered entries
 
 - **Shared XP sent as gains** (no more level drift; see OB-20's side effect). No `level` disagreements.
