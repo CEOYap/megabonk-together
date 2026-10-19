@@ -41,7 +41,7 @@ namespace MegabonkTogether.Patches.Unity
         /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(MinimapCamera.UpdateArrows))]
-        public static bool UpdateArrows_Prefix()
+        public static bool UpdateArrows_Prefix(MinimapCamera __instance)
         {
             if (!synchronizationService.HasNetplaySessionStarted())
             {
@@ -50,7 +50,64 @@ namespace MegabonkTogether.Patches.Unity
 
             // Unity's operator, so a destroyed player reads as null too — which is precisely the
             // teardown half of the window this exists for.
-            return MyPlayer.Instance != null;
+            if (MyPlayer.Instance == null)
+            {
+                return false;
+            }
+
+            PruneDeadArrows(__instance);
+            return true;
+        }
+
+        private static readonly System.Collections.Generic.List<UnityEngine.Transform> deadArrowKeys = [];
+
+        /// <summary>
+        /// Drops arrows whose target or arrow object has been destroyed, before UpdateArrows reads
+        /// them.
+        ///
+        /// <para><b>What threw.</b> 2026-10-19, host, three players: 72 pairs of
+        /// <c>NullReferenceException</c> in <c>Component.get_transform</c> from
+        /// <c>MinimapCamera.UpdateArrows</c>, right after a teammate's avatar was rebuilt at a stage
+        /// transition (<c>Spawned NetPlayer for …</c>). <c>arrowDict</c> is keyed by each tracked
+        /// player's <c>Transform</c>; the old avatar was destroyed but its entry stayed, and
+        /// UpdateArrows dereferenced it every frame. Unity's <c>==</c> reads a destroyed object as
+        /// null, so a dead entry is found with a plain null check. The dictionary holds a handful of
+        /// entries, so this is cheap per frame.</para>
+        /// </summary>
+        private static void PruneDeadArrows(MinimapCamera camera)
+        {
+            var arrows = camera != null ? camera.arrowDict : null;
+            if (arrows == null || arrows.Count == 0)
+            {
+                return;
+            }
+
+            deadArrowKeys.Clear();
+            foreach (var entry in arrows)
+            {
+                if (entry.Key == null || entry.Value == null)
+                {
+                    deadArrowKeys.Add(entry.Key);
+                }
+            }
+
+            if (deadArrowKeys.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var key in deadArrowKeys)
+            {
+                if (arrows.TryGetValue(key, out var arrow) && arrow != null)
+                {
+                    UnityEngine.Object.Destroy(arrow.gameObject);
+                }
+
+                arrows.Remove(key);
+            }
+
+            Plugin.Log.LogInfo($"[minimap] dropped {deadArrowKeys.Count} arrow(s) whose target was destroyed.");
+            deadArrowKeys.Clear();
         }
 
         /// <summary>

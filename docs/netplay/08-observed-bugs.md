@@ -2299,6 +2299,17 @@ transition where singleplayer would have had an empty dictionary. The guard is c
 
 ---
 
+### 2026-10-19 — a second throw in `UpdateArrows`: arrows for destroyed avatars
+
+Host, three players (owner plus two test bots): 72 pairs of `NullReferenceException` in
+`Component.get_transform` from `MinimapCamera.UpdateArrows`, right after a teammate's avatar was
+rebuilt at the stage-2 transition (`Spawned NetPlayer for …`). `arrowDict` is keyed by each tracked
+player's `Transform`; the old avatar was destroyed but its entry stayed, and `UpdateArrows` read it
+every frame. The first OB-17 fix only covered a missing local player. **Fixed:**
+`UpdateArrows_Prefix` now prunes entries whose key or arrow is destroyed (Unity null) before the
+original runs, and logs `[minimap] dropped N arrow(s) whose target was destroyed.` **Confirms fixed
+as:** no `UpdateArrows` exceptions across a stage transition with three or more players.
+
 <a name="ob-18"></a>
 ## OB-18 — "Projectile Bounces" stays 0 for the whole run — **CLOSED: vanilla behaviour, not a bug (2026-10-08)**
 
