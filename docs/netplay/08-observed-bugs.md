@@ -1882,7 +1882,7 @@ paused too and stops sending hits during the window. This gate is the backstop f
 Reported fixed by the player. The host log carries 53 `OB-13: suppressed N enemy hit(s) while paused`
 lines and the client 14, so the gate at `Enemy.Damage` is what held, not a coincidence of timing.
 
-## OB-14 — The end-of-run damage panel credits you with your teammate's weapons — **REOPENED 2026-10-18: still leaking after the hit-level fix**
+## OB-14 — The end-of-run damage panel credits you with your teammate's weapons — **FIX BUILT 2026-10-19 (LVL 0 rows recorded outside Started); not yet confirmed in play**
 
 **Reported 2026-08-17, with screenshots.** The DAMAGE column on the summary screen lists ~23 damage
 sources for a player whose inventory held **4 weapons and 4 tomes**. The extras are the other
@@ -2083,6 +2083,64 @@ Status effects (Burn, Poison) are expected once each.
 **Confirms fixed as:** no LVL 0 Electric Plug / Cursed Doll / Bob (Dead) on the host's panel, those
 three roughly equal on both screens, and the client log's `OB-14: recording` lines naming the path for
 Aura and Chunkers.
+
+### 2026-10-19 — the remaining LVL 0 rows were recorded outside `Started`
+
+Three players: the host and two test bots. The final boss was killed. The item rows the previous
+section fixed are gone. What was left:
+
+| Screen | LVL 0 rows |
+|---|---|
+| Host | Soul Harvester 945, Black Hole 412, Aura 109 |
+| Client (Player2) | Flamewalker 5,772, Soul Harvester 680 |
+
+**The diagnostic's silence is what located it.** `ReportForeignSource` logs the first time any
+source we do not own is recorded as ours, whether the hit was unattributed or attributed to us. It
+fired once on the host, for Poison, a status effect. It never fired on either client. So none of
+these rows was recorded through the path it watches. The prefix had exactly one way to record a hit
+without reaching it: the early `return true` when `HasNetplaySessionStarted()` is false. The
+session is in netplay but not `Started` during Ready, LoadingNextLevel (from a portal or the final
+boss spawner until the next level runs) and Endgame. In those states the panel recorded every hit
+applied on the machine, a teammate's included.
+
+- **Host.** It still runs every teammate's weapons, and their hits went into its panel.
+- **Clients.** `Enemy.Damage_Prefix` is gated on `Started` too, so a client lets local hits apply
+  in those states, such as the host's projectiles it was sent.
+
+This is the same ready-barrier hole as [OB-8](#ob-8).
+
+**What LVL 0 means, decompiled rather than inferred:**
+
+- **`DamageSource.GetLevel`** (VA `0x1804011E0`): `Enum.TryParse` the source as `EWeapon`,
+  ignoring case, and return the local `WeaponInventory.GetWeaponLevel`. Failing that, parse it as
+  `EItem` and return `ItemInventory.GetAmount`. Any other source shows 1.
+- **The two getters** (VA `0x180432B20`, `0x1804427E0`): each returns 0 exactly when the key is not
+  in the dictionary.
+- **`RunStats.OnEnemyDamaged` is the panel's only writer.** `DamageSource.AddDamage` and its
+  constructor have no callers of their own; they are inlined there.
+
+So a LVL 0 row is, by definition, a weapon or item source the viewer does not hold.
+
+**Fixed** in `Patches/RunStats.cs`. The prefix now runs while the session is *initialized*:
+
+1. **The tracker filter is unchanged.** It still applies only while `Started`, because the patches
+   that scope the tracker are all gated on that.
+2. **A second test needs no tracker, so it holds in every state.** It drops a hit whose source
+   parses (the game's own order and case rule) as a weapon or item the local player does not hold
+   and a spawned teammate does. While `Started` it also catches a teammate hit the tracker left
+   unattributed (`UNRESOLVED-WEAPON`).
+
+Requiring a teammate who holds it keeps the fix from hiding real damage: a game effect could carry
+the name of a weapon or item we lack.
+
+**Known gap.** A source both players hold is left to the tracker. Outside `Started` such a hit can
+still add to our row, but at our real level, not as a LVL 0 row.
+
+**UNVERIFIED, not run in-game.** Confirmed when:
+
+- No end screen shows a LVL 0 weapon or item row.
+- Each peer's log carries one `OB-14: kept '<source>' off our damage panel` line per teammate source
+  it dropped. The line's `session started` value names the state it happened in.
 
 ## OB-15 — The client's NullReferenceException storm — **FIXED and CONFIRMED in play (2026-10-12)**
 

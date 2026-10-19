@@ -1,5 +1,6 @@
 using Assets.Scripts.Actors;
 using Assets.Scripts.Actors.Enemies;
+using Assets.Scripts.Inventory__Items__Pickups.Items;
 using HarmonyLib;
 using MegabonkTogether.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -25,6 +26,10 @@ namespace MegabonkTogether.Patches
     /// ProjectileBase.HitEnemy sets the weapon's owner on the host, and CombatAura now does the same.
     /// This only reads it. A hit with no attribution is treated as ours, which is what it was
     /// before, so a gap in attribution can only under-correct, never hide our own damage.</para>
+    ///
+    /// <para><b>Backstop.</b> The tracker is only scoped while the session is Started, so a second
+    /// test that needs no tracker drops a weapon or item source we lack and a teammate holds, in
+    /// every in-session state. See IsTeammatesSource.</para>
     /// </summary>
     [HarmonyPatch(typeof(Assets.Scripts.Saves___Serialization.Progression.Stats.RunStats))]
     internal static class RunStatsPatches
@@ -37,28 +42,151 @@ namespace MegabonkTogether.Patches
         [HarmonyPatch("OnEnemyDamaged")]
         public static bool OnEnemyDamaged_Prefix(Enemy enemy, DamageContainer dc)
         {
-            if (!synchronizationService.HasNetplaySessionStarted())
+            // Initialized, not Started: see IsTeammatesSource. Outside netplay there are no spawned
+            // teammates, so the ownership filter cannot drop anything there anyway.
+            if (!synchronizationService.HasNetplaySessionInitialized())
             {
                 return true;
             }
 
-            var attacker = trackerService.GetCurrentPlayerId();
-            if (!attacker.HasValue)
+            uint? attacker = null;
+            if (synchronizationService.HasNetplaySessionStarted())
             {
-                ReportForeignSource(dc, attacker);
-                return true;
+                attacker = trackerService.GetCurrentPlayerId();
+
+                // Record only our own damage. Prefix-false is deliberate: the original does nothing
+                // but add to the panel's per-source table.
+                if (attacker.HasValue && !playerManagerService.IsLocalConnectionId(attacker.Value))
+                {
+                    return false;
+                }
             }
 
-            // Record only our own damage. Prefix-false is deliberate: the original does nothing
-            // but add to the panel's per-source table.
-            var ours = playerManagerService.IsLocalConnectionId(attacker.Value);
-            if (ours)
+            var source = dc?.damageSource;
+            if (IsTeammatesSource(source))
             {
-                ReportForeignSource(dc, attacker);
+                return false;
             }
 
-            return ours;
+            ReportForeignSource(source, attacker);
+            return true;
         }
+
+        /// <summary>
+        /// OB-14, the LVL 0 rows themselves. True when <paramref name="source"/> names a weapon or
+        /// item the local player does not hold and a teammate does: a row the panel could only ever
+        /// show at LVL 0, for damage that cannot be ours.
+        ///
+        /// <para><b>Why this is exactly "LVL 0".</b> The panel's level is DamageSource.GetLevel
+        /// (VA 0x1804011E0, decompiled): Enum.TryParse the source as EWeapon, ignoring case, and
+        /// return the local WeaponInventory.GetWeaponLevel; failing that, as EItem and return
+        /// ItemInventory.GetAmount; anything else shows 1. Both getters (VA 0x180432B20 and
+        /// 0x1804427E0, decompiled) return 0 exactly when the key is not in the dictionary. This is
+        /// the same test in the same order, so it drops nothing the panel would show at a real
+        /// level.</para>
+        ///
+        /// <para><b>Outside Started.</b> The tracker filter above only holds while the session is
+        /// Started, because every patch that scopes the tracker is gated on that. The panel kept
+        /// recording through the other in-session states (Ready, LoadingNextLevel, Endgame), and the
+        /// old prefix let every hit through there, a teammate's included, without reaching the
+        /// diagnostic below. That is why the 2026-10-19 run's LVL 0 rows (host: Soul Harvester 945,
+        /// Black Hole 412, Aura 109; a client: Flamewalker 5,772, Soul Harvester 680) produced no
+        /// "OB-14: recording" line on any peer. This test needs no tracker, so it holds in every
+        /// state, and while Started it also catches a teammate hit the tracker left unattributed
+        /// (UNRESOLVED-WEAPON).</para>
+        ///
+        /// <para><b>Why a teammate must hold it.</b> Not holding the source is not enough on its
+        /// own: a game effect could carry the name of a weapon or item we lack, and dropping it
+        /// would hide real damage. Requiring a teammate who holds it means the row was theirs. A
+        /// source we both hold is left to the tracker; outside Started such a hit can still inflate
+        /// our row, but at our real level, not as a LVL 0 row.</para>
+        ///
+        /// <para>Cost: reached only by hits about to be recorded. A source we hold costs one native
+        /// ContainsKey; the teammate scan runs only for a source we do not hold.</para>
+        /// </summary>
+        private static bool IsTeammatesSource(string source)
+        {
+            if (string.IsNullOrEmpty(source))
+            {
+                return false;
+            }
+
+            if (!parsedSources.TryGetValue(source, out var parsed))
+            {
+                parsed = Parse(source);
+                parsedSources[source] = parsed;
+            }
+
+            if (parsed.Kind == SourceKind.Other)
+            {
+                return false;
+            }
+
+            var local = GameManager.Instance?.player?.inventory;
+            if (local == null || Holds(local, parsed))
+            {
+                return false;
+            }
+
+            foreach (var netPlayer in playerManagerService.GetAllSpawnedNetPlayers())
+            {
+                var inventory = netPlayer?.Inventory;
+                if (inventory == null || !Holds(inventory, parsed))
+                {
+                    continue;
+                }
+
+                if (droppedSources.Add(source))
+                {
+                    Plugin.Log.LogInfo(
+                        $"OB-14: kept '{source}' off our damage panel -- a teammate's {parsed.Kind.ToString().ToLowerInvariant()} " +
+                        $"we do not hold (session started {synchronizationService.HasNetplaySessionStarted()}, " +
+                        $"replaying {Plugin.Instance.CAN_DAMAGE_ENEMIES}, host {synchronizationService.IsServerMode() ?? false}).");
+                }
+
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool Holds(PlayerInventory inventory, ParsedSource parsed)
+        {
+            if (parsed.Kind == SourceKind.Weapon)
+            {
+                var weapons = inventory.weaponInventory?.weapons;
+                return weapons != null && weapons.ContainsKey(parsed.Weapon);
+            }
+
+            var items = inventory.itemInventory?.items;
+            return items != null && items.ContainsKey(parsed.Item);
+        }
+
+        private enum SourceKind { Other, Weapon, Item }
+
+        private readonly record struct ParsedSource(SourceKind Kind, EWeapon Weapon, EItem Item);
+
+        /// <summary>Same order and case rule as DamageSource.GetLevel: weapon first, then item.</summary>
+        private static ParsedSource Parse(string source)
+        {
+            if (System.Enum.TryParse(source, true, out EWeapon weapon))
+            {
+                return new ParsedSource(SourceKind.Weapon, weapon, default);
+            }
+
+            if (System.Enum.TryParse(source, true, out EItem item))
+            {
+                return new ParsedSource(SourceKind.Item, default, item);
+            }
+
+            return new ParsedSource(SourceKind.Other, default, default);
+        }
+
+        /// <summary>Source string to its parse. Damage sources are a small, fixed set of names.</summary>
+        private static readonly System.Collections.Generic.Dictionary<string, ParsedSource> parsedSources = [];
+
+        /// <summary>Sources already logged as kept off the panel, once each per session.</summary>
+        private static readonly System.Collections.Generic.HashSet<string> droppedSources = [];
 
         private static readonly System.Collections.Generic.HashSet<string> checkedSources = [];
 
@@ -77,9 +205,8 @@ namespace MegabonkTogether.Patches
         /// (Burn, Poison, ...) are not weapons or items and will be reported once each; that is
         /// expected, not a leak.</para>
         /// </summary>
-        private static void ReportForeignSource(DamageContainer dc, uint? attacker)
+        private static void ReportForeignSource(string source, uint? attacker)
         {
-            var source = dc?.damageSource;
             if (string.IsNullOrEmpty(source) || !checkedSources.Add(source))
             {
                 return;
@@ -121,6 +248,10 @@ namespace MegabonkTogether.Patches
         }
 
         /// <summary>Clears the once-per-source memory so each session reports afresh.</summary>
-        internal static void ResetDiagnostics() => checkedSources.Clear();
+        internal static void ResetDiagnostics()
+        {
+            checkedSources.Clear();
+            droppedSources.Clear();
+        }
     }
 }
