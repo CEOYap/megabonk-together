@@ -3399,6 +3399,46 @@ ends) has torn the old session down before the new join's `AwaitSteamSession` ru
 now back-to-back. **Confirms fixed as:** A hosts, B joins, A leaves and hosts again, B joins without
 restarting — both directions — and B's log shows the owner-changed and leaving-before lines.
 
+<a name="ob-34"></a>
+
+## OB-34 — Item hits echoed between peers until the enemy died; one client never saw the final boss die — **FIXED 2026-10-19, not yet confirmed in play**
+
+**Reported 2026-10-19** (host plus two test bots, host on a god-mode testing plugin): the final boss died
+for the host and player 2, but player 3 kept a boss bar at 14.8K / 8.4M and the objective unticked.
+
+**Evidence.** The `[boss]` lines agree on all three peers (same id 442, same HP) until player 3's copy
+drifts: same HP but the position climbs to (-116, 122, 22) and freezes there at 14,751 HP with no death.
+At that moment the bandwidth lines show the cause:
+
+| Peer | `EnemyDamaged` sent | Payload |
+|---|---|---|
+| Host | **~33,000 / s** (to all clients, unreliable) | 2,623 KB/s |
+| Player 2 (client) | **~16,800 / s** (to host, reliable) | — |
+| Player 3 (client) | **~24,000 / s** (to host, reliable) | 1,235 KB/s |
+
+Earlier runs had a client sending 0.1–4.4 per second. Player 3 also got max-HP rescales for enemies
+whose spawns had not arrived and disagreed on the enemy count (host 1 / local 5): its connection was
+saturated, the boss's death never landed, and the host eventually dropped it.
+
+**Cause: an echo loop.** A client forwards its own item hits (`Enemy.Damage_Postfix`, any source in
+`AllowedDamageSource`). The host applies each one and forwards it to every client, and a client
+replays it through `Enemy.Damage` in `OnReceivedEnemyDamaged`, whose postfix saw an item source and
+forwarded it again as new. Nothing on that path checked `CAN_SEND_MESSAGES` or suppressed outbound.
+With two clients a hit ping-pongs through the host until the enemy dies, and applies again every lap,
+which also inflated item totals (player 2's Cursed Doll: 11.5M).
+
+**Fix.** `Damage_Postfix` on a client returns when `CAN_DAMAGE_ENEMIES` is set, which happens only
+inside a replay (`OnReceivedEnemyDamaged`, its single setter). A client's own item hits are forwarded as
+before; the host still forwards client hits to the other clients.
+
+**Confirms fixed as:** three-player run, client `[bw] EnemyDamaged` back to single or low double digits
+per second, the final boss's death reaching every client, and item totals on the end screens in line
+with the item.
+
+**Separately still heavy:** the host forwards every hit it applies to every client, one message per hit.
+At god-mode damage that alone is tens of thousands per second; aggregating per enemy per tick is the
+lever (see `17-enemy-cap.md`).
+
 ## Confirmed in play 2026-10-18, outside the numbered entries
 
 - **Shared XP sent as gains** (no more level drift; see OB-20's side effect). No `level` disagreements.

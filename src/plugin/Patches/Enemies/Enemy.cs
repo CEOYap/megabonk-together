@@ -265,6 +265,19 @@ namespace MegabonkTogether.Patches.Enemies
             }
 
             var isServer = synchronizationService.IsServerMode() ?? false;
+
+            // OB-34. A client applies damage only while replaying a hit the host sent it
+            // (OnReceivedEnemyDamaged opens CAN_DAMAGE_ENEMIES for exactly that call). Such a hit is
+            // never this client's to forward. Without this, an item hit the host forwarded was
+            // forwarded straight back as new, and with two clients it ping-ponged through the host
+            // until the enemy died, applying again on every lap: 2026-10-19, three players, 16-24k
+            // EnemyDamaged/s from EACH client and 33k/s from the host (2.6 MB/s), a client so far
+            // behind it never received the final boss's death.
+            if (!isServer && Plugin.Instance.CAN_DAMAGE_ENEMIES)
+            {
+                return;
+            }
+
             if (isServer || AllowedDamageSource.Contains(damageContainer.damageSource))
             {
                 synchronizationService.OnEnemyDamaged(__instance, damageContainer);
