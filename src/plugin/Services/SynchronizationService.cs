@@ -371,6 +371,7 @@ namespace MegabonkTogether.Services
         public void Reset()
         {
             currentState = State.None;
+            pendingSharedXp = 0;
             toSpawns.Clear();
             toUpdate.Clear();
 
@@ -5562,6 +5563,9 @@ namespace MegabonkTogether.Services
             }
         }
 
+        /// <summary>Shared XP that arrived while this peer had no player (stage load); added with the next gain.</summary>
+        private int pendingSharedXp;
+
         /// <summary>
         /// Shared XP: adds the other player's GAIN to ours.
         ///
@@ -5597,10 +5601,21 @@ namespace MegabonkTogether.Services
                 return;
             }
 
+            // Gains now also arrive during the ready barrier, when this peer may have no player
+            // yet (scene loading). Hold them and add them with the next gain that can land.
+            var playerXp = GameManager.Instance?.player?.inventory?.playerXp;
+            if (playerXp == null)
+            {
+                pendingSharedXp += xp.Amount;
+                return;
+            }
+
+            var amount = xp.Amount + pendingSharedXp;
+            pendingSharedXp = 0;
+
             using (Plugin.SuppressOutbound())
             {
-                var playerXp = GameManager.Instance.player.inventory.playerXp;
-                playerXp.xp += xp.Amount;
+                playerXp.xp += amount;
 
                 // Amount 0 adds nothing; it is what runs the level-up check against the new total.
                 playerXp.AddXp(0);

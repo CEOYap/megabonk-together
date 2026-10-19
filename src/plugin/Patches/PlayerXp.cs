@@ -25,7 +25,11 @@ namespace MegabonkTogether.Patches
         [HarmonyPatch(nameof(PlayerXp.AddXp))]
         public static void AddXp_Postfix(PlayerXp __instance, int amount, int __state)
         {
-            if (!synchronizationService.HasNetplaySessionStarted())
+            // "Initialized", not "started": XP gained during a stage transition's ready barrier
+            // (when HasNetplaySessionStarted is false) was never shared, so each peer kept only its
+            // own and shared XP, which only ever sends gains, could not re-converge. 2026-10-19:
+            // levels 39 / 40 before the final arena's barrier, 42 / 47 after it. Same hole as OB-8.
+            if (!synchronizationService.HasNetplaySessionInitialized())
             {
                 return;
             }
