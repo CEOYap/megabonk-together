@@ -3342,6 +3342,39 @@ not-Started states above. VAs are from `megabonk-re/build-21750826/dump.cs`.
 alive for a few frames) and `Endgame` are also not-Started, so the same guard opens there; nothing
 there was looked at.
 
+<a name="ob-33"></a>
+
+## OB-33 — Steam transport: after the host leaves and re-hosts, the other player cannot join until they restart — **FIXED 2026-10-19, not yet confirmed in play**
+
+**Reported 2026-10-19 by the project owner and their friend** (`UseSteamTransport = true`). A hosts and
+B joins with no trouble. A leaves the lobby and hosts a new one: B cannot join it until B restarts
+the game. The same happens the other way round.
+
+**Cause, from the code** (no log of the failing session in hand):
+
+1. When the host leaves a Steam lobby, the remaining member stays in it and Steam hands them
+   ownership. `SteamLobbyService.RefreshMembersIfDue` recorded the new owner and nothing reacted, so
+   B stayed `InLobby` in a lobby with no host.
+2. B's session can end without passing through `NetworkHandler.ResetNetworking`, the one teardown that
+   leaves the Steam lobby. Its comment already names this exact symptom ("Refusing to join a lobby
+   while InLobby ... stuck until they restarted"), fixed then for backing out of the panel only.
+3. The panel's Join path (`LobbyPanel.SwitchSession`) calls `INetplaySessionService.Cancel` first, and
+   `Cancel` returns before it leaves the lobby once the session is `Idle`.
+4. `CreateLobby`, `JoinLobby` and `JoinByCode` all refuse while `InLobby`, so every later host or join
+   failed until a restart reset the service. That is why it happens in both directions.
+
+**Fix.** `SteamLobbyService.LeaveStaleLobby`: `CreateLobby`, `JoinLobby` (to a different lobby) and
+`JoinByCode` (for a different code) now leave a lobby this peer is still in before going on, logging
+`[steam-lobby] Still in lobby N (owner …, M member(s)); leaving it before …`. The mod has no host
+migration, so a lobby being replaced is always finished with. The presence bridge only creates from
+`None`, so it is unaffected. Also new: `[steam-lobby] Lobby N owner changed A -> B (now ours: …);
+the host left.`, so the next log shows the moment it happens.
+
+**UNVERIFIED:** that `SteamNetSessionService` (which shuts the transport down when lobby membership
+ends) has torn the old session down before the new join's `AwaitSteamSession` runs; leave and join are
+now back-to-back. **Confirms fixed as:** A hosts, B joins, A leaves and hosts again, B joins without
+restarting — both directions — and B's log shows the owner-changed and leaving-before lines.
+
 ## Confirmed in play 2026-10-18, outside the numbered entries
 
 - **Shared XP sent as gains** (no more level drift; see OB-20's side effect). No `level` disagreements.

@@ -175,6 +175,8 @@ namespace MegabonkTogether.Services
                 return;
             }
 
+            LeaveStaleLobby("creating a new one");
+
             if (hasPendingCall || State == SteamLobbyState.InLobby)
             {
                 Fail($"Refusing to create a lobby while {State}.");
@@ -219,6 +221,11 @@ namespace MegabonkTogether.Services
                 return;
             }
 
+            if (State == SteamLobbyState.InLobby && LobbyId != lobbyId)
+            {
+                LeaveStaleLobby($"joining lobby {lobbyId}");
+            }
+
             if (hasPendingCall || State == SteamLobbyState.InLobby)
             {
                 Fail($"Refusing to join a lobby while {State}.");
@@ -248,6 +255,33 @@ namespace MegabonkTogether.Services
             {
                 Fail($"JoinLobby threw: {ex.GetType().Name}: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Leaves a lobby this peer is still a member of before it creates or joins another one.
+        ///
+        /// <para><b>The bug.</b> Reported 2026-10-19 on the Steam transport: A hosts, B joins fine;
+        /// A leaves and hosts again, and B cannot join until B restarts the game, either way round.
+        /// When the host leaves a Steam lobby, the other member stays in it and Steam hands them
+        /// ownership; nothing here reacted to that, so B stayed <c>InLobby</c> in a lobby with no
+        /// host. B's session could end without passing through <c>ResetNetworking</c> (the one path
+        /// that leaves the lobby), and <c>INetplaySessionService.Cancel</c> returns before leaving
+        /// once the session is <c>Idle</c>. Every later create or join then failed on "Refusing to
+        /// ... while InLobby" until a restart cleared the state.</para>
+        ///
+        /// <para>Leaving is always right here: the mod has no host migration, so a lobby we are asked
+        /// to replace is one we are done with. A call already in flight is left alone and still
+        /// refused by the caller.</para>
+        /// </summary>
+        private void LeaveStaleLobby(string why)
+        {
+            if (State != SteamLobbyState.InLobby || hasPendingCall)
+            {
+                return;
+            }
+
+            Plugin.Log.LogInfo($"[steam-lobby] Still in lobby {LobbyId} (owner {IsOwner}, {members.Count} member(s)); leaving it before {why}.");
+            LeaveLobby();
         }
 
         public void LeaveLobby()
@@ -556,6 +590,13 @@ namespace MegabonkTogether.Services
 
         public void JoinByCode(string code)
         {
+            // The caller (WatchSteamJoin) already treats "in the lobby with this code" as joined, so
+            // any lobby we are still in here is a different, stale one.
+            if (!string.Equals(LobbyCode, code, StringComparison.OrdinalIgnoreCase))
+            {
+                LeaveStaleLobby($"joining room {code}");
+            }
+
             if (State == SteamLobbyState.InLobby)
             {
                 Fail("Refusing to join a lobby while already in one.");
@@ -932,11 +973,20 @@ namespace MegabonkTogether.Services
             lastMemberRefresh = now;
 
             var before = members.Count;
+            var ownerBefore = OwnerSteamId;
             RefreshMembers();
 
             if (members.Count != before)
             {
                 Plugin.Log.LogInfo($"[steam-lobby] Member list now has {members.Count} member(s) (was {before}).");
+            }
+
+            // The signature of the host leaving: Steam passes ownership to a remaining member. The
+            // mod has no host migration, so this lobby is dead from here; LeaveStaleLobby releases it
+            // on the next create or join.
+            if (ownerBefore != 0UL && OwnerSteamId != ownerBefore)
+            {
+                Plugin.Log.LogInfo($"[steam-lobby] Lobby {LobbyId} owner changed {ownerBefore} -> {OwnerSteamId} (now ours: {IsOwner}); the host left.");
             }
         }
 
