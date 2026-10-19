@@ -664,7 +664,7 @@ not found` line.
 ---
 
 <a name="ob-8"></a>
-## OB-8 — The Desert final boss does not move for clients — **REOPENED 2026-10-19 as [OB-31](#ob-31): never fixed in code**
+## OB-8 — The Desert final boss does not move for clients, and its HP differs — **REOPENED 2026-10-19; root cause found by decompile and FIXED, not yet confirmed in play**
 
 **Reported:** alongside OB-7, the Desert final boss was completely static on the non-host peer.
 Forest's final boss behaved correctly.
@@ -709,6 +709,77 @@ OB-7's counter divergence is *not* Desert-specific in principle — it is merely
 the boss is resolved through a spawned-object id rather than an enemy id, then OB-7 and OB-8 are one
 bug with two symptoms and one fix. **Check this before treating them separately**, and note that the
 Forest-with-a-death reproduction suggested in OB-7 would test both at once.
+
+---
+
+### 2026-10-19 — reopened: never fixed in code, and the HP differs too
+
+
+**Reported 2026-10-19, first full run with the test bot (bot as client).** At the Desert final boss:
+host bar **6.8M / 6.8M**, client bar **5.5M / 5.5M**; neither moved, and on the client the boss did not
+move at all and was not where the host saw it.
+
+**It was never fixed.** Its entry ends "no fix has been written"; it was marked confirmed after the
+2026-08-18 run, the same luck that hid OB-7. What OB-8 did establish stands: the host's
+`FinalFightController.SpawnBoss` (VA `0x180493EC0`) goes through `EnemyManager.SpawnBoss` with flags
+`0x24` (FinalBoss | StageBoss), so the boss should reach the client as an ordinary replicated enemy.
+Decompiled again 2026-10-19: `SpawnBoss` changes no HP after the spawn (it stores the boss and sets
+the controller's timers; Ghidra labels the boss slot `pylons`, one slot off).
+
+**What the logs could not say.** Neither peer logged the final boss's spawn message, the HP it
+carried, any `EnemyMaxHpScaled` (OB-9), or its position. 6.8M / 5.5M = 1.24 matches neither the team
+Difficulty in play (0.29 average) nor the mod's 1.1 boss HP multiplier on its own.
+
+**Diagnostic added** (`Services/BossDiagnostics.cs`), always on, bosses only:
+
+- `[boss] host sent spawn (flag …): id N … hp …` and `[boss] client applied spawn …`
+- `[boss] host sent max-HP rescale …` / `client applied max-HP rescale …` (or `… before its spawn; held.`)
+- every 10 s on both peers: `[boss] host|client sees id N … hp X / Y at (x, y, z) flag …`
+
+**Next run:** compare the two logs' `[boss]` lines for the final boss's id. A different HP in
+"client applied spawn" than "host sent spawn" points at the message; equal spawn HP but a later host
+change with no rescale line points at an HP change OB-9 does not cover; a client position that never
+changes while the host's does points at the boss missing from the 40 Hz enemy stream.
+
+
+---
+
+### 2026-10-19 — root cause: the arena cinematic spawns the boss during the ready barrier
+
+Decompiled, four ways, and they agree:
+
+1. **No spawn was ever logged.** `EnemyManager.SpawnBoss_Prefix` logs `OB-11: leaving an arena boss
+   ... (flag N)` for every arena boss once the session has started. The host log has flag 4 (stage
+   bosses) and flag 2 (the time's-up `GhostInvincible`, enemy 0x30, from `GameManager.Update`), and
+   **never flag 36** (FinalBoss 32 + StageBoss 4), although a final boss existed on both peers. The
+   prefix is silent in exactly one case: `HasNetplaySessionStarted()` false.
+2. **The cinematic starts itself on arena load.** `FianlBossCinematic.Start` (VA `0x180491D60`)
+   calls `StartCoroutine(AnimateCinematic)` at once; the coroutine (VA `0x1804A0230`) is the only
+   caller of `FinalFightController.SpawnBoss` (xref), a few seconds in.
+3. **That moment is the ready barrier.** Both logs show the final arena's "Lobby not ready yet,
+   waiting..." for 10+ s before "Lobby is ready, starting the game". `MyTime.Pause` freezes physics,
+   not coroutines.
+4. **Every guard on the path opened with `if (!HasNetplaySessionStarted()) return true;`** —
+   `FinalFightController.SpawnBoss_Prefix` and `EnemyManager.SpawnBoss_Prefix`. Before Started, both
+   peers ran vanilla: the host spawned an unreplicated boss, and the client spawned **its own**, with
+   its own HP and no host updates — 6.8M / 5.5M, frozen on the client.
+
+The HP path itself is sound: `EnemyManager.SpawnBoss` (VA `0x18041A200`) calls `SpawnEnemy` (the
+overload the mod hooks) and then `SetSwarmMultiplierHp` only when `GameManager+0x60` boss curses are
+above 0, which OB-9 already replicates; `FinalFightController.SpawnBoss` itself changes no HP.
+
+**Fix.** `FinalFightController.SpawnBoss_Prefix` gates on `HasNetplaySessionInitialized`: a client in
+a session never spawns the final boss; the host, if the barrier is still up, holds the spawn
+(`[boss] final boss spawn held until the session starts`) and runs it once the session starts
+(`[boss] session started; spawning the held final boss.`), so it goes through the replicated path.
+`EnemyManager.SpawnBoss_Prefix` likewise stops a client spawning any local boss during the barrier,
+and logs any host `SpawnBoss` that still happens before Started.
+
+**UNVERIFIED:** that the rest of the cinematic and `FinalFightController.FixedUpdate` tolerate the boss
+arriving a few seconds later on the host; that a `SpawnedEnemy` reaching a client still finishing
+its barrier is applied. **Confirms fixed as:** the host logs the held/spawned lines and
+`OB-11: ... (flag 36)`, both peers' `[boss]` lines show the same id and HP, and the boss moves on the
+client.
 
 ---
 
@@ -3069,36 +3140,6 @@ on the client look frozen apart from moving.
 
 **Not changed:** projectiles have their own far-distance handling (zero opacity, `ffb8c44`), which was
 not part of this report.
-
-<a name="ob-31"></a>
-
-## OB-31 — Desert final boss: different HP on each peer, frozen for the client — **REPORTED 2026-10-19; diagnostic added, not fixed**
-
-**Reported 2026-10-19, first full run with the test bot (bot as client).** At the Desert final boss:
-host bar **6.8M / 6.8M**, client bar **5.5M / 5.5M**; neither moved, and on the client the boss did not
-move at all and was not where the host saw it.
-
-**OB-8 was never fixed.** Its entry ends "no fix has been written"; it was marked confirmed after the
-2026-08-18 run, the same luck that hid OB-7. What OB-8 did establish stands: the host's
-`FinalFightController.SpawnBoss` (VA `0x180493EC0`) goes through `EnemyManager.SpawnBoss` with flags
-`0x24` (FinalBoss | StageBoss), so the boss should reach the client as an ordinary replicated enemy.
-Decompiled again 2026-10-19: `SpawnBoss` changes no HP after the spawn (it stores the boss and sets
-the controller's timers; Ghidra labels the boss slot `pylons`, one slot off).
-
-**What the logs could not say.** Neither peer logged the final boss's spawn message, the HP it
-carried, any `EnemyMaxHpScaled` (OB-9), or its position. 6.8M / 5.5M = 1.24 matches neither the team
-Difficulty in play (0.29 average) nor the mod's 1.1 boss HP multiplier on its own.
-
-**Diagnostic added** (`Services/BossDiagnostics.cs`), always on, bosses only:
-
-- `[boss] host sent spawn (flag …): id N … hp …` and `[boss] client applied spawn …`
-- `[boss] host sent max-HP rescale …` / `client applied max-HP rescale …` (or `… before its spawn; held.`)
-- every 10 s on both peers: `[boss] host|client sees id N … hp X / Y at (x, y, z) flag …`
-
-**Next run:** compare the two logs' `[boss]` lines for the final boss's id. A different HP in
-"client applied spawn" than "host sent spawn" points at the message; equal spawn HP but a later host
-change with no rescale line points at an HP change OB-9 does not cover; a client position that never
-changes while the host's does points at the boss missing from the 40 Hz enemy stream.
 
 ## Confirmed in play 2026-10-18, outside the numbered entries
 

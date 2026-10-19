@@ -149,7 +149,7 @@ namespace MegabonkTogether.Scripts
 
                 Services.AllocationDiagnostics.Sample(ModConfig.LogAllocationRate.Value);
 
-                // OB-31. Bosses only, every 10 s.
+                // OB-8. Bosses only, every 10 s.
                 enemyManagerService ??= Plugin.Services.GetService<IEnemyManagerService>();
                 if (enemyManagerService != null)
                 {

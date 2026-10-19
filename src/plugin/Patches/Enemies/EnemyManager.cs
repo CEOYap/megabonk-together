@@ -111,7 +111,10 @@ namespace MegabonkTogether.Patches.Enemies
         [HarmonyPatch(nameof(EnemyManager.SpawnBoss))]
         public static bool SpawnBoss_Prefix(ref Vector3 pos, EEnemyFlag enemyFlag)
         {
-            if (!synchronizationService.HasNetplaySessionStarted())
+            // OB-8: "initialized", not "started", for the client. Game code that spawns a boss during
+            // the ready barrier (the final arena's cinematic does) must not spawn a local copy on a
+            // client; only the host's boss is real.
+            if (!synchronizationService.HasNetplaySessionInitialized())
             {
                 return true;
             }
@@ -120,6 +123,12 @@ namespace MegabonkTogether.Patches.Enemies
             if (!isServer)
             {
                 return false;
+            }
+
+            if (!synchronizationService.HasNetplaySessionStarted())
+            {
+                Plugin.Log.LogInfo($"[boss] host SpawnBoss before the session started (flag {(int)enemyFlag}); its spawn will not be replicated.");
+                return true;
             }
 
             // OB-16 / OB-11 scope correction. Arena bosses must spawn where the map put them.

@@ -6,7 +6,7 @@ using UnityEngine;
 namespace MegabonkTogether.Services
 {
     /// <summary>
-    /// OB-31. Puts every step of a boss's life on both peers into the log, so the host's and a
+    /// OB-8. Puts every step of a boss's life on both peers into the log, so the host's and a
     /// client's line for the same moment can be compared.
     ///
     /// <para><b>Why.</b> On 2026-10-19 the Desert final boss read 6.8M on the host and 5.5M on the

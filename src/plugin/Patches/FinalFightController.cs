@@ -1,4 +1,5 @@
-﻿using HarmonyLib;
+﻿using MegabonkTogether.Helpers;
+using HarmonyLib;
 using MegabonkTogether.Common.Messages;
 using MegabonkTogether.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -83,23 +84,65 @@ namespace MegabonkTogether.Patches
         }
 
         /// <summary>
-        /// Skip boss spawn on clients (the server will send the message)
+        /// OB-8. Only the host spawns the final boss, and only once the session has started, so the
+        /// spawn is replicated.
+        ///
+        /// <para><b>Why "initialized", not "started".</b> Decompiled: <c>FianlBossCinematic.Start</c>
+        /// (VA <c>0x180491D60</c>) starts <c>AnimateCinematic</c> the moment the final arena loads,
+        /// and the coroutine calls this method a few seconds in (VA <c>0x1804A0230</c>). That is
+        /// during the mod's ready barrier ("Lobby not ready yet, waiting..."), when
+        /// <c>HasNetplaySessionStarted()</c> is false. With the old guard both peers ran the vanilla
+        /// spawn: the host's boss went out with no replication (its <c>EnemyManager.SpawnBoss</c>
+        /// prefix stays silent before Started, which is why no flag-36 line was ever logged), and the
+        /// client spawned a boss of its own, with its own HP and no host updates to move it. That is
+        /// the 2026-10-19 run: 6.8M on the host, 5.5M on the client, frozen for the client.</para>
+        ///
+        /// <para>So: a client in a session never spawns it; the host, if the barrier is still up,
+        /// holds the spawn and runs it once the session starts, through the normal path that
+        /// broadcasts <c>SpawnedEnemy</c>.</para>
         /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(FinalFightController.SpawnBoss))]
-        public static bool SpawnBoss_Prefix()
+        public static bool SpawnBoss_Prefix(FinalFightController __instance)
         {
-            if (!synchronizationService.HasNetplaySessionStarted())
+            if (!synchronizationService.HasNetplaySessionInitialized())
             {
                 return true;
             }
+
+            // Prefix-false on purpose: the host spawns it and the client receives SpawnedEnemy.
             var isServer = synchronizationService.IsServerMode() ?? false;
             if (!isServer)
             {
                 return false;
             }
 
-            return true;
+            if (synchronizationService.HasNetplaySessionStarted())
+            {
+                return true;
+            }
+
+            // Prefix-false on purpose: held until the session starts, then re-run (see above).
+            Plugin.Log.LogInfo("[boss] final boss spawn held until the session starts (ready barrier still up).");
+            CoroutineRunner.Instance.Run(SpawnBossOnceStarted(__instance));
+            return false;
+        }
+
+        private static System.Collections.IEnumerator SpawnBossOnceStarted(FinalFightController controller)
+        {
+            while (synchronizationService.HasNetplaySessionInitialized() && !synchronizationService.HasNetplaySessionStarted())
+            {
+                yield return null;
+            }
+
+            if (controller == null || !synchronizationService.HasNetplaySessionStarted())
+            {
+                Plugin.Log.LogWarning("[boss] held final boss spawn dropped: the session ended or the arena is gone.");
+                yield break;
+            }
+
+            Plugin.Log.LogInfo("[boss] session started; spawning the held final boss.");
+            controller.SpawnBoss();
         }
 
         /// <summary>
