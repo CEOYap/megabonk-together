@@ -63,6 +63,22 @@ namespace MegabonkTogether.Services
         /// </summary>
         public ICollection<PlayerInventory> GetRemoteInventories();
 
+        /// <summary>
+        /// The teammate whose inventory holds <paramref name="weapon"/>, or null for the local
+        /// player's own weapon or one nobody holds. Reads the inventory store, so it still answers
+        /// during a level change, when the spawned avatars are gone.
+        /// </summary>
+        public uint? GetWeaponOwnerId(WeaponBase weapon);
+
+        /// <summary>A teammate's inventory, or null without the warning GetPlayerInventory logs. For hit paths.</summary>
+        public PlayerInventory FindPlayerInventory(uint connectionId);
+
+        /// <summary>The teammate whose item inventory this is, by native pointer; null if none.</summary>
+        public uint? GetItemInventoryOwnerId(System.IntPtr itemInventory);
+
+        /// <summary>The teammate whose passive ability this is, by native pointer; null if none.</summary>
+        public uint? GetPassiveAbilityOwnerId(System.IntPtr passiveAbility);
+
         public bool IsGameOver();
         public uint? GetRandomPlayerAliveConnectionId();
         public IEnumerable<(uint, Rigidbody)> GetConnectionIdsAndRigidBodies();
@@ -764,8 +780,62 @@ namespace MegabonkTogether.Services
 
         public NetPlayer GetNetPlayerByWeapon(WeaponBase weapon)
         {
+            // Null-guarded: a NetPlayer receives its Inventory a step after it is spawned, and this
+            // runs inside hit prefixes, where a throw aborts the game's hit.
             return spawnedPlayers.Values
-                .FirstOrDefault(np => np.Inventory.weaponInventory.weapons.ContainsValue(weapon));
+                .FirstOrDefault(np => np.Inventory?.weaponInventory?.weapons?.ContainsValue(weapon) ?? false);
+        }
+
+        public PlayerInventory FindPlayerInventory(uint connectionId)
+        {
+            return playerInventories.TryGetValue(connectionId, out var inventory) ? inventory : null;
+        }
+
+        public uint? GetWeaponOwnerId(WeaponBase weapon)
+        {
+            if (weapon == null)
+            {
+                return null;
+            }
+
+            foreach (var kv in playerInventories)
+            {
+                var weapons = kv.Value?.weaponInventory?.weapons;
+                if (weapons != null && weapons.ContainsValue(weapon))
+                {
+                    return kv.Key;
+                }
+            }
+
+            return null;
+        }
+
+        public uint? GetItemInventoryOwnerId(System.IntPtr itemInventory)
+        {
+            foreach (var kv in playerInventories)
+            {
+                var items = kv.Value?.itemInventory;
+                if (items != null && items.Pointer == itemInventory)
+                {
+                    return kv.Key;
+                }
+            }
+
+            return null;
+        }
+
+        public uint? GetPassiveAbilityOwnerId(System.IntPtr passiveAbility)
+        {
+            foreach (var kv in playerInventories)
+            {
+                var passive = kv.Value?.passiveAbility;
+                if (passive != null && passive.Pointer == passiveAbility)
+                {
+                    return kv.Key;
+                }
+            }
+
+            return null;
         }
 
         public void UnqueueNetplayerPositionRequest()

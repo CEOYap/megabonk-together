@@ -75,7 +75,34 @@ namespace MegabonkTogether.Services
             (int)EStat.ProjectileSpeedMultiplier, // 11
             (int)EStat.AttackSpeed,               // 15
             (int)EStat.Difficulty,                // 38 — OB-26, read by the host for the team average
+
+            // OB-38. What a hit's damage is built from (decompiled: WeaponUtility.GetDamage,
+            // GetNewDamage, GetCritChance, GetCritDamageMultiplier, GetKnockback, GetDamageContainer,
+            // Enemy.Damage, the burn and poison debuffs, the on-hit items). The host builds every
+            // teammate's hits, and read all of these from itself. TeammateCombatStats substitutes
+            // them while a teammate's hit is being built or applied.
+            (int)EStat.DamageMultiplier,          // 12
+            (int)EStat.EffectDurationMultiplier,  // 14
+            (int)EStat.CritChance,                // 18
+            (int)EStat.CritDamage,                // 19
+            (int)EStat.FireDamage,                // 20
+            (int)EStat.IceDamage,                 // 21
+            (int)EStat.LightningDamage,           // 22
+            (int)EStat.EliteDamageMultiplier,     // 23
+            (int)EStat.KnockbackMultiplier,       // 24
+            (int)EStat.BurnChance,                // 42
+            (int)EStat.FreezeChance,              // 43
+            (int)EStat.PoisonDamageMultiplier,    // 56
+            BaseDamageKey,
         ];
+
+        /// <summary>
+        /// OB-38. <c>MyPlayer.baseDamage</c> (defaultBaseDamage + character level, decompiled
+        /// <c>MyPlayer.CalculateBaseDamage</c>), which several on-hit items and the burn debuff read
+        /// as a raw field. Not an EStat: carried under a key no EStat uses, which the dictionary was
+        /// made for. A peer on an older build stores it and never reads it.
+        /// </summary>
+        internal const int BaseDamageKey = 1000;
 
         // INetTransport, NOT IUdpClientService. IUdpClientService is always the LiteNetLib session;
         // only INetTransport is switched to the Steam transport by UseSteamTransport (Plugin.cs).
@@ -114,7 +141,21 @@ namespace MegabonkTogether.Services
 
             foreach (var stat in TrackedStats)
             {
-                var value = PlayerStats.GetStat((EStat)stat);
+                float value;
+                if (stat == BaseDamageKey)
+                {
+                    var me = Assets.Scripts.Actors.Player.MyPlayer.Instance;
+                    if (me == null)
+                    {
+                        continue;
+                    }
+
+                    value = me.baseDamage;
+                }
+                else
+                {
+                    value = PlayerStats.GetStat((EStat)stat);
+                }
 
                 if (lastSent.TryGetValue(stat, out var previous) && previous == value)
                 {
@@ -174,6 +215,12 @@ namespace MegabonkTogether.Services
             var changed = new List<int>();
             foreach (var stat in message.Stats)
             {
+                // Not an EStat; OnStatUpdate below must never see it.
+                if (stat.Key == BaseDamageKey)
+                {
+                    continue;
+                }
+
                 if (previous == null
                     || !previous.TryGetValue(stat.Key, out var old)
                     || old != stat.Value)

@@ -990,6 +990,9 @@ namespace MegabonkTogether.Services
 
         public void PrepareForNextLevel()
         {
+            // OB-40. Pooled enemies are reused by the next stage.
+            Patches.Enemies.DebuffAttribution.Clear();
+
             // A stage change ends any round in flight — the encounter windows are torn down with
             // the stage, so a report that arrives after this point belongs to nothing.
             encounterService.ClearClosedEncounters();
@@ -2398,14 +2401,10 @@ namespace MegabonkTogether.Services
             var isHost = IsServerMode() ?? false;
             if (!isHost)
             {
-                if (playerManagerService.IsLocalConnectionId(died.DiedByOwnerId))
-                {
-                    foreach (var item in GameManager.Instance.player.inventory.itemInventory.items)
-                    {
-                        var actualItem = item.Value;
-                        actualItem.ProcOnHitEffects(damageContainer);
-                    }
-                }
+                // OB-37. A client used to proc all of its on-hit items here, once per kill of its
+                // own: the only way they ran at all, since the host ran its own items on every
+                // teammate hit. The host now runs the teammate's on-hit items on each of their
+                // hits (HitItemOwnership), so this would proc them a second time, client-side.
 
                 if (enemy.IsStageBoss() && !enemy.IsFinalBoss()) //Manually invoke boss defeated event client side
                 {

@@ -72,19 +72,35 @@ namespace MegabonkTogether.Patches.Projectiles
 
             if (isServer)
             {
-                var owner = playerManagerService.GetNetPlayerByWeapon(__instance.weaponBase);
+                // OB-41. The inventory store rather than the spawned avatars: it still answers at the
+                // portal, where ResetForNextLevel clears the avatars while projectiles are in flight.
+                var weapon = __instance.weaponBase;
+                var ownerId = playerManagerService.GetWeaponOwnerId(weapon);
 
                 // OB-14. A null lookup leaves the hit attributed to whoever the tracker already
                 // had -- on the host, the host -- which is how a teammate's weapon ends up in the
                 // host's damage panel. The existing anomaly counters cannot see this: a null sets
                 // nothing, so it is not a pairing anomaly, and the 2026-08-17 host log reported
                 // zero anomalies while the panel was demonstrably wrong.
-                TrackerAttributionDiagnostics.RecordWeaponOwnerLookup(owner != null);
+                TrackerAttributionDiagnostics.RecordWeaponOwnerLookup(ownerId.HasValue);
 
-                if (owner != null)
+                if (ownerId.HasValue)
                 {
-                    trackerService.SetCurrentPlayerId(owner.ConnectionId);
+                    trackerService.SetCurrentPlayerId(ownerId.Value);
                     __state = true;
+                }
+                else
+                {
+                    var localWeapons = GameManager.Instance?.player?.inventory?.weaponInventory?.weapons;
+                    if (weapon != null && localWeapons != null && localWeapons.ContainsValue(weapon))
+                    {
+                        TrackerAttributionDiagnostics.RecordOwnWeaponHit();
+                    }
+                    else if (TrackerAttributionDiagnostics.TakeUnknownSample())
+                    {
+                        TrackerAttributionDiagnostics.LogUnknownWeaponHit(
+                            __instance.gameObject?.name ?? "projectile", weapon == null, weapon?.weaponData?.eWeapon.ToString());
+                    }
                 }
             }
 

@@ -40,10 +40,9 @@ namespace MegabonkTogether.Patches.Items
     /// place each hit's procs run. Without that the procs that already reached the host through a
     /// client's forward would now run twice.</para>
     ///
-    /// <para><b>Not covered.</b> The items' own numbers still read the host's stats: for example
-    /// <c>ItemGlovesLightning.GetDamage</c> scales by a <c>MyPlayer</c> field, and crit comes from the
-    /// static <c>PlayerStats.GetStat</c>. A hit the host cannot attribute (UNRESOLVED-WEAPON) still
-    /// runs the host's items, as before.</para>
+    /// <para><b>Stats.</b> The items' numbers come from the teammate too: OB-38's GetStat postfix
+    /// covers the stats they read, and baseDamage is swapped around the redirected call. A hit the
+    /// host cannot attribute to anyone still runs the host's items, as before.</para>
     ///
     /// <para><b>UNVERIFIED.</b> Not run in-game.</para>
     /// </summary>
@@ -51,44 +50,28 @@ namespace MegabonkTogether.Patches.Items
     {
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
-        private static readonly ITrackerService trackerService = Plugin.Services.GetService<ITrackerService>();
-
-        /// <summary>
-        /// Owner of the weapon whose damage container is being built. GetDamageContainer runs
-        /// PreAttack before any tracker scope exists for the 33 hit sites outside ProjectileBase.
-        /// </summary>
-        private static uint? preAttackWeaponOwner;
 
         private static bool loggedRedirect = false;
 
-        internal static void BeginDamageContainer(WeaponBase weaponBase)
-        {
-            preAttackWeaponOwner = null;
-            if (!IsHostSession() || weaponBase == null)
-            {
-                return;
-            }
-
-            preAttackWeaponOwner = playerManagerService.GetNetPlayerByWeapon(weaponBase)?.ConnectionId;
-        }
-
-        internal static void EndDamageContainer() => preAttackWeaponOwner = null;
-
         /// <summary>Host only: the teammate's item inventory when this hit is theirs, else null.</summary>
-        internal static ItemInventory TeammateInventoryFor(ItemInventory instance, uint? explicitOwner)
+        internal static ItemInventory TeammateInventoryFor(ItemInventory instance, out uint owner)
         {
-            if (!IsHostSession() || !IsLocal(instance))
+            owner = 0;
+            if (!IsLocal(instance))
             {
                 return null;
             }
 
-            var owner = explicitOwner ?? trackerService.GetCurrentPlayerId();
-            if (!owner.HasValue || playerManagerService.IsLocalConnectionId(owner.Value))
+            // The weapon scope when one is open (GetDamageContainer, where PreAttack runs before
+            // any tracker scope exists), else the tracker. See TeammateCombatStats.
+            var teammateId = TeammateCombatStats.CurrentTeammate();
+            if (!teammateId.HasValue)
             {
                 return null;
             }
 
-            var teammate = playerManagerService.GetNetPlayerByNetplayId(owner.Value)?.Inventory?.itemInventory;
+            owner = teammateId.Value;
+            var teammate = playerManagerService.FindPlayerInventory(owner)?.itemInventory;
             if (teammate == null)
             {
                 return null;
@@ -97,21 +80,16 @@ namespace MegabonkTogether.Patches.Items
             if (!loggedRedirect)
             {
                 loggedRedirect = true;
-                Plugin.Log.LogInfo($"[items] OB-37: running {owner.Value}'s on-hit items for their hit instead of the host's (logged once per session).");
+                Plugin.Log.LogInfo($"[items] OB-37: running {owner}'s on-hit items for their hit instead of the host's (logged once per session).");
             }
 
             return teammate;
         }
 
-        internal static uint? PreAttackOwner => preAttackWeaponOwner;
-
         internal static bool IsClientSession()
             => synchronizationService.HasNetplaySessionStarted() && !(synchronizationService.IsServerMode() ?? false);
 
         internal static void ResetDiagnostics() => loggedRedirect = false;
-
-        private static bool IsHostSession()
-            => synchronizationService.HasNetplaySessionStarted() && (synchronizationService.IsServerMode() ?? false);
 
         private static bool IsLocal(ItemInventory instance)
         {
@@ -134,14 +112,25 @@ namespace MegabonkTogether.Patches.Items
                 return false;
             }
 
-            var teammate = HitItemOwnership.TeammateInventoryFor(__instance, null);
+            var teammate = HitItemOwnership.TeammateInventoryFor(__instance, out var owner);
             if (teammate == null)
             {
                 return true;
             }
 
-            // Re-enters this prefix with the teammate's inventory, which is not local, so it runs.
-            teammate.PostDamage(dc);
+            // OB-38. Several on-hit items (Thunder, Cursed and Blood Mitts) scale by
+            // MyPlayer.baseDamage, a raw field no GetStat postfix can reach.
+            var savedBaseDamage = TeammateCombatStats.EnterBaseDamage(owner);
+            try
+            {
+                // Re-enters this prefix with the teammate's inventory, which is not local, so it runs.
+                teammate.PostDamage(dc);
+            }
+            finally
+            {
+                TeammateCombatStats.ExitBaseDamage(savedBaseDamage);
+            }
+
             return false;
         }
 
@@ -149,7 +138,7 @@ namespace MegabonkTogether.Patches.Items
         [HarmonyPatch(nameof(ItemInventory.PreAttack))]
         public static bool PreAttack_Prefix(ItemInventory __instance, DamageContainer dc, StatComponents itemModifierStatComponents, ref StatComponents __result)
         {
-            var teammate = HitItemOwnership.TeammateInventoryFor(__instance, HitItemOwnership.PreAttackOwner);
+            var teammate = HitItemOwnership.TeammateInventoryFor(__instance, out _);
             if (teammate == null)
             {
                 return true;
@@ -166,14 +155,14 @@ namespace MegabonkTogether.Patches.Items
         [HarmonyPrefix]
         [HarmonyPatch(nameof(WeaponUtility.GetDamageContainer),
             new[] { typeof(WeaponBase), typeof(ProjectileBase), typeof(Enemy), typeof(Vector3), typeof(float) })]
-        public static void GetDamageContainer_Prefix(WeaponBase weaponBase)
-            => HitItemOwnership.BeginDamageContainer(weaponBase);
+        public static void GetDamageContainer_Prefix(WeaponBase weaponBase, out TeammateCombatStats.WeaponScope __state)
+            => __state = TeammateCombatStats.EnterWeapon(weaponBase);
 
         [HarmonyFinalizer]
         [HarmonyPatch(nameof(WeaponUtility.GetDamageContainer),
             new[] { typeof(WeaponBase), typeof(ProjectileBase), typeof(Enemy), typeof(Vector3), typeof(float) })]
-        public static void GetDamageContainer_Finalizer()
-            => HitItemOwnership.EndDamageContainer();
+        public static void GetDamageContainer_Finalizer(TeammateCombatStats.WeaponScope __state)
+            => TeammateCombatStats.ExitWeapon(__state);
     }
 
     /// <summary>

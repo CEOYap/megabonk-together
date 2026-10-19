@@ -112,6 +112,32 @@ namespace MegabonkTogether.Services
             }
         }
 
+        /// <summary>
+        /// OB-41. Of the unresolved hits, the ones from the host's own weapons. Those are expected,
+        /// and mixing them into the count is why "read the share, not the count" was needed.
+        /// </summary>
+        private static int ownWeaponHits;
+
+        private static int loggedUnknownSamples;
+
+        /// <summary>
+        /// OB-41. A projectile hit whose weapon nobody holds, neither the host nor any teammate's
+        /// inventory: it runs with the host's stats and items. The first few per session are
+        /// described, so the next run names the projectile kinds that cause it.
+        /// </summary>
+        internal static void RecordOwnWeaponHit() => Interlocked.Increment(ref ownWeaponHits);
+
+        /// <summary>True for the first few unknown hits per session; read names only when it is.</summary>
+        internal static bool TakeUnknownSample() => Interlocked.Increment(ref loggedUnknownSamples) <= 5;
+
+        internal static void LogUnknownWeaponHit(string projectileType, bool weaponNull, string weaponName)
+        {
+            Plugin.Log.LogInfo(
+                $"[attribution] OB-41: a {projectileType} hit has no owner -- weaponBase " +
+                (weaponNull ? "null" : $"'{weaponName}', held by no player") +
+                ". It counts as the host's (stats, items, kill).");
+        }
+
         private static string lastOverwrite = "none";
 
         internal static void RecordSet(uint? previous, uint incoming)
@@ -198,9 +224,11 @@ namespace MegabonkTogether.Services
             var crossThread = Interlocked.Exchange(ref crossThreadCalls, 0);
             var unresolved = Interlocked.Exchange(ref unresolvedWeaponHits, 0);
             var resolved = Interlocked.Exchange(ref resolvedWeaponHits, 0);
+            var own = Interlocked.Exchange(ref ownWeaponHits, 0);
+            var unknown = unresolved - own;
 
             if ((overwrites | redundant | strayUnsets | unbalanced | crossThread) == 0
-                && unresolved == 0)
+                && unknown <= 0)
             {
                 return; // nothing to say; do not spam a healthy session
             }
@@ -212,11 +240,11 @@ namespace MegabonkTogether.Services
                 $"unset-while-clear: {strayUnsets}, " +
                 $"redundant-set: {redundant}, " +
                 $"cross-thread: {crossThread}, " +
-                $"UNRESOLVED-WEAPON: {unresolved} of {unresolved + resolved} hit(s). " +
+                $"UNRESOLVED-WEAPON: {unknown} of {unresolved + resolved} hit(s) ({own} more were the host's own). " +
                 "Only UNBALANCED-UNSET and overwrite-while-set misattribute credit. " +
-                "UNRESOLVED-WEAPON is OB-14: the hit stayed attributed to whoever the tracker " +
-                "already had, which on the host is the host. Some are expected -- the host's own " +
-                "weapons resolve to no net player -- so read the share, not the count. " +
+                "UNRESOLVED-WEAPON is OB-14/OB-41: a hit whose weapon nobody holds, which runs as " +
+                "the host's. The host's own weapons are counted separately now (OB-41), so any " +
+                "UNRESOLVED-WEAPON is a teammate hit that lost its owner. " +
                 "See P1-5 in docs/netplay/01-critical-fixes.md and OB-14 in 08-observed-bugs.md.");
         }
 
@@ -227,6 +255,8 @@ namespace MegabonkTogether.Services
             Interlocked.Exchange(ref firstThreadId, 0);
             Interlocked.Exchange(ref unresolvedWeaponHits, 0);
             Interlocked.Exchange(ref resolvedWeaponHits, 0);
+            Interlocked.Exchange(ref ownWeaponHits, 0);
+            Interlocked.Exchange(ref loggedUnknownSamples, 0);
             Interlocked.Exchange(ref overwriteWhileSet, 0);
             Interlocked.Exchange(ref redundantSet, 0);
             Interlocked.Exchange(ref unsetWhileClear, 0);

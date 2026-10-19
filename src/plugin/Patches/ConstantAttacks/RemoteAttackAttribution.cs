@@ -39,13 +39,14 @@ namespace MegabonkTogether.Patches.ConstantAttacks
                 return false;
             }
 
-            var owner = playerManagerService.GetNetPlayerByWeapon(weaponBase);
-            if (owner == null)
+            // OB-41: the inventory store, which survives a level change.
+            var owner = playerManagerService.GetWeaponOwnerId(weaponBase);
+            if (!owner.HasValue)
             {
                 return false;
             }
 
-            trackerService.SetCurrentPlayerId(owner.ConnectionId);
+            trackerService.SetCurrentPlayerId(owner.Value);
             return true;
         }
 

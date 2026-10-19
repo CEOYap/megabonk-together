@@ -52,10 +52,11 @@ namespace MegabonkTogether.Patches.ConstantAttacks
             // teammate's projectiles; the finalizer clears it.
             if (isHost && __instance.weaponBase != null)
             {
-                var owner = playerManagerService.GetNetPlayerByWeapon(__instance.weaponBase);
-                if (owner != null)
+                // OB-41: the inventory store, which survives a level change.
+                var owner = playerManagerService.GetWeaponOwnerId(__instance.weaponBase);
+                if (owner.HasValue)
                 {
-                    trackerService.SetCurrentPlayerId(owner.ConnectionId);
+                    trackerService.SetCurrentPlayerId(owner.Value);
                     __state = true;
                 }
             }

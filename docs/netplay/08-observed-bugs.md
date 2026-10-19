@@ -3779,9 +3779,176 @@ subsection.
   `MyPlayer`, which is the host, even when the teammate's copy procs. That is the same as before
   for the host's own items.
 
+**2026-10-20 follow-up: three of these gaps are closed.**
+
+- **Stats.** The items' numbers now come from the teammate: [OB-38](#ob-38) covers `GetStat`, and
+  `baseDamage` is swapped around the redirected `PostDamage`.
+- **Heals.** None of the 27 on-hit or pre-attack item bodies heals or buffs the player (all 27
+  decompiled). The heals were in global listeners, which [OB-39](#ob-39) covers.
+- **Unattributed hits.** The two causes found are fixed: the portal gap ([OB-41](#ob-41)) and
+  debuff ticks ([OB-40](#ob-40)).
+- **Zap.** The client-only Zap damage is fixed by OB-39 too.
+- **Removed: the client's per-kill proc.** `OnReceivedEnemyDied` used to call `ProcOnHitEffects` on
+  every item the client held, for each of its own kills. That was the only way a client's on-hit
+  items ever ran. With the host now running them on every hit, it would double them, so it is gone.
+
 **UNVERIFIED, not run in-game.** To confirm, give a teammate an on-hit item the host lacks (Thunder
 Mitts, Big Bonk, Spicy Meatball). Then check three things:
 
 - **The teammate's panel** shows that item at their level, with damage growing with their hits.
 - **The host's items** no longer appear in `OB-14: kept` lines on the client.
 - **The host's log** carries the `[items] OB-37` line.
+
+
+<a name="ob-38"></a>
+## OB-38 — The host built every teammate's hits from the host's own stats — **FIXED 2026-10-20, not yet confirmed in play**
+
+**Decompiled, build 21750826.** Every stat read on a hit is the static `PlayerStats.GetStat(EStat)`.
+It takes no player and answers for the local one. The host builds every teammate's hits, so those
+hits read the host's stats:
+
+| What | Stat (EStat) | Where it is read |
+|---|---|---|
+| Damage | DamageMultiplier (12) | `WeaponUtility.GetDamage`, `GetNewDamage`, the burn and poison debuffs |
+| Crits | CritChance (18), CritDamage (19) | `GetDamageContainer`, `GetCritChance`, `GetCritDamageMultiplier` |
+| Knockback | KnockbackMultiplier (24) | `GetKnockback`, Eagle Claw |
+| Elite damage | EliteDamageMultiplier (23) | `Enemy` |
+| Poison | PoisonDamageMultiplier (56) | `DebuffPoison` |
+
+Some numbers bypass `GetStat` entirely:
+
+- **`baseDamage`.** Several on-hit items (Thunder, Cursed and Blood Mitts) and `DebuffFire` read
+  `MyPlayer.baseDamage` as a raw field. Per `MyPlayer.CalculateBaseDamage`, that field is
+  `defaultBaseDamage` plus the character level, so it only differs between players with shared XP
+  off.
+- **Item modifiers.** With item modifiers present, `GetNewDamage` reads the local player's
+  DamageMultiplier stat components directly, not through `GetStat`.
+
+**Fixed:**
+
+- **Sync.** `PlayerStatsSyncService.TrackedStats` now also carries the combat stats above, plus
+  Fire, Ice and Lightning damage, BurnChance, FreezeChance and EffectDurationMultiplier.
+  `baseDamage` travels under key 1000. That is not an EStat; `PlayerStatsChanged`'s keyed
+  dictionary exists to carry extra keys, and a peer on an older build stores it and never reads it.
+  There is no wire change.
+- **The override** (`Patches/Items/TeammateCombatStats.cs`). A postfix on `GetStat` returns the
+  teammate's synced value for those stats only, and only while one of their hits is in scope:
+  - **A weapon accessor called with their weapon.** `GetDamage`, `GetCritChance`,
+    `GetCritDamageMultiplier`, `GetKnockback`, `GetDamageProjectile` and the weapon
+    `GetDamageContainer` take the owner from their argument.
+  - **Otherwise, the tracker.** That covers projectile hits, auras, their on-hit items and their
+    debuff ticks.
+- **What is never substituted.** Drop chances, gold, XP and the host's own movement keep reading
+  the host.
+- **The item-modifier path.** `GetNewDamage` with modifiers is rescaled by the ratio of the two
+  DamageMultipliers. That is exact for a multiplicative modifier and close for an additive one.
+- **Log.** `[stats] OB-38: building <id>'s hit from their own combat stats` prints once per session.
+
+**UNVERIFIED, not run in-game.**
+
+- **To confirm:** give a teammate a much higher damage or crit build than the host's. Their end
+  screen should track their build rather than the host's.
+- **Known:** the OB-1 stats (Projectiles, Size, Bounces) keep their own per-accessor correction.
+
+<a name="ob-39"></a>
+## OB-39 — Hit and kill listeners on items and passives fired for everyone's hits, on every machine — **FIXED 2026-10-20, not yet confirmed in play**
+
+**Decompiled.** These listeners are subscribed to the static enemy-hit and enemy-death events.
+Each machine raises those events for every hit and kill applied there, whoever made it, and holds
+a live copy of every player's items and passive. So every copy reacted to every player's events,
+with the effect landing on the local player:
+
+| Listener | VA | Effect | Before |
+|---|---|---|---|
+| `PlayerHealth.OnEnemyDamaged`, `TryLifestealHit` | `0x180429320`, `0x18042A330` | lifesteal heal | the host healed off everyone's hits, each client off every replayed hit |
+| `ItemDemonBlade.OnEnemyDamaged` | `0x1804409B0` | heal on crit | same |
+| `ItemKevin.OnEnemyDamaged` | `0x18045F900` | counts hits, then damages its own player | same |
+| `ItemDemonicSoul`, `ItemDemonicBlood.OnEnemyDied` | `0x180454910`, `0x180454280` | kill stacks | stacked on everyone's kills |
+| `ItemJoesDagger.OnEnemyDamage` | `0x18045ED60` | stacks for its pre-attack bonus | every copy stacked |
+| `ItemBorgor.OnEnemyDied` | `0x18043BCE0` | burger drop | one roll per player per kill |
+| `ItemSoulHarvester.OnEnemyDied` | `0x180465B70` | death projectile | one per player per kill; on clients, client-side |
+| Zap, Plague, Bullseye passives | `0x1804800F0`, `0x18047B730`, `0x180474EA0` | damage | every copy; on clients, damage applied there only |
+| `WeaponPassiveBloodMagic.OnEnemyDied` | `0x1804334C0` | weapon stacks | every copy |
+
+**Fixed** in `Patches/Items/EventListenerOwnership.cs`, with two rules depending on where the
+effect lives:
+
+- **Owner's machine.** For effects on a player (heals, self-damage, stat stacks), only the local
+  player's copy runs, and only for its own hit or kill. Clients own their HP, and their stats
+  reach the host through `PlayerStatsChanged`.
+- **Host.** For effects in the simulation (damage, projectiles, pickups, stacks that feed a hit
+  the host builds), only the host runs them, and only the copy belonging to whoever made the hit
+  or kill.
+
+"Whose hit" is the tracker. On the host, that is the attacker the hit was scoped to; null means
+the host. On a client, it is the replay's `AttackerId` or the death's `DiedByOwnerId`.
+
+**Known effect:** a client's lifesteal now rolls once per replayed message. The host combines hits
+into one message per enemy per update (OB-34), so a client gets about 10% fewer rolls than hits at
+the measured 1.0–1.3 hits per message.
+
+**UNVERIFIED, not run in-game.** Two things to watch:
+
+- **Lifesteal.** The host should no longer heal off a teammate's hits.
+- **Zap.** A teammate's Zap should still zap, now on the host.
+
+The classification of each listener comes from reading its decompiled body.
+
+<a name="ob-40"></a>
+## OB-40 — A teammate's burn and poison ticked as the host's — **FIXED 2026-10-20, not yet confirmed in play**
+
+**Decompiled:**
+
+- **`Enemy.AddDebuff`** (`0x1804AB190`) buffers the debuff.
+- **Every type ticks through the base `EnemyDebuff.Tick`** (`0x1804A9E20`); subclasses override
+  only `MyTick`.
+- **A debuff remembers only its enemy and its ticks left**, not who applied it.
+
+So every tick ran unattributed. On the host that meant the host's DamageMultiplier,
+PoisonDamageMultiplier and `baseDamage`, the host's kill credit for a damage-over-time kill, and
+the host's damage panel.
+
+**Fixed** in `Patches/Enemies/DebuffAttribution.cs`:
+
+- **Record.** On the host, `AddDebuff` records the attacker the tracker holds, per enemy and debuff
+  type.
+- **Reopen.** `Tick` reopens that scope when nothing else holds the tracker, and swaps
+  `baseDamage` for the burn debuff.
+- **Latest application wins.** A host or unattributed re-application drops the record. Several
+  players stacking one debuff are credited to the last one who applied it.
+- **Cleared on a level change.**
+
+**UNVERIFIED, not run in-game.**
+
+<a name="ob-41"></a>
+## OB-41 — Some teammate hits had no owner and ran as the host's — **FIXED 2026-10-20 (two causes), not yet confirmed in play**
+
+"Some hits still use the host's items" meant hits the host could not trace to a player. Those run
+with the host's stats, items, lifesteal and kill credit.
+
+**Causes found:**
+
+- **The level change.** `GetNetPlayerByWeapon` searches the spawned avatars, and
+  `ResetForNextLevel` clears them at the portal while teammate projectiles are still in flight.
+  This is the 2026-10-19 OB-14 Wireless Dagger row.
+- **Debuff ticks.** See [OB-40](#ob-40).
+- **An unguarded dereference.** `GetNetPlayerByWeapon` also dereferenced `Inventory` unguarded. A
+  NetPlayer gets its inventory a step after it spawns, so in that window it could throw inside a
+  hit prefix.
+
+**Fixed:**
+
+- **A lookup that survives the level change.** The five attribution sites (projectile hit, aura
+  tick, constant-attack scopes, the hit-level note, and OB-38's weapon scope) now use
+  `PlayerManagerService.GetWeaponOwnerId`, which reads the inventory store.
+- **The crash.** `GetNetPlayerByWeapon` is null-guarded.
+- **The diagnostic counts what matters.** UNRESOLVED-WEAPON used to include the host's own weapons,
+  which is why its log line said to "read the share, not the count". The host's own hits are now
+  counted separately, so any UNRESOLVED-WEAPON is a teammate hit that lost its owner.
+- **Samples.** The first five per session log
+  `[attribution] OB-41: a <projectile> hit has no owner -- weaponBase ...`, naming the projectile
+  kind for the next fix.
+
+**Not covered.** A teammate's item `Tick` effects on the host (Cursed Doll, Bob, Holy Book and the
+like) still run unattributed; they are a separate path (`RemoteItemCopies`). **UNVERIFIED, not
+run in-game.**

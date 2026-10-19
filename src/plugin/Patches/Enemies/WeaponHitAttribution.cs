@@ -57,8 +57,8 @@ namespace MegabonkTogether.Patches.Enemies
                 return;
             }
 
-            var owner = weaponBase == null ? null : playerManagerService.GetNetPlayerByWeapon(weaponBase);
-            notedOwner = owner?.ConnectionId;
+            // OB-41: the inventory store, which survives a level change.
+            notedOwner = playerManagerService.GetWeaponOwnerId(weaponBase);
             notedHit = hit == null ? System.IntPtr.Zero : hit.Pointer;
         }
 

@@ -347,6 +347,8 @@ namespace MegabonkTogether.Scripts
             Services.BossDiagnostics.Reset();
             Patches.RunStatsPatches.ResetDiagnostics();
             Patches.Items.HitItemOwnership.ResetDiagnostics();
+            Patches.Items.TeammateCombatStats.ResetDiagnostics();
+            Patches.Enemies.DebuffAttribution.Clear();
             Services.PickupLifetimeDiagnostics.Reset();
             playerStatsSyncService?.Reset();
             desyncDetectorService?.Reset();
