@@ -3165,6 +3165,30 @@ added with the next one that lands, and cleared on session reset.
 **UNVERIFIED:** what produces the XP inside the barrier (likely the stage ending, LIKELY not
 decompiled). **Confirms fixed as:** no `level host N / local M` lines after a stage transition.
 
+### 2026-10-19 — why a level gap blocks the run, and re-convergence
+
+**Reported by the owner:** with levels apart, one player sits on "Waiting for other player(s)" after
+every level-up, until the shared-experience failsafe releases it, or until the other reaches the same
+level, which a five-level gap never does.
+
+**Mechanism: SE-6.** The barrier expects every reward window on every peer (shared XP normally makes
+both level up together), and `EncounterService.IsClosable()` waits for a report from every player. A
+peer that is behind has no level-up of its own, so no window and nothing to report; only a dead player
+auto-reports (`PopReward_Prefix` / `AddEncounter_Prefix`). Each extra level-up on the peer that is
+ahead therefore waits the full failsafe.
+
+**Fix: re-converge the totals instead of tolerating drift.** `AddXp` already carries the sender's
+total (`Xp`) next to the gain. On receipt the gain is added and, if the sender's total is still
+higher, ours is raised to it (`[xp] behind the shared total by N; raising ...`), then `AddXp(0)` runs
+the level-up check. It cannot over-count: the sender's total is a sum of real gains and can only lack
+some of ours. Because gains arrive `ReliableOrdered`, ours is only ever below it after a genuine loss,
+so the line marks exactly the drift cases. Any lost XP is recovered on the next message, so a gap
+lasts one pickup, not the run.
+
+**SE-6 itself stays open:** a player who legitimately has no window (any future asymmetric reward)
+would still hold the barrier until the failsafe. Fixing that needs per-round participant lists.
+
+
 ### Related, not a mod bug: the bot could not finish a revive fight
 
 Same run, third revive at the final stage: the bot pressed the coffin, then stayed `Reviving` until

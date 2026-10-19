@@ -5617,6 +5617,20 @@ namespace MegabonkTogether.Services
             {
                 playerXp.xp += amount;
 
+                // OB-31. Re-converge on the sender's total when ours is lower. Xp is the sender's total
+                // after this gain: a sum of real gains that can only be MISSING some of ours still in
+                // flight, so it never exceeds the true shared total and raising to it cannot
+                // over-count. Without this, any gain that was never shared (a barrier window, any
+                // path that bypasses AddXp) left the peers levels apart for the rest of the run, and
+                // every level-up on the peer that was ahead held both at the shared-experience
+                // barrier, waiting for a pick from a player who had no window to pick in, until the
+                // failsafe released it (SE-6).
+                if (xp.Xp > playerXp.xp)
+                {
+                    Plugin.Log.LogInfo($"[xp] behind the shared total by {xp.Xp - playerXp.xp}; raising {playerXp.xp} -> {xp.Xp} (level {playerXp.level}).");
+                    playerXp.xp = xp.Xp;
+                }
+
                 // Amount 0 adds nothing; it is what runs the level-up check against the new total.
                 playerXp.AddXp(0);
             }
