@@ -2142,6 +2142,45 @@ still add to our row, but at our real level, not as a LVL 0 row.
 - Each peer's log carries one `OB-14: kept '<source>' off our damage panel` line per teammate source
   it dropped. The line's `session started` value names the state it happened in.
 
+### 2026-10-19, second run — the filter works; one gap at the portal, and what it uncovered
+
+Same setup, with `63a7b36` in. Both clients' panels have no LVL 0 rows. The host's has one:
+**Wireless Dagger, LVL 0, 24**. That weapon belongs to Player2.
+
+**The filter is catching real leaks.**
+
+| Peer | Lines | Whose sources |
+|---|---|---|
+| Host | `LightningStaff` (Player3's) | a teammate's |
+| Player2 | `GlovePower`, `IceCube`, `Bonker`, `SpicyMeatball` | the **host's** items, each with `replaying True` |
+
+**The gap.** The host logged `OB-14: recording 'BluetoothDagger' as our damage ... unattributed` on
+the line right after `Cleared all player cards`. That is the portal into the final arena:
+`ResetForNextLevel` had just cleared the spawned avatars, and a dagger still in flight landed with no
+avatar left to match. The scan now reads the teammates' *inventories*
+(`PlayerManagerService.GetRemoteInventories`), which survive the level change, instead of the
+spawned avatars.
+
+**What the Player2 lines uncovered, decompiled.** These were the host's own items, replayed on
+Player2 under Player2's id. So on the host, the host's items had proced inside a hit that the
+tracker attributed to Player2. That is how the game is built:
+
+- **`Enemy.DamageFromPlayerWeapon`** (VA `0x1804AC700`) calls `Damage` and then
+  `MyPlayer.Instance.inventory.itemInventory.PostDamage(dc)`. That is the **local** player's
+  on-hit items, whoever owns the weapon.
+- **`WeaponUtility.GetDamageContainer`**, both overloads (`0x180434A50`, `0x180434FF0`), runs the
+  local player's `ItemInventory.PreAttack`. It also reads crit chance and crit damage from the
+  static `PlayerStats.GetStat`.
+- **So the host is the only player whose on-hit items proc.** Every teammate weapon hit the host
+  simulates gets the host's pre-attack modifiers, the host's crit stats and the host's on-hit
+  procs, and those are credited to the teammate.
+
+The panel side of that is now filtered. **The gameplay side is open and LIKELY:** a teammate's own
+on-hit items do not proc from their weapons on the host, and the host's do. A teammate's items
+that the client runs locally still reach the host through the client's item forward (Player2's
+Thunder Mitts and Zap rows), so not every item is affected.
+**UNVERIFIED in play** beyond the panel evidence above.
+
 ## OB-15 — The client's NullReferenceException storm — **FIXED and CONFIRMED in play (2026-10-12)**
 
 > Confirmed by absence: zero exceptions on both peers across the 2026-10-07, 10-08, 10-11 and
@@ -3587,7 +3626,7 @@ the god-mode plugin):
   `[Logging.Disk] WriteUnityLog`, which defaults to `false` and is a separate gate from
   `[Logging] UnityLogListening`. See [`05-local-testing.md`](05-local-testing.md).
 
-## OB-35 — Clients throw a NullReferenceException every frame from the tumbleweed interpolator — **FIXED 2026-10-19, not yet confirmed in play**
+## OB-35 — Clients throw a NullReferenceException every frame from the tumbleweed interpolator — **FIXED and CONFIRMED in play (2026-10-19)**
 
 **Observed 2026-10-19**, Desert, three players (host plus two test bots). Each client's log has about
 290 copies of one exception and the host's has none:
@@ -3630,3 +3669,55 @@ The first copies appear right after the stage-2 boss died.
 `TumbleWeedInterpolator` exception on any client. A `[tumbleweed] OB-35: dropped` line means the
 backstop caught a tumbleweed destroyed mid-level without a despawn message, which is worth a look of
 its own.
+
+**Confirmed, 2026-10-19 second run.** The run went Desert stages 2–3 and on to the final arena.
+Both clients' logs have zero `TumbleWeedInterpolator` exceptions, against about 290 each in the
+previous run. No `[tumbleweed] OB-35: dropped` line appeared, so the clear on a level change was
+enough on its own.
+
+## OB-36 — Falling off the final arena desyncs every position on that peer — **FIXED 2026-10-19, not yet confirmed in play**
+
+**Observed 2026-10-19**, three players, final arena. The final boss's HP matched on all three peers
+at every sample. Its position matched for the first three samples, then both clients' copies sat at
+**about 1.9 times the host's coordinates on every axis**, for the rest of the fight:
+
+| Host | Both clients |
+|---|---|
+| (−3, 49, 13) | (−5, 93, 27) |
+| (−53, 45, −8) | (−101, 87, −15) |
+| (−72, 42, 14) | (−137, 81, 27) |
+
+A fixed ratio on all three axes is not drift. It is two peers dequantizing over different ranges:
+`Quantizer` maps positions over ±`WorldSize.x / 2`, so the same short decodes to a coordinate
+scaled by the ratio of the two sizes.
+
+**Cause:**
+
+- **The final arena's range was never stored as its own.** `MapGenerationFinalBoss` sets the
+  range to 600, but `OriginalWorldSize` keeps the previous stage's map size, set by
+  `MapGenerationController`.
+- **A fall off the map restores that stale size.** `PlayerMovementPatches.TeleportPlayerBackToBounds_Prefix`
+  restores `OriginalWorldSize`. Its callers, by xref on VA `0x180343870`, are
+  `InteractableGhostBossLeave.Teleport` (leaving the graveyard boss room) and
+  `WorldColliderTrigger.OnCollisionStay`: the out-of-bounds trigger.
+- **So one peer leaves the shared range.** Falling off the arena put that peer on the old Desert
+  size while everyone else stayed on 600. From then on every position it sent was mis-scaled, and
+  so was every position it received.
+- **Graveyard has the same shape.** Its range is 5000, but the restore went back to the raw map
+  size.
+
+**LIKELY rather than confirmed.** No log line said which peer hit the trigger. Both bots switched
+between the same two samples, and they follow the host closely and teleport to it when stuck. The
+ratio is consistent with the Desert map's size against 600, but that size is not in the log.
+
+**Fixed:**
+
+- **`OriginalWorldSize` now means "this level's range".** `MapGenerationFinalBoss` sets it to 600,
+  and `MapGenerationController` sets it to whatever range it applied (5000 on Graveyard), so every
+  restore goes back to the range the other peers use.
+- **The restore logs once.** It now prints
+  `[world] OB-36: teleported back to bounds; position range A -> B`. A and B should be equal
+  everywhere except when leaving the graveyard boss room (7500 -> 5000).
+
+**UNVERIFIED, not run in-game.** Confirmed when a fall off the final arena logs `600 -> 600` and the
+`[boss] ... sees` positions keep matching across peers.

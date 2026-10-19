@@ -105,16 +105,17 @@ namespace MegabonkTogether.Patches.MapGeneration
 
             if (__instance.__1__state == 3)
             {
-                if (MapController.runConfig.mapData.eMap == Assets.Scripts._Data.MapsAndStages.EMap.Graveyard)
-                {
-                    Plugin.Instance.SetWorldSize(new UnityEngine.Vector3(5000f, 5000f, 5000f)); //Is the crypt outside of the map ? Using a large size fix Quantization issues
-                }
-                else
-                {
-                    Plugin.Instance.SetWorldSize(__instance._worldSize_5__5);
-                }
+                var levelWorldSize = MapController.runConfig.mapData.eMap == Assets.Scripts._Data.MapsAndStages.EMap.Graveyard
+                    ? new UnityEngine.Vector3(5000f, 5000f, 5000f) //Is the crypt outside of the map ? Using a large size fix Quantization issues
+                    : __instance._worldSize_5__5;
 
-                Plugin.Instance.OriginalWorldSize = __instance._worldSize_5__5;
+                Plugin.Instance.SetWorldSize(levelWorldSize);
+
+                // OB-36. What the restores (StopDungeon, TeleportPlayerBackToBounds) go back to, so it
+                // must be the range this level quantizes with, not the raw map size. The raw size here
+                // meant falling off the Graveyard map moved that peer from 5000 to the map size while
+                // everyone else stayed on 5000.
+                Plugin.Instance.OriginalWorldSize = levelWorldSize;
             }
         }
     }
