@@ -559,7 +559,7 @@ the host's `Complete` postfix sends `ChargeShrineCompleted` (union tag **79**), 
 completes the same shrine on receipt. The counter follows, since `A_Charged` is raised inside
 `Complete`. Trade-off: a shrine a client fills and the host does not stays unrewarded on the client.
 
-## OB-7 — Desert final-boss pylons do not exist for clients — **REOPENED 2026-10-18, now FIXED in code, not yet confirmed in play**
+## OB-7 — Desert final-boss pylons do not exist for clients — **FIXED (fixed ids) and CONFIRMED in play (2026-10-19)**
 
 **Reported:** on the Desert final boss the pylons do not appear or work for non-host clients. **The
 Forest final boss is fine.** That contrast is the whole diagnosis.
@@ -664,7 +664,7 @@ not found` line.
 ---
 
 <a name="ob-8"></a>
-## OB-8 — The Desert final boss does not move for clients, and its HP differs — **REOPENED 2026-10-19; root cause found by decompile and FIXED, not yet confirmed in play**
+## OB-8 — The Desert final boss does not move for clients, and its HP differs — **FIXED (ready-barrier spawn) and CONFIRMED in play (2026-10-19)**
 
 **Reported:** alongside OB-7, the Desert final boss was completely static on the non-host peer.
 Forest's final boss behaved correctly.
@@ -3140,6 +3140,40 @@ on the client look frozen apart from moving.
 
 **Not changed:** projectiles have their own far-distance handling (zero opacity, `ffb8c44`), which was
 not part of this report.
+
+<a name="ob-31"></a>
+
+## OB-31 — Levels drift apart at a stage transition, and never come back — **FIXED 2026-10-19, not yet confirmed in play**
+
+**Reported 2026-10-19** (owner hosting, test bot as client): "level discrepancy which makes my gameplay
+not smooth". Every level-up opens a shared-experience reward window for both players, so a peer that
+is ahead makes the other sit through extra pauses.
+
+**Evidence.** The client's desync detector: one level apart off and on through the run (27 / 28 up to
+39 / 40, re-converging), then **39 / 40 before the final arena's ready barrier and 42 / 47 after it**,
+for the rest of the run. The one-level wobble is gains in flight near a threshold; the jump is not.
+
+**Cause — same hole as OB-8.** `PlayerXpPatches.AddXp_Postfix` opened with
+`if (!HasNetplaySessionStarted()) return;`. During a stage transition's ready barrier the session is
+not Started, so every XP gain in that window stayed local. Shared XP replicates gains, not totals
+(see OB-20 and the shared-XP notes), so a gain that is never sent is never recovered.
+
+**Fix.** The postfix gates on `HasNetplaySessionInitialized`, so barrier-window gains are sent. The
+receiver may have no player yet while its scene loads; such a gain is held (`pendingSharedXp`) and
+added with the next one that lands, and cleared on session reset.
+
+**UNVERIFIED:** what produces the XP inside the barrier (likely the stage ending, LIKELY not
+decompiled). **Confirms fixed as:** no `level host N / local M` lines after a stage transition.
+
+### Related, not a mod bug: the bot could not finish a revive fight
+
+Same run, third revive at the final stage: the bot pressed the coffin, then stayed `Reviving` until
+the end. The new `[boss]` lines show the revive ghost **in sync** (same id, HP and position on both
+peers, all three ghosts); the bot was parked at the coffin by design while the ghost wandered ~40 u
+away, out of its weapons' reach (5.75M HP, about 4k lost a minute). Fixed in the bot: it now chases
+the ghost during the revive fight. Separately worth a look: the ghost's HP scales with run time and
+revive count (`RebalanceIfNeededReviverEnemy`: x1/6, x1/3, x1/2 ...), 5.75M at the third final-stage
+revive, which may be a lot for one surviving player.
 
 ## Confirmed in play 2026-10-18, outside the numbered entries
 
