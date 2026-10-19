@@ -1454,7 +1454,15 @@ namespace MegabonkTogether.Services
 
         private void OnReceivedSpawnedEnemy(SpawnedEnemy spawnedEnemy)
         {
-            if (!HasNetplaySessionStarted())
+            // Ready as well as Started: Ready is this peer's ready barrier, with the new stage loaded.
+            // The host starts as soon as its barrier releases and immediately spawns the held final
+            // boss (OB-8), but each client starts only when the host's start message reaches it, so
+            // that spawn can arrive while a client is still Ready. It used to be dropped here: on
+            // 2026-10-19 one of two bots never got the final boss ("enemies 1/0" in its digest, the
+            // boss's special attacks "not found"), so its fight and pylons never started. Queued
+            // spawns wait for Started anyway (PendingEnemySpawnRoutine), and LoadingNextLevel, where a
+            // late spawn from the old stage would leak into the new one, still drops.
+            if (currentState != State.Started && currentState != State.Ready)
             {
                 return;
             }
@@ -1782,6 +1790,14 @@ namespace MegabonkTogether.Services
                     break;
                 case EWeapon.Sniper:
                     var sniperProj = IL2CPP.PointerToValueGeneric<ProjectileSniper>(proj.Pointer, false, false);
+
+                    // The muzzle can be missing when the shot is spawned (no weaponAttack yet, or an
+                    // attack without one): 2026-10-19 host, 5 NullReferenceExceptions here, and each
+                    // one meant that shot was never sent to the clients. Fall back to the projectile's
+                    // own transform rather than lose the shot.
+                    var sniperMuzzle = sniperProj.weaponAttack != null && sniperProj.weaponAttack.muzzle != null
+                        ? sniperProj.weaponAttack.muzzle.transform
+                        : instance.transform;
                     message = new SpawnedSniperProjectile
                     {
                         Id = netplayId,
@@ -1789,8 +1805,8 @@ namespace MegabonkTogether.Services
                         Rotation = Quantizer.Quantize(instance.transform.eulerAngles),
                         Position = Quantizer.Quantize(instance.transform.position),
                         Weapon = (int)instance.weaponBase.weaponData.eWeapon,
-                        MuzzlePosition = Quantizer.Quantize(sniperProj.weaponAttack.muzzle.transform.position),
-                        MuzzleRotation = Quantizer.Quantize(sniperProj.weaponAttack.muzzle.transform.eulerAngles),
+                        MuzzlePosition = Quantizer.Quantize(sniperMuzzle.position),
+                        MuzzleRotation = Quantizer.Quantize(sniperMuzzle.eulerAngles),
                     };
                     break;
                 default:

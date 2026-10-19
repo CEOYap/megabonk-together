@@ -783,6 +783,19 @@ client.
 
 ---
 
+### 2026-10-19 — follow-up: a client still in its barrier dropped the held boss
+
+Three-player run (host plus two test bots): the held spawn worked on the host (`final boss spawn held`
+→ `spawning the held final boss` → `flag 36`), one bot got the boss, the other did not: its digest read
+`enemies 1/0`, the boss's special attacks arrived "not found", and with no boss its fight never
+started its pylons (9 × `Pylon object not found`). **Cause:** `OnReceivedSpawnedEnemy` dropped every
+spawn unless this client was `Started`, and a client starts only when the host's start message
+reaches it, after the host has already spawned the boss. **Fixed:** spawns are also queued while
+`Ready` (the barrier, new stage loaded); the queue still only builds enemies once `Started`, and
+`LoadingNextLevel` still drops, so nothing from the old stage leaks in.
+
+---
+
 <a name="ob-9"></a>
 ## OB-9 — Enemy max health is never replicated — cause corrected, **FIXED and CONFIRMED in play (2026-08-17)**
 
@@ -886,7 +899,7 @@ fine, and widening the fix to a path with no reported symptom risks changing som
 ---
 
 <a name="ob-10"></a>
-## OB-10 — Clients emit host-only-send warnings by the thousand — **one source found and fixed 2026-10-18 (LightningStrike); not yet confirmed at zero**
+## OB-10 — Clients emit host-only-send warnings by the thousand — **FIXED and CONFIRMED (2026-10-19): session total 0 on host and both clients**
 
 Not player-visible, found in the logs. The client emitted **1,841** of these in one session, first
 at line 4149 and continuing to the end of the run.
