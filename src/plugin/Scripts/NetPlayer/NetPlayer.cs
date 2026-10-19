@@ -714,11 +714,22 @@ namespace MegabonkTogether.Scripts.NetPlayer
 
         public void ToggleWeapon(EWeapon eWeapon, bool enabled)
         {
+            // A toggle can arrive for an avatar rebuilt at a stage transition before its inventory
+            // is filled in, or for a weapon it does not hold yet. The final boss toggles weapons
+            // right after the arena loads, which is exactly that window: 2026-10-19, one bot threw a
+            // NullReferenceException here on every toggle. Nothing to toggle is not an error.
+            var weapons = Inventory?.weaponInventory?.weapons;
+            if (weapons == null || !weapons.ContainsKey(eWeapon))
+            {
+                Plugin.Log.LogDebug($"[netplayer] {connectionId}: skipped toggling {eWeapon} ({(weapons == null ? "no inventory yet" : "weapon not held")}).");
+                return;
+            }
+
             playerManagerService.AddGetNetplayerPositionRequest(connectionId);
             try
             {
 
-                var weapon = Inventory.weaponInventory.weapons[eWeapon];
+                var weapon = weapons[eWeapon];
 
                 // OB-19. WeaponInventory.A_WeaponToggled is a STATIC event: a toggle on ANY
                 // inventory notifies every listener, including the LOCAL player's AuraAttacks
