@@ -724,6 +724,13 @@ namespace MegabonkTogether.Services
             currentState = State.Started;
             EventManager.OnGameStarted();
 
+            // Test bot: once a run is under way the lobby is closed, so a bot copy must not join it
+            // from the room-code file (it did on 2026-10-19 and landed mid-final-boss with no lobby).
+            if (IsServerMode() ?? false)
+            {
+                BotRoomCodeFile.Delete();
+            }
+
             var pause = UiManager.Instance.pause; //Disable restart buttons in pause menu
             var buttons = Il2CppFindHelper.RuntimeGetComponentsInChildren<MyButton>(pause);
             foreach (var button in buttons)

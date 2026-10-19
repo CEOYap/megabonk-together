@@ -164,6 +164,17 @@ namespace MegabonkTogether.Scripts.Bot
                 return;
             }
 
+            // Through the Play Together button's JoinLobby, the path an accepted Steam invite takes
+            // (SteamTicker): it opens the lobby panel and then joins behind it. Calling
+            // INetplaySessionService.Join directly connected with no panel, so there was no Ready
+            // button, and a panel opened later started a second session over the first. JoinLobby
+            // does nothing while a panel is already up, so wait for none.
+            var playTogether = Plugin.Instance.PlayTogetherButton;
+            if (playTogether == null || Modal.LobbyPanel.Current != null)
+            {
+                return;
+            }
+
             var code = Helpers.BotRoomCodeFile.ReadFresh(System.TimeSpan.FromMinutes(10));
             if (code == null)
             {
@@ -174,7 +185,7 @@ namespace MegabonkTogether.Scripts.Bot
             State = BotState.Joining;
             joinStartTime = Time.unscaledTime;
             Plugin.Log.LogInfo($"[bot] joining room {code}.");
-            netplaySessionService.Join(code);
+            playTogether.JoinLobby(code);
         }
 
         /// <summary>Gives up on a join that has not reached the lobby, so the bot can try again.</summary>
@@ -187,6 +198,15 @@ namespace MegabonkTogether.Scripts.Bot
 
             Plugin.Log.LogWarning($"[bot] join did not reach the lobby in {JOIN_TIMEOUT_SECONDS:F0}s; cancelling and retrying.");
             netplaySessionService.Cancel();
+
+            // The join opened a lobby panel; a retry waits for no panel, so take it down the way
+            // returning to the menu does (WindowManagerPatches.WindowOpened_Postfix).
+            var panel = Modal.LobbyPanel.Current;
+            if (panel != null)
+            {
+                GameObject.Destroy(panel.gameObject);
+            }
+
             ResetRun();
             State = BotState.Idle;
             nextJoinCheckTime = Time.unscaledTime + 2f;
