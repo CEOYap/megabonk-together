@@ -15,6 +15,7 @@ namespace MegabonkTogether.Helpers
         private static MethodInfo getSharedMaterials;
         private static MethodInfo getSharedMaterial;
         private static MethodInfo sphereCastAll;
+        private static MethodInfo overlapSphere;
         private static MethodInfo getComponentsInChildren;
         private static MemberInfo getComponents;
 
@@ -97,6 +98,43 @@ namespace MegabonkTogether.Helpers
             return Array.Empty<RaycastHit>();
         }
 
+
+        /// <summary>
+        /// <c>Physics.OverlapSphere(Vector3, float, int)</c>, resolved at runtime like
+        /// <see cref="RuntimeSphereCastAll"/>. PhysicsModule compiles from unity-libs, where the method
+        /// returns <c>Collider[]</c>; the game's returns an IL2CPP array, so a direct call threw
+        /// <c>MissingMethodException</c> on every call (the test bot, 2026-10-19: 8,735 times, and it
+        /// never moved).
+        /// </summary>
+        public static Collider[] RuntimeOverlapSphere(Vector3 position, float radius, int layerMask)
+        {
+            if (overlapSphere == null)
+            {
+                overlapSphere = AccessTools.GetDeclaredMethods(typeof(Physics))
+                    .FirstOrDefault(m =>
+                    {
+                        if (m.Name != "OverlapSphere") return false;
+                        var parameters = m.GetParameters();
+                        return parameters.Length == 3 &&
+                               parameters[0].ParameterType == typeof(Vector3) &&
+                               parameters[1].ParameterType == typeof(float) &&
+                               parameters[2].ParameterType == typeof(int);
+                    });
+
+                if (overlapSphere == null)
+                {
+                    Plugin.Log.LogError("Could not find Physics.OverlapSphere(Vector3, float, int)");
+                    return Array.Empty<Collider>();
+                }
+            }
+
+            var result = overlapSphere.Invoke(null, new object[] { position, radius, layerMask });
+
+            if (result is Il2CppArrayBase<Collider> array)
+                return [.. array];
+
+            return Array.Empty<Collider>();
+        }
 
         private static bool EnsureSetSharedMaterials()
         {

@@ -61,6 +61,7 @@ namespace MegabonkTogether.Scripts.Bot
         private Vector3 coffinPosition;
         private bool pressedCoffin;
         private float nextCoffinLookupTime;
+        private bool detoursDisabled;
 
         private bool announced;
         private float lastStatusTime = -999f;
@@ -187,6 +188,7 @@ namespace MegabonkTogether.Scripts.Bot
         {
             characterChosen = false;
             confirmPresses = 0;
+            detoursDisabled = false;
             BotInput.Clear();
             OwnerPosition = null;
             ownerTransform = null;
@@ -291,7 +293,7 @@ namespace MegabonkTogether.Scripts.Bot
                 return;
             }
 
-            var detour = BotTargets.FindDetour(me.transform.position, owner, 3f * ModConfig.BotFollowDistance.Value, detect);
+            var detour = FindDetourSafely(me.transform.position, owner);
             if (detour != null)
             {
                 detourTarget = detour;
@@ -303,6 +305,30 @@ namespace MegabonkTogether.Scripts.Bot
 
             var target = BotSteering.PickFollowPoint(owner, me.transform.position, ModConfig.BotFollowDistance.Value, Time.time);
             SteerTo(me, target, owner);
+        }
+
+        /// <summary>
+        /// Detours are optional; following is not. A throw here once stopped the bot moving at all
+        /// (it came before the steering call every frame), so the search is fenced off: the first
+        /// failure is logged and detours stay off for the session.
+        /// </summary>
+        private BaseInteractable FindDetourSafely(Vector3 bot, Vector3 owner)
+        {
+            if (detoursDisabled)
+            {
+                return null;
+            }
+
+            try
+            {
+                return BotTargets.FindDetour(bot, owner, 3f * ModConfig.BotFollowDistance.Value, detect);
+            }
+            catch (System.Exception ex)
+            {
+                detoursDisabled = true;
+                Plugin.Log.LogWarning($"[bot] detour search failed, detours off for this session: {ex.GetType().Name}: {ex.Message}");
+                return null;
+            }
         }
 
         /// <summary>The game's current interactable for the bot's player, by instance id; null when none.</summary>
@@ -583,7 +609,10 @@ namespace MegabonkTogether.Scripts.Bot
             nextLobbyActionTime = Time.unscaledTime + 1f;
 
             // The ready button lives on the lobby panel; on a path without one there is nothing to press.
-            if (Modal.LobbyPanel.Current != null && !lobbyViewService.IsLocalPlayerReady)
+            // Needs the local player: pressing earlier only logs "Cannot toggle readiness".
+            if (Modal.LobbyPanel.Current != null
+                && playerManagerService.GetLocalPlayer() != null
+                && !lobbyViewService.IsLocalPlayerReady)
             {
                 lobbyViewService.ToggleLocalReady();
                 Plugin.Log.LogInfo("[bot] ready.");

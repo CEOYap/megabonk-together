@@ -68,7 +68,8 @@ namespace MegabonkTogether.Scripts.Bot
                 return null;
             }
 
-            var hits = Physics.OverlapSphere(bot, maxRange, detect.whatIsInteractable);
+            // Not Physics.OverlapSphere directly: see Il2CppFindHelper.RuntimeOverlapSphere.
+            var hits = Helpers.Il2CppFindHelper.RuntimeOverlapSphere(bot, maxRange, detect.whatIsInteractable);
             if (hits == null)
             {
                 return null;
