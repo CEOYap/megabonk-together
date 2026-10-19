@@ -138,6 +138,7 @@ namespace MegabonkTogether.Services
                 foreach (var bucket in pending.Values)
                 {
                     send(bucket.Message);
+                    BandwidthDiagnostics.RecordEnemyDamageAggregated(bucket.Hits);
                 }
             }
             finally
@@ -173,6 +174,7 @@ namespace MegabonkTogether.Services
                 if (pending.Remove(key, out var bucket))
                 {
                     send(bucket.Message);
+                    BandwidthDiagnostics.RecordEnemyDamageAggregated(bucket.Hits);
                 }
             }
 
