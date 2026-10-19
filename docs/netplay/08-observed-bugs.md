@@ -3545,13 +3545,23 @@ the god-mode plugin):
 5. Final boss and stage boss deaths reach every client (OB-34's original symptom), and no client's
    `[boss]` HP drifts from the host's.
 
-**Seen while reading, not changed (UNVERIFIED, from code):**
+**Seen while reading (UNVERIFIED, from code):**
 
-- **A client's item hit may reach third peers twice.** On the host, `NetMessageRouter` rebroadcasts
-  a client's `EnemyDamaged` with `SendToAllClientsExcept(attacker)` (ReliableOrdered), and the host's
-  own replay of that hit goes through `Damage_Postfix` → `OnEnemyDamaged`, which forwards it to
-  every client. A third peer would apply it twice: doubled damage numbers, and doubled totals
-  wherever its damage panel counts other players' hits. Low rate since 3035c49, but worth checking.
+- **A client's item hit reached third peers twice — fixed 2026-10-19.** On the host,
+  `NetMessageRouter` rebroadcast a client's `EnemyDamaged` with `SendToAllClientsExcept(attacker)`
+  (ReliableOrdered), and the host's own replay of that hit went through `Damage_Postfix` →
+  `OnEnemyDamaged`, which forwards every hit it applies to every client. The origin got one copy,
+  each third peer two. The damage panel was not doubled: OB-14's `RunStats` prefix drops a
+  teammate's hits. The cost was two damage numbers per hit, plus a correctness risk. A replay that
+  drives the client's copy to 0 HP kills it, and `EnemyDied_Postfix` reports that death to the host,
+  so a doubled hit could end an enemy early for everyone. The rebroadcast also forwarded hits the
+  host never applied (paused by OB-13's gate, or already dead on the host). The router now only
+  applies the hit; the host's aggregated forward reaches every client, the origin included. The
+  origin needs that copy, because a client never applies its own hit. Confirms fixed as: in a
+  three-player run, a bot's item hit shows one damage number per tick on the other bot, not two,
+  and the host's `[bw]` `EnemyDamaged` sends/s equal the aggregation line's msgs/s. Before, the
+  rebroadcast added its own sends to that row.
+  Low rate since 3035c49, so this is hard to see by eye.
 - **Armor may be applied twice on a client.** `Enemy.Damage` writes the scaled damage back into the
   container, so the postfix forwards the post-armor value and the client's replay scales it again.
   Clients would then show smaller numbers and damage-panel totals than the host on armored enemies.
