@@ -346,6 +346,7 @@ namespace MegabonkTogether.Scripts
             Services.FrameTimeDiagnostics.Reset();
             Services.BossDiagnostics.Reset();
             Patches.RunStatsPatches.ResetDiagnostics();
+            Patches.Items.HitItemOwnership.ResetDiagnostics();
             Services.PickupLifetimeDiagnostics.Reset();
             playerStatsSyncService?.Reset();
             desyncDetectorService?.Reset();

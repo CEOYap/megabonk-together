@@ -3721,3 +3721,67 @@ ratio is consistent with the Desert map's size against 600, but that size is not
 
 **UNVERIFIED, not run in-game.** Confirmed when a fall off the final arena logs `600 -> 600` and the
 `[boss] ... sees` positions keep matching across peers.
+
+## OB-37 — A teammate's weapon hits ran the host's on-hit items, never their own — **FIXED 2026-10-19, not yet confirmed in play**
+
+**Found 2026-10-19** from OB-14's filter. On Player2, the host's items (`GlovePower`, `IceCube`,
+`Bonker`, `SpicyMeatball`) arrived in replays carrying Player2's id. See OB-14's "second run"
+subsection.
+
+**What the game does, decompiled (build 21750826).** A hit's item effects always come from
+`MyPlayer.Instance`, the local player:
+
+- **On-hit procs.** `Enemy.DamageFromPlayerWeapon` (`0x1804AC700`) and `DamageFromPlayerOther`
+  (`0x1804AC650`) call `Damage`, then the local `ItemInventory.PostDamage` (`0x180442BF0`). That
+  runs every on-hit item in the inventory it is called on, once more per Overpowered Lamp (EItem
+  26).
+- **Pre-attack modifiers.** Both `WeaponUtility.GetDamageContainer` overloads run the local
+  `ItemInventory.PreAttack` (`0x180442E90`).
+
+**What that did in netplay:**
+
+- **The host's items ran on everyone's hits.** The host simulates every player's weapons, so every
+  teammate hit got the host's pre-attack modifiers and on-hit procs, credited to the teammate.
+- **A teammate's on-hit items barely ran at all.** Clients do not run their own weapon hits:
+  `ProjectileBase.HitEnemy` and `CombatAura.FixedUpdate` return `isHost`. So a teammate's on-hit
+  items ran only where their own machine happened to call `PostDamage` itself.
+- **Where they did run, it was client-only damage.** The example here is Tony McZoom's Zap passive
+  (`PassiveAbilityZooma.OnEnemyDamage`, `0x1804800F0`). It is a listener on every enemy hit, so on a
+  client it fired inside the host's replayed hits and called `DamageFromPlayerOther`. That ran the
+  client's `PostDamage` (Player2's Thunder Mitts, `GloveLightning`) and applied damage on the client
+  only, while the replay had damage open.
+- **`RemoteItemCopies`' premise does not cover on-hit items.** Its doc says each player's own game
+  runs their items. That holds for `Tick` and event items, not for on-hit procs.
+
+**Fixed** in `Patches/Items/HitItemOwnership.cs`:
+
+- **Host.** When the tracker attributes the hit to a teammate, `PostDamage` and `PreAttack` on the
+  host's inventory run that teammate's inventory instead.
+  - For `PreAttack`, the owner comes from the `GetDamageContainer` weapon argument, because no
+    tracker scope exists yet at that point.
+  - `Enemy.DamageFromPlayerWeapon` now holds the `WeaponHitAttribution` scope across the whole
+    call, because that scope used to close when `Damage` returned, before `PostDamage` ran.
+- **Client.** It skips `PostDamage` entirely. A client applies no hits of its own, so the host is
+  now the one place each hit's procs run. Without this, procs that already reached the host
+  through a client's item forward would run twice.
+- **Log.** `[items] OB-37: running <id>'s on-hit items for their hit instead of the host's` prints
+  once per session.
+
+**Not covered:**
+
+- **Item numbers still read the host's stats.** For example, `ItemGlovesLightning.GetDamage`
+  scales by a `MyPlayer` field, and crit comes from the static `PlayerStats.GetStat`.
+- **Unattributed hits are unchanged.** A hit the host cannot attribute (`UNRESOLVED-WEAPON`) still
+  runs the host's items.
+- **Zap itself is unchanged.** A client's Zap passive still applies client-only damage inside a
+  replay. That is a separate defect, not fixed here.
+- **Heals go to the host.** On-hit items that heal or buff "the player", such as lifesteal, affect
+  `MyPlayer`, which is the host, even when the teammate's copy procs. That is the same as before
+  for the host's own items.
+
+**UNVERIFIED, not run in-game.** To confirm, give a teammate an on-hit item the host lacks (Thunder
+Mitts, Big Bonk, Spicy Meatball). Then check three things:
+
+- **The teammate's panel** shows that item at their level, with damage growing with their hits.
+- **The host's items** no longer appear in `OB-14: kept` lines on the client.
+- **The host's log** carries the `[items] OB-37` line.
