@@ -2362,7 +2362,8 @@ namespace MegabonkTogether.Services
             }
             else
             {
-                if (enemy.IsStageBoss() && !enemy.IsFinalBoss()) //Manually invoke boss defeated event client side
+                //Manually invoke boss defeated event client side. OB-44: only once no stage boss is left.
+                if (enemy.IsStageBoss() && !enemy.IsFinalBoss() && !IsAnotherStageBossAlive(enemySpawned.Key))
                 {
                     OnBossDefeated();
                 }
@@ -2418,7 +2419,8 @@ namespace MegabonkTogether.Services
                 // teammate hit. The host now runs the teammate's on-hit items on each of their
                 // hits (HitItemOwnership), so this would proc them a second time, client-side.
 
-                if (enemy.IsStageBoss() && !enemy.IsFinalBoss()) //Manually invoke boss defeated event client side
+                //Manually invoke boss defeated event client side. OB-44: only once no stage boss is left.
+                if (enemy.IsStageBoss() && !enemy.IsFinalBoss() && !IsAnotherStageBossAlive(died.EnemyId))
                 {
                     OnBossDefeated();
                 }
@@ -2452,6 +2454,36 @@ namespace MegabonkTogether.Services
         /// <para>Reset in <see cref="PrepareForNextLevel"/> and <see cref="Reset"/>, since each
         /// stage has its own boss and portal and per-run state must not cross a session (SE-2).</para>
         /// </summary>
+        /// <summary>
+        /// OB-44. The game opens a stage's portal only when EVERY boss its spawner spawned is gone
+        /// (decompiled: <c>InteractableBossSpawner.Interact</c>, VA 0x1804C5670, keeps the list
+        /// <c>SummonerController.SpawnStageBoss</c> returns, which holds <c>GameManager[+0x60] + 1</c>
+        /// bosses; <c>OnEnemyReleasedFromPool</c>, 0x1804C5B80, removes each and opens the portal
+        /// only once the list is empty and <c>CanSpawnPortal</c> holds). A client opened it on the
+        /// first stage-boss death. 2026-10-19: stage 2 spawned two Pharaoh2s; after the first died
+        /// both bots saw a portal and one walked through it with the second still alive on every
+        /// peer ("enemies 1/1"), while the host, correctly, had none.
+        /// </summary>
+        private bool IsAnotherStageBossAlive(uint dyingEnemyId)
+        {
+            foreach (var kv in enemyManagerService.GetAllRegisteredEnemies())
+            {
+                if (kv.Key == dyingEnemyId)
+                {
+                    continue;
+                }
+
+                var other = kv.Value;
+                if (other != null && other.IsStageBoss() && !other.IsFinalBoss() && !other.IsDead())
+                {
+                    logger.LogInfo($"[boss] OB-44: a stage boss died but another (id {kv.Key}) is still alive; the portal waits for it.");
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         private void OnBossDefeated()
         {
             if (hasHandledBossDefeatedThisStage)

@@ -4015,7 +4015,7 @@ teammate.
 
 | Kind | Items | Where it runs now | Stats |
 |---|---|---|---|
-| Stat only | Battery, Beacon, Boss Buster, Brass Knuckles, Clover, Echo Shard, Forbidden Juice, Giant Fork, Golden Glove, Gym Sauce, Key, Medkit, Oats, Old Mask, Pot, Pumpkin, Skuleg, Slippery Ring, Tactical Glasses, Time Bracelet, Turbo Socks, Unstable Transfusion, Wizard's Hat, Wrench, Shattered Wisdom, Moldy Gloves | owner's stats, on the owner's game | owner's; the host reads the synced combat set (OB-38) |
+| Stat only | Battery, Beacon, Boss Buster, Brass Knuckles, Clover, Echo Shard, Forbidden Juice, Giant Fork, Golden Glove, Gym Sauce, Key, Medkit, Oats, Old Mask, Pot, Pumpkin, Skuleg, Slippery Ring, Tactical Glasses, Time Bracelet, Turbo Socks, Unstable Transfusion, Wizard's Hat, Wrench, Shattered Wisdom | owner's stats, on the owner's game | owner's; the host reads the synced combat set (OB-38) |
 | On-hit / pre-attack (27 bodies) | Big Bonk, Bloody Cleaver, Dragonfire, Eagle Claw, Joe's Dagger, Giant Fork, the five Mitts, Grandma's Tonic, Ice Crystal, Ice Cube, Lightning Orb, Moldy Cheese, Phantom Shroud, Quin's Mask, Slutty Cannon, Snek, Spicy Meatball, Tactical Glasses, Unstable Transfusion, Weeb Headset, Boss Buster, Brass Knuckles | host, as the owner (OB-37); their ticks keep running on the host to reset proc caps | owner's, plus baseDamage, plus position (below) |
 | Hit or kill listeners | Demon Blade, Kevin, Demonic Soul and Blood (owner's game); Joe's Dagger, Borgor, Soul Harvester (host) | OB-39 | owner's |
 | Timed damage | Cursed Doll, Bob (Dead), Holy Book, Energy Core, Bob's Lantern, Electric Plug | owner's game only; hits forwarded and procced on the host (OB-42) | owner's (local) |
@@ -4054,3 +4054,44 @@ teammate.
 
 **UNVERIFIED, not run in-game.** First check: the BepInEx log at startup has no Harmony errors.
 This pass adds about 30 hooks, each checked against `dump.cs` names and parameters.
+
+
+<a name="ob-44"></a>
+## OB-44 — With two stage bosses, clients opened the portal after the first died — **FIXED 2026-10-20, not yet confirmed in play**
+
+**Reported 2026-10-19.** In stage 2, after the host killed the boss, the host saw no portal but
+both bots did. A bot walked through it and the run moved on.
+
+**What the logs show.** The host spawned **two** Pharaoh2s from one interaction (ids 233 and 234,
+the same frame, a unit apart). Then:
+
+- **One died.** Both clients logged `Boss defeated, activating portal.`
+- **The other was still alive** on every peer: the host's next sample showed 1 enemy, and the
+  desync digest read `enemies 1/1`.
+- **A bot used the portal** about 10 seconds after the spawn. The host correctly had none.
+
+**Decompiled (build 21750826):**
+
+- **`SummonerController.SpawnStageBoss`** (`0x180487C20`) spawns `GameManager[+0x60] + 1` bosses,
+  so more than one is vanilla.
+- **`InteractableBossSpawner.Interact`** (`0x1804C5670`) keeps the returned list.
+- **`OnEnemyReleasedFromPool`** (`0x1804C5B80`) removes each boss from the list. Only when the list
+  is empty, and `CanSpawnPortal` holds, does it activate the portal.
+- **`CanSpawnPortal`** (`0x1804C5540`) requires `MapController.index < runConfig.mapTierIndex` and
+  not the last stage.
+
+Ghidra's applied field names on this class are one slot off; the offsets were matched to
+`dump.cs`.
+
+**The defect.** A client opens the portal itself (`OnBossDefeated`). It did so on the first
+stage-boss death, from both its own `OnEnemyDied` and the host's `EnemyDied`.
+
+**Fixed.** Both call sites now open the portal only when no other living stage boss is
+registered. When one is still alive they log `[boss] OB-44: a stage boss died but another ... is
+still alive; the portal waits for it.`
+
+**Not changed.** A client still doesn't check `CanSpawnPortal`'s stage and tier condition. The host
+decides that, and the host's own run has matched on every stage so far.
+
+**UNVERIFIED, not run in-game.** To confirm, a stage with two bosses (stage 2 in this run) should
+show its portal on all peers only after the second boss dies.
