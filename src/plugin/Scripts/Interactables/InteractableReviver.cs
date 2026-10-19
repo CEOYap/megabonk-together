@@ -27,6 +27,9 @@ namespace MegabonkTogether.Scripts.Interactables
         /// <summary>The player this coffin revives. Read by the test bot to find the host's coffin.</summary>
         internal uint OwnerId => ownerId;
 
+        /// <summary>The revive fight's ghost once it has spawned, else null. Read by the test bot.</summary>
+        internal Enemy SpawnedGhost => spawned;
+
 
         protected void Awake()
         {

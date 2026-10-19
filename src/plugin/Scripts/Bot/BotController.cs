@@ -527,7 +527,16 @@ namespace MegabonkTogether.Scripts.Bot
                 return;
             }
 
-            SteerTo(me, coffinPosition, OwnerPosition ?? coffinPosition);
+            // During the revive fight, go after the ghost: it wanders, and a bot parked at the coffin
+            // could not reach it (2026-10-19: a 5.7M ghost lost ~4k HP a minute, 40u from the bot).
+            var target = coffinPosition;
+            var ghost = coffin != null ? coffin.SpawnedGhost : null;
+            if (pressedCoffin && ghost != null && ghost.hp > 0)
+            {
+                target = ghost.transform.position;
+            }
+
+            SteerTo(me, target, OwnerPosition ?? coffinPosition);
         }
 
         private void EndRevive()
