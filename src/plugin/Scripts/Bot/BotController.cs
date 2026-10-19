@@ -31,6 +31,14 @@ namespace MegabonkTogether.Scripts.Bot
         private INetplaySessionService netplaySessionService;
         private ILobbyViewService lobbyViewService;
         private float nextJoinCheckTime;
+        private float menuSince = -1f;
+        private float joinStartTime;
+
+        /// <summary>How long the main menu must have been up before the bot joins.</summary>
+        private const float MENU_SETTLE_SECONDS = 3f;
+
+        /// <summary>A join that has not reached the lobby by then is cancelled and retried.</summary>
+        private const float JOIN_TIMEOUT_SECONDS = 30f;
         private float nextLobbyActionTime;
         private bool characterChosen;
         private int confirmPresses;
@@ -134,7 +142,24 @@ namespace MegabonkTogether.Scripts.Bot
 
             nextJoinCheckTime = Time.unscaledTime + 1f;
 
-            if (netplaySessionService.IsBusy || synchronizationService.HasNetplaySessionInitialized())
+            // Only from a main menu that has been up a moment. Opening the "Menu" window runs
+            // ResetNetworking (WindowManagerPatches.WindowOpened_Postfix), so a join started while the
+            // game was still loading connected and was torn down at once when the menu appeared
+            // (2026-10-19: HandleMatchInfo True, then "Session ended" on the next line).
+            if (WindowManager.activeWindow == null || WindowManager.activeWindow.name != "Menu")
+            {
+                menuSince = -1f;
+                return;
+            }
+
+            if (menuSince < 0f)
+            {
+                menuSince = Time.unscaledTime;
+            }
+
+            if (Time.unscaledTime - menuSince < MENU_SETTLE_SECONDS
+                || netplaySessionService.IsBusy
+                || synchronizationService.HasNetplaySessionInitialized())
             {
                 return;
             }
@@ -145,10 +170,26 @@ namespace MegabonkTogether.Scripts.Bot
                 return;
             }
 
-            Helpers.BotRoomCodeFile.Delete();
+            // The file is kept until the bot reaches the lobby, so a failed join can retry.
             State = BotState.Joining;
+            joinStartTime = Time.unscaledTime;
             Plugin.Log.LogInfo($"[bot] joining room {code}.");
             netplaySessionService.Join(code);
+        }
+
+        /// <summary>Gives up on a join that has not reached the lobby, so the bot can try again.</summary>
+        private void CheckJoinTimeout()
+        {
+            if (Time.unscaledTime - joinStartTime < JOIN_TIMEOUT_SECONDS)
+            {
+                return;
+            }
+
+            Plugin.Log.LogWarning($"[bot] join did not reach the lobby in {JOIN_TIMEOUT_SECONDS:F0}s; cancelling and retrying.");
+            netplaySessionService.Cancel();
+            ResetRun();
+            State = BotState.Idle;
+            nextJoinCheckTime = Time.unscaledTime + 2f;
         }
 
         /// <summary>
@@ -175,6 +216,12 @@ namespace MegabonkTogether.Scripts.Bot
             if (State == BotState.Joining && initialized)
             {
                 State = BotState.InLobby;
+                Helpers.BotRoomCodeFile.Delete();
+                Plugin.Log.LogInfo("[bot] in the lobby.");
+            }
+            else if (State == BotState.Joining)
+            {
+                CheckJoinTimeout();
             }
 
             if (State == BotState.InLobby && started)
