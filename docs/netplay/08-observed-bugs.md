@@ -2889,6 +2889,37 @@ without touching the design question.
   Unity warnings never reach its log; a "0" there means nothing. The host copy has it `true` and
   logged 0 in the 2026-10-19 run.
 
+### 2026-10-19 — every old log surveyed; the caller is still unidentified
+
+All 11 logs in the owner's `megabonk_logs` folder (2026-10-08 to 10-18, all with `WriteUnityLog = true`):
+
+| Role | Runs | Warnings |
+|---|---|---|
+| Host | 6 | **0** every time |
+| Client | 5 | 178, 8,961, 4,819, 0, 2,507 |
+
+Every client run with warnings pairs with a host log carrying `SpawnedRocketProjectile` (39–118
+`[bw]` samples), and in the 2026-10-18 evening run those rockets were the **client's own** (its end
+screen: Slutty Rocket LVL 4; the host's listed it at LVL 0). That fits the design: a client never fires
+projectiles itself; the host simulates every weapon and sends each spawn back, the client's own
+included (`OnReceivedSpawnedProjectile` takes the local inventory when `OwnerId` is local). So on a
+client every rocket is a received one, and the player using rockets sees the most.
+
+**But the obvious caller is already blocked.** `RocketPatches.MyFixedUpdate_Prefix` (since
+`91d4673`, 2026-08-04, so in every log above) skips `Rocket.FixedUpdate`, and with it
+`StepMovement`'s `LookRotation`, for any rocket carrying the `ownerId` marker a received rocket gets.
+`ProjectileInterpolator` guards exact-zero vectors. The remaining call is therefore not proven, and the
+entry's rule stands: no fifth patch without the caller.
+
+**Why no log has ever named it:** `LogOutput.log` keeps Unity's message but not its stack, and the mod
+turned script stacks on only for Error / Exception / Assert. This warning is a plain Log message, so
+even `Player.log` never recorded a caller.
+
+**Next step (built 2026-10-19):** `[Diagnostics] LogUnityMessageStackTraces = true` (with
+`LogUnityStackTraces = true`) on the **client** for one rocket-heavy run, then read that machine's
+`%USERPROFILE%\AppData\LocalLow\Ved\Megabonk\Player.log`: each warning will carry the script stack
+that produced it.
+
 **Targeted form of option 2 now available:** a prefix on `Rocket.StepMovement` that returns false for
 a *remote* rocket on a client, leaving position and facing to the interpolator (which already guards
 its own `LookRotation`). Expiry still runs (`FixedUpdate` checks it after the call). **Cost:** the

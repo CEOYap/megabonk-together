@@ -30,6 +30,7 @@ namespace MegabonkTogether.Configuration
         public static ConfigEntry<bool> SteamNetSelfTest { get; private set; }
         public static ConfigEntry<bool> UseSteamTransport { get; private set; }
         public static ConfigEntry<bool> LogUnityStackTraces { get; private set; }
+        public static ConfigEntry<bool> LogUnityMessageStackTraces { get; private set; }
 
         public static void Initialize(ConfigFile config)
         {
@@ -192,6 +193,16 @@ namespace MegabonkTogether.Configuration
                 @"%USERPROFILE%\AppData\LocalLow\Ved\Megabonk\Player.log, which keeps " +
                 "the full trace. Off by default because it changes logging for the whole game, " +
                 "not just the mod."
+            );
+            LogUnityMessageStackTraces = config.Bind(
+                "Diagnostics",
+                "LogUnityMessageStackTraces",
+                false,
+                "Also record script stack traces for Unity's plain Log and Warning messages, such as " +
+                "'Look rotation viewing vector is zero' (OB-25), in Unity's player log at " +
+                @"%USERPROFILE%\AppData\LocalLow\Ved\Megabonk\Player.log. Needs LogUnityStackTraces " +
+                "on too. Off by default: it adds a stack to every message the game logs, so the " +
+                "player log grows quickly. Turn it on for one run, then off."
             );
             EncounterInputGraceSeconds = config.Bind(
                 "Gameplay",

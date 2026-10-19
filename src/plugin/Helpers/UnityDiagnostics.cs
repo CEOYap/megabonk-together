@@ -47,6 +47,15 @@ namespace MegabonkTogether.Helpers
                 Application.SetStackTraceLogType(LogType.Exception, StackTraceLogType.ScriptOnly);
                 Application.SetStackTraceLogType(LogType.Assert, StackTraceLogType.ScriptOnly);
 
+                // OB-25: the rocket warning is a plain Log message, so it never had a caller in any
+                // log. Separate switch, because this stacks every message the game logs.
+                if (Configuration.ModConfig.LogUnityMessageStackTraces.Value)
+                {
+                    Application.SetStackTraceLogType(LogType.Log, StackTraceLogType.ScriptOnly);
+                    Application.SetStackTraceLogType(LogType.Warning, StackTraceLogType.ScriptOnly);
+                    Plugin.Log.LogInfo("[diag] Unity Log and Warning messages now carry script stacks in Player.log too.");
+                }
+
                 applied = true;
                 Plugin.Log.LogInfo(
                     "[diag] Unity script stack traces enabled. Errors in this log now name their "
