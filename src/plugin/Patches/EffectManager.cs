@@ -209,25 +209,44 @@ namespace MegabonkTogether.Patches
         }
 
         /// <summary>
-        /// Prevent client spawning tumbleweeds 
+        /// OB-32. Only the host spawns tumbleweeds, and only once the session has started, so
+        /// every one it spawns is replicated by <c>InteractableTumbleWeed.OnEnable_Postfix</c>.
+        ///
+        /// <para><b>Why "initialized", not "started".</b> Decompiled: <c>MapEventsManager.FixedUpdate</c>
+        /// (VA <c>0x180499EC0</c>) calls <c>MapEventsDesert.Tick</c> (VA <c>0x180473EB0</c>) on every
+        /// Desert stage but the final arena, and <c>MyTime.Pause</c> does not stop MonoBehaviour
+        /// <c>FixedUpdate</c> - it only sets <c>paused</c> and switches physics to script mode.
+        /// <c>Tick</c> spawns when <c>lastSpawnedTumbleweedTime + 2.2 &lt;= MyTime.time</c>; a fresh
+        /// <c>MapEventsDesert</c> starts at 0 and <c>MyTime.time</c> is never reset per stage, so the
+        /// first tick of every Desert stage spawns one at once - inside the ready barrier. With the
+        /// old guard both peers ran it: the host's went out unreplicated (its despawn later logs
+        /// "TumbleWeed not found ... OnTumbleWeedDespawned", once per Desert stage in the 2026-10-19
+        /// host log), and the client kept one of its own that froze when the session started and
+        /// could never despawn.</para>
+        ///
+        /// <para>So: a client in a session never spawns one (it instantiates the host's from
+        /// <c>TumbleWeedSpawned</c> directly); the host drops a spawn before Started. Dropping is
+        /// enough - <c>Tick</c> has already moved <c>lastSpawnedTumbleweedTime</c> on, and the next
+        /// one comes 2.2 s after the barrier releases.</para>
         /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(EffectManager.SpawnTumbleWeeds))]
         public static bool SpawnTumbleWeeds_Prefix()
         {
-            if (!synchronizationService.HasNetplaySessionStarted())
+            if (!synchronizationService.HasNetplaySessionInitialized())
             {
                 return true;
             }
 
+            // Prefix-false on purpose: the host spawns them and the client receives TumbleWeedSpawned.
             var isHost = synchronizationService.IsServerMode() ?? false;
-
             if (!isHost)
             {
                 return false;
             }
 
-            return true;
+            // Prefix-false on purpose: before Started the OnEnable postfix does not replicate (see above).
+            return synchronizationService.HasNetplaySessionStarted();
         }
     }
 }
