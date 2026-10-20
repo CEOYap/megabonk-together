@@ -565,10 +565,9 @@ namespace MegabonkTogether.Scripts.Bot
         /// the owner died on the ground). Anything else, a miss or a hit far above or below,
         /// returns the reference. Triggers are ignored so the ray does not stop on pickups.
         /// </summary>
-        private static Vector3 GroundUnder(Vector3 point, Vector3 reference)
+        private static Vector3 GroundUnder(Vector3 point, Vector3 reference, float heightBand = 25f)
         {
             const float rayHeight = 80f;
-            const float heightBand = 25f;
 
             var origin = new Vector3(point.x, Mathf.Max(point.y, reference.y) + rayHeight, point.z);
             if (Physics.Raycast(origin, Vector3.down, out var hit, rayHeight * 3f, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore)
@@ -641,7 +640,15 @@ namespace MegabonkTogether.Scripts.Bot
                 return;
             }
 
-            var destination = owner + new Vector3(2f, 0.5f, 0f);
+            // OB-53: a spot beside the owner only if there is ground there at the owner's own height;
+            // otherwise exactly where the owner stands, which is known to be in the world. The bare
+            // "+2 on X" put the bot inside a wall next to the host and out of the map (2026-10-20,
+            // Forest: seven teleports in a minute, then it died out there and its coffin with it).
+            var destination = GroundUnder(owner + new Vector3(2f, 0f, 0f), owner, 3f);
+            if (destination == owner)
+            {
+                destination = owner + new Vector3(0f, 0.5f, 0f);
+            }
             me.transform.position = destination;
             var rb = me.playerMovement.rb;
             if (rb != null)

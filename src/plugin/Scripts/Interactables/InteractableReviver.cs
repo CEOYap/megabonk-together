@@ -1,4 +1,4 @@
-﻿using Assets.Scripts.Actors;
+using Assets.Scripts.Actors;
 using Assets.Scripts.Actors.Enemies;
 using Assets.Scripts.Managers;
 using Il2CppInterop.Runtime;
@@ -123,6 +123,7 @@ namespace MegabonkTogether.Scripts.Interactables
         {
             if (hasInteracted) return false;
             hasInteracted = true;
+            Plugin.Log.LogInfo($"[revive] OB-53: coffin for {ownerId} used; revive fight starting.");
 
             this.gameObject.GetComponent<Collider>().enabled = false;
 

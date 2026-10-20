@@ -4381,3 +4381,44 @@ Player2's record. The execute (`AddStacks`, OB-50) then ran unattributed.
 **Fixed.** While `DebuffBloodmark.OnEnemyDamaged` runs, `DebuffAttribution.OnAdded` ignores
 applications: a mark re-adding itself is not a new owner. The execute then reopens Player2's scope
 through OB-50. **UNVERIFIED, not run in-game.**
+
+
+<a name="ob-53"></a>
+## OB-53 — A bot teleported into a wall, died outside the map, and its coffin could not be reached — **FIXED 2026-10-20, not yet confirmed in play**
+
+**Reported 2026-10-20**, two-player Tier 1 Forest with a mortal bot, with a screenshot. The bot
+teleported toward the host but ended up outside the map. Then it died, and the host could not
+revive it.
+
+**From the logs:**
+
+- **Teleports.** The bot teleported to its owner **7 times** in about a minute.
+- **No out-of-bounds catch.** It logged no `[world] OB-36` line, so the game's out-of-bounds trigger
+  never caught it.
+- **No revive.** The host log has no trace of the coffin being used: no `OB-11` re-centre and no
+  revive-ghost spawn. Every earlier revive was a client using the host's coffin; this was the first
+  time the host tried to revive a client.
+
+**Cause, LIKELY.** It is a chain; the coffin's position was not logged.
+
+1. **The stuck-teleport lands beside the owner, blind.** It used `owner + (2, 0.5, 0)` with no
+   check. Beside the host's stone wall, that is inside geometry, and the bot fell out of the
+   playable area.
+2. **The coffin follows the body.** The mortal bot died out there, and `SpawnReviver` places the
+   coffin at the dead player's position, which was unreachable.
+
+**Fixed:**
+
+- **Bot teleport.** The spot beside the owner is used only if a downward ray finds ground there
+  within 3 units of the owner's height. Otherwise the bot lands exactly on the owner, which is a
+  known in-world position. `GroundUnder` takes the band as a parameter.
+- **Coffin (host).** If there is no ground directly under the death point (within 6 units), the
+  coffin is moved up to the first surface above it. A death on the surface, even under a tree,
+  stays put. Clients get the position through `SpawnedReviver`.
+- **Logging, so the next run settles the LIKELY:**
+  - `[revive] OB-53: coffin for <id> at <pos>` when a coffin is placed;
+  - `... died under the surface ...; coffin moved up to <pos>` when it is moved;
+  - `... coffin for <id> used; revive fight starting.` when it is used.
+
+**UNVERIFIED, not run in-game.** Confirmed when a mortal bot's coffin can be used by the host and
+the revive completes.

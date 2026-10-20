@@ -4820,6 +4820,17 @@ namespace MegabonkTogether.Services
         {
             var desertGraves = EffectManager.Instance.desertGraves;
 
+            // OB-53. The coffin goes where the player died, and the revive respawns them there. A
+            // player who died under the map (a bot teleported into a wall, 2026-10-20) left a coffin
+            // nobody could reach. The host places it on the surface above instead, and every client
+            // gets that position from SpawnedReviver.
+            if (IsServerMode() ?? false)
+            {
+                position = SnapCoffinToSurface(position, ownerConnectionId);
+            }
+
+            logger.LogInfo($"[revive] OB-53: coffin for {ownerConnectionId} at {position}.");
+
             // Declared outside the scope: the rest of this method uses it. The suppression only
             // needs to cover the Instantiate, which is what trips the spawn patches.
             GameObject desertGraveInstance;
@@ -4859,6 +4870,31 @@ namespace MegabonkTogether.Services
 
             GameObject.Destroy(interactable);
 
+        }
+
+        /// <summary>
+        /// OB-53. When the death point is under a surface, the first surface above it. A downward ray
+        /// from well above that only lands meaningfully higher than the death point means the player
+        /// died below the ground; a death on the surface hits at its own height and stays put.
+        /// </summary>
+        private Vector3 SnapCoffinToSurface(Vector3 position, uint ownerConnectionId)
+        {
+            // Standing on something: a normal death, even under a tree canopy. Leave it.
+            if (Physics.Raycast(position + Vector3.up, Vector3.down, 6f, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
+            {
+                return position;
+            }
+
+            const float rayHeight = 120f;
+            var origin = position + Vector3.up * rayHeight;
+            if (Physics.Raycast(origin, Vector3.down, out var hit, rayHeight * 2f, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore)
+                && hit.point.y > position.y + 3f)
+            {
+                logger.LogInfo($"[revive] OB-53: {ownerConnectionId} died under the surface at {position}; coffin moved up to {hit.point}.");
+                return hit.point + Vector3.up * 0.2f;
+            }
+
+            return position;
         }
 
         private void OnReceivedSpawnedReviver(SpawnedReviver reviver)
