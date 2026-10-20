@@ -4288,3 +4288,38 @@ teleported outside the map, and after the revive the host stood outside it too.
   (`BotInvincibilityPatches`). It ends only when the host wins or quits.
 
 **UNVERIFIED, not run in-game.**
+
+
+<a name="ob-50"></a>
+## OB-50 — A teammate's Bloodmark executes counted as the host's — **FIXED 2026-10-20, not yet confirmed in play**
+
+**Seen 2026-10-20.** This was a two-player Tier 1 Forest run: the host, plus Player2 played by hand
+with the bot off. The host's end-screen report had a `Bloodmark 213` row. The mark comes from
+Player2's Bloody Cleaver.
+
+**Decompiled (build 21750826):**
+
+- **`DebuffBloodmark.AddStacks`** (`0x1804A65F0`) is where the damage lands. It computes
+  `DamageMultiplier × baseDamageMultiplier × MyPlayer.baseDamage × stacks`, and executes the enemy
+  once that reaches its HP.
+- **`OnEnemyDamaged`** (`0x1804A68B0`) only re-queues the mark, when a hit brings the enemy below
+  it.
+- **`MyTick`** is an empty stub, and **`OnRemove`** (`0x1804A69A0`) only unsubscribes.
+
+So the execute happens neither inside the hit nor inside `EnemyDebuff.Tick`, which is all OB-40
+scopes. It ran unattributed on the host, with the host's DamageMultiplier and `baseDamage`.
+
+**Fixed.** `AddStacks` reopens the scope of whoever applied the mark, through the same
+`DebuffAttribution.BeginTick` as `Tick`. That gives the applier's tracker, their combat stats
+(OB-38) and their `baseDamage`.
+
+**Also from this run, all fine:**
+
+- **No LVL 0 rows** on either report.
+- **Cactus, Mirror and Cursed Doll** appear only on Player2's screen.
+- **Two filter catches.** The host's filter logged `kept 'Dragonfire'` once (one unattributed
+  Dragonfire hit kept off the host's panel), and no other teammate item leaked.
+- **Death and game over.** The run ended normally: Player2 died, a revive ghost spawned while only
+  the host was alive, and then the host died too.
+
+**UNVERIFIED, not run in-game.**

@@ -119,4 +119,28 @@ namespace MegabonkTogether.Patches.Enemies
         public static void Tick_Finalizer(DebuffAttribution.TickScope __state)
             => DebuffAttribution.EndTick(__state);
     }
+
+    /// <summary>
+    /// OB-50. Bloodmark (Bloody Cleaver) does its damage outside both the hit and the debuff tick.
+    /// <c>DebuffBloodmark.AddStacks</c> (VA 0x1804A65F0, decompiled) computes
+    /// <c>DamageMultiplier x baseDamageMultiplier x MyPlayer.baseDamage x stacks</c> and executes the
+    /// enemy once that reaches its HP; its <c>OnEnemyDamaged</c> (0x1804A68B0) only re-queues the mark
+    /// when a hit brings the enemy below it, and <c>MyTick</c> is an empty stub. So the execute ran
+    /// unattributed on the host, with the host's stats, and went on the host's panel: 2026-10-20, a
+    /// "Bloodmark 213" row on the host for a mark from Player2's Bloody Cleaver. Scoped to whoever
+    /// applied the mark, exactly as <c>EnemyDebuff.Tick</c> is. <b>UNVERIFIED.</b>
+    /// </summary>
+    [HarmonyPatch(typeof(Assets.Scripts.Game.Combat.EnemyDebuffs.Implementations.DebuffBloodmark))]
+    internal static class DebuffBloodmarkAttributionPatches
+    {
+        [HarmonyPrefix]
+        [HarmonyPatch(nameof(Assets.Scripts.Game.Combat.EnemyDebuffs.Implementations.DebuffBloodmark.AddStacks))]
+        public static void AddStacks_Prefix(Assets.Scripts.Game.Combat.EnemyDebuffs.Implementations.DebuffBloodmark __instance, out DebuffAttribution.TickScope __state)
+            => __state = DebuffAttribution.BeginTick(__instance);
+
+        [HarmonyFinalizer]
+        [HarmonyPatch(nameof(Assets.Scripts.Game.Combat.EnemyDebuffs.Implementations.DebuffBloodmark.AddStacks))]
+        public static void AddStacks_Finalizer(DebuffAttribution.TickScope __state)
+            => DebuffAttribution.EndTick(__state);
+    }
 }
