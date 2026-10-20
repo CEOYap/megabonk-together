@@ -91,7 +91,7 @@ namespace MegabonkTogether.Patches
         [HarmonyPatch(nameof(InteractablePortalFinal.Interact))]
         public static bool Interact_Prefix(InteractablePortalFinal __instance, ref bool __result)
         {
-            if (!endlessRunService.Active)
+            if (!endlessRunService.NextRoomKnown)
             {
                 return true;
             }
@@ -176,7 +176,7 @@ namespace MegabonkTogether.Patches
         private static readonly IEndlessRunService endlessRunService = Plugin.Services.GetService<IEndlessRunService>();
 
         private static bool In(EndlessRoom room)
-            => endlessRunService.Active && endlessRunService.CurrentRoom == room && synchronizationService.HasNetplaySessionInitialized();
+            => endlessRunService.NextRoomKnown && endlessRunService.CurrentRoom == room && synchronizationService.HasNetplaySessionInitialized();
 
         private static void LeaveRoom()
         {

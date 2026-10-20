@@ -3263,7 +3263,7 @@ namespace MegabonkTogether.Services
             if (isFinalPortal)
             {
                 // Endless: a final boss's portal leads to the next room, not to the end of the run.
-                TransitionToState(endlessRunService.Active ? GameEvent.PortalOpened : GameEvent.FinalPortalOpened);
+                TransitionToState(endlessRunService.NextRoomKnown ? GameEvent.PortalOpened : GameEvent.FinalPortalOpened);
             }
         }
 
@@ -3436,10 +3436,12 @@ namespace MegabonkTogether.Services
                 var finalPortal = Il2CppFindHelper.FindAllGameObjects().FirstOrDefault(go => go.GetComponent<InteractablePortalFinal>() != null).GetComponent<InteractablePortalFinal>(); //Find the componnt somehow instead of whole gameobject search
                 if (finalPortal != null)
                 {
+                    // Read before Interact: in Endless that already counts the stage change.
+                    var endlessExit = endlessRunService.NextRoomKnown;
                     using (Plugin.SuppressOutbound())
                     {
                         finalPortal.Interact();
-                        TransitionToState(endlessRunService.Active ? GameEvent.PortalOpened : GameEvent.FinalPortalOpened);
+                        TransitionToState(endlessExit ? GameEvent.PortalOpened : GameEvent.FinalPortalOpened);
                     }
                 }
                 else
@@ -5028,7 +5030,7 @@ namespace MegabonkTogether.Services
                 udpClientService.SendToAllClients(message, NetDelivery.ReliableOrdered);
 
                 // After RunStarted, so the first room reaches each client behind its run start.
-                endlessRunService.BeginRun(isHost: true);
+                endlessRunService.BeginRun(isHost: true, runConfig);
             }
         }
         private void OnReceivedRunStarted(RunStarted started)
@@ -5066,7 +5068,7 @@ namespace MegabonkTogether.Services
 
             Plugin.Instance.HideModal();
             MapController.StartNewMap(runConfig);
-            endlessRunService.BeginRun(isHost: false);
+            endlessRunService.BeginRun(isHost: false, runConfig);
         }
 
         private void OnReceivedPlayerDisconnected(PlayerDisconnected disconnected)

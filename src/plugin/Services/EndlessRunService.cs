@@ -1,3 +1,4 @@
+using Assets.Scripts.Game.Other;
 using Assets.Scripts.Managers;
 using BepInEx.Logging;
 using MegabonkTogether.Common.Messages.GameNetworkMessages;
@@ -38,8 +39,15 @@ namespace MegabonkTogether.Services
         /// <summary>Stage changes so far this run; 0 in the starting room.</summary>
         int Transitions { get; }
 
-        /// <summary>A run has started on this peer, its first stage already chosen by StartNewMap.</summary>
-        void BeginRun(bool isHost);
+        /// <summary>A run has started on this peer, with this config.</summary>
+        void BeginRun(bool isHost, RunConfig config);
+
+        /// <summary>
+        /// The next stage change's room is known here: always on the host, and on a client once the
+        /// host's room has arrived. An exit only becomes an Endless stage change when this holds;
+        /// otherwise it stays the game's own, so a missing room cannot strand a client.
+        /// </summary>
+        bool NextRoomKnown { get; }
 
         /// <summary>
         /// The game is about to load a stage. Returns whether the original may run: false when this
@@ -96,7 +104,9 @@ namespace MegabonkTogether.Services
 
         public int Transitions => transitions;
 
-        public void BeginRun(bool isHost)
+        public bool NextRoomKnown => Active && (isHost || received.ContainsKey(transitions + 1));
+
+        public void BeginRun(bool isHost, RunConfig config)
         {
             Clear();
             this.isHost = isHost;
@@ -106,11 +116,18 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            var map = MapController.currentMap;
-            var start = map == null ? null : EndlessRooms.FromStage(map.eMap, MapController.index, MapController.isFinalBossStage);
+            // From the config, not MapController: the host reaches here from StartNewMap's postfix,
+            // which also runs on the call its own prefix skipped while waiting for the lobby, before
+            // any map is set (2026-10-21: "no map stage 0" on the host, so the host ran without
+            // Endless while both clients waited for rooms that never came).
+            var map = config?.mapData ?? MapController.currentMap;
+            var index = config?.mapData != null && config.stageData != null
+                ? config.mapData.stages.IndexOf(config.stageData)
+                : MapController.index;
+            var start = map == null ? null : EndlessRooms.FromStage(map.eMap, index, false);
             if (!start.HasValue)
             {
-                logger.LogWarning($"[endless] Endless needs a Forest, Desert or Graveyard start (this run: {map?.eMap.ToString() ?? "no map"} stage {MapController.index}); off for this run.");
+                logger.LogWarning($"[endless] Endless needs a Forest, Desert or Graveyard start (this run: {map?.eMap.ToString() ?? "no map"} stage {index}); off for this run.");
                 return;
             }
 

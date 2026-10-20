@@ -340,6 +340,40 @@ Every exit is already synced: `InteractableUsed`, then each peer replays `Intera
 - **Graveyard:** the key door opens once every key is collected.
 - **Ghost King:** the fight starts, and its exit leads on.
 
+### First run, 2026-10-21: the host ran without Endless; both clients' runs ended
+
+**The run.** Tier 1 Graveyard, Endless and No Projectile Cap on. At the first crypt's exit, the
+host reached the surface, and both bots' games ended.
+
+**What the logs show.**
+
+- **Host:** `[endless] Endless needs a Forest, Desert or Graveyard start (this run: no map stage
+  0); off for this run.`
+- **Both clients:** `Endless Run on; starting room Crypt1`. At the crypt exit they logged `Stage
+  change 1 came before the host's room for it`. Then the game's own `LoadNextStage` threw
+  `IndexOutOfRangeException`: the Graveyard has one stage.
+
+**Cause.**
+
+- **The host started Endless too early.** It calls `BeginRun` from `OnRunStarted`, in
+  `StartNewMap`'s postfix. Harmony runs that postfix even on the call whose prefix returned false
+  while waiting for the lobby, so `MapController.currentMap` was still null there. The host turned
+  Endless off, sent no rooms, and took the vanilla crypt exit.
+- **The clients had no way back.** They had Endless on, so the exit patch turned the crypt exit
+  into a stage change with no room to go to.
+
+**Fixed:**
+
+- **The start comes from the run config.** `BeginRun` takes the `RunConfig` (`mapData`, and the
+  index of `stageData`), not `MapController` state.
+- **Exits need a known room.** An exit becomes an Endless stage change only when
+  `NextRoomKnown`: always on the host, and on a client once the host's room for the next change
+  has arrived. This covers the Graveyard exits and the final portal, and the matching session
+  state on both of its paths. Otherwise the game's own exit runs, the same as on a host without
+  Endless.
+
+**UNVERIFIED, not run in-game.**
+
 ### Phases
 
 | Phase | Scope | Risk |
