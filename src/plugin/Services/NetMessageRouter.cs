@@ -95,6 +95,9 @@ namespace MegabonkTogether.Services
                 case LobbySettings lobbySettings:
                     EventManager.OnLobbySettings(lobbySettings);
                     break;
+                case EndlessNextRoom endlessNextRoom:
+                    EventManager.OnEndlessNextRoom(endlessNextRoom);
+                    break;
                 case ChargeShrineCompleted chargeShrineCompleted:
                     EventManager.OnChargeShrineCompleted(chargeShrineCompleted);
                     break;

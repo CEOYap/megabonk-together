@@ -17,6 +17,7 @@ namespace MegabonkTogether.Configuration
         public static ConfigEntry<bool> AllowSavesDuringNetplay { get; private set; }
         public static ConfigEntry<bool> EnabledSharedExperience { get; private set; }
         public static ConfigEntry<bool> NoProjectileCap { get; private set; }
+        public static ConfigEntry<bool> EndlessRun { get; private set; }
         public static ConfigEntry<float> EncounterInputGraceSeconds { get; private set; }
         public static ConfigEntry<bool> LogAllocationRate { get; private set; }
         public static ConfigEntry<bool> LogFrameTiming { get; private set; }
@@ -259,6 +260,14 @@ namespace MegabonkTogether.Configuration
                 false,
                 "Lets a weapon fire every projectile of a big volley at once. The game normally stops at 80 and drops the rest, " +
                 "which only matters with very high Quantity. Only the host's setting counts: it applies to everyone in the session."
+            );
+            EndlessRun = config.Bind(
+                "Lobby",
+                "EndlessRun",
+                false,
+                "Endless Run: the run never ends at the tier's last stage. Every stage change goes to a shuffled Forest or Desert stage, " +
+                "with a final boss (Ent or Pharaoh) after every three stages; only death ends it. Start the run on Forest or Desert. " +
+                "Only the host's setting counts: it applies to everyone in the session."
             );
         }
 

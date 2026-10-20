@@ -85,6 +85,7 @@ namespace MegabonkTogether.Common.Messages
     [MemoryPackUnion(78, typeof(StateDigest))]
     [MemoryPackUnion(79, typeof(ChargeShrineCompleted))]
     [MemoryPackUnion(80, typeof(LobbySettings))]
+    [MemoryPackUnion(81, typeof(EndlessNextRoom))]
     public partial interface IGameNetworkMessage
     {
 

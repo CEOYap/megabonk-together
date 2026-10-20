@@ -462,6 +462,7 @@ rides, so a Phase 1 translation can be checked tag by tag.
 | 78 | `StateDigest` | host periodic | `ReliableOrdered` — every 5 s, **only when `Diagnostics.LogDesync` is on**; carries a dictionary, so it must be reliable |
 | 79 | `ChargeShrineCompleted` | host | `ReliableOrdered` — one-shot; the only way a client completes a charge shrine (OB-6) |
 | 80 | `LobbySettings` | host | `ReliableOrdered` — one-shot per run, sent just before `RunStarted` on the same channel so it always arrives first ([plan](18-endless-and-projectile-cap-plan.md)) |
+| 81 | `EndlessNextRoom` | host | `ReliableOrdered`. One-shot per stage change, sent one change ahead, so a client holds the room before its own portal fires ([plan](18-endless-and-projectile-cap-plan.md)). |
 
 "both" means the host broadcasts it and the client requests it; the two halves may differ, and
 where they do the cell says so.

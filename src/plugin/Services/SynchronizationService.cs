@@ -167,6 +167,7 @@ namespace MegabonkTogether.Services
         private readonly ILobbyViewService lobbyViewService;
         private readonly ITrackerService trackerService;
         private readonly ILobbySettingsService lobbySettingsService;
+        private readonly IEndlessRunService endlessRunService;
         private readonly ManualLogSource logger;
         private readonly ConcurrentBag<SpawnedObject> toSpawns = [];
         private readonly ConcurrentBag<SpawnedObjectInCrypt> toUpdate = [];
@@ -228,10 +229,12 @@ namespace MegabonkTogether.Services
             IReadinessService readinessService,
             ILobbyViewService lobbyViewService,
             ITrackerService trackerService,
-            ILobbySettingsService lobbySettingsService
+            ILobbySettingsService lobbySettingsService,
+            IEndlessRunService endlessRunService
             )
         {
             this.lobbySettingsService = lobbySettingsService;
+            this.endlessRunService = endlessRunService;
             this.playerManagerService = playerManagerService;
             this.enemyManagerService = enemyManagerService;
             this.projectileManagerService = projectileManagerService;
@@ -386,6 +389,7 @@ namespace MegabonkTogether.Services
         {
             currentState = State.None;
             lobbySettingsService.Reset();
+            endlessRunService.Reset();
 #if DEBUG
             Helpers.TestLoadout.Reset();
 #endif
@@ -3258,7 +3262,8 @@ namespace MegabonkTogether.Services
 
             if (isFinalPortal)
             {
-                TransitionToState(GameEvent.FinalPortalOpened);
+                // Endless: a final boss's portal leads to the next room, not to the end of the run.
+                TransitionToState(endlessRunService.Active ? GameEvent.PortalOpened : GameEvent.FinalPortalOpened);
             }
         }
 
@@ -3434,7 +3439,7 @@ namespace MegabonkTogether.Services
                     using (Plugin.SuppressOutbound())
                     {
                         finalPortal.Interact();
-                        TransitionToState(GameEvent.FinalPortalOpened);
+                        TransitionToState(endlessRunService.Active ? GameEvent.PortalOpened : GameEvent.FinalPortalOpened);
                     }
                 }
                 else
@@ -5021,6 +5026,9 @@ namespace MegabonkTogether.Services
                 // settings before its run begins.
                 lobbySettingsService.BroadcastToClients();
                 udpClientService.SendToAllClients(message, NetDelivery.ReliableOrdered);
+
+                // After RunStarted, so the first room reaches each client behind its run start.
+                endlessRunService.BeginRun(isHost: true);
             }
         }
         private void OnReceivedRunStarted(RunStarted started)
@@ -5058,6 +5066,7 @@ namespace MegabonkTogether.Services
 
             Plugin.Instance.HideModal();
             MapController.StartNewMap(runConfig);
+            endlessRunService.BeginRun(isHost: false);
         }
 
         private void OnReceivedPlayerDisconnected(PlayerDisconnected disconnected)

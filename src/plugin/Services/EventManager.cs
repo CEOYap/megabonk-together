@@ -16,6 +16,7 @@ namespace MegabonkTogether.Services
         private static event Action<StateDigest> StateDigestEvents;
         private static event Action<ChargeShrineCompleted> ChargeShrineCompletedEvents;
         private static event Action<LobbySettings> LobbySettingsEvents;
+        private static event Action<EndlessNextRoom> EndlessNextRoomEvents;
         private static event Action<PlayerUpdate> PlayerUpdatesEvents;
         private static event Action<SelectedCharacter> SelectedCharacterEvents;
         private static event Action<IEnumerable<EnemyModel>> EnemiesUpdateEvents;
@@ -159,6 +160,20 @@ namespace MegabonkTogether.Services
         public static void SubscribeStateDigestEvents(Action<StateDigest> action)
         {
             StateDigestEvents += action;
+        }
+
+        /// <summary>Endless Run: the host's room for the next stage change.</summary>
+        public static void OnEndlessNextRoom(EndlessNextRoom message)
+        {
+            MainThreadDispatcher.Enqueue(() =>
+            {
+                EndlessNextRoomEvents?.Invoke(message);
+            });
+        }
+
+        public static void SubscribeEndlessNextRoomEvents(Action<EndlessNextRoom> action)
+        {
+            EndlessNextRoomEvents += action;
         }
 
         /// <summary>The host's lobby settings for this session.</summary>

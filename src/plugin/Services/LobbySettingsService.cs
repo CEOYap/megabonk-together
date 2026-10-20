@@ -20,6 +20,9 @@ namespace MegabonkTogether.Services
         /// <summary>No Projectile Cap is in effect for this session.</summary>
         bool NoProjectileCap { get; }
 
+        /// <summary>Endless Run is on for this session.</summary>
+        bool EndlessEnabled { get; }
+
         /// <summary>Host: snapshot the config and send it to every client.</summary>
         void BroadcastToClients();
 
@@ -43,12 +46,14 @@ namespace MegabonkTogether.Services
 
         public bool NoProjectileCap => current.NoProjectileCap;
 
+        public bool EndlessEnabled => current.EndlessEnabled;
+
         public void BroadcastToClients()
         {
             current = new LobbySettings
             {
                 NoProjectileCap = ModConfig.NoProjectileCap.Value,
-                EndlessEnabled = false,
+                EndlessEnabled = ModConfig.EndlessRun.Value,
             };
 
             transport.SendToAllClients(current, NetDelivery.ReliableOrdered);
@@ -68,6 +73,6 @@ namespace MegabonkTogether.Services
         }
 
         private static string Describe(LobbySettings settings)
-            => $"no projectile cap {(settings.NoProjectileCap ? "ON" : "off")}";
+            => $"no projectile cap {(settings.NoProjectileCap ? "ON" : "off")}, endless {(settings.EndlessEnabled ? "ON" : "off")}";
     }
 }

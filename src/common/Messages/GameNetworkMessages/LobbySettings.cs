@@ -11,9 +11,7 @@ namespace MegabonkTogether.Common.Messages.GameNetworkMessages
     /// <para>Sent by the host just before <c>RunStarted</c>, on the same ReliableOrdered channel, so
     /// a client always holds the settings before its run begins.</para>
     ///
-    /// <para><b>Fields are positional on the wire.</b> <see cref="EndlessEnabled"/> is carried now,
-    /// unused, so the Endless phase does not have to add a field to a message peers already speak.
-    /// Add new settings only as a new message.</para>
+    /// <para><b>Fields are positional on the wire.</b> Add new settings only as a new message.</para>
     /// </summary>
     [MemoryPackable]
     public partial class LobbySettings : IGameNetworkMessage
@@ -21,7 +19,7 @@ namespace MegabonkTogether.Common.Messages.GameNetworkMessages
         /// <summary>Lifts the game's 80-projectile ceiling on a zero-interval volley.</summary>
         public bool NoProjectileCap { get; set; }
 
-        /// <summary>Reserved for Endless Run (docs/netplay/18). Not acted on yet.</summary>
+        /// <summary>Endless Run (docs/netplay/18): every stage change follows the host's route.</summary>
         public bool EndlessEnabled { get; set; }
     }
 }

@@ -1,6 +1,6 @@
 # Endless Run and No Projectile Cap — research and plan
 
-**Status:** Phase 1 built 2026-10-20 (lobby settings plus No Projectile Cap); **UNVERIFIED, not run in-game**. Phases 2 to 4 are still a plan. Written 2026-10-20 from two sources:
+**Status:** Phases 1 and 2 built 2026-10-20: lobby settings, No Projectile Cap, and Endless on Forest and Desert. **UNVERIFIED, not run in-game.** Phases 3 and 4 are still a plan. Written 2026-10-20 from two sources:
 
 - **Our own decompile** of build 21750826. That is authoritative.
 - **A single-player reference mod** (MelonLoader, not BepInEx), decompiled for research only. It is
@@ -203,6 +203,76 @@ then, everyone in a session should run the same build.
   every peer.
 - **Bandwidth.** The `[bw]` projectile lines stay within budget in a late-game swarm.
 - **Off again.** Turning it off brings the cap back next run, with singleplayer unaffected.
+
+### Phase 2, as built (2026-10-20)
+
+**What the decompile settled** (the open questions below are answered for Forest and Desert):
+
+- **`MapController.LoadNextStage`** (`0x180421DF0`), unless `reseting`, does four things in order:
+  1. stores `GameManager.GetPlayerInventory()` into `MapController.inventory`;
+  2. increments `index`;
+  3. sets `currentStage = currentMap.stages[index]`;
+  4. starts the scene load.
+
+  **So the inventory already carries across any stage load.** No inventory patches are needed when
+  the run stays within these maps.
+- **`LoadFinalStage`** (`0x180421C00`) does the same, but sets `isFinalBossStage` where the other
+  increments `index`.
+- **`StartNewMap`** (`0x1804222F0`) cleans up the old inventory and then calls `LoadNextStage` for
+  stage 1.
+- **`InteractablePortalFinal.Interact`** (`0x1804CCA20`) sets `done` and starts `DoFinishGame`,
+  which ends the run.
+
+**Built:**
+
+- **Wire.** `EndlessNextRoom { Sequence, Room }`, union tag **81**, host to clients,
+  ReliableOrdered. `LobbySettings.EndlessEnabled` is now live, from `[Lobby] EndlessRun`, with an
+  `Endless: ON/OFF` toggle on the lobby's Options page.
+- **`Helpers/EndlessRooms`.** The room ids are wire values: Forest 1–3 = 0–2, Desert 1–3 = 3–5,
+  Graveyard rooms 6–8 reserved, Ent 9, Pharaoh 10, Ghost King 11 reserved. The table also holds
+  the map and stage of each room, and a Fisher–Yates refill that never repeats the current room
+  first.
+- **`EndlessRunService`.** `BeginRun` runs on every peer after `StartNewMap`: on the host from
+  `OnRunStarted`, after `RunStarted` is sent; on a client at the end of `OnReceivedRunStarted`. It
+  needs a Forest or Desert start, and logs and stays off otherwise.
+  - **The host** rolls the route with `System.Random`. Unity's generator is seeded per run and
+    shared with map generation, so the host must not consume it. It sends each room one stage
+    change ahead: room 1 at run start, room *n + 1* while applying room *n*.
+  - **The route:** three regular rooms, then Ent or Pharaoh, from separately shuffled pools.
+- **Stage changes.** `LoadNextStage` and `LoadFinalStage` prefixes hand every stage change to the
+  service. For each room, the service:
+  1. sets `runConfig.mapData`/`stageData`, `currentMap`, `currentStage` and
+     `isFinalBossStage = false`;
+  2. sets `index` to the room's stage, minus 1 for a regular room;
+  3. lets the matching load run, or calls the other one itself when the game asked for the wrong
+     kind.
+
+  `StartNewMap`'s own first load is excluded.
+- **Exits.**
+  - **Regular rooms.** `CanSpawnPortal` is forced true on every regular room.
+  - **Boss rooms.** `InteractablePortalFinal.Interact` loads the next stage instead of
+    `DoFinishGame`, and `SynchronizationService` treats that portal as `PortalOpened`, not
+    `FinalPortalOpened`, on both its send and receive paths.
+- **Failure handling.** A client that reaches a stage change without the host's room, or a room
+  without stage data, logs `[endless] ...` and turns Endless off for the run, rather than loading a
+  stage the host did not choose.
+- **Logs.** `[endless] Endless Run on; starting room X`, then `[endless] Stage change N: Room` on
+  every peer.
+
+**Not covered by Phase 2:**
+
+- **Graveyard and Crypt.** They are reserved, not in the route.
+- **Enemy scaling.** Difficulty still grows only with time, as in vanilla.
+- **The version gate.**
+- **The final-boss flow** (OB-7/8/19) is reused as it is on each boss room. That it holds up being
+  entered several times in one run is **UNVERIFIED**.
+
+**Confirm in play:**
+
+- **Rooms agree.** Host plus two bots, Endless on, starting on Forest stage 1. Every peer logs the
+  same `Stage change N: Room` sequence, and a boss room is every fourth change.
+- **State survives.** Inventories and levels carry through each change, and digests stay in sync.
+- **Boss exits.** The portal after Ent or Pharaoh leads on rather than ending the run.
 
 ### Phases
 
