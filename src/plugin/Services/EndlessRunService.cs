@@ -8,8 +8,8 @@ namespace MegabonkTogether.Services
 {
     /// <summary>
     /// Endless Run, Phase 2 (docs/netplay/18): after a run's first stage, every stage change goes
-    /// to a room on a shuffled route of Forest and Desert stages, with a final-boss room (Ent or
-    /// Pharaoh) after every three regular rooms. It never ends by itself; only death ends the run.
+    /// to a room on a shuffled route of Forest, Desert and Graveyard rooms, with a boss room (Ent,
+    /// Pharaoh or the Ghost King) after every three regular rooms. It never ends by itself; only death ends the run.
     ///
     /// <para><b>How a stage change is steered</b> (decompiled, build 21750826).
     /// <c>MapController.LoadNextStage</c> (0x180421DF0) keeps the live inventory, increments
@@ -32,6 +32,12 @@ namespace MegabonkTogether.Services
     {
         bool Active { get; }
 
+        /// <summary>The room this peer is in, or is loading.</summary>
+        EndlessRoom CurrentRoom { get; }
+
+        /// <summary>Stage changes so far this run; 0 in the starting room.</summary>
+        int Transitions { get; }
+
         /// <summary>A run has started on this peer, its first stage already chosen by StartNewMap.</summary>
         void BeginRun(bool isHost);
 
@@ -40,6 +46,15 @@ namespace MegabonkTogether.Services
         /// redirected to the other load method itself.
         /// </summary>
         bool OnStageLoadRequested(bool finalStageRequested);
+
+        /// <summary>
+        /// Graveyard (Phase 3): true once per arrival in a Graveyard room, at its spawn portal,
+        /// with the room to prepare.
+        /// </summary>
+        bool TakeGraveyardArrival(out EndlessRoom room);
+
+        /// <summary>True once per prepared Graveyard arrival, when the room should start.</summary>
+        bool TakeGraveyardActivation(out EndlessRoom room);
 
         void Reset();
     }
@@ -54,6 +69,8 @@ namespace MegabonkTogether.Services
         private int transitions;
         private EndlessRoom current;
         private bool redirecting;
+        private int graveyardPreparedFor = -1;
+        private bool graveyardActivationPending;
 
         // Host only.
         private int regularCompleted;
@@ -75,6 +92,10 @@ namespace MegabonkTogether.Services
 
         public bool Active { get; private set; }
 
+        public EndlessRoom CurrentRoom => current;
+
+        public int Transitions => transitions;
+
         public void BeginRun(bool isHost)
         {
             Clear();
@@ -89,7 +110,7 @@ namespace MegabonkTogether.Services
             var start = map == null ? null : EndlessRooms.FromStage(map.eMap, MapController.index, MapController.isFinalBossStage);
             if (!start.HasValue)
             {
-                logger.LogWarning($"[endless] Endless needs a Forest or Desert start (this run: {map?.eMap.ToString() ?? "no map"} stage {MapController.index}); off for this run.");
+                logger.LogWarning($"[endless] Endless needs a Forest, Desert or Graveyard start (this run: {map?.eMap.ToString() ?? "no map"} stage {MapController.index}); off for this run.");
                 return;
             }
 
@@ -161,10 +182,10 @@ namespace MegabonkTogether.Services
                 PlanAndSend(sequence + 1);
             }
 
-            var boss = EndlessRooms.IsBoss(room);
-            MapController.index = boss ? stage : stage - 1;
+            var finalStage = EndlessRooms.LoadsFinalStage(room);
+            MapController.index = finalStage ? stage : stage - 1;
 
-            if (boss == finalStageRequested)
+            if (finalStage == finalStageRequested)
             {
                 return true;
             }
@@ -174,7 +195,7 @@ namespace MegabonkTogether.Services
             redirecting = true;
             try
             {
-                if (boss)
+                if (finalStage)
                 {
                     MapController.LoadFinalStage();
                 }
@@ -227,6 +248,31 @@ namespace MegabonkTogether.Services
             received[message.Sequence] = (EndlessRoom)message.Room;
         }
 
+        public bool TakeGraveyardArrival(out EndlessRoom room)
+        {
+            room = current;
+            if (!Active || !EndlessRooms.IsGraveyard(current) || graveyardPreparedFor == transitions)
+            {
+                return false;
+            }
+
+            graveyardPreparedFor = transitions;
+            graveyardActivationPending = true;
+            return true;
+        }
+
+        public bool TakeGraveyardActivation(out EndlessRoom room)
+        {
+            room = current;
+            if (!graveyardActivationPending)
+            {
+                return false;
+            }
+
+            graveyardActivationPending = false;
+            return Active;
+        }
+
         public void Reset() => Clear();
 
         private void Clear()
@@ -235,6 +281,8 @@ namespace MegabonkTogether.Services
             transitions = 0;
             regularCompleted = 0;
             redirecting = false;
+            graveyardPreparedFor = -1;
+            graveyardActivationPending = false;
             regularQueue.Clear();
             bossQueue.Clear();
             planned.Clear();

@@ -1,5 +1,6 @@
 using Assets.Scripts.Managers;
 using HarmonyLib;
+using MegabonkTogether.Helpers;
 using MegabonkTogether.Services;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -104,6 +105,140 @@ namespace MegabonkTogether.Patches
             __instance.done = true;
             MapController.LoadNextStage();
             __result = true;
+            return false;
+        }
+    }
+    /// <summary>
+    /// Endless, Phase 3: Graveyard rooms. The arrival is moved into the chosen room at the spawn
+    /// portal and started once the run is playing (<see cref="EndlessGraveyard"/>). Every peer runs
+    /// this for its own arrival, so no ownership check; nothing is sent from here.
+    /// </summary>
+    [HarmonyPatch]
+    internal static class EndlessGraveyardArrivalPatches
+    {
+        private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
+        private static readonly IEndlessRunService endlessRunService = Plugin.Services.GetService<IEndlessRunService>();
+
+        [HarmonyPrefix]
+        [HarmonyPatch(typeof(SpawnPlayerPortal), nameof(SpawnPlayerPortal.StartPortal))]
+        public static void StartPortal_Prefix(SpawnPlayerPortal __instance)
+        {
+            if (!synchronizationService.HasNetplaySessionInitialized() || !endlessRunService.TakeGraveyardArrival(out var room))
+            {
+                return;
+            }
+
+            EndlessGraveyard.Prepare(__instance, room);
+        }
+
+        // Per frame: one property read until an arrival is pending.
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(GameManager), nameof(GameManager.Update))]
+        public static void Update_Postfix(GameManager __instance)
+        {
+            if (!endlessRunService.Active || !__instance.IsPlaying() || !endlessRunService.TakeGraveyardActivation(out var room))
+            {
+                return;
+            }
+
+            EndlessGraveyard.Activate(room);
+        }
+
+        /// <summary>
+        /// Prefix-false on purpose in the Ghost King room before its fight: the room is entered
+        /// without the second crypt's exit that normally readies it, and its Update must not run
+        /// ahead of <c>Activate</c>.
+        /// </summary>
+        [HarmonyPrefix]
+        [HarmonyPatch(typeof(GraveyardBossRoom), "Update")]
+        public static bool BossRoomUpdate_Prefix(GraveyardBossRoom __instance)
+        {
+            if (!endlessRunService.Active || endlessRunService.CurrentRoom != EndlessRoom.GhostKing || __instance.isFightingBoss)
+            {
+                return true;
+            }
+
+            return __instance.isBossDefeated;
+        }
+    }
+
+    /// <summary>
+    /// Endless, Phase 3: a Graveyard room's exit is a stage change to the next room, in place of the
+    /// teleport to the next area of the same scene. Prefix-false on purpose in those rooms. The
+    /// exits are already synced (<c>InteractableUsed</c>, then each peer replays <c>Interact</c>),
+    /// so this runs on every peer. Each moves this peer to a normal stage change first, as a portal
+    /// would, so the level's state is torn down before the next stage loads.
+    /// </summary>
+    [HarmonyPatch]
+    internal static class EndlessGraveyardExitPatches
+    {
+        private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
+        private static readonly IEndlessRunService endlessRunService = Plugin.Services.GetService<IEndlessRunService>();
+
+        private static bool In(EndlessRoom room)
+            => endlessRunService.Active && endlessRunService.CurrentRoom == room && synchronizationService.HasNetplaySessionInitialized();
+
+        private static void LeaveRoom()
+        {
+            synchronizationService.TransitionToState(GameEvent.PortalOpened);
+            MapController.LoadNextStage();
+        }
+
+        [HarmonyPrefix]
+        [HarmonyPatch(typeof(InteractableCryptLeave), nameof(InteractableCryptLeave.Interact))]
+        public static bool CryptLeave_Prefix(InteractableCryptLeave __instance, ref bool __result)
+        {
+            if (!In(EndlessRoom.Crypt1) && !In(EndlessRoom.Crypt2))
+            {
+                return true;
+            }
+
+            __result = !__instance.hasInteracted && __instance.CanInteract();
+            if (__result)
+            {
+                __instance.hasInteracted = true;
+                LeaveRoom();
+            }
+
+            return false;
+        }
+
+        [HarmonyPrefix]
+        [HarmonyPatch(typeof(InteractableCrypt), nameof(InteractableCrypt.Interact))]
+        public static bool KeyDoor_Prefix(InteractableCrypt __instance, ref bool __result)
+        {
+            // Closed: the game's own message about the missing keys.
+            if (!In(EndlessRoom.Graveyard) || !__instance.IsOpen())
+            {
+                return true;
+            }
+
+            __result = !__instance.isDone && __instance.CanInteract();
+            if (__result)
+            {
+                __instance.isDone = true;
+                LeaveRoom();
+            }
+
+            return false;
+        }
+
+        [HarmonyPrefix]
+        [HarmonyPatch(typeof(InteractableGhostBossLeave), nameof(InteractableGhostBossLeave.Interact))]
+        public static bool GhostBossLeave_Prefix(InteractableGhostBossLeave __instance, ref bool __result)
+        {
+            if (!In(EndlessRoom.GhostKing))
+            {
+                return true;
+            }
+
+            __result = __instance.isBossDead && !__instance.hasInteracted && __instance.CanInteract();
+            if (__result)
+            {
+                __instance.hasInteracted = true;
+                LeaveRoom();
+            }
+
             return false;
         }
     }

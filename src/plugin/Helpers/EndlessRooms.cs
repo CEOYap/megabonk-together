@@ -6,9 +6,14 @@ namespace MegabonkTogether.Helpers
     /// <summary>
     /// Endless Run's rooms. A regular room is one stage of a map; a boss room is a map's final boss
     /// stage. The values travel in <c>EndlessNextRoom.Room</c>, so they are wire format: append only,
-    /// never renumber. The Graveyard rooms are reserved for Phase 3 and are not in the route yet.
+    /// never renumber.
+    ///
+    /// <para><b>Graveyard</b> is one map whose rooms are areas of one scene: the first crypt, the
+    /// surface with its keys, the second crypt (the boss dungeon), and the Ghost King's room. Each
+    /// loads the Graveyard scene's stage 0, then <see cref="EndlessGraveyard"/> moves the arrival
+    /// into the right area.</para>
     /// </summary>
-    internal enum EndlessRoom
+    public enum EndlessRoom
     {
         Forest1 = 0,
         Forest2 = 1,
@@ -16,29 +21,37 @@ namespace MegabonkTogether.Helpers
         Desert1 = 3,
         Desert2 = 4,
         Desert3 = 5,
-        Crypt1 = 6,     // Phase 3
-        Graveyard = 7,  // Phase 3
-        Crypt2 = 8,     // Phase 3
+        Crypt1 = 6,
+        Graveyard = 7,
+        Crypt2 = 8,
         Ent = 9,
         Pharaoh = 10,
-        GhostKing = 11, // Phase 3
+        GhostKing = 11,
     }
 
     internal static class EndlessRooms
     {
-        /// <summary>Phase 2: Forest and Desert only.</summary>
         internal static readonly EndlessRoom[] Regular =
         [
             EndlessRoom.Forest1, EndlessRoom.Forest2, EndlessRoom.Forest3,
             EndlessRoom.Desert1, EndlessRoom.Desert2, EndlessRoom.Desert3,
+            EndlessRoom.Crypt1, EndlessRoom.Graveyard, EndlessRoom.Crypt2,
         ];
 
-        internal static readonly EndlessRoom[] Bosses = [EndlessRoom.Ent, EndlessRoom.Pharaoh];
+        internal static readonly EndlessRoom[] Bosses = [EndlessRoom.Ent, EndlessRoom.Pharaoh, EndlessRoom.GhostKing];
 
         /// <summary>A boss room comes after this many regular rooms.</summary>
         internal const int RegularRoomsPerBoss = 3;
 
         internal static bool IsBoss(EndlessRoom room) => room is EndlessRoom.Ent or EndlessRoom.Pharaoh or EndlessRoom.GhostKing;
+
+        /// <summary>
+        /// Loaded through <c>LoadFinalStage</c>: a map's final-boss stage. The Ghost King is a boss
+        /// room too, but lives in the Graveyard scene's stage 0, so it loads like a regular room.
+        /// </summary>
+        internal static bool LoadsFinalStage(EndlessRoom room) => room is EndlessRoom.Ent or EndlessRoom.Pharaoh;
+
+        internal static bool IsGraveyard(EndlessRoom room) => Map(room) == EMap.Graveyard;
 
         internal static bool IsKnown(int value) => System.Enum.IsDefined(typeof(EndlessRoom), value);
 
@@ -57,7 +70,7 @@ namespace MegabonkTogether.Helpers
             _ => 0,
         };
 
-        /// <summary>The room a stage is, or null when it is not one Endless knows (Phase 2: Forest and Desert).</summary>
+        /// <summary>The room a stage is, or null when it is not one Endless knows. A Graveyard start is its first crypt.</summary>
         internal static EndlessRoom? FromStage(EMap map, int index, bool finalBoss)
         {
             if (map == EMap.Forest)
@@ -68,6 +81,11 @@ namespace MegabonkTogether.Helpers
             if (map == EMap.Desert)
             {
                 return finalBoss ? EndlessRoom.Pharaoh : index switch { 0 => EndlessRoom.Desert1, 1 => EndlessRoom.Desert2, 2 => EndlessRoom.Desert3, _ => null };
+            }
+
+            if (map == EMap.Graveyard && !finalBoss && index == 0)
+            {
+                return EndlessRoom.Crypt1;
             }
 
             return null;

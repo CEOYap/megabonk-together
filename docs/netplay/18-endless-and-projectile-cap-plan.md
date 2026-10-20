@@ -1,6 +1,6 @@
 # Endless Run and No Projectile Cap — research and plan
 
-**Status:** Phases 1 and 2 built 2026-10-20: lobby settings, No Projectile Cap, and Endless on Forest and Desert. **UNVERIFIED, not run in-game.** Phases 3 and 4 are still a plan. Written 2026-10-20 from two sources:
+**Status:** Phases 1 to 3 built 2026-10-20: lobby settings, No Projectile Cap, and Endless on Forest, Desert and Graveyard. **UNVERIFIED, not run in-game.** Phase 4 (scaling) is still a plan. Written 2026-10-20 from two sources:
 
 - **Our own decompile** of build 21750826. That is authoritative.
 - **A single-player reference mod** (MelonLoader, not BepInEx), decompiled for research only. It is
@@ -273,6 +273,72 @@ then, everyone in a session should run the same build.
   same `Stage change N: Room` sequence, and a boss room is every fourth change.
 - **State survives.** Inventories and levels carry through each change, and digests stay in sync.
 - **Boss exits.** The portal after Ent or Pharaoh leads on rather than ending the run.
+
+### Phase 3, as built (2026-10-20)
+
+**The vanilla Graveyard** (decompiled) is one stage played in a fixed order:
+
+1. **The first crypt.**
+2. `InteractableCryptLeave.Teleport` (`0x1804C8A20`) stops the dungeon and teleports up to the
+   surface.
+3. **The key door.** `InteractableCrypt.Teleport` (`0x1804C90E0`):
+   - generates the second crypt with `RsgController.Generate(MapGenerationController.mapSeed + 1,
+     BossDungeon, out time)`;
+   - points that crypt's exit at `roomBoss.playerTeleportTransform`;
+   - calls `StartDungeon(time)` and teleports to `rsgStart.spawnTransform`.
+4. **The second crypt's exit** activates `GraveyardBossRoom`.
+5. `InteractableGhostBossLeave.Teleport` (`0x1804CB5B0`) clears the map.
+
+Every exit is already synced: `InteractableUsed`, then each peer replays `Interact`.
+
+**Built:**
+
+- **Route.**
+  - **Regular pool:** Crypt 1, Graveyard (the surface) and Crypt 2 join Forest and Desert, nine
+    rooms in all.
+  - **Boss pool:** the Ghost King joins Ent and Pharaoh.
+  - **Loading:** every Graveyard room loads the Graveyard scene's stage 0 through `LoadNextStage`.
+    Only Ent and Pharaoh use `LoadFinalStage` (`EndlessRooms.LoadsFinalStage`).
+  - **Starting there:** a run may now start on Graveyard, as Crypt 1.
+- **Arrival** (`Helpers/EndlessGraveyard.Prepare`, from a `SpawnPlayerPortal.StartPortal` prefix,
+  once per arrival). This repeats the vanilla step that leads into each room, then moves the spawn
+  portal there:
+
+  | Room | What arrival does |
+  |---|---|
+  | Crypt 1 | Nothing; the scene starts there |
+  | Graveyard | Moves to the first crypt exit's teleport target, then `StopDungeon` and `ClearMap` |
+  | Crypt 2 | `ClearMap`, then the key door's `Generate`, `StartDungeon(time)` and `cryptIndex = 1`; spawns at the crypt start, with the exit pointed at the boss room |
+  | Ghost King | `StopDungeon`, `ClearMap`, enables the boss room and spawns at its arrival point |
+
+- **Start** (`EndlessGraveyard.Activate`, from a `GameManager.Update` postfix, once it is playing).
+  - **Graveyard:** removes crypt keys left from an earlier visit and shows the key objective.
+  - **Ghost King:** calls `roomBoss.Activate()`, whose lamp and exit ids our existing patch
+    allocates in lockstep. Until the fight starts, `GraveyardBossRoom.Update` is held unless the
+    boss is already beaten.
+- **Exits** are prefixes on `InteractableCryptLeave`, `InteractableCrypt` (only once open) and
+  `InteractableGhostBossLeave` (only once the boss is dead). Each applies only in its own room, and
+  each:
+  1. moves this peer to `PortalOpened`, as a portal would;
+  2. calls `LoadNextStage`, which the route steers.
+
+**Risks** (all **UNVERIFIED**):
+
+- **Crypt objects.** The second crypt's pots and chests are registered by the host after
+  `Generate`, as with the key door. Clients match them by position. That relies on each peer
+  generating the identical crypt from the session seed.
+- **Ghost King ids.** They stay aligned only if every peer reaches `Activate` with the same object
+  registry.
+- **Surface state.** The surface's key cages and graveyard objects are the scene's own. Whether
+  they come up correctly when the crypt was skipped is not checked.
+
+**Confirm in play:**
+
+- **All three Graveyard rooms come up.** Each player spawns inside the room the route chose
+  (`[endless] Graveyard arrival moved into <room>`).
+- **Crypt 2:** the crypt's pots and chests open on every peer.
+- **Graveyard:** the key door opens once every key is collected.
+- **Ghost King:** the fight starts, and its exit leads on.
 
 ### Phases
 

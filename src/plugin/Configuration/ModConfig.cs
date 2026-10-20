@@ -265,8 +265,9 @@ namespace MegabonkTogether.Configuration
                 "Lobby",
                 "EndlessRun",
                 false,
-                "Endless Run: the run never ends at the tier's last stage. Every stage change goes to a shuffled Forest or Desert stage, " +
-                "with a final boss (Ent or Pharaoh) after every three stages; only death ends it. Start the run on Forest or Desert. " +
+                "Endless Run: the run never ends at the tier's last stage. Every stage change goes to a shuffled Forest, Desert or Graveyard room " +
+                "(the Graveyard's crypts and surface count as rooms), with a boss (Ent, Pharaoh or the Ghost King) after every three; only death ends it. " +
+                "Start the run on Forest, Desert or Graveyard. " +
                 "Only the host's setting counts: it applies to everyone in the session."
             );
         }
