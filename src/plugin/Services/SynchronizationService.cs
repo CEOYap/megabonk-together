@@ -5601,6 +5601,19 @@ namespace MegabonkTogether.Services
             if (position.HasValue)
             {
                 player.transform.position = position.Value;
+
+                // OB-49. The transform alone does not move a player: its Rigidbody keeps the old
+                // position and the next physics step puts it back (the test bot has to set rb.position
+                // for its teleports to stick). 2026-10-20: after a revive the host stood outside the
+                // world, and their next coffin was 14 units under the Forest ground.
+                var rb = player.playerMovement?.rb;
+                if (rb != null)
+                {
+                    rb.position = position.Value;
+                    rb.velocity = Vector3.zero;
+                }
+
+                logger.LogInfo($"[revive] OB-49: respawned the local player at {position.Value}.");
             }
 
             player.inventory.playerHealth.hp = player.inventory.playerHealth.maxHp;

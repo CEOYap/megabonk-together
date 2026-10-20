@@ -549,11 +549,35 @@ namespace MegabonkTogether.Scripts.Bot
                 target = ghost.transform.position;
             }
 
-            // The stuck-teleport lands next to the ghost during the fight, not next to the owner: the
-            // owner is the dead player, so "teleport to owner" put the bot back at the corpse every
-            // 6 s while the ghost wandered off. 2026-10-20: a 169K revive ghost lost ~15K in 90 s,
-            // teleports 62 -> 64, until the host revived themself.
-            SteerTo(me, target, fightingGhost ? target : (OwnerPosition ?? coffinPosition));
+            // The stuck-teleport lands on the ground under the ghost during the fight. Not next to the
+            // owner: the owner is the dead player, so the bot went back to the corpse every 6 s while
+            // the ghost wandered off (2026-10-20 run 1: a 169K ghost lost ~15K in 90 s). And not at
+            // the ghost itself: it flies through terrain (run 2: sampled at y -56 on Forest ground
+            // around -20), and teleporting to it put the bots, then the revived host, outside the
+            // world.
+            var anchor = fightingGhost ? GroundUnder(target, coffinPosition) : (OwnerPosition ?? coffinPosition);
+            SteerTo(me, target, anchor);
+        }
+
+        /// <summary>
+        /// The walkable ground under <paramref name="point"/>: a downward ray from well above it,
+        /// accepted only when it lands near <paramref name="reference"/>'s height (the coffin, where
+        /// the owner died on the ground). Anything else, a miss or a hit far above or below,
+        /// returns the reference. Triggers are ignored so the ray does not stop on pickups.
+        /// </summary>
+        private static Vector3 GroundUnder(Vector3 point, Vector3 reference)
+        {
+            const float rayHeight = 80f;
+            const float heightBand = 25f;
+
+            var origin = new Vector3(point.x, Mathf.Max(point.y, reference.y) + rayHeight, point.z);
+            if (Physics.Raycast(origin, Vector3.down, out var hit, rayHeight * 3f, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore)
+                && Mathf.Abs(hit.point.y - reference.y) <= heightBand)
+            {
+                return hit.point + Vector3.up;
+            }
+
+            return reference;
         }
 
         private void EndRevive()

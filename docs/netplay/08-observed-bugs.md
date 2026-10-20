@@ -4119,7 +4119,7 @@ Release DLL was checked to contain none of `BotController`, `BotMode`, `TestLoad
 
 
 <a name="ob-46"></a>
-## OB-46 — On the tier's last stage the host correctly had no portal; clients opened one anyway — **FIXED 2026-10-20, not yet confirmed in play**
+## OB-46 — On the tier's last stage the host correctly had no portal; clients opened one anyway — **FIXED and CONFIRMED in play (2026-10-20)**
 
 **Reported twice** (2026-10-19 and 2026-10-20). After the stage-2 boss, the host saw no portal and
 both bots did. A bot walked through it and the run went on to a third stage.
@@ -4155,9 +4155,43 @@ to exist, and using it took every peer to a stage the tier does not have.
 - **Log.** It prints `Boss defeated; the tier's last stage has no portal (OB-46).` when there is
   none.
 
-**What happens next on the last stage is the game's own flow, and it has not been seen in
-multiplayer yet,** because the extra portal always pre-empted it. **UNVERIFIED, not run in-game.**
-Confirmed when, on a `mapTierIndex 1` run, no peer shows a stage-2 portal and all show "Survive".
+**Confirmed 2026-10-20, Tier 1 Forest** (`mapTierIndex 0`, so stage 1 is the tier's last):
+
+- **No portal anywhere.** No peer got a portal after the stage boss.
+- **Same objective everywhere.** All three showed "Find the Boss Portal ✓, Defeat the Boss ✓,
+  Survive...".
+- **Both bots logged it:** `Boss defeated; the tier's last stage has no portal (OB-46).`
+
+That is the game's intended flow.
+
+### Notes for a future endless-run mode
+
+This is what an "endless" option would have to change, and where. **All of it is UNVERIFIED as a
+design.** Only the decompiled rule above is established.
+
+- **The only gate is `InteractableBossSpawner.CanSpawnPortal`** (`0x1804C5540`):
+  `!MapController.IsLastStage() && MapController.index < runConfig.mapTierIndex`.
+  - A postfix forcing it true on **every** peer would open the portal on the tier's last stage.
+  - Since OB-46 the clients ask the same method, so one patch covers host and clients alike. It
+    must be the same on every peer, so it belongs in a synced lobby setting, not in a per-player
+    config.
+- **`IsLastStage()` is the second wall.** On a map's last stage (Forest/Desert stage 3) a portal
+  would lead to an index past `mapData.stages`. Endless needs a decision there:
+  - **Wrap:** back to stage 0, or to a random stage.
+  - **Repeat:** the last stage again.
+  - **Advance:** to another map.
+
+  Each is a new stage load. That goes through `MapController` (index, `currentStage`), which the
+  mod drives with `RunStarted` / `PortalOpened`, and every peer must pick the same next stage. So
+  the host chooses and the existing level-change messages carry it; the wire format stays unchanged
+  if an existing field can carry it.
+- **What the "last stage" flow drives,** in case endless keeps or suppresses it:
+  - `A_BossDefeated(false)` raises `ObjectiveUi`'s "Survive" (`0x1803E7BD0`).
+  - `DeathScreen.OnBossDefeated` (`0x180531EA0`) sets `tierVictory` via
+    `MapController.IsTierFinalStage()`. That is the victory state the end screen reads.
+- **Scaling past the tier.** `GameBalanceService` keys its multipliers on the stage index,
+  switching on 0/1/2, so an index past 2 needs a rule, for example clamping or extrapolating. The
+  game's own difficulty curve is time-based (`EStat.Difficulty`, OB-26).
 
 <a name="ob-47"></a>
 ## OB-47 — A teammate's row slipped past the damage-panel filter while the local inventory was missing — **FIXED 2026-10-20, not yet confirmed in play**
@@ -4212,3 +4246,45 @@ So any Holy Book ticking on a machine plays the effect on that machine's player.
 some copy was evidently not recognised as one. `Tick` now logs once, in that case:
 `[items] OB-48: a Holy Book ticked here though we hold none (owner ...)`. The next run's host log
 names the path. **UNVERIFIED, not run in-game.**
+
+
+<a name="ob-49"></a>
+## OB-49 — The bots, then the revived host, ended up outside the world during a revive fight — **FIXED 2026-10-20, not yet confirmed in play**
+
+**Reported 2026-10-20**, Tier 1 Forest, with screenshots. Chasing the host's revive ghost, the bots
+teleported outside the map, and after the revive the host stood outside it too.
+
+**What the host log shows:**
+
+- **The ghost goes underground.** The second revive ghost was sampled at **(242, −56, 261)**, with
+  Forest ground around y −20, so it flies through and below terrain. The first was seen at y +10.
+- **The host died below the ground.** The host's second coffin was at **(260.3, −34.4, 262.0)**,
+  14 units below the ground, so the host was already outside the world before that death.
+
+**Two causes:**
+
+- **The bot.** The previous fix (324f7c2) teleported a stuck bot *to the ghost*, which can be inside or under the
+  terrain.
+- **The revive.** `ReviveLocalPlayer` set only `player.transform.position`. The player's
+  `Rigidbody` keeps its own position and the next physics step can put it back. The test bot has to
+  set `rb.position` for its own teleports to stick, which is the same effect. **LIKELY:** nothing
+  logged where the host actually stood after the revive.
+
+**Fixed:**
+
+- **The bot** (`BotController.GroundUnder`). During the revive fight a stuck bot lands on the
+  ground under the ghost, using a downward raycast from above.
+  - **Sanity band.** The hit is accepted only within 25 units of the coffin's height, since the
+    owner died on the ground there.
+  - **Fallback.** Otherwise the bot lands at the coffin.
+- **The revive.** `ReviveLocalPlayer` also sets `rb.position` and clears the velocity. It logs
+  `[revive] OB-49: respawned the local player at (x, y, z).`, so the next run shows where a revive
+  put the player.
+
+**Not changed.**
+
+- **The ghost.** It is GhostGrave4, a flying boss; its movement is the game's.
+- **Ending a bot run.** A bot run cannot reach the end screen, because the bots never die
+  (`BotInvincibilityPatches`). It ends only when the host wins or quits.
+
+**UNVERIFIED, not run in-game.**
