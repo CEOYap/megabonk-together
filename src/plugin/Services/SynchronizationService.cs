@@ -166,6 +166,7 @@ namespace MegabonkTogether.Services
         private readonly IReadinessService readinessService;
         private readonly ILobbyViewService lobbyViewService;
         private readonly ITrackerService trackerService;
+        private readonly ILobbySettingsService lobbySettingsService;
         private readonly ManualLogSource logger;
         private readonly ConcurrentBag<SpawnedObject> toSpawns = [];
         private readonly ConcurrentBag<SpawnedObjectInCrypt> toUpdate = [];
@@ -226,9 +227,11 @@ namespace MegabonkTogether.Services
             IEncounterService encounterService,
             IReadinessService readinessService,
             ILobbyViewService lobbyViewService,
-            ITrackerService trackerService
+            ITrackerService trackerService,
+            ILobbySettingsService lobbySettingsService
             )
         {
+            this.lobbySettingsService = lobbySettingsService;
             this.playerManagerService = playerManagerService;
             this.enemyManagerService = enemyManagerService;
             this.projectileManagerService = projectileManagerService;
@@ -382,6 +385,7 @@ namespace MegabonkTogether.Services
         public void Reset()
         {
             currentState = State.None;
+            lobbySettingsService.Reset();
 #if DEBUG
             Helpers.TestLoadout.Reset();
 #endif
@@ -5013,6 +5017,9 @@ namespace MegabonkTogether.Services
             var isHost = IsServerMode() ?? false;
             if (isHost)
             {
+                // First, on the same ReliableOrdered channel, so every client holds the session's
+                // settings before its run begins.
+                lobbySettingsService.BroadcastToClients();
                 udpClientService.SendToAllClients(message, NetDelivery.ReliableOrdered);
             }
         }

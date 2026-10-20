@@ -1,6 +1,6 @@
 # Endless Run and No Projectile Cap — research and plan
 
-**Status: PLAN, nothing implemented.** Written 2026-10-20 from two sources:
+**Status:** Phase 1 built 2026-10-20 (lobby settings plus No Projectile Cap); **UNVERIFIED, not run in-game**. Phases 2 to 4 are still a plan. Written 2026-10-20 from two sources:
 
 - **Our own decompile** of build 21750826. That is authoritative.
 - **A single-player reference mod** (MelonLoader, not BepInEx), decompiled for research only. It is
@@ -173,6 +173,36 @@ New union tags after 79:
 **A version gate is needed.** A peer on an older mod version handshakes fine, but cannot apply
 these. Endless must be refused, or the toggle greyed out, unless every peer reports a version that
 has them.
+
+### Phase 1, as built (2026-10-20)
+
+- **Wire.** `LobbySettings` (union tag **80**) carries `NoProjectileCap` plus `EndlessEnabled`.
+  `EndlessEnabled` is reserved, so Phase 2 adds no field to a message peers already speak. The
+  client route republishes it through `EventManager`.
+- **`LobbySettingsService`.** The host snapshots its `[Lobby]` config at run start and sends it from
+  `SynchronizationService.OnRunStarted`, just before `RunStarted` on the same ReliableOrdered
+  channel. A client applies the host's values and never its own. Everything returns to vanilla on
+  `SynchronizationService.Reset`, which also restores every patched attack.
+- **`NoProjectileCapPatches`** (`Patches/WeaponAttack.cs`). A `SetAttack` postfix sets the cap to
+  `int.MaxValue` while the session is started and the setting is on, keeping the original. Without
+  the setting it restores the original.
+- **UI.** A `No Proj. Cap: ON/OFF` toggle on the lobby's Options page, next to Saves and Shared XP.
+  It writes `[Lobby] NoProjectileCap`. Only the host's value counts.
+- **Logs.** The host prints `[lobby-settings] Host settings for this session: ...`. Each client
+  prints `[lobby-settings] Applying the host's settings: ...`.
+
+**Mixed versions.** A peer on an older build does not know tag 80. It drops the message and keeps
+the cap, so its volleys differ from the host's. The plan's version gate is not built yet; until
+then, everyone in a session should run the same build.
+
+**Confirm in play:**
+
+- **Logs.** The host turns it on, and both bots log `Applying the host's settings: no projectile
+  cap ON`.
+- **Volleys.** A weapon with Quantity above 80 and no burst interval fires every projectile on
+  every peer.
+- **Bandwidth.** The `[bw]` projectile lines stay within budget in a late-game swarm.
+- **Off again.** Turning it off brings the cap back next run, with singleplayer unaffected.
 
 ### Phases
 

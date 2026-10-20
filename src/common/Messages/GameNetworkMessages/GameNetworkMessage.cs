@@ -1,4 +1,4 @@
-﻿using MegabonkTogether.Common.Messages.GameNetworkMessages;
+using MegabonkTogether.Common.Messages.GameNetworkMessages;
 using MemoryPack;
 
 namespace MegabonkTogether.Common.Messages
@@ -84,6 +84,7 @@ namespace MegabonkTogether.Common.Messages
     [MemoryPackUnion(77, typeof(PlayerStatsChanged))]
     [MemoryPackUnion(78, typeof(StateDigest))]
     [MemoryPackUnion(79, typeof(ChargeShrineCompleted))]
+    [MemoryPackUnion(80, typeof(LobbySettings))]
     public partial interface IGameNetworkMessage
     {
 

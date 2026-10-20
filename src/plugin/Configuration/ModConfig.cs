@@ -16,6 +16,7 @@ namespace MegabonkTogether.Configuration
         public static ConfigEntry<string> PreviousVersion { get; private set; }
         public static ConfigEntry<bool> AllowSavesDuringNetplay { get; private set; }
         public static ConfigEntry<bool> EnabledSharedExperience { get; private set; }
+        public static ConfigEntry<bool> NoProjectileCap { get; private set; }
         public static ConfigEntry<float> EncounterInputGraceSeconds { get; private set; }
         public static ConfigEntry<bool> LogAllocationRate { get; private set; }
         public static ConfigEntry<bool> LogFrameTiming { get; private set; }
@@ -251,6 +252,13 @@ namespace MegabonkTogether.Configuration
                 "EnabledSharedExperience",
                 false,
                 "Enable Host experience (Same XP and pause enabled). Disable for no pause and separate XP."
+            );
+            NoProjectileCap = config.Bind(
+                "Lobby",
+                "NoProjectileCap",
+                false,
+                "Lets a weapon fire every projectile of a big volley at once. The game normally stops at 80 and drops the rest, " +
+                "which only matters with very high Quantity. Only the host's setting counts: it applies to everyone in the session."
             );
         }
 

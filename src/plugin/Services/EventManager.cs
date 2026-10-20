@@ -1,4 +1,4 @@
-﻿using MegabonkTogether.Common.Messages;
+using MegabonkTogether.Common.Messages;
 using MegabonkTogether.Common.Messages.GameNetworkMessages;
 using MegabonkTogether.Common.Models;
 using MegabonkTogether.Scripts;
@@ -15,6 +15,7 @@ namespace MegabonkTogether.Services
         private static event Action<PlayerStatsChanged> PlayerStatsChangedEvents;
         private static event Action<StateDigest> StateDigestEvents;
         private static event Action<ChargeShrineCompleted> ChargeShrineCompletedEvents;
+        private static event Action<LobbySettings> LobbySettingsEvents;
         private static event Action<PlayerUpdate> PlayerUpdatesEvents;
         private static event Action<SelectedCharacter> SelectedCharacterEvents;
         private static event Action<IEnumerable<EnemyModel>> EnemiesUpdateEvents;
@@ -158,6 +159,20 @@ namespace MegabonkTogether.Services
         public static void SubscribeStateDigestEvents(Action<StateDigest> action)
         {
             StateDigestEvents += action;
+        }
+
+        /// <summary>The host's lobby settings for this session.</summary>
+        public static void OnLobbySettings(LobbySettings message)
+        {
+            MainThreadDispatcher.Enqueue(() =>
+            {
+                LobbySettingsEvents?.Invoke(message);
+            });
+        }
+
+        public static void SubscribeLobbySettingsEvents(Action<LobbySettings> action)
+        {
+            LobbySettingsEvents += action;
         }
 
         /// <summary>OB-6. The host completed a charge shrine.</summary>

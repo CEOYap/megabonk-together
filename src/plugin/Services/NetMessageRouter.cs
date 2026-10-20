@@ -1,4 +1,4 @@
-﻿using BepInEx.Logging;
+using BepInEx.Logging;
 using MegabonkTogether.Common.Messages;
 using MegabonkTogether.Common.Messages.GameNetworkMessages;
 using MegabonkTogether.Extensions;
@@ -91,6 +91,9 @@ namespace MegabonkTogether.Services
                     break;
                 case StateDigest stateDigest:
                     EventManager.OnStateDigest(stateDigest);
+                    break;
+                case LobbySettings lobbySettings:
+                    EventManager.OnLobbySettings(lobbySettings);
                     break;
                 case ChargeShrineCompleted chargeShrineCompleted:
                     EventManager.OnChargeShrineCompleted(chargeShrineCompleted);

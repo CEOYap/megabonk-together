@@ -290,6 +290,7 @@ namespace MegabonkTogether
                 services.AddSingleton<ILobbyViewService, LobbyViewService>();
                 services.AddSingleton<IUiAssetService, UiAssetService>();
                 services.AddSingleton<ITrackerService, TrackerService>();
+                services.AddSingleton<ILobbySettingsService, LobbySettingsService>();
                 services.AddSingleton<ISteamService, SteamService>();
                 services.AddSingleton<ISteamLobbyService, SteamLobbyService>();
                 services.AddSingleton<ISteamAvatarService, SteamAvatarService>();

@@ -1,4 +1,4 @@
-﻿using MegabonkTogether.Configuration;
+using MegabonkTogether.Configuration;
 using MegabonkTogether.Helpers;
 using MegabonkTogether.Scripts.Button;
 using MegabonkTogether.Services;
@@ -151,6 +151,7 @@ namespace MegabonkTogether.Scripts.Modal
         private CustomButton optionsButton;
         private CustomButton saveToggleButton;
         private CustomButton sharedExpToggleButton;
+        private CustomButton projectileCapToggleButton;
         private CustomButton optionsBackButton;
 
         /// <summary>
@@ -596,12 +597,13 @@ namespace MegabonkTogether.Scripts.Modal
 
             leaveLobbyButton = CreateButton("LeaveLobbyButton", "Leave Lobby", OnLeaveLobbyClicked);
 
-            // The options view's three, built into the same column and hidden with everything else
+            // The options view's four, built into the same column and hidden with everything else
             // when the lobby view is up. Only one view's buttons are ever visible, so the column
             // still only has to be tall enough for the larger of the two.
             optionsButton = CreateButton("NetplayOptionsButton", "Options", OnOptionsClicked);
             saveToggleButton = CreateButton("SaveToggleButton", "Saves: OFF", OnSaveToggleClicked);
             sharedExpToggleButton = CreateButton("SharedExpToggleButton", "Shared XP: OFF", OnSharedExpToggleClicked);
+            projectileCapToggleButton = CreateButton("ProjectileCapToggleButton", "No Proj. Cap: OFF", OnProjectileCapToggleClicked);
             optionsBackButton = CreateButton("OptionsBackButton", "Back", OnOptionsBackClicked);
         }
 
@@ -637,6 +639,7 @@ namespace MegabonkTogether.Scripts.Modal
 
             SetButtonVisible(saveToggleButton, false);
             SetButtonVisible(sharedExpToggleButton, false);
+            SetButtonVisible(projectileCapToggleButton, false);
             SetButtonVisible(optionsBackButton, false);
 
             if (memberListRoot != null && !memberListRoot.gameObject.activeSelf)
@@ -756,10 +759,12 @@ namespace MegabonkTogether.Scripts.Modal
 
             SetButtonVisible(saveToggleButton, true);
             SetButtonVisible(sharedExpToggleButton, true);
+            SetButtonVisible(projectileCapToggleButton, true);
             SetButtonVisible(optionsBackButton, true);
 
             SetButtonLabel(saveToggleButton, ModConfig.AllowSavesDuringNetplay.Value ? "Saves: ON" : "Saves: OFF");
             SetButtonLabel(sharedExpToggleButton, ModConfig.EnabledSharedExperience.Value ? "Shared XP: ON" : "Shared XP: OFF");
+            SetButtonLabel(projectileCapToggleButton, ModConfig.NoProjectileCap.Value ? "No Proj. Cap: ON" : "No Proj. Cap: OFF");
 
             lobbyWindow?.FindAllButtonsInWindow();
 
@@ -800,6 +805,20 @@ namespace MegabonkTogether.Scripts.Modal
             PlaySelectSfx();
 
             ModConfig.EnabledSharedExperience.Value = !ModConfig.EnabledSharedExperience.Value;
+            ModConfig.Save();
+
+            Refresh();
+        }
+
+        /// <summary>
+        /// Lobby setting: when this player hosts, the whole session uses it (LobbySettingsService
+        /// sends the host's value at run start). A client's own value is never applied.
+        /// </summary>
+        private void OnProjectileCapToggleClicked()
+        {
+            PlaySelectSfx();
+
+            ModConfig.NoProjectileCap.Value = !ModConfig.NoProjectileCap.Value;
             ModConfig.Save();
 
             Refresh();
