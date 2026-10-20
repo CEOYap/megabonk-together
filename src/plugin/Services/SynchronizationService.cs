@@ -4888,7 +4888,7 @@ namespace MegabonkTogether.Services
             const float rayHeight = 120f;
             var origin = position + Vector3.up * rayHeight;
             if (Physics.Raycast(origin, Vector3.down, out var hit, rayHeight * 2f, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore)
-                && hit.point.y > position.y + 3f)
+                && hit.point.y > position.y + 1f) // 1 u: a coffin sunk a metre into the ground is as lost as one far below (2026-10-20 report)
             {
                 logger.LogInfo($"[revive] OB-53: {ownerConnectionId} died under the surface at {position}; coffin moved up to {hit.point}.");
                 return hit.point + Vector3.up * 0.2f;

@@ -4413,7 +4413,9 @@ revive it.
   within 3 units of the owner's height. Otherwise the bot lands exactly on the owner, which is a
   known in-world position. `GroundUnder` takes the band as a parameter.
 - **Coffin (host).** If there is no ground directly under the death point (within 6 units), the
-  coffin is moved up to the first surface above it. A death on the surface, even under a tree,
+  coffin is moved up to the first surface above it, when that surface is more than 1 unit higher.
+  The host confirmed afterwards that the coffin could not be found at all, and looked to be in or
+  under the ground, which is this case. A death on the surface, even under a tree,
   stays put. Clients get the position through `SpawnedReviver`.
 - **Logging, so the next run settles the LIKELY:**
   - `[revive] OB-53: coffin for <id> at <pos>` when a coffin is placed;
