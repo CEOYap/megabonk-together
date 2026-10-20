@@ -4187,3 +4187,28 @@ was the dead host's body, so it kept landing back at the corpse; teleports went 
 ghost lost about 15K in 90 s. During the revive fight the bot now teleports next to the ghost. The
 ghost's HP itself is unchanged: boss HP scaled by team difficulty and cut to 2/12 on the first
 revive (`EnemyManagerService.RebalanceIfNeededReviverEnemy`).
+
+
+<a name="ob-48"></a>
+## OB-48 — The Holy Book effect played on the host, who held no Holy Book — **FIXED (visual) 2026-10-20, cause not yet named**
+
+**Reported 2026-10-20.** The host saw the Holy Book effect on their own character. They held no Holy
+Book; a bot did. The host's report had no Holy Book damage row, and its log no `kept 'HolyBook'`
+line, so no Holy Book damage was recorded on the host.
+
+**Decompiled:**
+
+- **`HolyBookEffect`** is a component on the player.
+- **Its `Awake`** (`0x1804983B0`) subscribes `OnUse(radius)` to the static `ItemHolyBook.A_OnUse`.
+- **`ItemHolyBook.Tick`** (`0x18045D250`) raises that event each time any copy radiates.
+- **The game's own `Refresh`** (`0x180498AE0`) shows the book only when the local inventory holds
+  one; `OnUse` has no such check.
+
+So any Holy Book ticking on a machine plays the effect on that machine's player.
+
+**Fixed (visual).** `HolyBookEffect.OnUse` plays only when the local player holds a Holy Book.
+
+**Not yet named.** Which book ticked on the host remains open. OB-42 gates a teammate's copy, so
+some copy was evidently not recognised as one. `Tick` now logs once, in that case:
+`[items] OB-48: a Holy Book ticked here though we hold none (owner ...)`. The next run's host log
+names the path. **UNVERIFIED, not run in-game.**

@@ -122,7 +122,33 @@ namespace MegabonkTogether.Patches.Items
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ItemHolyBook.Tick))]
         public static bool Tick_Prefix(ItemHolyBook __instance)
-            => !RemoteItemCopies.IsTeammateCopy(__instance);
+        {
+            if (RemoteItemCopies.IsTeammateCopy(__instance))
+            {
+                return false;
+            }
+
+            // OB-48 diagnostic. Tick raises the static ItemHolyBook.A_OnUse, which every
+            // HolyBookEffect plays. On 2026-10-20 the host, holding no Holy Book, saw the effect on
+            // its own character, with no Holy Book damage recorded. If a book ticks here while the
+            // local player holds none, this copy was not recognised as a teammate's: name it once.
+            if (RemoteItemCopies.InSession && !LocalHoldsHolyBook() && !loggedForeignTick)
+            {
+                loggedForeignTick = true;
+                Plugin.Log.LogInfo(
+                    $"[items] OB-48: a Holy Book ticked here though we hold none (owner {EventListenerOwnership.OwnerOf(__instance)?.ToString() ?? "unknown"}).");
+            }
+
+            return true;
+        }
+
+        private static bool loggedForeignTick;
+
+        internal static bool LocalHoldsHolyBook()
+        {
+            var items = GameManager.Instance?.player?.inventory?.itemInventory;
+            return items != null && items.GetAmount(EItem.HolyBook) > 0;
+        }
 
         [HarmonyPrefix]
         [HarmonyPatch("OnHeal")]
@@ -135,5 +161,23 @@ namespace MegabonkTogether.Patches.Items
 
             return !RemoteItemCopies.InSession || EventListenerOwnership.IsLocalHealth(ph);
         }
+    }
+
+    /// <summary>
+    /// OB-48. <c>HolyBookEffect</c> is a component on the player. <c>Awake</c> (VA 0x1804983B0,
+    /// decompiled) subscribes <c>OnUse(radius)</c> to the static <c>ItemHolyBook.A_OnUse</c>, which
+    /// <c>ItemHolyBook.Tick</c> raises each time any copy of the book radiates. So any Holy Book on
+    /// this machine played the effect on this machine's player, whether or not they held one. The
+    /// game's own <c>Refresh</c> (0x180498AE0) only shows the book when the local inventory holds
+    /// one; <c>OnUse</c> now follows the same rule. Visual only. <b>UNVERIFIED.</b>
+    /// </summary>
+    [HarmonyPatch(typeof(HolyBookEffect))]
+    internal static class HolyBookEffectPatches
+    {
+        // Prefix-false on purpose: the effect belongs to whoever holds the book.
+        [HarmonyPrefix]
+        [HarmonyPatch(nameof(HolyBookEffect.OnUse))]
+        public static bool OnUse_Prefix()
+            => !RemoteItemCopies.InSession || ItemHolyBookPatches.LocalHoldsHolyBook();
     }
 }
