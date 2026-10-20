@@ -456,6 +456,40 @@ namespace MegabonkTogether.Patches.Enemies
             EnemiesDistanceThrottler.Cleanup(instanceId);
         }
 
+        private static int pooledWhileRegistered;
+
+        /// <summary>
+        /// OB-51 diagnostic. <c>ReleaseToPool</c> (VA 0x1804AFC50, decompiled) is where every enemy
+        /// leaves the field. A timed despawn (<c>TryDespawn</c>, 0x1804B0640, which starts the
+        /// <c>Despawn</c> coroutine, which ends here) never calls <c>EnemyDied</c>, so nothing
+        /// unregisters it: the registry keeps an entry for a pooled object on that peer. Says so,
+        /// rarely, so a run shows whether that happens before it is replicated. Read-only.
+        /// </summary>
+        [HarmonyPostfix]
+        [HarmonyPatch(nameof(Enemy.ReleaseToPool))]
+        public static void ReleaseToPool_Postfix(Enemy __instance)
+        {
+            if (!synchronizationService.HasNetplaySessionStarted() || __instance == null || __instance.hp <= 0f)
+            {
+                return;
+            }
+
+            var registered = enemyManagerService.GetEnemyByReference(__instance);
+            if (registered.Value == null)
+            {
+                return;
+            }
+
+            pooledWhileRegistered++;
+            if (pooledWhileRegistered == 1 || pooledWhileRegistered % 25 == 0)
+            {
+                Plugin.Log.LogInfo(
+                    $"[desync] OB-51: enemy {registered.Key} ({__instance.enemyData?.enemyName}, hp {__instance.hp:0}) " +
+                    $"went back to the pool alive and still registered ({pooledWhileRegistered} so far, " +
+                    $"host {synchronizationService.IsServerMode() ?? false}).");
+            }
+        }
+
         /// <summary>
         /// OB-9. Replicate an enemy's HP after it has been rescaled post-spawn.
         ///

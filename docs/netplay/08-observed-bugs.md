@@ -4326,7 +4326,7 @@ scopes. It ran unattributed on the host, with the host's DamageMultiplier and `b
 
 
 <a name="ob-51"></a>
-## OB-51 — A client held 5–6 more enemies than the host for the rest of a run — **OPEN: diagnostic added 2026-10-20**
+## OB-51 — A client held 5–6 more enemies than the host for the rest of a run — **FIXED 2026-10-20 (relay), not yet confirmed in play**
 
 **Seen 2026-10-20.** Two-player Tier 1 Forest: the host, and a mortal test bot (`BotInvincible
 false`). From digest #102 (t ≈ 606 s) to the end, the bot's desync check reported
@@ -4389,6 +4389,82 @@ but it does not explain the living Goblins and Golems.
 ends in either `died-msg-RECEIVED` (the host sent the death and this peer failed to apply it) or
 `no-died-msg` (the host never sent it), which says which side to fix. The set is cleared per stage
 and per session.
+
+### Cause: the host relayed a client's kill to everyone except the killer
+
+Found by reading the death path end to end, after the 2026-10-20 17:02 run (+186 on a bot).
+
+**How a client reports a kill.** `OnReceivedEnemyDamaged` replays the host's hits with the tracker
+set to `AttackerId` and does not suppress outbound messages. So when a replayed hit takes the
+client's copy to 0 HP, the client's own `EnemyDied` postfix runs:
+
+- it removes the enemy locally;
+- it sends `EnemyDied` to the host with `DiedByOwnerId` = that **attacker**.
+
+**How the host passed it on.** `NetMessageRouter` (host) applied the death and relayed it with
+`SendToAllClientsExcept(enemyDied.DiedByOwnerId)`. That id is the killer, not the sender.
+
+- **Attacker is the host, or the sender itself:** every peer that still had the enemy got it.
+- **Attacker is a third player:** say bot 2 reports a kill made by bot 3's hit. The host removed
+  the enemy, bot 2 had already removed it, and the one peer skipped was bot 3, which still held it.
+
+The host never streams an enemy it no longer has, so bot 3's copy stayed alive and frozen at the
+low HP its own copy had reached. That matches the report:
+
+- Goblins, Golems and BoomerSpiders at 1–20 HP;
+- silent for minutes;
+- arriving in batches, one per AoE kill.
+
+**Why it grew with Bloodmark, and the honest answer to "is it the Bloodmark change".**
+
+- **The patches do not drop deaths.** OB-40/50/52 are void prefixes and finalizers that only set
+  the tracker and swap stats; they never skip a game method.
+- **They did raise how often this bug fired.** Before OB-40 a debuff tick had no attribution, so a
+  client stamped its own id as `DiedByOwnerId` and the relay skipped only the sender, which was
+  harmless. Now a debuff kill carries its owner, often a third player, which is exactly the losing
+  case. The defect was in the relay from the start; the attribution fix made it common.
+  **LIKELY**, from the code and the correlation (+5 at Bloodmark 2,395, +186 at 8,134).
+
+**Fixed.** The host relays a client's `EnemyDied` to **all** clients. The message has no sender
+field, so the sender gets its own kill back. That is harmless:
+
+- it has already removed the enemy, so the id is unknown there;
+- it lands in `enemiesDiedBeforeSpawn`, which is cleared per stage, and ids are never reused
+  within one.
+
+No wire change.
+
+**Ruled out by decompiling, build 21750826:**
+
+- **A death being dropped by the game.** `Enemy.EnemyDied(dc)` (`0x1804AD060`) returns early only
+  if the enemy's dead flag is already set. It stops movement, runs `DeathBehaviour`, stops all
+  coroutines and raises `A_EnemyDied`, and it never pools synchronously.
+- **The host's own broadcast.** `OnEnemyDied` sends `ReliableOrdered` to all clients.
+
+**Separate, not fixed: timed despawns.**
+
+- **How they happen.** `Enemy.TryDespawn` (`0x1804B0640`, reached only through a function pointer)
+  starts the `Despawn` coroutine inline once `MyTime.time` passes `despawnAtTime` (+0x98). It does
+  not call `Enemy.Despawn()`, so patching that method would never fire. The coroutine
+  (`0x1804BD2A0`) ends in `ReleaseToPool` (`0x1804AFC50`: `SetActive(false)`, pool release,
+  `ClearAllDebuffs`, `A_EnemyReleasedFromPool`) with no `EnemyDied`.
+- **What follows.** Nothing unregisters a despawned enemy, on any peer.
+- **Why it is not this bug.** The entry stays in the registry on the host too, so the host keeps
+  streaming it and the counts match. It cannot explain a client-only surplus.
+- **Diagnostic.** Whether it happens at all is unknown, so `Enemy.ReleaseToPool` now logs
+  `[desync] OB-51: enemy N (...) went back to the pool alive and still registered (k so far, ...)`
+  on the first and every 25th time. If that shows up, replicate it.
+
+**Also unchanged:**
+
+- **BoomerSpider entries.** A client never removes a BoomerSpider on `EnemyDied`; that waits for
+  its explosion. This produced the two `hp 0 DEAD` entries.
+- **The host warnings.** The 11 `Enemy not found ... OnEnemyDied` warnings are the host's own
+  deaths of enemies it had already unregistered.
+
+**Confirm in play:** the `OB-51: N more enemies here than on the host` warning should stay at or
+near 0 on both bots, with Bloodmark or Unstable Transfusion in a teammate's build. **UNVERIFIED,
+not run in-game.**
 
 
 <a name="ob-52"></a>

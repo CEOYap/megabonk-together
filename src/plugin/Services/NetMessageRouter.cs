@@ -283,7 +283,13 @@ namespace MegabonkTogether.Services
                     break;
                 case EnemyDied enemyDied:
                     EventManager.OnEnemyDied(enemyDied);
-                    Transport.SendToAllClientsExcept(enemyDied.DiedByOwnerId, enemyDied);
+                    // OB-51: to every client, the sender included. DiedByOwnerId is the killer (the
+                    // attacker whose replayed hit finished the enemy there), not the sender, so
+                    // excluding it skipped the one other client still holding the enemy whenever a
+                    // client reported a third player's kill: that client kept it, alive and silent,
+                    // for the rest of the stage. The message has no sender field, and the echo is
+                    // harmless: the sender has already removed the enemy, so it is an unknown id there.
+                    Transport.SendToAllClients(enemyDied, NetDelivery.ReliableOrdered);
                     break;
                 case PickupApplied pickupApplied:
                     EventManager.OnPickupApplied(pickupApplied);

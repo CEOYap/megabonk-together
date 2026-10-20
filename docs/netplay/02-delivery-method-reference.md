@@ -307,7 +307,9 @@ This path was absent from the previous revision of this document entirely.
 `FinalBossOrbDestroyed` (25), `TomeAdded` (40), `ItemAdded` (52), `ItemRemoved` (53),
 `WeaponToggled` (54), `StartingChargingLamp` (56), `StoppingChargingLamp` (57), `TimerStarted`
 (58), `HatChanged` (59), `AddXp` (64), `GoldChanged` (67), `PlayerDisconnected` (31, via
-`SendToAllClients` rather than the exclusion helper)
+`SendToAllClients` rather than the exclusion helper), and since 2026-10-20 `EnemyDied` (6), also to
+all clients: the exclusion used `DiedByOwnerId`, the killer, so a third client never got it
+([OB-51](08-observed-bugs.md#ob-51))
 
 Received but **not** rebroadcast: `PlayerUpdate` (3), `StartingChargingShrine` (17),
 `StoppingChargingShrine` (18), `PlayerDied` (28), `InteractableCharacterFightEnemySpawned` (48),
