@@ -3181,7 +3181,7 @@ and swapping who plays Dicehead leaves enemy toughness unchanged for the same pa
 
 <a name="ob-27"></a>
 
-## OB-27 — Character select throws every frame once a friend joins — **FIXED 2026-10-18, not yet confirmed in play**
+## OB-27 — Character select throws every frame once a friend joins — **FIXED, CONFIRMED by log 2026-10-20**
 
 **Reported 2026-10-18 (evening run).** "So many errors as soon as my friend joined." The host logged
 **4,362** `NullReferenceException`s, all from one line, `WindowManagerPatches.Update_Postix`
@@ -3205,6 +3205,8 @@ per-frame site now returns instead of throwing when either is null.
 
 **Confirms fixed as:** a friend joins, both reach character select, and neither log has a
 `WindowManager.cs:line` exception; the host's confirm button greys out alone and lights up with two.
+
+**Confirmed by log, 2026-10-20 21:01 run (host plus two bots, Forest stage 1, ended in a game over before any stage boss died).** Three peers reached character selection together (`[lobby] Host started the lobby; advancing every peer to character selection.`), and no peer logged a `WindowManager.cs` exception. The confirm button's grey-out with one player was not reported either way.
 
 <a name="ob-28"></a>
 
@@ -3498,7 +3500,7 @@ restarting — both directions — and B's log shows the owner-changed and leavi
 
 <a name="ob-34"></a>
 
-## OB-34 — Item hits echoed between peers until the enemy died; one client never saw the final boss die — **FIXED 2026-10-19, not yet confirmed in play**
+## OB-34 — Item hits echoed between peers until the enemy died; one client never saw the final boss die — **FIXED; echo CONFIRMED by log 2026-10-20, final-boss death not yet seen**
 
 **Reported 2026-10-19** (host plus two test bots, host on a god-mode testing plugin): the final boss died
 for the host and player 2, but player 3 kept a boss bar at 14.8K / 8.4M and the objective unticked.
@@ -3921,7 +3923,7 @@ the host's damage panel.
 **UNVERIFIED, not run in-game.**
 
 <a name="ob-41"></a>
-## OB-41 — Some teammate hits had no owner and ran as the host's — **FIXED 2026-10-20 (two causes), not yet confirmed in play**
+## OB-41 — Some teammate hits had no owner and ran as the host's — **FIXED, CONFIRMED by log 2026-10-20**
 
 "Some hits still use the host's items" meant hits the host could not trace to a player. Those run
 with the host's stats, items, lifesteal and kill credit.
@@ -3952,6 +3954,7 @@ with the host's stats, items, lifesteal and kill credit.
 **Not covered, and corrected 2026-10-20.** This entry first listed Cursed Doll, Bob and Holy Book
 as running unattributed. Only Holy Book did; see [OB-42](#ob-42). **UNVERIFIED, not run in-game.**
 
+**Confirmed by log, 2026-10-20 21:01 run (host plus two bots, Forest stage 1, ended in a game over before any stage boss died).** No peer logged an `[attribution] OB-41: ... has no owner` sample, and the host never printed its `Kill-attribution anomalies` warning. That warning prints only when a 5 s window has an unbalanced unset, an overwrite, or an `UNRESOLVED-WEAPON` hit, so no teammate hit lost its owner all session.
 
 <a name="ob-42"></a>
 ## OB-42 — Holy Book ran on every machine and counted every player's healing; forwarded item hits lost their procs — **FIXED 2026-10-20, not yet confirmed in play**
@@ -4661,3 +4664,10 @@ revive it.
 
 **UNVERIFIED, not run in-game.** Confirmed when a mortal bot's coffin can be used by the host and
 the revive completes.
+
+**Partly confirmed, 2026-10-20 21:01 run (host plus two bots, Forest stage 1, ended in a game over before any stage boss died).**
+
+- **The echo is gone.** The clients' `[bw] EnemyDamaged` ran at 0.1 to 3.7 messages a second, against the storm of 2026-10-19.
+- **Aggregation was not exercised.** The host's line read 31 to 45 hits a second at 1.0 hits per message, a load where nothing combines.
+- **Not seen yet:** the final boss's death reaching every client. The run never reached the final arena.
+
