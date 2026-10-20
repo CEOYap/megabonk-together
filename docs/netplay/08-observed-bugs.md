@@ -4357,6 +4357,39 @@ name the leak.
 
 **OPEN.** Needs the next run's `OB-51` line.
 
+### 2026-10-20 second run — 186 extra enemies, alive and frozen on the client
+
+Two-player Tier 1 Forest, mortal bot. The bot died four times and was revived three times. The
+desync grew to **186 more enemies on the client than on the host**, and stopped growing once the
+stage boss was dead. The new report named the entries:
+
+- **Goblins, Golems and BoomerSpiders,** all at very low HP (1–20).
+- **Alive on the client, and silent for minutes.** None was marked `DEAD`, and the host had sent
+  some of them nothing for over 400 s. They are enemies that died on the host while the client kept
+  them, alive and frozen.
+- **Some BoomerSpiders were `silent never`.** The host never sent them a single update, which means
+  they died very soon after spawning.
+
+**Ruled out:**
+
+- **Deaths arriving before their spawn.** `enemiesDiedBeforeSpawn` is checked when the queued spawn
+  drains.
+- **The Bloodmark execute itself.** `AddStacks` kills through `DamageFromPlayerOther`, and both
+  `EnemyDied` overloads broadcast.
+
+**Correlates with, not yet proven:** more Bloodmark executes (+5 at Bloodmark 2,395; +186 at
+8,134). The host also logged 11 `Enemy not found ... OnEnemyDied` warnings, most of them during
+the first revive fight.
+
+**Known side issue.** A client never removes a BoomerSpider on `EnemyDied` (that waits for its
+explosion), so a spider killed without exploding stays in the registry. That inflates the count,
+but it does not explain the living Goblins and Golems.
+
+**Diagnostic added.** The client records every `EnemyDied` id it receives. Each `OB-51` entry now
+ends in either `died-msg-RECEIVED` (the host sent the death and this peer failed to apply it) or
+`no-died-msg` (the host never sent it), which says which side to fix. The set is cleared per stage
+and per session.
+
 
 <a name="ob-52"></a>
 ## OB-52 — OB-50 was undone by Bloodmark re-adding itself — **FIXED 2026-10-20, not yet confirmed in play**

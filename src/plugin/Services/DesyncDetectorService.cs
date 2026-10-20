@@ -244,6 +244,22 @@ namespace MegabonkTogether.Services
 
         private float lastStaleReport = -999f;
 
+        // OB-51: ids whose EnemyDied this peer received. Bounded: cleared when it grows past a few
+        // thousand, which only loses the oldest evidence.
+        private static readonly System.Collections.Generic.HashSet<uint> diedReceived = new();
+
+        internal static void ClearEnemyDiedReceived() => diedReceived.Clear();
+
+        internal static void NoteEnemyDiedReceived(uint id)
+        {
+            if (diedReceived.Count > 20000)
+            {
+                diedReceived.Clear();
+            }
+
+            diedReceived.Add(id);
+        }
+
         /// <summary>
         /// OB-51. The client holds more enemies than the host: name the registry entries the host has
         /// been silent about longest, which is where a missed death or despawn shows up. 2026-10-20:
@@ -284,7 +300,7 @@ namespace MegabonkTogether.Services
             {
                 var r = rows[i];
                 var age = r.Age == float.MaxValue ? "never" : $"{r.Age:F0}s";
-                parts.Add($"{r.Id} {r.Name} hp {r.Hp:F0}{(r.Dead ? " DEAD" : "")} silent {age}");
+                parts.Add($"{r.Id} {r.Name} hp {r.Hp:F0}{(r.Dead ? " DEAD" : "")} silent {age}{(diedReceived.Contains(r.Id) ? " died-msg-RECEIVED" : " no-died-msg")}");
             }
 
             Plugin.Log.LogWarning(

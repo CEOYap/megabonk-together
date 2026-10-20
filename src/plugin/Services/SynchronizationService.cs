@@ -385,6 +385,7 @@ namespace MegabonkTogether.Services
 #if DEBUG
             Helpers.TestLoadout.Reset();
 #endif
+            DesyncDetectorService.ClearEnemyDiedReceived();
             pendingSharedXp = 0;
             toSpawns.Clear();
             toUpdate.Clear();
@@ -1000,6 +1001,7 @@ namespace MegabonkTogether.Services
         {
             // OB-40. Pooled enemies are reused by the next stage.
             Patches.Enemies.DebuffAttribution.Clear();
+            DesyncDetectorService.ClearEnemyDiedReceived(); // OB-51: enemy ids restart per stage
 
             // A stage change ends any round in flight — the encounter windows are torn down with
             // the stage, so a report that arrives after this point belongs to nothing.
@@ -2382,6 +2384,10 @@ namespace MegabonkTogether.Services
 
         private void OnReceivedEnemyDied(EnemyDied died)
         {
+            // OB-51 diagnostic: lets the desync report say whether a lingering enemy's death ever
+            // arrived (the host sent it; this peer failed to apply it) or not (the host never sent it).
+            DesyncDetectorService.NoteEnemyDiedReceived(died.EnemyId);
+
             var enemy = enemyManagerService.GetEnemyById(died.EnemyId);
             if (enemy == null)
             {
