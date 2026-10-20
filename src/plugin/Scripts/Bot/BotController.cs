@@ -543,12 +543,17 @@ namespace MegabonkTogether.Scripts.Bot
             // could not reach it (2026-10-19: a 5.7M ghost lost ~4k HP a minute, 40u from the bot).
             var target = coffinPosition;
             var ghost = coffin != null ? coffin.SpawnedGhost : null;
-            if (pressedCoffin && ghost != null && ghost.hp > 0)
+            var fightingGhost = pressedCoffin && ghost != null && ghost.hp > 0;
+            if (fightingGhost)
             {
                 target = ghost.transform.position;
             }
 
-            SteerTo(me, target, OwnerPosition ?? coffinPosition);
+            // The stuck-teleport lands next to the ghost during the fight, not next to the owner: the
+            // owner is the dead player, so "teleport to owner" put the bot back at the corpse every
+            // 6 s while the ghost wandered off. 2026-10-20: a 169K revive ghost lost ~15K in 90 s,
+            // teleports 62 -> 64, until the host revived themself.
+            SteerTo(me, target, fightingGhost ? target : (OwnerPosition ?? coffinPosition));
         }
 
         private void EndRevive()
@@ -622,7 +627,7 @@ namespace MegabonkTogether.Scripts.Bot
             }
 
             Teleports++;
-            Plugin.Log.LogInfo($"[bot] stuck {stuckFor:F0}s, teleported to owner.");
+            Plugin.Log.LogInfo($"[bot] stuck {stuckFor:F0}s, teleported to {(owner == target ? "the target" : "owner")}.");
             DropTarget();
         }
 

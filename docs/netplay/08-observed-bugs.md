@@ -4090,8 +4090,9 @@ stage-boss death, from both its own `OnEnemyDied` and the host's `EnemyDied`.
 registered. When one is still alive they log `[boss] OB-44: a stage boss died but another ... is
 still alive; the portal waits for it.`
 
-**Not changed.** A client still doesn't check `CanSpawnPortal`'s stage and tier condition. The host
-decides that, and the host's own run has matched on every stage so far.
+**Not changed here, and the cause of the original report.** A client did not check
+`CanSpawnPortal`'s stage and tier condition. That turned out to be why the host had no stage-2
+portal at all; see [OB-46](#ob-46).
 
 **UNVERIFIED, not run in-game.** To confirm, a stage with two bosses (stage 2 in this run) should
 show its portal on all peers only after the second boss dies.
@@ -4115,3 +4116,74 @@ items". **Not run in-game yet.**
 **Release builds exclude it (2026-10-20).** The loadout and the test bot are behind `#if DEBUG`. A
 Release DLL was checked to contain none of `BotController`, `BotMode`, `TestLoadout` or
 `TestItems`. The report stays in all builds.
+
+
+<a name="ob-46"></a>
+## OB-46 — On the tier's last stage the host correctly had no portal; clients opened one anyway — **FIXED 2026-10-20, not yet confirmed in play**
+
+**Reported twice** (2026-10-19 and 2026-10-20). After the stage-2 boss, the host saw no portal and
+both bots did. A bot walked through it and the run went on to a third stage.
+
+**The host was right; this is vanilla design.** Decompiled, build 21750826:
+
+- **`InteractableBossSpawner.CanSpawnPortal`** (`0x1804C5540`) is
+  `!MapController.IsLastStage() && MapController.index < runConfig.mapTierIndex`.
+- **`OnEnemyReleasedFromPool`** (`0x1804C5B80`) opens the portal only when that holds. Either way it
+  raises `A_BossDefeated(canSpawnPortal)`.
+- **`ObjectiveUi.OnBossDefeated`** (`0x1803E7BD0`) shows `survive` for false and `enterPortal` for
+  true. Ghidra prints the base as `enterPortal`; by `dump.cs` offsets the pair is
+  `survive`/`enterPortal`.
+- **`DeathScreen.OnBossDefeated`** (`0x180531EA0`) sets `tierVictory` when
+  `MapController.IsTierFinalStage()`.
+
+So on the tier's last stage, killing the boss opens no portal: the objective becomes "Survive" and
+the tier counts as won.
+
+**This run's tier.** The `RunStarted` line prints `runConfig.mapTierIndex`, and it read **1**.
+Stage 1 (index 0) passes `0 < 1` and the host opened its portal. Stage 2 (index 1) fails `1 < 1`, so
+the host, correctly, opened none in both runs.
+
+**The defect.** A client opens the portal itself in `OnBossDefeated` (OB-44's call sites). It did so
+unconditionally and raised `A_BossDefeated(true)`. So the bots saw a portal the game never meant
+to exist, and using it took every peer to a stage the tier does not have.
+
+**Fixed.** The client asks the same `bossSpawner.CanSpawnPortal()`:
+
+- **Portal.** It activates the portal only when that is true.
+- **Event.** It raises `A_BossDefeated` with the real value, so its own objective and victory state
+  match the host's.
+- **Log.** It prints `Boss defeated; the tier's last stage has no portal (OB-46).` when there is
+  none.
+
+**What happens next on the last stage is the game's own flow, and it has not been seen in
+multiplayer yet,** because the extra portal always pre-empted it. **UNVERIFIED, not run in-game.**
+Confirmed when, on a `mapTierIndex 1` run, no peer shows a stage-2 portal and all show "Survive".
+
+<a name="ob-47"></a>
+## OB-47 — A teammate's row slipped past the damage-panel filter while the local inventory was missing — **FIXED 2026-10-20, not yet confirmed in play**
+
+**What the 2026-10-20 report showed.** The host's end-screen report showed `Mirror LVL 0 997`. The
+host held no Mirror; a bot did. The host log had neither an `OB-14: kept 'Mirror'` line nor an
+`OB-14: recording 'Mirror'` line.
+
+**How that can happen.** Of the prefix's paths, only one records a hit silently: the local
+inventory is null for a moment. That happens during a level load, or with the player object gone.
+
+- **The teammate check gave up.** `IsTeammatesSource` returned "not a teammate's" as soon as it
+  found no local inventory.
+- **The diagnostic hid it.** `ReportForeignSource` spent its once-per-source mark before
+  discovering the inventory was missing, so the one log line for that source never printed.
+
+**Fixed:**
+
+- **Teammate check.** A missing local inventory no longer ends it; the teammate check alone decides.
+- **Diagnostic.** It marks a source only once it can actually check it.
+
+The path is LIKELY, not seen directly, because nothing logged it. **UNVERIFIED, not run in-game.**
+
+**Also this run (2026-10-20): the bot and the revive fight.** While the host was dead, a bot chased
+the revive ghost (GhostGrave4, 169K HP). Whenever it got stuck it teleported to its "owner", which
+was the dead host's body, so it kept landing back at the corpse; teleports went 62 -> 64, and the
+ghost lost about 15K in 90 s. During the revive fight the bot now teleports next to the ghost. The
+ghost's HP itself is unchanged: boss HP scaled by team difficulty and cut to 2/12 on the first
+revive (`EnemyManagerService.RebalanceIfNeededReviverEnemy`).

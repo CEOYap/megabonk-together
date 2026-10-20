@@ -122,8 +122,12 @@ namespace MegabonkTogether.Patches
                 return false;
             }
 
+            // OB-47: a missing local inventory (during a level load, or with the player object gone)
+            // used to end the test here and let a teammate's row through as ours: the host's
+            // 2026-10-20 panel kept a LVL 0 Mirror (997) with no "kept" or "recording" line. Without
+            // a local inventory we cannot hold the source, so only the teammate check decides.
             var local = GameManager.Instance?.player?.inventory;
-            if (local == null || Holds(local, parsed))
+            if (local != null && Holds(local, parsed))
             {
                 return false;
             }
@@ -210,16 +214,20 @@ namespace MegabonkTogether.Patches
         /// </summary>
         private static void ReportForeignSource(string source, uint? attacker)
         {
-            if (string.IsNullOrEmpty(source) || !checkedSources.Add(source))
+            if (string.IsNullOrEmpty(source) || checkedSources.Contains(source))
             {
                 return;
             }
 
+            // Checked before the once-per-source mark, so a hit that arrives while the local
+            // inventory is missing does not use up the one log line for that source (OB-47).
             var inventory = GameManager.Instance?.player?.inventory;
             if (inventory == null)
             {
                 return;
             }
+
+            checkedSources.Add(source);
 
             if (inventory.weaponInventory?.weapons != null)
             {

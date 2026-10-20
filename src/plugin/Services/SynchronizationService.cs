@@ -2500,16 +2500,28 @@ namespace MegabonkTogether.Services
             }
             hasHandledBossDefeatedThisStage = true;
 
-            logger.LogInfo("Boss defeated, activating portal.");
             var cam = GameManager.Instance.player.minimapCamera.GetComponent<MinimapCamera>();
             cam.arrowDict.Clear(); //Prevent sometimes double add for portal arrow
 
+            // OB-46. The game's own rule, not "always". InteractableBossSpawner.OnEnemyReleasedFromPool
+            // (VA 0x1804C5B80) opens the portal only if CanSpawnPortal (0x1804C5540):
+            // !MapController.IsLastStage() && MapController.index < runConfig.mapTierIndex. On the
+            // tier's last stage it opens none and raises A_BossDefeated(false), which ObjectiveUi turns
+            // into "Survive" and DeathScreen into a tier victory (IsTierFinalStage). Clients opened a
+            // portal regardless: on a mapTierIndex 1 run the host, correctly, had no stage-2 portal
+            // while both bots did, and a bot walking through it took everyone to a stage the tier does
+            // not have (2026-10-19 and 2026-10-20).
             var bossSpawner = spawnedObjectManagerService.GetSpecific<InteractableBossSpawner>();
-            if (bossSpawner != null)
+            var canSpawnPortal = bossSpawner == null || bossSpawner.CanSpawnPortal();
+            logger.LogInfo(canSpawnPortal
+                ? "Boss defeated, activating portal."
+                : "Boss defeated; the tier's last stage has no portal (OB-46).");
+
+            if (bossSpawner != null && canSpawnPortal)
             {
                 bossSpawner.portal.SetActive(true);
             }
-            InteractableBossSpawner.A_BossDefeated?.Invoke(true);
+            InteractableBossSpawner.A_BossDefeated?.Invoke(canSpawnPortal);
         }
 
         public void OnProjectileDone(ProjectileBase instance)
