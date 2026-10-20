@@ -23,6 +23,7 @@ namespace MegabonkTogether.Configuration
         // Developer test tooling, Debug builds only: a release has neither the bot nor the
         // loadout, so a player cannot turn either on by editing their config.
         public static ConfigEntry<bool> BotMode { get; private set; }
+        public static ConfigEntry<bool> BotInvincible { get; private set; }
         public static ConfigEntry<float> BotFollowDistance { get; private set; }
         public static ConfigEntry<float> BotStuckSeconds { get; private set; }
         public static ConfigEntry<string> TestItems { get; private set; }
@@ -94,6 +95,14 @@ namespace MegabonkTogether.Configuration
                 "bot that joins the host's lobby by itself, follows the host, cannot take damage, " +
                 "picks rewards at random, uses nearby chests and shrines, and revives the host. " +
                 "Meant for a second copy on the same PC (see docs/netplay/05-local-testing.md)."
+            );
+            BotInvincible = config.Bind(
+                "Bot",
+                "BotInvincible",
+                true,
+                "Developer tool. With BotMode on, whether the bot cannot take damage. Turn it off to " +
+                "let the bot die, so a run can reach game over and the end screen, and so a bot's " +
+                "death and revive can be tested. Needs a restart."
             );
             BotFollowDistance = config.Bind(
                 "Bot",

@@ -203,6 +203,13 @@ after a hiccup, and a problem when they repeat.
 
 ---
 
+## Letting a bot die
+
+`[Bot] BotInvincible` (default `true`) controls whether a `BotMode` copy can take damage. Set it to
+`false`, then restart that copy, to let the bot die. That makes a bot run able to reach game over and
+the end-screen `[report]`, and it exercises a bot's own death and revive. It is Debug-only, like
+the rest of the bot.
+
 ## Testing specific items (OB-45)
 
 Chests roll items at random, so a run may never touch the item you changed. Each copy of the

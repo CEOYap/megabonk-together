@@ -33,11 +33,11 @@ namespace MegabonkTogether.Patches.Bot
         /// PlayerHealth wrapper on every damage check. Turning BotMode on needs a restart.
         /// </summary>
         [HarmonyPrepare]
-        public static bool Prepare() => ModConfig.BotMode.Value;
+        public static bool Prepare() => ModConfig.BotMode.Value && ModConfig.BotInvincible.Value;
 
         private static bool IsBotsOwnHealth(PlayerHealth health)
         {
-            if (!ModConfig.BotMode.Value || health == null || !synchronizationService.HasNetplaySessionStarted())
+            if (!ModConfig.BotMode.Value || !ModConfig.BotInvincible.Value || health == null || !synchronizationService.HasNetplaySessionStarted())
             {
                 return false;
             }
