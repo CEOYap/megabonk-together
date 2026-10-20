@@ -4224,7 +4224,7 @@ revive (`EnemyManagerService.RebalanceIfNeededReviverEnemy`).
 
 
 <a name="ob-48"></a>
-## OB-48 — The Holy Book effect played on the host, who held no Holy Book — **FIXED (visual) 2026-10-20, cause not yet named**
+## OB-48 — The Holy Book effect played on the host, who held no Holy Book — **FIXED (visual), CONFIRMED in play 2026-10-20 21:01**
 
 **Reported 2026-10-20.** The host saw the Holy Book effect on their own character. They held no Holy
 Book; a bot did. The host's report had no Holy Book damage row, and its log no `kept 'HolyBook'`
@@ -4249,7 +4249,7 @@ names the path. **UNVERIFIED, not run in-game.**
 
 
 <a name="ob-49"></a>
-## OB-49 — The bots, then the revived host, ended up outside the world during a revive fight — **FIXED 2026-10-20, not yet confirmed in play**
+## OB-49 — The bots, then the revived host, ended up outside the world during a revive fight — **FIXED, CONFIRMED in play 2026-10-20 21:01**
 
 **Reported 2026-10-20**, Tier 1 Forest, with screenshots. Chasing the host's revive ghost, the bots
 teleported outside the map, and after the revive the host stood outside it too.
@@ -4291,7 +4291,7 @@ teleported outside the map, and after the revive the host stood outside it too.
 
 
 <a name="ob-50"></a>
-## OB-50 — A teammate's Bloodmark executes counted as the host's — **FIXED 2026-10-20, not yet confirmed in play**
+## OB-50 — A teammate's Bloodmark executes counted as the host's — **FIXED, CONFIRMED in play 2026-10-20 21:01**
 
 **Seen 2026-10-20.** This was a two-player Tier 1 Forest run: the host, plus Player2 played by hand
 with the bot off. The host's end-screen report had a `Bloodmark 213` row. The mark comes from
@@ -4326,7 +4326,7 @@ scopes. It ran unattributed on the host, with the host's DamageMultiplier and `b
 
 
 <a name="ob-51"></a>
-## OB-51 — A client held 5–6 more enemies than the host for the rest of a run — **FIXED 2026-10-20 (relay), not yet confirmed in play**
+## OB-51 — A client held 5–6 more enemies than the host for the rest of a run — **FIXED (relay + pooled ids), CONFIRMED in play 2026-10-20 21:01**
 
 **Seen 2026-10-20.** Two-player Tier 1 Forest: the host, and a mortal test bot (`BotInvincible
 false`). From digest #102 (t ≈ 606 s) to the end, the bot's desync check reported
@@ -4514,9 +4514,21 @@ path.
 
 **UNVERIFIED, not run in-game.**
 
+**Confirmed 2026-10-20 21:01** (host plus two bots, both bots holding Bloody Cleaver and Unstable
+Transfusion):
+
+- **No surplus.** Zero `more enemies here` warnings on any peer.
+- **Counts match.** Every digest was in sync, ending at `enemies 183/183`.
+- **One live pooling, everywhere at once.** A GoldenSkeleton (id 1263) went back to the pool alive
+  on the host and on both bots. Both bots unregistered it, and the host dropped the stale id when
+  the object was reused for 1350.
+- **Timed despawn.** The client-only despawns of the earlier run (575) are gone.
+
+Which fix removed which share is not separable from one run. Both causes were real.
+
 
 <a name="ob-52"></a>
-## OB-52 — Bloodmark's second execute, on removal, ran unscoped on the host — **FIXED 2026-10-20 (second attempt), not yet confirmed in play**
+## OB-52 — Bloodmark's second execute, on removal, ran unscoped on the host — **FIXED (second attempt), CONFIRMED in play 2026-10-20 21:01**
 
 **Seen 2026-10-20**, with OB-50 already in the build. The host's end screen had `Bloodmark 2,395`.
 The host confirmed holding no Bloodmark item (no Bloody Cleaver, no Slurp Gloves); the bot held
@@ -4589,9 +4601,16 @@ the second Bloodmark execute, and it ran as the host's.
 
 **UNVERIFIED, not run in-game.**
 
+**Confirmed 2026-10-20 21:01.**
+
+- **Host.** No `Bloodmark` row, and no `recording 'Bloodmark' ... unattributed` line.
+- **Player2.** Its own end screen carries `Bloodmark 8,198`, the mark's owner credited.
+- **Poison.** This run the host held Glove Poison itself (`GlovePoison LVL 1`), so its `Poison` row
+  is its own.
+
 
 <a name="ob-53"></a>
-## OB-53 — A bot teleported into a wall, died outside the map, and its coffin could not be reached — **FIXED 2026-10-20, not yet confirmed in play**
+## OB-53 — A bot teleported into a wall, died outside the map, and its coffin could not be reached — **FIXED, CONFIRMED in play 2026-10-20 21:01**
 
 **Reported 2026-10-20**, two-player Tier 1 Forest with a mortal bot, with a screenshot. The bot
 teleported toward the host but ended up outside the map. Then it died, and the host could not
