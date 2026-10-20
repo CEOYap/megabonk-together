@@ -259,6 +259,23 @@ You should now have the macthmaking server built and also the mod file
 
 To target a local server, modify the file `{your game path}/BepInEx/config/MegabonkTogether.cfg` and update [Network].ServerUrl to `ws://127.0.0.1:5000`
 
+## Developer testing tools
+
+Debug builds include tools for testing multiplayer alone on one PC, using extra copies of the game.
+Full setup: [`docs/netplay/05-local-testing.md`](docs/netplay/05-local-testing.md).
+
+| Tool | Setting | What it does |
+|---|---|---|
+| Test bot | `[Bot] BotMode = true` | That copy joins your lobby by itself, follows you, can't take damage, picks rewards, opens nearby chests and shrines, and revives you |
+| Test loadout | `[Testing] TestItems = IceCube, CursedDoll*2, Cactus` | That copy is given these items when a multiplayer run starts, so a test covers the items you choose instead of whatever the chests roll |
+| End-screen report | always on | Each copy writes its end-screen damage rows and kill count to `BepInEx/LogOutput.log` as `[report]` lines, so a run can be checked from the logs |
+
+> [!NOTE]
+> The test bot and the test loadout exist only in **Debug** builds. Releases are built in
+> Release mode and leave them out entirely, so players can't turn them on by editing their
+> config, and the settings don't appear in their config file. The end-screen report is in
+> every build.
+
 # Linux Support (Proton / Steam Deck)
 
 The mod is compatible with Linux via **Proton**. Native Linux support is currently experimental and unstable due to BepInEx 6 compatibility issues with newer kernels (glibc/CET conflicts).
