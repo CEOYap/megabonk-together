@@ -4178,6 +4178,8 @@ That is the game's intended flow.
 
 ### Notes for a future endless-run mode
 
+**Superseded by the plan in [`18-endless-and-projectile-cap-plan.md`](18-endless-and-projectile-cap-plan.md)** (2026-10-20), where the two differ.
+
 This is what an "endless" option would have to change, and where. **All of it is UNVERIFIED as a
 design.** Only the decompiled rule above is established.
 
