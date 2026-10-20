@@ -3247,7 +3247,7 @@ warnings.
 
 <a name="ob-30"></a>
 
-## OB-30 — Enemies vanish and reappear past a certain distance — **FIXED 2026-10-19 (renderers no longer hidden), not yet confirmed in play**
+## OB-30 — Enemies vanish and reappear past a certain distance — **FIXED, CONFIRMED in play 2026-10-20**
 
 **Reported by the project owner.** In netplay, enemies disappear once they are some distance away
 and pop back in when they come closer. It looks like a render distance or LOD cutoff.
@@ -3319,6 +3319,8 @@ on the client look frozen apart from moving.
 
 **Not changed:** projectiles have their own far-distance handling (zero opacity, `ffb8c44`), which was
 not part of this report.
+
+**Confirmed in play 2026-10-20** by the host player: distant enemies no longer vanish and reappear. Nothing logs this, so the confirmation is visual.
 
 <a name="ob-31"></a>
 
@@ -3853,7 +3855,7 @@ Some numbers bypass `GetStat` entirely:
 - **Known:** the OB-1 stats (Projectiles, Size, Bounces) keep their own per-accessor correction.
 
 <a name="ob-39"></a>
-## OB-39 — Hit and kill listeners on items and passives fired for everyone's hits, on every machine — **FIXED 2026-10-20, not yet confirmed in play**
+## OB-39 — Hit and kill listeners on items and passives fired for everyone's hits, on every machine — **FIXED, CLOSED 2026-10-20 on play evidence**
 
 **Decompiled.** These listeners are subscribed to the static enemy-hit and enemy-death events.
 Each machine raises those events for every hit and kill applied there, whoever made it, and holds
@@ -3895,6 +3897,13 @@ the measured 1.0–1.3 hits per message.
 - **Zap.** A teammate's Zap should still zap, now on the host.
 
 The classification of each listener comes from reading its decompiled body.
+
+**Closed 2026-10-20** at the host player's call. **The basis.** This fix has no log line of its own, so a quiet log is not evidence either way. What supports closing it is behaviour across the 2026-10-20 runs:
+
+- **The listeners' own symptoms are gone.** Holy Book plays only for its holder (OB-48). A teammate's Bloodmark is credited to them (OB-50, OB-52). End screens show owners' rows and no LVL 0 teammate rows.
+- **The host stays clean.** It keeps no heals or stacks off teammates' hits.
+
+Reopen if a heal, stack or proc is seen landing on a player who does not own the item.
 
 <a name="ob-40"></a>
 ## OB-40 — A teammate's burn and poison ticked as the host's — **FIXED 2026-10-20, not yet confirmed in play**
