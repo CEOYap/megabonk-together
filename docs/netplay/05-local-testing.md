@@ -231,13 +231,15 @@ TestItems = IceCube, Bonker, CursedDoll, Cactus
 LVL is computed the way the panel computes it, so a row marked `<-- LVL 0` is a LVL 0 row on
 screen. Compare the three logs side by side.
 
-**A loadout that covers every item group.** Use it on the bots, and leave the host empty or give
-it something different:
+**A loadout that covers every item group.** Use it on the bots, and leave the host empty:
 
 | Copy | `TestItems` | Covers |
 |---|---|---|
-| Bot 1 | `IceCube, Bonker, CursedDoll, Cactus` | on-hit procs run by the host (OB-37), timed damage forwarded and procced (OB-42), a reaction to the bot taking damage (OB-43) |
-| Bot 2 | `GloveLightning, SpicyMeatball, HolyBook, GoldenShield, EnergyCore` | baseDamage and position on host-run procs (OB-38/43), Holy Book on its owner only (OB-42), owner-only gold (OB-43), timed damage not doubled (OB-43) |
+| Bot 1 | `DemonBlade, BloodyCleaver, Dragonfire, Cactus, Mirror, Bonker, CursedDoll` | heal on crit and lifesteal reactions on the owner only (OB-39/43), a burn credited to its owner (OB-40), thorns and Mirror on the owner only (OB-43/47), host-run procs (OB-37), timed damage (OB-42) |
+| Bot 2 | `GlovePoison, Snek, GoldenShield, SpicyMeatball, GlovePower, SluttyCannon, HolyBook, DemonicSoul` | poison credited to its owner (OB-40), owner-only gold (OB-43), host-run procs starting from the bot's position (OB-43), Holy Book on its owner only (OB-42/48), kill stacks on the owner (OB-39) |
+
+An earlier loadout (`IceCube, Bonker, CursedDoll, Cactus` / `GloveLightning, SpicyMeatball,
+HolyBook, GoldenShield, EnergyCore`) confirmed OB-37, OB-38 and OB-42 on 2026-10-20.
 
 **What to look for:**
 
