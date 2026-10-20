@@ -4323,3 +4323,36 @@ scopes. It ran unattributed on the host, with the host's DamageMultiplier and `b
   the host was alive, and then the host died too.
 
 **UNVERIFIED, not run in-game.**
+
+
+<a name="ob-51"></a>
+## OB-51 — A client held 5–6 more enemies than the host for the rest of a run — **OPEN: diagnostic added 2026-10-20**
+
+**Seen 2026-10-20.** Two-player Tier 1 Forest: the host, and a mortal test bot (`BotInvincible
+false`). From digest #102 (t ≈ 606 s) to the end, the bot's desync check reported
+`enemies host N / local N+5` (or N+6) on 62 consecutive digests: host 18 / local 23, then host 33 /
+local 39.
+
+**What it is not:**
+
+- **A transient.** The previous Forest run stayed in sync to the end (319/319).
+- **A death on the client.** The client never died mid-run. The host died once and was revived at
+  client line 618, long before the drift began.
+- **A missing broadcast for Bloodmark.** Bloodmark kills through `DamageFromPlayerOther`, and both
+  `Enemy.EnemyDied` overloads broadcast.
+
+The extra entries are registry entries the host no longer has. That points to a missed death, or a
+host-side removal that is not replicated. The logs carry counts only, so they cannot say which
+enemies.
+
+**Diagnostic.** `EnemyInterpolator` now records when the host last sent each enemy. When the client
+holds more enemies than the host, the desync warning also prints the longest-silent registry
+entries, at most once a minute:
+
+`[desync] OB-51: N more enemies here than on the host; the longest-silent entries: <id> <type> hp <hp> [DEAD] silent <s>; ...`
+
+**Limits.** The host's stream carries only changes, so a still enemy can go quiet legitimately;
+silence is a hint, not proof. Entries that are `DEAD`, destroyed, or of one recurring type would
+name the leak.
+
+**OPEN.** Needs the next run's `OB-51` line.

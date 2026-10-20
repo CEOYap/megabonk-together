@@ -1,4 +1,4 @@
-﻿using Assets.Scripts.Actors.Enemies;
+using Assets.Scripts.Actors.Enemies;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -70,8 +70,17 @@ namespace MegabonkTogether.Scripts.Snapshot
             EnemyInterpolatorManager.Register(this);
         }
 
+        /// <summary>
+        /// OB-51 diagnostic: when the host last sent this enemy, in unscaled seconds. The host's
+        /// stream carries changes only, so a still enemy can go quiet legitimately; a long silence
+        /// is a hint, not proof, that the host no longer has it.
+        /// </summary>
+        public float LastSnapshotAt { get; private set; } = -1f;
+
         public void AddSnapshot(EnemySnapshot snapshot)
         {
+            LastSnapshotAt = Time.unscaledTime;
+
             // The enemy stream is `Unreliable, chunked` at 40 Hz, so it has no ordering guarantee
             // and a late chunk can arrive after a newer one. Everything below this line assumes the
             // buffer is sorted by timestamp: FindSnapshotPair scans linearly for a bracketing pair,

@@ -218,6 +218,11 @@ namespace MegabonkTogether.Services
                 Plugin.Log.LogWarning(
                     $"[desync] digest #{host.Sequence}: {reportLines.Count} field(s) disagree with the host " +
                     $"on two consecutive digests -- {string.Join("; ", reportLines)}");
+
+                if (localEnemies > host.TrackedEnemies)
+                {
+                    ReportStalestEnemies(localEnemies - host.TrackedEnemies);
+                }
             }
             else
             {
@@ -235,6 +240,56 @@ namespace MegabonkTogether.Services
 
             // Swap rather than copy: the set that was current becomes the comparison baseline.
             (previousMismatches, currentMismatches) = (currentMismatches, previousMismatches);
+        }
+
+        private float lastStaleReport = -999f;
+
+        /// <summary>
+        /// OB-51. The client holds more enemies than the host: name the registry entries the host has
+        /// been silent about longest, which is where a missed death or despawn shows up. 2026-10-20:
+        /// host 18 / local 23 from digest #102 to the end of a run, with counts only and nothing to
+        /// say which enemies. At most once a minute; reads every registered enemy, so it stays off
+        /// the per-digest path.
+        /// </summary>
+        private void ReportStalestEnemies(int extra)
+        {
+            var now = Time.unscaledTime;
+            if (now - lastStaleReport < 60f)
+            {
+                return;
+            }
+
+            lastStaleReport = now;
+
+            var rows = new System.Collections.Generic.List<(uint Id, string Name, float Hp, float Age, bool Dead)>();
+            foreach (var kv in enemyManagerService.GetAllRegisteredEnemies())
+            {
+                var enemy = kv.Value;
+                if (enemy == null)
+                {
+                    rows.Add((kv.Key, "<destroyed>", 0f, float.MaxValue, true));
+                    continue;
+                }
+
+                var interpolator = enemy.GetComponent<Scripts.Snapshot.EnemyInterpolator>();
+                var last = interpolator == null ? -1f : interpolator.LastSnapshotAt;
+                var age = last < 0f ? float.MaxValue : now - last;
+                rows.Add((kv.Key, enemy.enemyData != null ? enemy.enemyData.enemyName.ToString() : "?", enemy.hp, age, enemy.IsDead()));
+            }
+
+            rows.Sort((a, b) => b.Age.CompareTo(a.Age));
+            var shown = System.Math.Min(rows.Count, System.Math.Max(extra, 5));
+            var parts = new System.Collections.Generic.List<string>();
+            for (var i = 0; i < shown; i++)
+            {
+                var r = rows[i];
+                var age = r.Age == float.MaxValue ? "never" : $"{r.Age:F0}s";
+                parts.Add($"{r.Id} {r.Name} hp {r.Hp:F0}{(r.Dead ? " DEAD" : "")} silent {age}");
+            }
+
+            Plugin.Log.LogWarning(
+                $"[desync] OB-51: {extra} more enemies here than on the host; the longest-silent entries: " +
+                string.Join("; ", parts) + ".");
         }
 
         private void CheckCount(string field, int host, int local)
