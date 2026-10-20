@@ -4466,6 +4466,54 @@ No wire change.
 near 0 on both bots, with Bloodmark or Unstable Transfusion in a teammate's build. **UNVERIFIED,
 not run in-game.**
 
+### Second cause: pooled objects kept their ids on the client (2026-10-20 17:55)
+
+**The run.** The relay fix was in the build, and a bot still ended **114 ahead** of the host.
+
+- **Deaths did arrive.** 99 of the 114 entries were tagged `died-msg-RECEIVED`, and the client log
+  had no exception.
+- **One object, several ids.** Four of them were Goblins at exactly HP 8 and exactly 130 s silent.
+- **Pooling on the client only.** The bot logged **575** live enemies going back to the pool while
+  registered (Ghosts, BoomerSpiders, a few Goblins). The host logged **none**.
+
+**What happened.**
+
+1. A client pooled a live enemy itself, most likely through the game's own timed despawn. The host
+   still had it.
+2. The registry kept the old id.
+3. The pool handed the same object to the next `SpawnedEnemy`, so two ids pointed at it.
+4. A death removed one id. The other stayed registered for the stage, silent, at the object's last
+   HP, and so did the death-received tag set by the first.
+
+**Fixed:**
+
+- **Registry** (`EnemyManagerService`). The registry indexes each entry by the object's instance
+  id. Registering an object drops any older id still pointing at it, and logs
+  `enemy object reused for N while M still pointed at it`.
+- **Client release** (`Enemy.ReleaseToPool` postfix). A client unregisters whatever id a pooled
+  object held.
+- **Host release.** The host only logs. Its deaths unregister in the `EnemyDied` postfix, which
+  must still find the entry to broadcast.
+- **Timed despawn** (`Enemy.TryDespawn`). It no longer runs on clients; only the host decides that
+  an enemy despawns.
+
+**LIKELY** that the 575 releases were timed despawns. The release log names the enemy, not the
+path.
+
+**Left open.**
+
+- **Host-side timed despawn.** If the host itself despawns an enemy, nothing tells the clients. It
+  read 0 in this run.
+- **Host-side alias drop.** If the host's registration drops an alias, that is not broadcast
+  either.
+
+**Confirm in play:**
+
+- the `more enemies here` warning stays near 0;
+- `went back to the pool alive` on a client should become rare.
+
+**UNVERIFIED, not run in-game.**
+
 
 <a name="ob-52"></a>
 ## OB-52 — Bloodmark's second execute, on removal, ran unscoped on the host — **FIXED 2026-10-20 (second attempt), not yet confirmed in play**

@@ -1,4 +1,4 @@
-﻿using Actors.Enemies;
+using Actors.Enemies;
 using Assets.Scripts.Actors.Enemies;
 using Assets.Scripts.Game.Spawning;
 using Assets.Scripts.Managers;
@@ -32,6 +32,9 @@ namespace MegabonkTogether.Services
         public IEnumerable<KeyValuePair<uint, Enemy>> GetAllRegisteredEnemies();
         public KeyValuePair<uint, Enemy> GetEnemyByReference(Enemy enemy);
         public void RemoveEnemyById(uint id);
+
+        /// <summary>OB-51. Unregisters whatever id this pooled object held; returns it, or null.</summary>
+        public uint? RemoveEnemyByInstance(Enemy enemy);
         public void ResetForNextLevel();
         public void ApplyRetargetedEnemies(IEnumerable<(uint, uint)> enemy_NewTargetids, IEnumerable<(uint, Rigidbody)> playerId_rigidbody);
         public void InitializeSwitcher(TargetSwitcher switcher, EEnemyFlag enemyFlag, EEnemy enemyName);
@@ -57,6 +60,72 @@ namespace MegabonkTogether.Services
         }
 
         private readonly ConcurrentDictionary<uint, Enemy> spawnedEnemies = [];
+
+        /// <summary>
+        /// OB-51. Which id each enemy object is registered under, by Unity instance id. Enemies are
+        /// pooled: an object released without its id being removed (a client's own despawn, say)
+        /// came back for the next spawn while the old id still pointed at it, so several ids shared
+        /// one object. A death then removed only one of them, and the rest stayed registered for the
+        /// stage, silent, at whatever HP the object last had (2026-10-20 17:55: 99 of 114 stale
+        /// entries had received their death, four Goblins sharing HP 8 and the same silence).
+        /// </summary>
+        private readonly Dictionary<int, uint> idByInstance = [];
+        private readonly Dictionary<uint, int> instanceById = [];
+        private readonly object instanceLock = new();
+        private int droppedAliases;
+
+        /// <summary>Indexes a new registration, dropping any older id that still points at this object.</summary>
+        private void IndexRegistration(uint id, Enemy enemy)
+        {
+            var instanceId = enemy.GetInstanceID();
+            lock (instanceLock)
+            {
+                if (idByInstance.TryGetValue(instanceId, out var oldId) && oldId != id)
+                {
+                    instanceById.Remove(oldId);
+                    if (spawnedEnemies.TryRemove(oldId, out _))
+                    {
+                        droppedAliases++;
+                        if (droppedAliases == 1 || droppedAliases % 25 == 0)
+                        {
+                            logger.LogInfo($"[desync] OB-51: enemy object reused for {id} while {oldId} still pointed at it; dropped {oldId} ({droppedAliases} so far).");
+                        }
+                    }
+                }
+
+                idByInstance[instanceId] = id;
+                instanceById[id] = instanceId;
+            }
+        }
+
+        private void UnindexId(uint id)
+        {
+            lock (instanceLock)
+            {
+                if (instanceById.Remove(id, out var instanceId)
+                    && idByInstance.TryGetValue(instanceId, out var current) && current == id)
+                {
+                    idByInstance.Remove(instanceId);
+                }
+            }
+        }
+
+        /// <summary>OB-51. Client: the game pooled this object, so whatever id it held is gone here.</summary>
+        public uint? RemoveEnemyByInstance(Enemy enemy)
+        {
+            uint id;
+            lock (instanceLock)
+            {
+                if (!idByInstance.Remove(enemy.GetInstanceID(), out id))
+                {
+                    return null;
+                }
+
+                instanceById.Remove(id);
+            }
+
+            return spawnedEnemies.TryRemove(id, out _) ? id : null;
+        }
 
         public int TrackedEnemyCount => spawnedEnemies.Count;
         private readonly ConcurrentDictionary<Enemy, string> reviverEnemies_NetplayNames = [];
@@ -377,6 +446,7 @@ namespace MegabonkTogether.Services
             }
 
             DynamicData.For(enemy).Set("netplayId", newId);
+            IndexRegistration(newId, enemy);
 
             return newId;
         }
@@ -393,6 +463,7 @@ namespace MegabonkTogether.Services
             }
 
             DynamicData.For(enemy).Set("netplayId", enemyId);
+            IndexRegistration(enemyId, enemy);
         }
 
         public KeyValuePair<uint, Enemy> GetEnemyByReference(Enemy enemy)
@@ -408,16 +479,19 @@ namespace MegabonkTogether.Services
 
         public void RemoveEnemyById(uint id)
         {
-            if (!spawnedEnemies.TryRemove(id, out var enemy))
-            {
-                return;
-            }
+            UnindexId(id);
+            spawnedEnemies.TryRemove(id, out _);
         }
 
         public void ResetForNextLevel()
         {
             //spawnedEnemies.Select(Enemy => Enemy.Value).ToList().ForEach(enemy => GameObject.Destroy(enemy.gameObject));
             spawnedEnemies.Clear();
+            lock (instanceLock)
+            {
+                idByInstance.Clear();
+                instanceById.Clear();
+            }
             lastSentEnemies = [];
             lastSentTick = [];
             enemyStreamTick = 0;

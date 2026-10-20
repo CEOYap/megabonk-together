@@ -1,4 +1,4 @@
-﻿using Assets.Scripts.Actors;
+using Assets.Scripts.Actors;
 using Assets.Scripts.Actors.Enemies;
 using Assets.Scripts.Inventory__Items__Pickups.Items;
 using HarmonyLib;
@@ -459,23 +459,52 @@ namespace MegabonkTogether.Patches.Enemies
         private static int pooledWhileRegistered;
 
         /// <summary>
-        /// OB-51 diagnostic. <c>ReleaseToPool</c> (VA 0x1804AFC50, decompiled) is where every enemy
-        /// leaves the field. A timed despawn (<c>TryDespawn</c>, 0x1804B0640, which starts the
-        /// <c>Despawn</c> coroutine, which ends here) never calls <c>EnemyDied</c>, so nothing
-        /// unregisters it: the registry keeps an entry for a pooled object on that peer. Says so,
-        /// rarely, so a run shows whether that happens before it is replicated. Read-only.
+        /// OB-51. <c>ReleaseToPool</c> (VA 0x1804AFC50, decompiled) is where every enemy leaves the
+        /// field: <c>SetActive(false)</c>, pool release, <c>ClearAllDebuffs</c>,
+        /// <c>A_EnemyReleasedFromPool</c>.
+        ///
+        /// <para><b>Client:</b> the object is gone here, so whatever id it held is unregistered. A
+        /// pooled object that kept its id came back for a later spawn under a second id, and from
+        /// then on one death left the other id registered for the stage (2026-10-20 17:55: +114 on
+        /// a bot, 99 of them with their death received, 575 alive releases logged).</para>
+        ///
+        /// <para><b>Host:</b> read-only. Its deaths unregister in <c>OnEnemyDied</c>, which runs in
+        /// the <c>EnemyDied</c> postfix and must find the entry there to broadcast; a removal here
+        /// could beat it if a death listener pools synchronously. A live release on the host (a
+        /// timed despawn: <c>TryDespawn</c>, 0x1804B0640, never calls <c>EnemyDied</c>) is only
+        /// logged; it read 0 in that run.</para>
         /// </summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(Enemy.ReleaseToPool))]
         public static void ReleaseToPool_Postfix(Enemy __instance)
         {
-            if (!synchronizationService.HasNetplaySessionStarted() || __instance == null || __instance.hp <= 0f)
+            if (!synchronizationService.HasNetplaySessionStarted() || __instance == null)
             {
                 return;
             }
 
-            var registered = enemyManagerService.GetEnemyByReference(__instance);
-            if (registered.Value == null)
+            var isHost = synchronizationService.IsServerMode() ?? false;
+            uint? id;
+            if (isHost)
+            {
+                if (__instance.hp <= 0f)
+                {
+                    return;
+                }
+
+                var registered = enemyManagerService.GetEnemyByReference(__instance);
+                id = registered.Value != null ? registered.Key : null;
+            }
+            else
+            {
+                id = enemyManagerService.RemoveEnemyByInstance(__instance);
+                if (__instance.hp <= 0f)
+                {
+                    return;
+                }
+            }
+
+            if (!id.HasValue)
             {
                 return;
             }
@@ -484,11 +513,25 @@ namespace MegabonkTogether.Patches.Enemies
             if (pooledWhileRegistered == 1 || pooledWhileRegistered % 25 == 0)
             {
                 Plugin.Log.LogInfo(
-                    $"[desync] OB-51: enemy {registered.Key} ({__instance.enemyData?.enemyName}, hp {__instance.hp:0}) " +
-                    $"went back to the pool alive and still registered ({pooledWhileRegistered} so far, " +
-                    $"host {synchronizationService.IsServerMode() ?? false}).");
+                    $"[desync] OB-51: enemy {id.Value} ({__instance.enemyData?.enemyName}, hp {__instance.hp:0}) " +
+                    $"went back to the pool alive while registered ({pooledWhileRegistered} so far, host {isHost}" +
+                    (isHost ? ", still registered)." : ", unregistered here)."));
             }
         }
+
+        /// <summary>
+        /// OB-51. Only the host decides that an enemy despawns. <c>TryDespawn</c> (VA 0x1804B0640,
+        /// decompiled) starts the <c>Despawn</c> coroutine once <c>MyTime.time</c> passes
+        /// <c>despawnAtTime</c> (+0x98); the coroutine ends in <c>ReleaseToPool</c> with no
+        /// <c>EnemyDied</c>. On 2026-10-20 a bot pooled 575 live enemies the host still had (the
+        /// host logged none), so they vanished on that client only. Prefix-false on purpose, on
+        /// clients: the host's death and explosion messages remove an enemy there.
+        /// <b>UNVERIFIED</b> that every one of those 575 came from here.
+        /// </summary>
+        [HarmonyPrefix]
+        [HarmonyPatch("TryDespawn")]
+        public static bool TryDespawn_Prefix()
+            => !synchronizationService.HasNetplaySessionStarted() || (synchronizationService.IsServerMode() ?? false);
 
         /// <summary>
         /// OB-9. Replicate an enemy's HP after it has been rescaled post-spawn.
