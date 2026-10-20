@@ -1,3 +1,6 @@
+// Developer test tooling: compiled into Debug builds only, never into a release (the release
+// workflows build Release). See docs/netplay/05-local-testing.md.
+#if DEBUG
 using Assets.Scripts.UI.InGame.Rewards;
 using UnityEngine;
 
@@ -170,3 +173,4 @@ namespace MegabonkTogether.Scripts.Bot
         }
     }
 }
+#endif

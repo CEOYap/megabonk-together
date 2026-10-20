@@ -1,3 +1,6 @@
+// Developer test tooling: compiled into Debug builds only, never into a release (the release
+// workflows build Release). See docs/netplay/05-local-testing.md.
+#if DEBUG
 using HarmonyLib;
 using MegabonkTogether.Configuration;
 using MegabonkTogether.Scripts.Bot;
@@ -105,3 +108,4 @@ namespace MegabonkTogether.Patches.Bot
         }
     }
 }
+#endif

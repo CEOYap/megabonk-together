@@ -22,6 +22,13 @@ configuration. The log line `UDPClient listening on port N` confirms which it go
 
 ---
 
+> **Debug builds only.** The test bot (`[Bot] BotMode`), its room-code file and the item loadout
+> (`[Testing] TestItems`) are wrapped in `#if DEBUG`. Every release workflow builds `-c Release`,
+> so a shipped build has none of it, and a player cannot switch it on by editing their config
+> (`TestItems` would otherwise hand out items in a public lobby, and the bot is invincible). The
+> test copies need a Debug build, which is what the `MegabonkPath` auto-copy produces. The
+> end-of-run `[report]` lines are not developer-only and stay in every build.
+
 ## One-time setup
 
 ### 1. Second game copy

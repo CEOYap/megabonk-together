@@ -1,4 +1,4 @@
-﻿using Assets.Scripts.Game.MapGeneration.MapEvents;
+using Assets.Scripts.Game.MapGeneration.MapEvents;
 using Assets.Scripts.Inventory__Items__Pickups;
 using Assets.Scripts.Inventory__Items__Pickups.Items;
 using Assets.Scripts.Inventory__Items__Pickups.Stats;
@@ -197,7 +197,9 @@ namespace MegabonkTogether
             ClassInjector.RegisterTypeInIl2Cpp<CoroutineRunner>();
             ClassInjector.RegisterTypeInIl2Cpp<MainThreadDispatcher>();
             ClassInjector.RegisterTypeInIl2Cpp<NetworkHandler>();
+#if DEBUG
             ClassInjector.RegisterTypeInIl2Cpp<Scripts.Bot.BotController>();
+#endif
             ClassInjector.RegisterTypeInIl2Cpp<PlayerInterpolator>();
             ClassInjector.RegisterTypeInIl2Cpp<EnemyInterpolator>();
             ClassInjector.RegisterTypeInIl2Cpp<BossOrbInterpolator>();
@@ -366,11 +368,13 @@ namespace MegabonkTogether
             var goNetworkHandler = new GameObject("NetworkHandler");
             GameObject.DontDestroyOnLoad(goNetworkHandler);
             NetworkHandler = goNetworkHandler.AddComponent<NetworkHandler>();
+#if DEBUG
             // Test bot: only on a BotMode copy (read once at load; turning it on needs a restart).
             if (Configuration.ModConfig.BotMode.Value)
             {
                 goNetworkHandler.AddComponent<Scripts.Bot.BotController>();
             }
+#endif
 
             var goNetPlayersDisplayer = new GameObject("NetPlayersDisplayer");
             GameObject.DontDestroyOnLoad(goNetPlayersDisplayer);

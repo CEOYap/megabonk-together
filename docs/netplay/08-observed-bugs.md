@@ -1,4 +1,4 @@
-﻿# Observed bugs — backlog
+# Observed bugs — backlog
 
 Bugs seen in play that are **not yet fixed** and are not tracked elsewhere. Distinct from
 [`01-critical-fixes.md`](01-critical-fixes.md) (defects found by source analysis, most now fixed)
@@ -4111,3 +4111,7 @@ reading three screens:
 
 Usage and a loadout that covers every item group: `05-local-testing.md`, "Testing specific
 items". **Not run in-game yet.**
+
+**Release builds exclude it (2026-10-20).** The loadout and the test bot are behind `#if DEBUG`. A
+Release DLL was checked to contain none of `BotController`, `BotMode`, `TestLoadout` or
+`TestItems`. The report stays in all builds.

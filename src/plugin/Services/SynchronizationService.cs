@@ -1,4 +1,4 @@
-﻿using MegabonkTogether.Configuration;
+using MegabonkTogether.Configuration;
 using Actors.Enemies;
 using Assets.Scripts._Data.Hats;
 using Assets.Scripts._Data.Tomes;
@@ -382,7 +382,9 @@ namespace MegabonkTogether.Services
         public void Reset()
         {
             currentState = State.None;
+#if DEBUG
             Helpers.TestLoadout.Reset();
+#endif
             pendingSharedXp = 0;
             toSpawns.Clear();
             toUpdate.Clear();
@@ -742,6 +744,7 @@ namespace MegabonkTogether.Services
             currentState = State.Started;
             EventManager.OnGameStarted();
 
+#if DEBUG
             // OB-45 test loadout. After Started, so the item-add postfix replicates each item.
             Helpers.TestLoadout.GrantOnce();
 
@@ -751,6 +754,7 @@ namespace MegabonkTogether.Services
             {
                 BotRoomCodeFile.Delete();
             }
+#endif
 
             var pause = UiManager.Instance.pause; //Disable restart buttons in pause menu
             var buttons = Il2CppFindHelper.RuntimeGetComponentsInChildren<MyButton>(pause);

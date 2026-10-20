@@ -1,4 +1,4 @@
-﻿using MegabonkTogether.Common.Messages;
+using MegabonkTogether.Common.Messages;
 using MegabonkTogether.Common.Messages.WsMessages;
 using MegabonkTogether.Common.Models;
 using MegabonkTogether.Configuration;
@@ -139,11 +139,13 @@ namespace MegabonkTogether.Services
             connectionId = statusMsg.ConnectionId;
             Plugin.Instance.Mode.RoomCode = statusMsg.RoomCode;
 
+#if DEBUG
             // Test bot: a second copy on this PC joins by reading this (Helpers/BotRoomCodeFile).
             if (Plugin.Instance.Mode.Role == Role.Host && Plugin.Instance.Mode.Mode == NetworkModeType.Friendlies)
             {
                 Helpers.BotRoomCodeFile.Write(statusMsg.RoomCode);
             }
+#endif
 
             currentServerUrl = serverUrl;
             currentRdvServerPort = rdvServerPort;

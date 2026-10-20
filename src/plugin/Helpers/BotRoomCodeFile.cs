@@ -1,3 +1,6 @@
+// Developer test tooling: compiled into Debug builds only, never into a release (the release
+// workflows build Release). See docs/netplay/05-local-testing.md.
+#if DEBUG
 using System;
 using System.IO;
 
@@ -81,3 +84,4 @@ namespace MegabonkTogether.Helpers
         }
     }
 }
+#endif
