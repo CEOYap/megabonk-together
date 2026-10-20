@@ -22,6 +22,7 @@ namespace MegabonkTogether.Configuration
         public static ConfigEntry<bool> BotMode { get; private set; }
         public static ConfigEntry<float> BotFollowDistance { get; private set; }
         public static ConfigEntry<float> BotStuckSeconds { get; private set; }
+        public static ConfigEntry<string> TestItems { get; private set; }
         public static ConfigEntry<bool> LogEncounterPause { get; private set; }
         public static ConfigEntry<bool> LogBandwidth { get; private set; }
         public static ConfigEntry<bool> LogDesync { get; private set; }
@@ -94,6 +95,17 @@ namespace MegabonkTogether.Configuration
                 "BotFollowDistance",
                 8f,
                 "Developer tool. How far, in world units, the bot may drift from the host it follows."
+            );
+            TestItems = config.Bind(
+                "Testing",
+                "TestItems",
+                "",
+                "Developer tool, leave empty for normal play. Items this copy of the game is given " +
+                "when a multiplayer run starts, comma-separated by internal item name, with an " +
+                "optional count: \"IceCube, CursedDoll*2, Cactus\". Names are the game's EItem " +
+                "names (Big Bonk is Bonker, Thunder Mitts is GloveLightning); an unknown name is " +
+                "logged and skipped. Granted once per session, through the normal item path, so " +
+                "every peer sees them. Each run also logs its end-screen damage rows (OB-45)."
             );
             BotStuckSeconds = config.Bind(
                 "Bot",

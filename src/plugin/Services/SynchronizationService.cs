@@ -382,6 +382,7 @@ namespace MegabonkTogether.Services
         public void Reset()
         {
             currentState = State.None;
+            Helpers.TestLoadout.Reset();
             pendingSharedXp = 0;
             toSpawns.Clear();
             toUpdate.Clear();
@@ -740,6 +741,9 @@ namespace MegabonkTogether.Services
 
             currentState = State.Started;
             EventManager.OnGameStarted();
+
+            // OB-45 test loadout. After Started, so the item-add postfix replicates each item.
+            Helpers.TestLoadout.GrantOnce();
 
             // Test bot: once a run is under way the lobby is closed, so a bot copy must not join it
             // from the room-code file (it did on 2026-10-19 and landed mid-final-boss with no lobby).

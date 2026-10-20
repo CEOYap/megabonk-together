@@ -196,6 +196,52 @@ after a hiccup, and a problem when they repeat.
 
 ---
 
+## Testing specific items (OB-45)
+
+Chests roll items at random, so a run may never touch the item you changed. Each copy of the
+game can be given a fixed loadout instead, in its own `BepInEx/config` file:
+
+```ini
+[Testing]
+TestItems = IceCube, Bonker, CursedDoll, Cactus
+```
+
+- **Format.** Comma-separated EItem names, case-insensitive, with an optional `*count`
+  (`CursedDoll*2`). The names are the game's internal ones: Big Bonk is `Bonker`, Thunder Mitts
+  is `GloveLightning`. An unknown name is logged as `[test] OB-45: '<name>' is not an item name`
+  and skipped.
+- **When it applies.** Granted once per session, when the run starts, through the same path a
+  chest uses, so every peer sees the items. Each grant logs `[test] OB-45: granted <item> x<n>.`
+- **Leave it empty for normal play.**
+
+**At the end of every multiplayer run,** each copy writes its end-screen damage panel to its log:
+
+```
+[report] OB-45: end screen for <id>: 9 damage row(s), 0 at LVL 0, 4646 kill(s), host True.
+[report]   Bonker                 LVL  51     216,300,000
+```
+
+LVL is computed the way the panel computes it, so a row marked `<-- LVL 0` is a LVL 0 row on
+screen. Compare the three logs side by side.
+
+**A loadout that covers every item group.** Use it on the bots, and leave the host empty or give
+it something different:
+
+| Copy | `TestItems` | Covers |
+|---|---|---|
+| Bot 1 | `IceCube, Bonker, CursedDoll, Cactus` | on-hit procs run by the host (OB-37), timed damage forwarded and procced (OB-42), a reaction to the bot taking damage (OB-43) |
+| Bot 2 | `GloveLightning, SpicyMeatball, HolyBook, GoldenShield, EnergyCore` | baseDamage and position on host-run procs (OB-38/43), Holy Book on its owner only (OB-42), owner-only gold (OB-43), timed damage not doubled (OB-43) |
+
+**What to look for:**
+
+- **Each bot's report** lists its items at their real level (x1 = LVL 1), with damage that grows
+  over the run.
+- **The host's report** has none of the bots' items, and no `<-- LVL 0` rows.
+- **The host's log** carries `[items] OB-37` and `[stats] OB-38`, and few or no
+  `[attribution] OB-41` lines.
+- **Play without the god-mode build.** Otherwise the host kills everything before the bots' hits
+  land.
+
 ## What this setup cannot tell you
 
 **Loopback has no packet loss, no latency, and no reordering.** Per

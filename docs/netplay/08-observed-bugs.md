@@ -4095,3 +4095,19 @@ decides that, and the host's own run has matched on every stage so far.
 
 **UNVERIFIED, not run in-game.** To confirm, a stage with two bosses (stage 2 in this run) should
 show its portal on all peers only after the second boss dies.
+
+
+<a name="ob-45"></a>
+## OB-45 — Test tooling: a fixed item loadout and an end-screen report in the log — **ADDED 2026-10-20**
+
+Not a bug. These are tools for verifying OB-37 to OB-44 without relying on chest rolls or on
+reading three screens:
+
+- **`[Testing] TestItems`** (`Helpers/TestLoadout.cs`) grants the listed items once per session at
+  run start, through `ItemInventory.AddItem`, so they replicate like a pickup.
+- **The end-screen report** (`Patches/RunEndReport.cs`) is a postfix on
+  `GameOverDamageSourcesUi.Start`. It logs every `RunStats.damageSources` row with
+  `DamageSource.GetLevel` (the panel's own LVL), plus kills.
+
+Usage and a loadout that covers every item group: `05-local-testing.md`, "Testing specific
+items". **Not run in-game yet.**
