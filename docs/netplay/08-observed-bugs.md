@@ -4412,8 +4412,19 @@ revive it.
 - **Bot teleport.** The spot beside the owner is used only if a downward ray finds ground there
   within 3 units of the owner's height. Otherwise the bot lands exactly on the owner, which is a
   known in-world position. `GroundUnder` takes the band as a parameter.
-- **Coffin (host).** If there is no ground directly under the death point (within 6 units), the
-  coffin is moved up to the first surface above it, when that surface is more than 1 unit higher.
+- **Coffin (host), in three steps:**
+  1. **Ground directly under the death point** (within 6 units): the coffin stays there. That covers
+     a normal death, even under a tree.
+  2. **A surface 1–6 units above it:** the coffin moves up to it. That covers a coffin sunk into the
+     ground or a shallow dip.
+  3. **Anything else:** the coffin is placed beside the nearest living player, on checked ground.
+     "Anything else" means deep under the map, inside a hill or mountain, or in the void.
+
+  Step 3 exists because a ray from above lands on the *top* of whatever is there: under or inside a
+  desert hill, a straight lift would have put the coffin on an unclimbable peak. A living player's
+  position is reachable by definition. The revived player respawns at the coffin, so they come back
+  in the world too.
+
   The host confirmed afterwards that the coffin could not be found at all, and looked to be in or
   under the ground, which is this case. A death on the surface, even under a tree,
   stays put. Clients get the position through `SpawnedReviver`.

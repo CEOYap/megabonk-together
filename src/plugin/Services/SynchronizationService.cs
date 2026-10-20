@@ -4879,22 +4879,88 @@ namespace MegabonkTogether.Services
         /// </summary>
         private Vector3 SnapCoffinToSurface(Vector3 position, uint ownerConnectionId)
         {
-            // Standing on something: a normal death, even under a tree canopy. Leave it.
+            // 1. Standing on something: a normal death, even under a tree canopy. Leave it.
             if (Physics.Raycast(position + Vector3.up, Vector3.down, 6f, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
             {
                 return position;
             }
 
+            // 2. Just below a surface (sunk into the ground, a shallow dip): the surface above, but
+            //    only a little above. A ray from high up lands on the TOP of whatever is there, and
+            //    under or inside a desert hill that is a peak nobody can climb to.
             const float rayHeight = 120f;
+            const float maxLift = 6f;
             var origin = position + Vector3.up * rayHeight;
             if (Physics.Raycast(origin, Vector3.down, out var hit, rayHeight * 2f, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore)
-                && hit.point.y > position.y + 1f) // 1 u: a coffin sunk a metre into the ground is as lost as one far below (2026-10-20 report)
+                && hit.point.y > position.y + 1f && hit.point.y <= position.y + maxLift)
             {
-                logger.LogInfo($"[revive] OB-53: {ownerConnectionId} died under the surface at {position}; coffin moved up to {hit.point}.");
+                logger.LogInfo($"[revive] OB-53: {ownerConnectionId} died just under the surface at {position}; coffin moved up to {hit.point}.");
                 return hit.point + Vector3.up * 0.2f;
             }
 
+            // 3. Deep under the map, inside a hill or mountain, or out in the void: no surface here
+            //    can be trusted to be reachable. Beside the nearest living player is, by definition.
+            var beside = NearestLivingPlayerPosition(position, ownerConnectionId);
+            if (beside.HasValue)
+            {
+                var target = beside.Value;
+                var spot = target + new Vector3(2f, 0f, 0f);
+                if (Physics.Raycast(spot + Vector3.up * 3f, Vector3.down, out var ground, 6f, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore)
+                    && Mathf.Abs(ground.point.y - target.y) <= 2f)
+                {
+                    target = ground.point;
+                }
+
+                logger.LogInfo($"[revive] OB-53: {ownerConnectionId} died off the walkable map at {position}; coffin placed beside the nearest living player at {target}.");
+                return target + Vector3.up * 0.2f;
+            }
+
+            logger.LogWarning($"[revive] OB-53: {ownerConnectionId} died off the walkable map at {position} and nobody is alive to place the coffin by; leaving it there.");
             return position;
+        }
+
+        /// <summary>The nearest living player's position other than <paramref name="exclude"/>, on the host.</summary>
+        private Vector3? NearestLivingPlayerPosition(Vector3 from, uint exclude)
+        {
+            Vector3? best = null;
+            var bestDistance = float.MaxValue;
+
+            void Consider(Vector3 candidate)
+            {
+                var distance = (candidate - from).sqrMagnitude;
+                if (distance < bestDistance)
+                {
+                    bestDistance = distance;
+                    best = candidate;
+                }
+            }
+
+            foreach (var player in playerManagerService.GetAllPlayersAlive())
+            {
+                if (player.ConnectionId == exclude)
+                {
+                    continue;
+                }
+
+                if (playerManagerService.IsLocalConnectionId(player.ConnectionId))
+                {
+                    var me = GameManager.Instance?.player;
+                    if (me != null && !me.IsDead())
+                    {
+                        Consider(me.transform.position);
+                    }
+
+                    continue;
+                }
+
+                var model = playerManagerService.GetNetPlayerByNetplayId(player.ConnectionId)?.Model;
+                if (model != null)
+                {
+                    Consider(model.transform.position);
+                }
+            }
+
+            return best;
         }
 
         private void OnReceivedSpawnedReviver(SpawnedReviver reviver)
