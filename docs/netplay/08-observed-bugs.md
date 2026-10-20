@@ -4468,7 +4468,7 @@ not run in-game.**
 
 
 <a name="ob-52"></a>
-## OB-52 — OB-50 was undone by Bloodmark re-adding itself — **FIXED 2026-10-20, not yet confirmed in play**
+## OB-52 — Bloodmark's second execute, on removal, ran unscoped on the host — **FIXED 2026-10-20 (second attempt), not yet confirmed in play**
 
 **Seen 2026-10-20**, with OB-50 already in the build. The host's end screen had `Bloodmark 2,395`.
 The host confirmed holding no Bloodmark item (no Bloody Cleaver, no Slurp Gloves); the bot held
@@ -4490,6 +4490,56 @@ Player2's record. The execute (`AddStacks`, OB-50) then ran unattributed.
 **Fixed.** While `DebuffBloodmark.OnEnemyDamaged` runs, `DebuffAttribution.OnAdded` ignores
 applications: a mark re-adding itself is not a new owner. The execute then reopens Player2's scope
 through OB-50. **UNVERIFIED, not run in-game.**
+
+### The first fix was wrong; seen again at 17:55
+
+**The run.** The host still showed `Bloodmark 1,550`, again with no Bloodmark item. Both bots now
+held Bloody Cleaver. The log still read `recording 'Bloodmark' ... unattributed`.
+
+**The misread.** Read with `dump.cs` offsets, Ghidra's field names in `OnEnemyDamaged` are off by
+one slot, as the decompilation guide warns: the call is `HashSet<EDebuff>.Add`. The only
+`HashSet<EDebuff>` on `Enemy` is `debuffsToRemove` (0x130); `debuffsToAdd` (0x138) is a
+`Dictionary`. So **`OnEnemyDamaged` never re-adds the mark. It queues the mark for removal** when
+a hit leaves the enemy at or under the mark's damage. The guard above could never fire, and it has
+been removed.
+
+**The real path** (all decompiled):
+
+1. `Enemy.DebuffTick` (`0x1804ACC60`) ticks each debuff through virtual slot 4 (the base
+   `EnemyDebuff.Tick`, scoped by OB-40).
+2. It then drains `debuffsToRemove` through `Enemy.RemoveDebuff` (`0x1804AFD70`), with no tracker
+   scope.
+3. `DebuffBloodmark.OnRemove` (`0x1804A69A0`) unsubscribes. Unless the removal is from death, or
+   there are no stacks, or the enemy is at 0 HP, it then deals the mark's stored `damage` through
+   `Enemy.DamageFromPlayerOther`.
+
+That stored damage was computed by `AddStacks` under the owner's scope (OB-50). The hit itself is
+the second Bloodmark execute, and it ran as the host's.
+
+**So Bloodmark deals damage in exactly two places:**
+
+- **`AddStacks`**, once the stacks reach the enemy's HP. Scoped since OB-50.
+- **`OnRemove`**, the "a hit brought it low enough" execute. Unscoped until now.
+
+`MyTick` is an empty stub.
+
+**Fixed.** `DebuffBloodmark.OnRemove` reopens the mark owner's scope, exactly as `AddStacks` does
+(`DebuffAttribution.BeginTick` / `EndTick`):
+
+- **Credit.** The execute is the owner's.
+- **Damage panel.** It goes on the owner's panel, not the host's.
+- **On-hit items.** It runs the owner's on-hit items through the host's redirect (OB-37).
+
+**Ruled out:**
+
+- **The teammate's Bloody Cleaver copy on the host.** Its `Tick` (`0x180439FA0`) marks every enemy
+  in its lifesteal tally, but its `OnLifestealProc` is already owner-only (OB-43), so that tally
+  stays empty on the host.
+- **Poison.** It does its damage in `MyTick`, inside the scoped `EnemyDebuff.Tick`, and its
+  `OnRemove` deals none. The host's `Poison 2,508` row is a separate question: whether the host
+  has a poison source of its own is not yet checked.
+
+**UNVERIFIED, not run in-game.**
 
 
 <a name="ob-53"></a>

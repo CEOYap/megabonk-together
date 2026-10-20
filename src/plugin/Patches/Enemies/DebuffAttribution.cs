@@ -45,17 +45,9 @@ namespace MegabonkTogether.Patches.Enemies
         private static bool IsHostSession()
             => synchronizationService.HasNetplaySessionStarted() && (synchronizationService.IsServerMode() ?? false);
 
-        /// <summary>
-        /// OB-52. Set while a debuff re-adds itself. <c>DebuffBloodmark.OnEnemyDamaged</c>
-        /// (VA 0x1804A68B0) calls <c>Enemy.AddDebuff(Bloodmark)</c> when ANY hit brings the marked
-        /// enemy under the mark's damage, to queue the execute. That is not a new application, so it
-        /// must not change who the mark belongs to.
-        /// </summary>
-        internal static bool SelfReapplying;
-
         internal static void OnAdded(Enemy enemy, EDebuff debuff)
         {
-            if (enemy == null || SelfReapplying || !IsHostSession())
+            if (enemy == null || !IsHostSession())
             {
                 return;
             }
@@ -132,8 +124,11 @@ namespace MegabonkTogether.Patches.Enemies
     /// OB-50. Bloodmark (Bloody Cleaver) does its damage outside both the hit and the debuff tick.
     /// <c>DebuffBloodmark.AddStacks</c> (VA 0x1804A65F0, decompiled) computes
     /// <c>DamageMultiplier x baseDamageMultiplier x MyPlayer.baseDamage x stacks</c> and executes the
-    /// enemy once that reaches its HP; its <c>OnEnemyDamaged</c> (0x1804A68B0) only re-queues the mark
-    /// when a hit brings the enemy below it, and <c>MyTick</c> is an empty stub. So the execute ran
+    /// enemy once that reaches its HP; <c>MyTick</c> is an empty stub. The other execute is in
+    /// <c>OnRemove</c> (0x1804A69A0): <c>OnEnemyDamaged</c> (0x1804A68B0) queues the mark for removal
+    /// (<c>debuffsToRemove</c>, 0x130) when a hit leaves the enemy at or under the mark's damage, and
+    /// <c>Enemy.DebuffTick</c> (0x1804ACC60) later removes it; unless the enemy is already dying,
+    /// <c>OnRemove</c> then deals the mark's damage through <c>DamageFromPlayerOther</c>. So the execute ran
     /// unattributed on the host, with the host's stats, and went on the host's panel: 2026-10-20, a
     /// "Bloodmark 213" row on the host for a mark from Player2's Bloody Cleaver. Scoped to whoever
     /// applied the mark, exactly as <c>EnemyDebuff.Tick</c> is. <b>UNVERIFIED.</b>
@@ -141,22 +136,19 @@ namespace MegabonkTogether.Patches.Enemies
     [HarmonyPatch(typeof(Assets.Scripts.Game.Combat.EnemyDebuffs.Implementations.DebuffBloodmark))]
     internal static class DebuffBloodmarkAttributionPatches
     {
-        // OB-52. The host's own hit on a teammate's marked enemy re-adds the mark from inside this
-        // handler with no tracker scope, and OnAdded took that as the host applying it: the owner
-        // record was dropped and the execute went on the host's panel (2026-10-20, Bloodmark 2,395
-        // on a host holding no Bloodmark item).
+        // OB-52. The removal execute. It runs from Enemy.DebuffTick, with no tracker scope, so it
+        // went on the host's panel as the host's damage (2026-10-20: Bloodmark 2,395, then 1,550,
+        // on a host holding no Bloodmark item). The first fix assumed OnEnemyDamaged re-added the
+        // mark; decompiled with dump.cs offsets, it queues the removal instead.
         [HarmonyPrefix]
-        [HarmonyPatch("OnEnemyDamaged")]
-        public static void OnEnemyDamaged_Prefix(out bool __state)
-        {
-            __state = DebuffAttribution.SelfReapplying;
-            DebuffAttribution.SelfReapplying = true;
-        }
+        [HarmonyPatch(nameof(Assets.Scripts.Game.Combat.EnemyDebuffs.Implementations.DebuffBloodmark.OnRemove))]
+        public static void OnRemove_Prefix(Assets.Scripts.Game.Combat.EnemyDebuffs.Implementations.DebuffBloodmark __instance, out DebuffAttribution.TickScope __state)
+            => __state = DebuffAttribution.BeginTick(__instance);
 
         [HarmonyFinalizer]
-        [HarmonyPatch("OnEnemyDamaged")]
-        public static void OnEnemyDamaged_Finalizer(bool __state)
-            => DebuffAttribution.SelfReapplying = __state;
+        [HarmonyPatch(nameof(Assets.Scripts.Game.Combat.EnemyDebuffs.Implementations.DebuffBloodmark.OnRemove))]
+        public static void OnRemove_Finalizer(DebuffAttribution.TickScope __state)
+            => DebuffAttribution.EndTick(__state);
 
         [HarmonyPrefix]
         [HarmonyPatch(nameof(Assets.Scripts.Game.Combat.EnemyDebuffs.Implementations.DebuffBloodmark.AddStacks))]
