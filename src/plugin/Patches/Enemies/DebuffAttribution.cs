@@ -45,9 +45,17 @@ namespace MegabonkTogether.Patches.Enemies
         private static bool IsHostSession()
             => synchronizationService.HasNetplaySessionStarted() && (synchronizationService.IsServerMode() ?? false);
 
+        /// <summary>
+        /// OB-52. Set while a debuff re-adds itself. <c>DebuffBloodmark.OnEnemyDamaged</c>
+        /// (VA 0x1804A68B0) calls <c>Enemy.AddDebuff(Bloodmark)</c> when ANY hit brings the marked
+        /// enemy under the mark's damage, to queue the execute. That is not a new application, so it
+        /// must not change who the mark belongs to.
+        /// </summary>
+        internal static bool SelfReapplying;
+
         internal static void OnAdded(Enemy enemy, EDebuff debuff)
         {
-            if (enemy == null || !IsHostSession())
+            if (enemy == null || SelfReapplying || !IsHostSession())
             {
                 return;
             }
@@ -133,6 +141,23 @@ namespace MegabonkTogether.Patches.Enemies
     [HarmonyPatch(typeof(Assets.Scripts.Game.Combat.EnemyDebuffs.Implementations.DebuffBloodmark))]
     internal static class DebuffBloodmarkAttributionPatches
     {
+        // OB-52. The host's own hit on a teammate's marked enemy re-adds the mark from inside this
+        // handler with no tracker scope, and OnAdded took that as the host applying it: the owner
+        // record was dropped and the execute went on the host's panel (2026-10-20, Bloodmark 2,395
+        // on a host holding no Bloodmark item).
+        [HarmonyPrefix]
+        [HarmonyPatch("OnEnemyDamaged")]
+        public static void OnEnemyDamaged_Prefix(out bool __state)
+        {
+            __state = DebuffAttribution.SelfReapplying;
+            DebuffAttribution.SelfReapplying = true;
+        }
+
+        [HarmonyFinalizer]
+        [HarmonyPatch("OnEnemyDamaged")]
+        public static void OnEnemyDamaged_Finalizer(bool __state)
+            => DebuffAttribution.SelfReapplying = __state;
+
         [HarmonyPrefix]
         [HarmonyPatch(nameof(Assets.Scripts.Game.Combat.EnemyDebuffs.Implementations.DebuffBloodmark.AddStacks))]
         public static void AddStacks_Prefix(Assets.Scripts.Game.Combat.EnemyDebuffs.Implementations.DebuffBloodmark __instance, out DebuffAttribution.TickScope __state)

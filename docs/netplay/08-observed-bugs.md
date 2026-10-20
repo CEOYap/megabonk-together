@@ -4356,3 +4356,28 @@ silence is a hint, not proof. Entries that are `DEAD`, destroyed, or of one recu
 name the leak.
 
 **OPEN.** Needs the next run's `OB-51` line.
+
+
+<a name="ob-52"></a>
+## OB-52 — OB-50 was undone by Bloodmark re-adding itself — **FIXED 2026-10-20, not yet confirmed in play**
+
+**Seen 2026-10-20**, with OB-50 already in the build. The host's end screen had `Bloodmark 2,395`.
+The host confirmed holding no Bloodmark item (no Bloody Cleaver, no Slurp Gloves); the bot held
+Bloody Cleaver. The host log read `recording 'Bloodmark' ... unattributed`, so at the execute no
+owner record existed.
+
+**Decompiled.** An xref on `Enemy.AddDebuff` (`0x1804AB190`) gives the Bloodmark appliers:
+
+- `ItemBloodyCleaver.ProcOnHitEffects` and `Tick`;
+- `ItemGlovesBlood.ProcOnHitEffects` and `ItemUnstableTransfusion.ProcOnHitEffects`;
+- **`DebuffBloodmark.OnEnemyDamaged`** (`0x1804A68B0`) itself. When **any** hit brings the marked
+  enemy under the mark's damage, it calls `AddDebuff(Bloodmark)` again to queue the execute.
+
+**The defect.** OB-40 lets the latest application of a debuff decide its owner, and drops the
+record when the application is unscoped. The host's own hit on Player2's marked enemy was
+unscoped, so that self-re-application looked like the host applying the mark, and erased
+Player2's record. The execute (`AddStacks`, OB-50) then ran unattributed.
+
+**Fixed.** While `DebuffBloodmark.OnEnemyDamaged` runs, `DebuffAttribution.OnAdded` ignores
+applications: a mark re-adding itself is not a new owner. The execute then reopens Player2's scope
+through OB-50. **UNVERIFIED, not run in-game.**
