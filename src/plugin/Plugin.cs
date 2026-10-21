@@ -1,3 +1,4 @@
+using Assets.Scripts.Managers;
 using Assets.Scripts.Game.MapGeneration.MapEvents;
 using Assets.Scripts.Inventory__Items__Pickups;
 using Assets.Scripts.Inventory__Items__Pickups.Items;
@@ -767,12 +768,25 @@ namespace MegabonkTogether
             hasSavedInventoryActions = false;
         }
 
+        /// <summary>
+        /// The Desert's map events, or null when this stage is not the Desert or has none yet.
+        ///
+        /// <para>It used to assume both: a storm message arriving just after a peer had left a
+        /// Desert room (Endless, 2026-10-21) found no <c>MapEventsManager</c> and threw. And it
+        /// reinterpreted whatever map's events it found as Desert ones through a raw pointer, which
+        /// on any other map is a different type read as this one. Now it checks the map and uses a
+        /// checked cast, and only caches a real result.</para>
+        /// </summary>
         public MapEventsDesert GetMapEventsDesert()
         {
-            if (mapEventsDesert == null && mapEventsManager == null)
+            if (MapController.currentMap == null || MapController.currentMap.eMap != Assets.Scripts._Data.MapsAndStages.EMap.Desert)
             {
-                mapEventsManager = GetMapEventsManager();
-                mapEventsDesert = IL2CPP.PointerToValueGeneric<MapEventsDesert>(mapEventsManager.mapEvents.Pointer, false, false);
+                return null;
+            }
+
+            if (mapEventsDesert == null)
+            {
+                mapEventsDesert = GetMapEventsManager()?.mapEvents?.TryCast<MapEventsDesert>();
             }
 
             return mapEventsDesert;
@@ -784,7 +798,7 @@ namespace MegabonkTogether
             {
                 mapEventsManager = Il2CppFindHelper.FindAllGameObjects()
                     .FirstOrDefault(go => go.GetComponent<MapEventsManager>() != null)
-                    .GetComponent<MapEventsManager>();
+                    ?.GetComponent<MapEventsManager>();
             }
             return mapEventsManager;
         }

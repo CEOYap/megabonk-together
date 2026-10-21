@@ -5383,6 +5383,14 @@ namespace MegabonkTogether.Services
             try
             {
                 var desertEvent = Plugin.Instance.GetMapEventsDesert();
+                if (desertEvent == null)
+                {
+                    // The storm belongs to a Desert stage this peer has already left (or not yet
+                    // reached): nothing to start here.
+                    logger.LogInfo("A storm start arrived outside a Desert stage; ignored.");
+                    return;
+                }
+
                 desertEvent.StartStorm();
                 desertEvent.stormOverAtTime = started.StormOverAtTime;
             }
@@ -5406,7 +5414,7 @@ namespace MegabonkTogether.Services
             Plugin.Instance.CAN_START_STOP_STORMS = true;
             try
             {
-                Plugin.Instance.GetMapEventsDesert().StopStorm();
+                Plugin.Instance.GetMapEventsDesert()?.StopStorm();
             }
             finally
             {
