@@ -116,8 +116,8 @@ private const float xUpdatetickInterval = 1f / X_UPDATE_TICK_RATE;
 private float xUpdateAccumulator = 0f;
 ```
 
-Raising a rate raises bandwidth *and* CPU on every peer. Historical FPS complaints in the
-changelog (v4.1.0, v4.2.2, v5.x) trace back to send volume — treat rate increases as a
+Raising a rate raises bandwidth *and* CPU on every peer. Past FPS complaints traced back
+to send volume — treat rate increases as a
 performance change, not a fidelity tweak.
 
 ## Bandwidth reduction

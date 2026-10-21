@@ -364,7 +364,7 @@ namespace MegabonkTogether.Scripts
             // Encounter-UI statics hold references from the finished session — a MyButton, a
             // Coroutine handle, a TMP component parented to UI the session destroys. Handing any
             // of those back to the game in the next session is a NullReferenceException on a
-            // destroyed Component, which is upstream issue #93's signature.
+            // destroyed Component, which is the signature of a reported crash.
             Patches.ChestWindowUiPatches.Reset();
             Patches.LevelUpScreenPatches.Reset();
             Patches.Projectiles.ProjectileBasePatches.ClearOpacityCache();

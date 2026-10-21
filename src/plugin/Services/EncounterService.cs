@@ -77,7 +77,7 @@ namespace MegabonkTogether.Services
     ///
     /// <para>Closing that properly needs a wire change. Until then the failsafe clock here is what
     /// stops a hole from being permanent: a peer blocked for <see cref="WaitFailsafeSeconds"/>
-    /// releases the round itself. Upstream issue #88 asks for exactly this.</para>
+    /// releases the round itself. Players asked for exactly this.</para>
     /// </summary>
     internal class EncounterService(IPlayerManagerService playerManagerService) : IEncounterService
     {

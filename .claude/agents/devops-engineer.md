@@ -26,7 +26,7 @@ The `Exists()` guard means a wrong `MegabonkPath` **silently falls back** to `st
 rather than failing — a stale-proxy build looks like a mysterious runtime mismatch. When
 diagnosing, verify the path first.
 
-Debug post-build copies output into `BepInEx/plugins/MegabonkTogether` (xcopy on Windows, cp on
+Debug post-build copies output into `BepInEx/plugins/OmniBonk` (xcopy on Windows, cp on
 Linux), skipped when `GITHUB_ACTIONS` or `CI` is set. Release does not copy — by design.
 
 ### Adding a reference (three steps, all mandatory)
@@ -43,7 +43,7 @@ are ever committed** — never a full game DLL. Skipping step 2/3 builds locally
 | Constant | Env var | Purpose |
 |---|---|---|
 | `THUNDERSTORE` | `THUNDERSTORE_BUILD=true` | platform distribution; in-mod auto-updater off |
-| `PROTON` | `PROTON_BUILD=true` | Linux / Steam Deck (experimental, v5.0.0) |
+| `PROTON` | `PROTON_BUILD=true` | Linux / Steam Deck (experimental) |
 
 **Hard rule:** these gate distribution and platform plumbing only. A `#if` that changes message
 handling or the wire format breaks Windows↔Proton cross-play. Reject such a change.
@@ -56,7 +56,7 @@ Docs: `THUNDERSTORE_BUILD.md`, `docs/PROTON_SETUP.md`, `scripts/proton/build.sh`
 notes), `build-plugin-thunderstore.yml`, `build-plugin-proton.yml`, `build-server.yml`.
 
 `build-plugin.yml` derives the version from the tag with a leading `v` stripped and packages
-DLLs+PDBs under a `MegabonkTogether/` folder. **Nothing enforces tag ↔ csproj `<Version>`
+DLLs+PDBs under an `OmniBonk/` folder, as `OmniBonk-<version>.zip`. **Nothing enforces tag ↔ csproj `<Version>`
 agreement** — a mismatch ships a build whose in-game version differs from its release. If you
 touch release automation, adding that check is worth proposing.
 

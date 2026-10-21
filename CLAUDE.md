@@ -4,11 +4,10 @@ Peer-to-peer multiplayer mod for **Megabonk** (IL2CPP Unity, BepInEx 6). Up to 6
 host-authoritative, LiteNetLib UDP + MemoryPack, with a WebSocket matchmaking server that
 relays when a direct connection can't be established.
 
-Fork of [`Fcornaire/megabonk-together`](https://github.com/Fcornaire/megabonk-together), released
-as **OmniBonk** from 1.0.0: plugin GUID, assembly and release zips say `OmniBonk`; the C# namespaces,
+Released as **OmniBonk** from 1.0.0: plugin GUID, assembly and release zips say `OmniBonk`; the C# namespaces,
 project files and the `Common` assembly keep `MegabonkTogether`. Rename record:
 [`docs/netplay/19-session-handover.md`](docs/netplay/19-session-handover.md), section 3.
-Fork goals, the CONFIRMED / LIKELY / UNVERIFIED status legend, and standing ground rules:
+The docs index, the CONFIRMED / LIKELY / UNVERIFIED status legend, and standing ground rules:
 [`docs/README.md`](docs/README.md).
 
 ## Layout

@@ -168,9 +168,6 @@ namespace MegabonkTogether.Scripts.Modal
 
             sb.AppendLine("<color=#00D9FF><size=25>Thanks for playing!</size></color>");
             sb.AppendLine();
-            sb.AppendLine("<color=#00D9FF><size=20>If you like the mod, consider a small support on Patreon at</size></color>");
-            sb.AppendLine("<color=#00D9FF><size=20>https://www.patreon.com/c/DShadModdingAdventure</size></color>");
-            sb.AppendLine();
             sb.AppendLine("<color=#555555>────────────────────────</color>");
             sb.AppendLine();
 

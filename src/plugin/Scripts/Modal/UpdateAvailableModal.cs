@@ -61,11 +61,11 @@ namespace MegabonkTogether.Scripts.Modal
             var text = textObj.AddComponent<TextMeshProUGUI>();
             if (autoUpdaterService.IsCustomBuild())
             {
-                text.text = $"Megabonk together Version {autoUpdaterService.GetDownloadedVersion()}\nis available!\nPlease update through Thunderstore mod manager or Github if SteamDeck/Proton.";
+                text.text = $"{MyPluginInfo.PLUGIN_NAME} Version {autoUpdaterService.GetDownloadedVersion()}\nis available!\nPlease update through Thunderstore mod manager or Github if SteamDeck/Proton.";
             }
             else
             {
-                text.text = $"Megabonk together Version {autoUpdaterService.GetDownloadedVersion()}\ndownloaded and ready\nto be applied! Restart the game after the update!";
+                text.text = $"{MyPluginInfo.PLUGIN_NAME} Version {autoUpdaterService.GetDownloadedVersion()}\ndownloaded and ready\nto be applied! Restart the game after the update!";
             }
             text.alignment = TextAlignmentOptions.Center;
             text.fontSize = 30;

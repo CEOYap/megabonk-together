@@ -53,7 +53,7 @@ jobs:
           namespace = "CEOYap"
           name = "OmniBonk"
           versionNumber = "${{ env.VERSION }}"
-          description = "Play Megabonk with up to 6 friends over netplay. Fork of Megabonk Together."
+          description = "Play Megabonk with up to 6 friends over netplay."
           websiteUrl = "https://github.com/CEOYap/OmniBonk"
           containsNsfwContent = false
 

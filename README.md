@@ -15,15 +15,7 @@
 
 # About The Mod
 
-OmniBonk brings online co-op to Megabonk. It is a fork of
-[Megabonk Together](https://github.com/Fcornaire/megabonk-together) by Fcornaire (DShad), renamed
-at version 1.0. All credit for the original mod goes to its author; you can support them on
-[Patreon](https://patreon.com/DShadModdingAdventure). Like the original, OmniBonk is GPL-2.0.
-
-> [!IMPORTANT]
-> OmniBonk is a separate mod from Megabonk Together. **Remove the old `MegabonkTogether` folder
-> from `BepInEx/plugins`** before installing it: with both present, OmniBonk does not load. Your
-> settings start fresh in `BepInEx/config/OmniBonk.cfg`.
+OmniBonk brings online co-op to Megabonk, for up to 6 players.
 
 This mod feature:
 
@@ -47,7 +39,7 @@ More info at [Notable Network Changes](./NETPLAY_CHANGES.md)
 
 ## New in OmniBonk 1.0
 
-These are new since Megabonk Together v5.1.0. Each one is in the lobby's **Options** page.
+These are new in 1.0. Each one is in the lobby's **Options** page.
 **Only the host's choice counts**: it applies to everyone in the session.
 
 ### Endless Run (`Endless: ON`)
@@ -156,8 +148,7 @@ and the Endless design is in [`docs/netplay/18-endless-and-projectile-cap-plan.m
 
 > [!IMPORTANT]
 > **Everyone in a session must run the same version.** In the lobby, a player on a different
-> version (or on Megabonk Together) shows **WRONG VERSION**, and the host cannot start until they
-> update. On the Steam transport, a lobby from a different version cannot be joined at all.
+> version shows **WRONG VERSION**, and the host cannot start until they update. On the Steam transport, a lobby from a different version cannot be joined at all.
 
 ## Changelog
 
@@ -166,141 +157,40 @@ and the Endless design is in [`docs/netplay/18-endless-and-projectile-cap-plan.m
 
 ### OmniBonk v1.0.0
 
-- 🏷️ **Megabonk Together is now OmniBonk.** A separate mod with its own settings file; remove the old `MegabonkTogether` folder first
 - 🔒 **Version check in the lobby.** A player on a different version shows WRONG VERSION, and the host cannot start until it is fixed
 - ♾️ **Endless Run**, **No Projectile Cap** and the lobby **Options** page (see above)
 - 🛠️ **Many sync fixes** (see "What's confirmed working" above)
-
-#### Megabonk Together history
-
-### v5.1.0
-
-- 🚀 **More code optimizations one more time !**
-
-### v5.0.0
-
-- 🐧 **Added Proton support**: You can now play with friends on Steam using Proton/Steam Deck, with cross-play on Windows. This is also an experimental and might not work perfectly
-
-### v4.2.2
-
-- 🚀 **Attempt to fix FPS issues**: Less critical updates are now sent unreliably, which improves bandwidth and CPU usage
-- 🔧 **Attempt to fix some desync issues (Shared Experience)**: Some packets were dropped in some scenarios. Critical interactions are now sent reliably, which should prevent desync issues
-
-### v4.2.1
-
-- 🛠️ **Reworked damage calculation**: Some items/projectiles were not applying damage correctly. This is now globally resolved (some items still have issues, will try to fix later)
-
-### v4.2.0
-
-- 🚀 **More code optimizations again !**
-- 🧩 **Some items fixes**: Prevent Soul Harvester / Chaos tome triggering even when not owned
-
-### v4.1.0
-
-- 🚀 **More improvements to tackle FPS issues**
-
-### v4.0.3
-
-- 🪙 **Fixed Gold desync (Shared Experience)**: Gold sharing has been reworked. Gains are now shared across everyone, while losses are applied individually. Players who can’t afford a chest are paused until eligible players finish
-
-### v4.0.2
-
-- 🪙 **Attempt to fix gold desync (Shared Experience)**: Computing delta instead of raw changes
-
-### v4.0.1
-
-- 🔄 **Attempt to fix encounter desync (Shared Experience)**: Better handling of multiple encounters occurring at the same time. It should prevent deadlocks (though laggy players might still cause issues). This fix should at least help for now.
-
-### v4.0.0
-
-- ✨ **Added Shared Experience mode (Experimental!)**: Shared XP, Gold and interactions across all players. This also implies an active pause on every interaction. The original mode is still available
-- 🎮 **Added 'Netplay options' button**: Now gathers all netplay related options (Shared Experience and Save progression)
-- 🐛 **Fixed some boss not rendering** sometimes for some reason
-
-### v3.0.0
-
-- ⚡ **Added a distance throttler for enemies**: They will not update / be rendered when too far away. Same idea for projectiles (reduced opacity for far away projectiles). This should help improve FPS
-- 👻 **Rebalanced Reviver** to make them less punishing early (start at low health and increase per player per death)
-
-### v2.0.2
-
-- 🐛 **Fixed item Ghost crashing**: This was the main reason everyone was crashing
-- 🐸 **Added egg interaction support**
-- 🎯 **Fixed client side Challenge shrines interactions** not working properly
-
-### v2.0.1
-
-- 💾 **Added option** to allow saving in netplay sessions. Use at your own risk
-- 📦 **Properly queue encounter rewards** to prevent missing rewards when multiple encounters happen simultaneously. This should also fix random crash hopefully
-- 📊 **Properly track kills/money** per player
-- 🔌 **Fixed disconnection issues** preventing reconnection
-- 🎮 **Fixed button selection reset issue** in character window
-- 🎯 **Fixed projectile not despawning** in singleplayer mode
-- 🔗 **Fixed some connection issues** in relay mode for some users
-
-### v2.0.0
-
-- 🎉 **Added changelog system**: See what's new after each update!
-- 🎮 **Implemented Friendlies**: A private queue system. One host share a code and other join with it.
-- ⚰️ **Added a new interactable, Reviver**: When a player die, it will now spawn a Coffin. Other player have to defeat his ghost to respawn the dead player
-
-### v1.3.0
-
-- 🛒 **Thunderstore support**: No auto update for thunderstore as they have to update throught the website or r2modman
-- ⚖️ **Balance change**: Reduced Credits earning to limit a bit spawned enemies
-
-### v1.2.0
-
-- 📊 **Add latency indicator to the host**: The host see latency for all clients
-
-### v1.1.0
-
-- 🔄 **Generate updater on the fly**
-
-### v1.0.0
-
-- 🚀 **Initial release !** Thanks for trying the mod
 
 </details>
 
 # Install
 
-This mod has only been developed and tested on windows, probably won't work on other platform (Is the game can even be run on Linux/Mac even ?)
+OmniBonk is developed and tested on Windows. Linux and Steam Deck work through Proton; see
+[Linux Support](#linux-support-proton--steam-deck) below. A major game update can break the mod
+until it is updated.
 
-Also this mod was developed for the 1.0.49 version (ok let me rant a bit, it was developed on previous update but Graveyard update broke some major stuff, i was a bit mad but its okay now, i fixed all the stuff), meaning it will probably break when an official major update drop .
+> [!NOTE]
+> Back up your save before installing. It is in `{user}/AppData/LocalLow/Ved/Megabonk`; copying
+> that whole folder is the simplest way.
 
-> [!NOTE]  
-> Before starting, i suggest to make a backup of your current save file just in case.
-> The game save is somewhere at `{user}/AppData/LocalLow/Ved/Megabonk/Saves/CloudDir/{some steam id guess}`
+OmniBonk runs on the [BepInEx 6 Bleeding Edge build](https://builds.bepinex.dev/projects/bepinex_be).
+Get the **IL2CPP, Windows, x64** build, for example
+[BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.752](https://builds.bepinex.dev/projects/bepinex_be/752/BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.752%2Bdd0655f.zip),
+and extract it into the folder that holds `Megabonk.exe`, something like
+`{your own path}/steamapps/common/Megabonk`.
 
-> You can also just copy all at `{user}/AppData/LocalLow/Ved/Megabonk` if not sure
+- Launch the game once and wait for the main menu. BepInEx opens a console window next to the game
+  and generates the files it needs.
+- Close the game, then download the [latest release](https://github.com/CEOYap/OmniBonk/releases/latest).
+- Extract the zip and copy the `OmniBonk` folder into `BepInEx/plugins`, something like
+  `../steamapps/common/Megabonk/BepInEx/plugins`.
+- Launch the game. A `TOGETHER!` button appears at the bottom of the main menu.
 
-> Make sure to copy your save somewhere in case you need to restore it back for some reason
+> [!NOTE]
+> The button cannot be selected with a controller yet. Click it with the mouse; you can switch back
+> to the controller afterwards.
 
-This mod run with [BepInEX 6 Bleeding Edge Build](https://builds.bepinex.dev/projects/bepinex_be) (tested on the current latest #752):
-
-Start by downloading the BepInex loader [BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.752](https://builds.bepinex.dev/projects/bepinex_be/752/BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.752%2Bdd0655f.zip) in your game directory (Where your Megabonk.exe is). This mean you want to extract BepInEx at something like `{your own path}\steamapps\common\Megabonk`
-
-> [!NOTE]  
-> We specifically target the IL2CPP version (.IL2CPP) in the BepInEx build page and also the windows (-win) and the 64 bits (-x64) version of BepInex.
-
-> Not sure if i will upgrade this page every new BepInEx update this how you know what version you should get
-
-> Also i dont know if 64 bits is tied with how the game was built or your system , if the 64 bits version is not working, i guess you should try the 32 bits (x86) version (something like `BepInEx-Unity.IL2CPP-win-x86-6.0.0-be`)
-
-- Launch the game first at least one time to confirm BepInEx is working (Wait for the main menu as BepInEx need to make some dummy dll). Yous should see a terminal opened along side with the game with some logs in it
-
-- After exiting the game,grab and download the [latest release](https://github.com/CEOYap/OmniBonk/releases/latest)
-
-- Extract the zip and copy the folder `OmniBonk` to the plugins path of BepInEx , something like `../steamapps/common/Megabonk/BepInEx/plugins`
-
-- Launch the game and confirm a new weird `Togther!` button is at the bottom of the main screen
-
-> [!NOTE]  
-> The button is not navigable right now, you won't be able to select it with a controller , use your mouse to interact with it (You can pick your controller later)
-> Will try to fix later
-
-- Enjoy ! Do not hesitate to open an [issue](https://github.com/CEOYap/OmniBonk/issues) if you encounter a bug or something isn't working
+Found a bug? Open an [issue](https://github.com/CEOYap/OmniBonk/issues).
 
 # How to play
 
@@ -318,8 +208,8 @@ If you want to run your own matchmaking/relay server, check the [Self-Hosting Gu
 
 # Known issue
 
-- For some obscure reason, The game crash when loading the map. this is mostly rare and you can just close and restart the game if it ever happen. Dunno why it sometimes crash here ¯\_(ツ)\_/¯
-- Not all the stuff happening in the game are perfectly synchronized, like getting money when you shouldn't or ghost item not spawning or whatever. I will mostly be looking for game breaking bug before looking at those
+- The game can rarely crash while a map loads. Restart the game if it happens.
+- Not everything in the game is perfectly synchronized yet. Game-breaking bugs are fixed first.
 
 # Building (Developer)
 
@@ -332,7 +222,7 @@ You should now have the macthmaking server built and also the mod file
 > [!IMPORTANT]  
 > The IDE will copy the result mod file in your game directory. This is super practical when developing locally but remember to delete it after.
 
-To target a local server, modify the file `{your game path}/BepInEx/config/OmniBonk.cfg` and update [Network].ServerUrl to `ws://127.0.0.1:5000`
+`[Network] ServerUrl` in `{your game path}/BepInEx/config/OmniBonk.cfg` defaults to `ws://127.0.0.1:5000`, a server on the same PC. It is only used when `[Network] UseSteamTransport` is `false`.
 
 ## Developer testing tools
 
@@ -425,13 +315,10 @@ You can build the mod natively on Linux using the .NET 8 SDK.
 </Project>
 ```
 
-# Social
+# License
 
-Bsky : [Dshad66](https://bsky.app/profile/dshad66.bsky.social)
-
-Twitter : DShad - [@DShad66](https://twitter.com/DShad66)
-
-Discord : dshad (was DShad#4670)
+OmniBonk is distributed under the GPL-2.0 (see [LICENSE](LICENSE)). It is based on
+[Megabonk Together](https://github.com/Fcornaire/megabonk-together) by Fcornaire.
 
 <!-- MARKDOWN LINKS & IMAGES -->
 <!-- https://www.markdownguide.org/basic-syntax/#reference-style-links -->
@@ -447,4 +334,4 @@ Discord : dshad (was DShad#4670)
 [license-shield]: https://img.shields.io/github/license/CEOYap/OmniBonk.svg?style=for-the-badge
 [download-shield]: https://img.shields.io/github/downloads/CEOYap/OmniBonk/total?style=for-the-badge
 [download-url]: https://github.com/CEOYap/OmniBonk/releases
-[license-url]: https://github.com/CEOYap/OmniBonk/blob/master/LICENSE.txt
+[license-url]: https://github.com/CEOYap/OmniBonk/blob/main/LICENSE

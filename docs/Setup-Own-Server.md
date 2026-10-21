@@ -1,6 +1,6 @@
-# Self-Hosting a MegabonkTogether Server
+# Self-Hosting an OmniBonk Server
 
-This guide explains how to set up and run your own MegabonkTogether matchmaking/relay server and how players connect to it.
+This guide explains how to set up and run your own OmniBonk matchmaking/relay server and how players connect to it.
 
 ## Prerequisites
 
@@ -9,8 +9,8 @@ This guide explains how to set up and run your own MegabonkTogether matchmaking/
 
 ### Option A - Download the Prebuilt Server
 
-1. Go to the [latest GitHub release](https://github.com/Fcornaire/megabonk-together/releases/latest).
-2. Download the **`MegabonkTogether-Server-win-x64-*.zip`** archive.
+1. Go to the [latest GitHub release](https://github.com/CEOYap/OmniBonk/releases/latest).
+2. Download the **`OmniBonk-Server-win-x64-*.zip`** archive.
 3. Extract it to a folder of your choice.
 4. Run `MegabonkTogether.Server.exe`.
 
@@ -18,8 +18,8 @@ This guide explains how to set up and run your own MegabonkTogether matchmaking/
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/Fcornaire/megabonk-together.git
-   cd megabonk-together
+   git clone https://github.com/CEOYap/OmniBonk.git
+   cd OmniBonk
    ```
 2. Build and run the server:
    ```bash
@@ -70,4 +70,4 @@ ws://<your-ip>:5000
 
 ## Connecting Players to Your Server
 
-Each player needs to update their `ServerUrl` setting in their **MegabonkTogether plugin config** (found in BepInEx config at `{Megabonk Game path}/BepInEx/config/MegabonkTogether.cfg`
+Each player needs to update their `ServerUrl` setting in their **OmniBonk plugin config** (found in BepInEx config at `{Megabonk Game path}/BepInEx/config/OmniBonk.cfg`), and set `[Network] UseSteamTransport` to `false`

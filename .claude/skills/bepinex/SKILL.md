@@ -78,8 +78,7 @@ Don't cache `.Value` in a static at load time unless you intend to freeze it.
 
 Network defaults worth knowing:
 
-- `ServerUrl` → `wss://megabonk-together-matchmaking.balatro-vs-matchmaking.eu`
-- Local testing → `ws://127.0.0.1:5000` (matches the server project's default)
+- `ServerUrl` → `ws://127.0.0.1:5000`, the server project's local default. There is no public server yet; players point it at their own
 - `RDVServerPort` → `5678`
 
 ## Logging
@@ -92,9 +91,8 @@ Plugin.Log.LogError(...);
 
 Output goes to `BepInEx/LogOutput.log` in the game folder. Because there is no debugger against
 a shipped IL2CPP build, the log is the primary diagnostic — but it is also a real per-frame cost.
-**Never log inside `Update()`, a per-frame patch, or the packet receive path.** Recent history
-bears this out: commit `041881b` added chest-open logging to chase a bug and the following
-release was a performance pass.
+**Never log inside `Update()`, a per-frame patch, or the packet receive path.** Diagnostic
+logging left in a hot path has cost a release a performance pass before.
 
 For on-screen debugging during a session, use `Helpers/ScreenTextHelper.cs` rather than log spam.
 

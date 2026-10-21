@@ -3913,7 +3913,7 @@ namespace MegabonkTogether.Services
         /// <summary>
         /// FIX P2-3: shared by shrine / pylon / lamp, which had three byte-identical copies of this
         /// apart from the message type, the dictionary and a noun in the log line. Resolves
-        /// upstream's "pylon and lamp should be refactored to use the same logic" TODO.
+        /// an old "pylon and lamp should be refactored to use the same logic" TODO.
         ///
         /// <para>Carries the P0-1 and P2-2 fixes in one place: the occupancy check happens BEFORE
         /// the write (the old order overwrote the current charger with the rejected one, so the
@@ -6162,7 +6162,7 @@ namespace MegabonkTogether.Services
 
         /// <summary>
         /// Failsafe release for a barrier that will never complete on its own — the answer to
-        /// upstream #88's "add a 60 second failsafe that closes the menus for both players".
+        /// a player request to "add a 60 second failsafe that closes the menus for both players".
         ///
         /// <para>A client also re-sends its own <c>EncounterClosed</c>: the likeliest reason it is
         /// still waiting is that the host never counted its report (a round-attribution mistake,
@@ -6328,7 +6328,7 @@ namespace MegabonkTogether.Services
         {
             // SE-11: ignore our own gain coming back.
             //
-            // Gold is shared as a DELTA (upstream 4.0.3 — gains shared, losses local), and a delta
+            // Gold is shared as a DELTA (gains shared, losses local), and a delta
             // applied twice is a permanent divergence, not the no-op it would be under an absolute
             // value. The host excludes the sender when relaying, but that exclusion runs through
             // SendToAllClientsExcept, whose relay branch falls back to an EMPTY filter list on a
@@ -6342,7 +6342,7 @@ namespace MegabonkTogether.Services
 
             // Runs from a network callback, and gold changes with every coin — an unguarded deref
             // here during teardown or a stage change is a repeating NullReferenceException, which
-            // is what upstream #76 reported alongside the freeze.
+            // is what was reported alongside the freeze.
             var inventory = GameManager.Instance == null || GameManager.Instance.player == null
                 ? null
                 : GameManager.Instance.player.inventory;

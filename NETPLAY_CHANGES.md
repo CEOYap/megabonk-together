@@ -21,7 +21,7 @@ and it applies to the item pick, take, banish, discard and skip — but not to o
 which commits nothing.
 
 Change it with `EncounterInputGraceSeconds` in
-`BepInEx/config/megabonk.together.cfg`; set it to `0` to turn it off.
+`BepInEx/config/OmniBonk.cfg`; set it to `0` to turn it off.
 
 ## Synchronization
 
@@ -51,7 +51,7 @@ You get i-frames when leveling up/getting a reward/openning a chest. This is to 
 in singleplayer either.
 
 That is deliberate. The game detects mods by looking for their files on disk, so a solo run with
-MegabonkTogether installed is just as detectable as a co-op one. Blocking only during netplay
+OmniBonk installed is just as detectable as a co-op one. Blocking only during netplay
 would leave your singleplayer scores exposed to exactly the risk this is meant to avoid. Getting
 your run onto the leaderboard is the one thing that could actually get you in trouble, so the mod
 refuses to submit at all.

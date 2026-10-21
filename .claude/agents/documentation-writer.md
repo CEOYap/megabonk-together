@@ -20,10 +20,8 @@ no marketing. Read the neighbouring file before writing a new one.
 | `README.md` | user-facing: features + full changelog in a `<details>` block | every release |
 | `NETPLAY_CHANGES.md` | notable network behaviour changes | behaviour visible to players changes |
 | `src/plugin/CHANGELOG.toml` | in-game changelog, read by `ChangelogService` | every release |
-| `docs/netplay/00-fork-comparison.md` | fork audit | upstream divergence changes |
 | `docs/netplay/01-critical-fixes.md` | known-bad areas, **UNVERIFIED** markers | a fix lands or an assumption is verified |
 | `docs/netplay/02-delivery-method-reference.md` | delivery policy + message→channel map | **any** message added or channel changed |
-| `docs/netplay/03-cherry-pick-guide.md` | upstream cherry-pick procedure | procedure changes |
 | `docs/netplay/04-performance-and-gc.md` | allocation and frame-cost notes | a perf pass lands |
 | `docs/reverse-engineering/00-decompilation-guide.md` | Il2CppDumper/Ghidra toolchain | toolchain changes |
 | `docs/reverse-engineering/01-investigation-targets.md` | open RE questions | a question is answered or added |

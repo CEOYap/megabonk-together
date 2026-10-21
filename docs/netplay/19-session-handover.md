@@ -103,7 +103,7 @@ The project owner's decisions on the five items below:
 | 1. GUID | **New GUID, `OmniBonk`** | `<AssemblyName>` and `<Product>` are `OmniBonk`, so `PLUGIN_GUID`, the config file (`OmniBonk.cfg`), the Harmony id and the DLL all follow. `[BepInIncompatibility("MegabonkTogether")]` stops it loading next to the old plugin. `<RootNamespace>` and the `Common` assembly keep `MegabonkTogether`. |
 | 2. Updater | **A new `CEOYap/OmniBonk` repo** | `AutoUpdaterService` reads releases there and expects `OmniBonk-X.Y.Z.zip`. **The repo does not exist yet**: until it does, the update check logs a failed fetch and nothing else. The updater batch also backed up a `MegabonkTogether.Plugin.dll` that never existed; it now names the real DLL. |
 | 3. Version | **1.0.0** | Works because of 1: a separate plugin, so 1.0.0 is never compared with 5.1.0. |
-| 4. Server | **Self-host, URL to follow** | `ServerUrl` still defaults to upstream's server. Change the default in `ModConfig.cs` once the URL exists. |
+| 4. Server | **Self-host, URL to follow** | `ServerUrl` defaults to `ws://127.0.0.1:5000` until the self-hosted URL exists; then change the default in `ModConfig.cs`. |
 | 5. Mixed versions | **Version handshake** | `ProtocolHello`, union tag 83; `Protocol.Version` 2 → 3. The host cannot start the lobby until every client has confirmed protocol 3. See `01-critical-fixes.md`, P1-3, last section. |
 
 Also renamed: the four workflows (zip and folder names, workflow names that chain on each other),
@@ -146,7 +146,7 @@ is find-and-replace. The items below need a decision first.
    - Decide whether a player should run both plugins at once. They must not: both would patch the
      same game methods.
 4. **The matchmaking server.**
-   - The default `ServerUrl` is `wss://megabonk-together-matchmaking.balatro-vs-matchmaking.eu`,
+   - The default `ServerUrl` was the original mod's public server (now `ws://127.0.0.1:5000`),
      which is **upstream's** server.
    - Either keep using it, which means OmniBonk players can be matched with Megabonk Together
      players, or self-host. The repo has the server (`src/server/`), a `Dockerfile` and
@@ -186,8 +186,8 @@ MelonLoader research mod; that rule is about that mod, not this project's upstre
 | Player2 | `D:\Games\Megabonk` | Bot, `BotInvincible = false` |
 | Player3 | `D:\Games\Megabonk - Copy` | Bot, `BotInvincible = true` |
 
-- **Copying the DLL.** After a Debug build, copy `src/plugin/bin/Debug/net6.0/MegabonkTogether.dll`
-  into both bot folders under `BepInEx/plugins/MegabonkTogether/`.
+- **Copying the DLL.** After a Debug build, copy `src/plugin/bin/Debug/net6.0/OmniBonk.dll`
+  into both bot folders under `BepInEx/plugins/OmniBonk/`.
 - **Bot loadouts.** Both bots carry Bloody Cleaver and Unstable Transfusion in `[Testing]
   TestItems`, to exercise the debuff attribution.
 - **Starting Endless.** Options page → `Endless: ON`, then start on Graveyard, Forest or Desert.

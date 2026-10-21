@@ -28,7 +28,7 @@ The plugin needs Megabonk's Il2CppInterop proxy assemblies. Two sources, resolve
 | `MegabonkPath` set **and** `$(MegabonkPath)/BepInEx/interop` exists | the real game folder, and `PluginPath` becomes `$(MegabonkPath)/BepInEx/plugins` |
 
 Set `MegabonkPath` to your game install to get a Debug post-build auto-copy into
-`BepInEx/plugins/MegabonkTogether` (Windows `xcopy`, Linux `cp`). The copy is **Debug-only** and
+`BepInEx/plugins/OmniBonk` (Windows `xcopy`, Linux `cp`). The copy is **Debug-only** and
 is skipped when `GITHUB_ACTIONS` or `CI` is set.
 
 ```powershell
@@ -57,7 +57,7 @@ Currently referenced: `Assembly-CSharp`, `Il2Cppmscorlib`, `Il2CppSystem(.Core)`
 | Constant | Set by env var | Effect |
 |---|---|---|
 | `THUNDERSTORE` | `THUNDERSTORE_BUILD=true` | Thunderstore/r2modman distribution — disable the in-mod auto-updater; users update through the platform |
-| `PROTON` | `PROTON_BUILD=true` | Linux / Steam Deck via Proton (v5.0.0, experimental); cross-play with Windows must be preserved |
+| `PROTON` | `PROTON_BUILD=true` | Linux / Steam Deck via Proton (experimental); cross-play with Windows must be preserved |
 
 ```csharp
 #if THUNDERSTORE
@@ -76,7 +76,7 @@ and `THUNDERSTORE_BUILD.md`.
 
 | Workflow | Trigger | Produces |
 |---|---|---|
-| `build-plugin.yml` | push of any tag | `Megabonk-Together-<version>.zip` (DLLs+PDBs under a `MegabonkTogether/` folder), GitHub Release with commit-diff notes |
+| `build-plugin.yml` | push of any tag | `OmniBonk-<version>.zip` (DLLs+PDBs under an `OmniBonk/` folder), GitHub Release with commit-diff notes |
 | `build-plugin-thunderstore.yml` | — | Thunderstore package |
 | `build-plugin-proton.yml` | — | Proton/Linux build |
 | `build-server.yml` | — | matchmaking server image |

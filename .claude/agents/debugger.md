@@ -53,8 +53,8 @@ here that nobody read.
 3. **Read the code path end to end** — patch → service → send → receive → apply. Desyncs almost
    always break at one specific link, and naming the link is the diagnosis.
 4. **Instrument narrowly.** `Helpers/ScreenTextHelper.cs` for in-session state;
-   `Plugin.Log.LogInfo` **only outside hot paths** and removed before merge. Commit `041881b`
-   added chest-open logging for a diagnosis and the next release had to undo the cost.
+   `Plugin.Log.LogInfo` **only outside hot paths** and removed before merge. Diagnostic logging left in a
+   hot path has cost a release a performance pass before.
 5. **Verify before claiming.** State what you actually observed. If a fix wasn't run in-game,
    say it's untested.
 

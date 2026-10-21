@@ -8,7 +8,7 @@ namespace MegabonkTogether.Common.Messages.GameNetworkMessages
     ///
     /// <para><b>Why a message, when P1-3 says the gate belongs in Steam lobby metadata.</b> That
     /// gate exists and still runs, but it covers only the Steam transport. The matchmaker path had
-    /// nothing, and it is the path that can pair this mod with an older Megabonk Together build.
+    /// nothing, and it is the path that can pair this mod with an older, incompatible build.
     /// The connect-key gate was disproved in game (see <c>docs/netplay/01-critical-fixes.md</c>,
     /// P1-3), so this is checked after connecting instead.</para>
     ///

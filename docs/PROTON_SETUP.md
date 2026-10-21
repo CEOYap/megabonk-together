@@ -1,6 +1,6 @@
 # Proton Setup Guide for BepInEx 6
 
-This document details the steps to run Megabonk Together on Linux using Proton.
+This document details the steps to run OmniBonk on Linux using Proton.
 
 ## 1. Game Configuration
 - **Steam Properties:** Force the use of **Proton 9.0-2** (or newer).

@@ -59,8 +59,8 @@ namespace MegabonkTogether.Configuration
             ServerUrl = config.Bind(
                 "Network",
                 "ServerUrl",
-                "wss://megabonk-together-matchmaking.balatro-vs-matchmaking.eu",
-                "The URL of the matchmaking server. Do not change this unless you know what you're doing (e.g. for self-hosting). Use ws://127.0.0.1:5000 on localhost for testing purpose"
+                "ws://127.0.0.1:5000",
+                "The URL of the matchmaking server, used only when UseSteamTransport is false. The default is a server on this PC (see docs/Setup-Own-Server.md); set it to your own server's address to play over the internet"
             );
             RDVServerPort = config.Bind(
                 "Network",

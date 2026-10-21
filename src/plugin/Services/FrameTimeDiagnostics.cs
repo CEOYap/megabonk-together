@@ -9,8 +9,8 @@ namespace MegabonkTogether.Services
     /// Frame-time sampler for performance testing: one <c>[perf]</c> line every
     /// <see cref="REPORT_INTERVAL_SECONDS"/> while a session runs.
     ///
-    /// <para><b>Why not average FPS alone.</b> The complaints this project has had (v4.1.0, v4.2.2,
-    /// v5.x) are stutter, and an average hides it: 59 frames at 10 ms and one at 400 ms is "~70 FPS".
+    /// <para><b>Why not average FPS alone.</b> The FPS complaints this project has had
+    /// are stutter, and an average hides it: 59 frames at 10 ms and one at 400 ms is "~70 FPS".
     /// So the line carries the 1% and 0.1% lows, the worst frame, and counts of frames over 33 ms
     /// (below 30 FPS) and over 100 ms (a visible hitch).</para>
     ///

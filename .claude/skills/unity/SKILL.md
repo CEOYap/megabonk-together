@@ -104,7 +104,7 @@ units was visible pop-in):
 | `Close` | every tick | every tick |
 
 Any new synchronized entity type with a per-frame cost should route through a `DistanceThrottler`
-instance. This mechanism was introduced in v3.0.0 specifically to fix FPS.
+instance. This mechanism exists specifically to fix FPS.
 
 ## Object pooling
 

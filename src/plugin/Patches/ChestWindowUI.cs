@@ -71,7 +71,7 @@ namespace MegabonkTogether.Patches
         }
 
         /// <summary>
-        /// Diagnostic for upstream #81 ("first item works, then every chest only offers banish").
+        /// Diagnostic for a reported bug ("first item works, then every chest only offers banish").
         ///
         /// <para>The mod never touches the take/banish buttons, so the most plausible way it could
         /// break them is by stranding a game static it borrows: <c>NetPlayer.AddItem</c> /

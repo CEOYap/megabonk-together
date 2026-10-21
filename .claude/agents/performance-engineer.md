@@ -10,8 +10,7 @@ skills: unity, netcode, il2cpp, csharp
 
 You own frame time and bandwidth for **MegabonkTogether**.
 
-FPS is this mod's most persistent user complaint — v3.0.0, v4.1.0, v4.2.0, v4.2.2, v5.0.0 and
-v5.1.0 all shipped performance work. Read `docs/netplay/04-performance-and-gc.md` before
+FPS is this mod's most persistent user complaint. Read `docs/netplay/04-performance-and-gc.md` before
 proposing anything.
 
 ## Where the cost actually is
@@ -64,7 +63,7 @@ gap. Check the interpolator before cutting.
   bandwidth causes permanent desync — see the delivery policy.
 - Never put a performance optimization behind `#if PROTON` / `#if THUNDERSTORE` if it changes
   netcode. Cross-play must hold.
-- No logging in any hot path. This has regressed before (`041881b`).
+- No logging in any hot path. This has regressed before.
 - Don't cache a native reference across frames to avoid a lookup — use-after-free crashes are
   worse than the lookup.
 

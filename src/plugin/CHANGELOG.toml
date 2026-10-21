@@ -1,6 +1,5 @@
 ﻿# OmniBonk Changelog
 # Shown in game after an update: write it for players.
-# Megabonk Together's history (up to 5.1.0) is in README.md; OmniBonk restarts at 1.0.0.
 # Format:
 # [version."X.Y.Z"]
 # changes = [
@@ -10,7 +9,6 @@
 
 [version."1.0.0"]
 changes = [
-    "Megabonk Together is now OmniBonk! It is a separate mod: delete the old MegabonkTogether folder from BepInEx/plugins, or OmniBonk will not load. Your settings start fresh in OmniBonk.cfg.",
     "Everyone needs the same OmniBonk version. The lobby shows WRONG VERSION next to a player on a different one, and the host cannot start until it is fixed.",
     "Endless Run (lobby Options): the run goes on through Forest, Desert and Graveyard rooms, with a boss after every three, until everyone is dead. Enemies get tougher after each boss.",
     "No Projectile Cap (lobby Options): weapons can fire more than 80 projectiles in one burst.",
