@@ -270,7 +270,7 @@ reported symptom were the same gap seen from two ends.
 ---
 
 <a name="ob-3"></a>
-## OB-3 — "Waiting for other player(s) choices…" reappears every ~20 s — **not reproducing (2026-08-18)**
+## OB-3 — "Waiting for other player(s) choices…" reappears every ~20 s — **CLOSED 2026-10-21: has not reappeared**
 
 **Reported:** the waiting message appeared repeatedly for no obvious reason.
 
@@ -304,6 +304,8 @@ the round complete. The 20-second failsafe cycle should therefore still be expec
 addressed, and the next capture should be read with that in mind rather than as a regression.
 
 ---
+
+**Closed 2026-10-21** at the host player's call. It has not reappeared since 2026-08-18, through every playtest since, including the long multi-stage Endless runs of 2026-10-21; those logs have no "Waiting for other player(s) choices" line. No root cause was ever named, so reopen it if the message comes back on a timer.
 
 <a name="ob-4"></a>
 ## OB-4 — The failsafe closes an encounter window that is mid-use — CONFIRMED, **FIXED and VERIFIED in play**
@@ -2891,7 +2893,7 @@ fixed this.
 **Confirms as:** `[steam-lobby] Member list now has 2 member(s) (was 1).` in the host log when the
 friend joins, and his avatar on the host's screen.
 
-## OB-23 — The client's camera detaches from its character during the failsafe storm — **not reproducing (2026-10-11)**
+## OB-23 — The client's camera detaches from its character during the failsafe storm — **CLOSED 2026-10-21: has not reappeared**
 
 Reported alongside [OB-21](#ob-21). Not explained, and recorded as unexplained rather than guessed.
 
@@ -4717,4 +4719,6 @@ the revive completes.
 **Confirmed by log, 2026-10-21 Endless run (host plus two bots; Graveyard start, nine stage changes across Forest, Desert and Graveyard, with Ent and the Ghost King as boss rooms). The host's log was overwritten by a relaunch, so this rests on both bots' logs.** In the Ent arena a bot logged `[world] OB-36: teleported back to bounds; position range 600 -> 600.` That `[boss]` positions kept matching afterwards could not be compared against the host.
 
 **Confirmed, 2026-10-21 Endless run (host plus two bots, eleven stage changes, including Desert rooms and the Ent and Pharaoh arenas; the host's log was kept).** Falls off the final arena logged `[world] OB-36: teleported back to bounds; position range 600 -> 600.` three times across the peers, and the host player reported no desync afterwards.
+
+**Closed 2026-10-21** at the host player's call. It has not reappeared since 2026-10-11. It was seen only during the failsafe storm, which OB-21's fix ended, and no later log has a failsafe storm (the 2026-10-21 logs have at most one failsafe line per peer). Reopen it if the client's camera leaves its character again.
 
