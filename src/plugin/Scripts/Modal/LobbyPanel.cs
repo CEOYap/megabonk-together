@@ -818,6 +818,11 @@ namespace MegabonkTogether.Scripts.Modal
 
         private void ApplyOptionsColumnLayout(bool options)
         {
+            // The rule under the member list belongs to the lobby view: once the column moves up it
+            // runs straight through the options buttons (2026-10-21). Decoration the prefab may not
+            // have (docs/ui/01-ui-asset-bundle.md), so a missing one is fine.
+            buttonContainer.parent?.Find("FooterRule")?.gameObject.SetActive(!options);
+
 
             // GetComponent, not a cast: see WarnIfButtonColumnOverflows.
             var column = buttonContainer.GetComponent<RectTransform>();
