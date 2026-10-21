@@ -1,4 +1,4 @@
-﻿using MegabonkTogether.Helpers;
+using MegabonkTogether.Helpers;
 using HarmonyLib;
 using MegabonkTogether.Common.Messages;
 using MegabonkTogether.Services;
@@ -76,6 +76,15 @@ namespace MegabonkTogether.Patches
                 }
 
                 var netplayId = PYLON_ID_BASE + (uint)i;
+
+                // StartPylons runs once per pylon phase, three times a fight, on the same pylons:
+                // already registered as itself is the normal case, not a collision (2026-10-21: 22
+                // "already exists" warnings per Pharaoh fight).
+                if (spawnedObjectManagerService.GetSpawnedObject(netplayId) == pylon.gameObject)
+                {
+                    continue;
+                }
+
                 spawnedObjectManagerService.SetSpawnedObject(netplayId, pylon.gameObject);
                 DynamicData.For(pylon.gameObject).Set("netplayId", netplayId);
             }

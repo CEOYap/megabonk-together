@@ -181,6 +181,16 @@ namespace MegabonkTogether.Services
         /// </summary>
         private readonly Dictionary<uint, int> cryptUpdateAttempts = [];
         private const int MAX_CRYPT_UPDATE_ATTEMPTS = 20;
+
+        /// <summary>
+        /// Host-spawned objects not yet spawned here, by netplay id, and the passes each has had.
+        /// Counted only while Started, which a client reaches after its own map generation, so a
+        /// prefab that is merely late is not dropped. 2026-10-21: a ChargeShrineFinishFx sent around
+        /// a stage change arrived after this peer had cleared its prefabs, and was retried (and
+        /// logged twice) every half second for the whole next room: 656 lines.
+        /// </summary>
+        private readonly Dictionary<uint, int> spawnAttempts = [];
+        private const int MAX_SPAWN_ATTEMPTS = 20;
         private readonly ConcurrentQueue<SpawnedEnemy> pendingEnemySpawns = new();
         private readonly HashSet<uint> enemiesDiedBeforeSpawn = [];
 
@@ -408,6 +418,7 @@ namespace MegabonkTogether.Services
             toSpawns.Clear();
             toUpdate.Clear();
             cryptUpdateAttempts.Clear();
+            spawnAttempts.Clear();
 
             shrineChargingPlayers.Clear();
             pylonChargingPlayers.Clear();
@@ -1067,6 +1078,11 @@ namespace MegabonkTogether.Services
             // the same position in a later Graveyard visit.
             while (toUpdate.TryTake(out _)) { }
             cryptUpdateAttempts.Clear();
+
+            // The same for a spawned object: it belongs to the level it was sent in, and this peer's
+            // prefabs for that level are being cleared now.
+            while (toSpawns.TryTake(out _)) { }
+            spawnAttempts.Clear();
             requestedShrineCompletions.Clear();
             Patches.Enemies.EnemyPatch.EnemiesDistanceThrottler.ClearAll();
 
@@ -1337,17 +1353,30 @@ namespace MegabonkTogether.Services
                     {
                         if (toSpawns.TryTake(out var toSpawn))
                         {
-                            if (!SpawnObject(toSpawn))
+                            if (SpawnObject(toSpawn))
                             {
-                                unspawnedYet.Add(toSpawn);
+                                spawnAttempts.Remove(toSpawn.Id);
+                            }
+                            else
+                            {
+                                spawnAttempts.TryGetValue(toSpawn.Id, out var attempts);
+                                if (++attempts >= MAX_SPAWN_ATTEMPTS)
+                                {
+                                    spawnAttempts.Remove(toSpawn.Id);
+                                    logger.LogInfo($"Gave up spawning {toSpawn.PrefabName} ({toSpawn.Id}) after {MAX_SPAWN_ATTEMPTS / 2} s; there is no such prefab here.");
+                                }
+                                else
+                                {
+                                    spawnAttempts[toSpawn.Id] = attempts;
+                                    unspawnedYet.Add(toSpawn);
+                                }
                             }
                         }
                         canSpawn = toSpawns.Count > 0;
                     }
 
-                    foreach (var item in unspawnedYet) //Add back to retry later
+                    foreach (var item in unspawnedYet) //Add back to retry later; logged once, when given up
                     {
-                        logger.LogWarning($"Retrying spawn for object: {item.PrefabName}");
                         toSpawns.Add(item);
                     }
 
