@@ -1,4 +1,4 @@
-﻿using Assets.Scripts.Game.MapGeneration;
+using Assets.Scripts.Game.MapGeneration;
 using HarmonyLib;
 using MegabonkTogether.Helpers;
 using MegabonkTogether.Services;
@@ -58,7 +58,7 @@ namespace MegabonkTogether.Patches
                 var inGame = Il2CppFindHelper.FindAllGameObjects();
                 foreach (var obj in inGame)
                 {
-                    if (obj.name.StartsWith(prefab.name) && obj.name != "BarrelMesh" && obj.name != "ArchCollider")
+                    if (IsCopyOf(obj.name, prefab.name) && obj.name != "BarrelMesh" && obj.name != "ArchCollider")
                     {
                         if (prefab.name.Contains("Microwave"))
                         {
@@ -77,5 +77,18 @@ namespace MegabonkTogether.Patches
                 }
             }
         }
+
+        /// <summary>
+        /// A spawned copy of <paramref name="prefab"/>: its own name, or Unity's "Name(Clone)" and
+        /// "Name (n)". A bare prefix also matched other objects whose names merely start the same:
+        /// <c>ChargeShrineFinishFx</c>, a charge shrine's finishing effect, was sent as a spawned
+        /// <c>ChargeShrine</c>, and no client has a prefab by that name (2026-10-21: four per Ghost
+        /// King room, each retried until given up).
+        /// </summary>
+        private static bool IsCopyOf(string name, string prefab)
+            => name == prefab
+               || (name.Length > prefab.Length
+                   && name.StartsWith(prefab, System.StringComparison.Ordinal)
+                   && (name[prefab.Length] == '(' || name[prefab.Length] == ' '));
     }
 }

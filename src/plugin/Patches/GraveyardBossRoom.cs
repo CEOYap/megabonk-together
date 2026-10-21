@@ -1,4 +1,4 @@
-﻿using HarmonyLib;
+using HarmonyLib;
 using MegabonkTogether.Services;
 using Microsoft.Extensions.DependencyInjection;
 using MonoMod.Utils;
@@ -67,6 +67,41 @@ namespace MegabonkTogether.Patches
             }
 
             DynamicData.For(__instance.interactableGhostBossLeave.gameObject).Set("netplayId", bossLeaveNetplayId);
+        }
+
+        /// <summary>
+        /// Client: the Ghost King's spawn, without the spawn. <c>CheckSpawnBoss</c> (VA 0x180505F90,
+        /// decompiled; Ghidra's labels are a slot off, read against dump.cs offsets) waits for
+        /// <c>isFightingBoss</c> and <c>spawnBossAtTime</c>, sets <c>hasSpawnedBoss</c>, calls
+        /// <c>EnemyManager.SpawnBoss</c> and then uses the boss it returns (armor, lamp colliders),
+        /// plays <c>musicTrackBoss</c> and updates the objective. On a client <c>SpawnBoss</c> returns
+        /// null by design (only the host's boss is real), so the method threw on the null boss once a
+        /// fight and the client never got the boss music (2026-10-21, a bot in the Ghost King's room).
+        ///
+        /// <para>Prefix-false on purpose, on clients: the same check and flag, then the music. The boss,
+        /// its armor and the objective arrive with the host's <c>SpawnedEnemy</c>
+        /// (<c>ProcessSpawnedEnemy</c>'s Ghost King branch). The lamp colliders only matter to the
+        /// host's physics. <b>UNVERIFIED, not run in-game.</b></para>
+        /// </summary>
+        [HarmonyPrefix]
+        [HarmonyPatch("CheckSpawnBoss")]
+        public static bool CheckSpawnBoss_Prefix(GraveyardBossRoom __instance)
+        {
+            if (!synchronizationService.HasNetplaySessionInitialized() || (synchronizationService.IsServerMode() ?? false))
+            {
+                return true;
+            }
+
+            if (!__instance.hasSpawnedBoss && __instance.isFightingBoss && __instance.spawnBossAtTime <= Assets.Scripts.Utility.MyTime.time)
+            {
+                __instance.hasSpawnedBoss = true;
+                if (MusicController.Instance != null && __instance.musicTrackBoss != null)
+                {
+                    MusicController.Instance.PlayMusicTrack(__instance.musicTrackBoss);
+                }
+            }
+
+            return false;
         }
     }
 }

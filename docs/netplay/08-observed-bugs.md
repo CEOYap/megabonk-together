@@ -4744,3 +4744,45 @@ the revive completes.
 
 **Closed 2026-10-21** at the host player's call. It has not reappeared since 2026-10-11. It was seen only during the failsafe storm, which OB-21's fix ended, and no later log has a failsafe storm (the 2026-10-21 logs have at most one failsafe line per peer). Reopen it if the client's camera leaves its character again.
 
+<a name="ob-54"></a>
+## OB-54 — Two leftovers from a full log review of the 2026-10-21 runs — **FIXED 2026-10-21, not yet confirmed in play**
+
+**1. The Ghost King's spawn threw on every client, and clients got no boss music.**
+
+`GraveyardBossRoom.CheckSpawnBoss` (`0x180505F90`, decompiled; Ghidra's labels are one slot off,
+so read against `dump.cs` offsets) runs when `isFightingBoss` is set and `spawnBossAtTime` has
+passed:
+
+1. sets `hasSpawnedBoss`;
+2. spawns the Ghost King with `EnemyManager.SpawnBoss`;
+3. uses the returned boss for its armor and the lamp colliders;
+4. plays `musicTrackBoss` and updates the objective.
+
+On a client `SpawnBoss` returns null by design (OB-8), so step 3 threw, once per fight, and step
+4 never ran there.
+
+**Fixed:** on a client the method is replaced by its check, the flag and the music. The boss, its
+armor and the objective already arrive with the host's `SpawnedEnemy`. The lamp colliders only
+matter to the host's physics.
+
+**2. A charge shrine's finishing effect was sent to clients as a spawned object.**
+
+`RandomObjectSpawner_Postfix` matched scene objects to a spawner's prefabs with
+`name.StartsWith(prefab.name)`. So `ChargeShrineFinishFx` matched the `ChargeShrine` prefab, was
+sent as a spawned object, and no client has a prefab by that name: four per Ghost King room, each
+retried until given up.
+
+**Fixed:** only a real copy matches, meaning the prefab's own name, `Name(Clone)` or `Name (n)`.
+
+**Also seen, not changed:**
+
+- **One shared-experience failsafe at Forest 2.** A client reported for an encounter that the host
+  had not opened yet. The failsafe released it after 20 s, the host's release followed, and digests
+  stayed in sync.
+- **`Could not find original InventoryHud or itemContainerPrefab`** each time teammate cards are
+  built. This is present since the original code: the teammate cards find no `InventoryHud` to
+  copy, so they likely show no weapon and tome icons. Not investigated.
+- **The host's one Unity `NullReferenceException`** as an encounter window opened. Player.log had
+  been overwritten by another copy of the game, so there was no stack trace.
+
+**UNVERIFIED, not run in-game.**
