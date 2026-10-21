@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
@@ -212,6 +212,7 @@ namespace MegabonkTogether.Services
         {
             EventManager.SubscribeLobbyReadyChangedEvents(OnLobbyReadyChanged);
             EventManager.SubscribeLobbyReadyStateEvents(OnLobbyReadyState);
+            EventManager.SubscribeLobbyRosterEvents(OnLobbyRoster);
         }
 
         private void OnLobbyReadyChanged(Common.Messages.GameNetworkMessages.LobbyReadyChanged changed) =>
@@ -219,6 +220,57 @@ namespace MegabonkTogether.Services
 
         private void OnLobbyReadyState(Common.Messages.GameNetworkMessages.LobbyReadyState state) =>
             ApplyHostState(state.Entries);
+
+        /// <summary>Client: takes the other members' names from the host. Our own stays ours.</summary>
+        private void OnLobbyRoster(Common.Messages.GameNetworkMessages.LobbyRoster roster)
+        {
+            var localId = playerManagerService.GetLocalPlayer()?.ConnectionId;
+            foreach (var entry in roster.Entries)
+            {
+                if (entry.ConnectionId == localId || string.IsNullOrWhiteSpace(entry.Name))
+                {
+                    continue;
+                }
+
+                var player = playerManagerService.GetPlayer(entry.ConnectionId);
+                if (player != null)
+                {
+                    player.Name = entry.Name;
+                }
+            }
+        }
+
+        private const long RosterResendMs = 3000;
+        private string lastRosterSignature;
+        private long lastRosterSentTicks;
+
+        /// <summary>
+        /// Host, while the lobby panel is open (it reads <see cref="GetMembers"/> twice a second):
+        /// sends every member's name when the roster changes, and every few seconds otherwise, so a
+        /// client that connected after the change is covered. A few bytes per member.
+        /// </summary>
+        private void BroadcastRosterIfDue(IEnumerable<Common.Models.Player> players)
+        {
+            if (netTransport.IsHost() != true)
+            {
+                return;
+            }
+
+            var entries = players
+                .Select(p => new Common.Messages.GameNetworkMessages.LobbyRosterEntry { ConnectionId = p.ConnectionId, Name = p.Name })
+                .ToList();
+            var signature = string.Join("|", entries.Select(e => $"{e.ConnectionId}:{e.Name}"));
+            var now = Environment.TickCount64;
+
+            if (signature == lastRosterSignature && now - lastRosterSentTicks < RosterResendMs)
+            {
+                return;
+            }
+
+            lastRosterSignature = signature;
+            lastRosterSentTicks = now;
+            netTransport.SendToAllClients(new Common.Messages.GameNetworkMessages.LobbyRoster { Entries = entries }, NetDelivery.ReliableOrdered);
+        }
 
         public bool IsInLobby =>
             Plugin.Instance?.Mode != null
@@ -247,7 +299,10 @@ namespace MegabonkTogether.Services
             // unstable order makes rows appear to swap places while people are reading them.
             var steamIdsByConnectionId = ResolveSteamIds();
 
-            var members = playerManagerService.GetAllPlayers()
+            var roster = playerManagerService.GetAllPlayers().ToList();
+            BroadcastRosterIfDue(roster);
+
+            var members = roster
                 .OrderByDescending(p => p.IsHost)
                 .ThenBy(p => p.ConnectionId)
                 .Select(p => new LobbyMemberView(

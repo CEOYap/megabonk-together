@@ -245,6 +245,9 @@ namespace MegabonkTogether.Services
                 case LobbyReadyState lobbyReadyState:
                     EventManager.OnLobbyReadyState(lobbyReadyState);
                     break;
+                case LobbyRoster lobbyRoster:
+                    EventManager.OnLobbyRoster(lobbyRoster);
+                    break;
                 case LobbyStartRequested:
                     EventManager.OnLobbyStartRequested();
                     break;

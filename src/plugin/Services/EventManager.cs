@@ -79,6 +79,7 @@ namespace MegabonkTogether.Services
         private static event Action LobbyStartRequestedEvents;
         private static event Action<LobbyReadyChanged> LobbyReadyChangedEvents;
         private static event Action<LobbyReadyState> LobbyReadyStateEvents;
+        private static event Action<LobbyRoster> LobbyRosterEvents;
         private static event Action<GoldChanged> GoldChangedEvents;
 
         public static void OnSpawnedObject(SpawnedObject spawnedObject)
@@ -1006,6 +1007,20 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>Client-side. The host's authoritative lobby-ready set.</summary>
+        public static void SubscribeLobbyRosterEvents(Action<LobbyRoster> action)
+        {
+            LobbyRosterEvents += action;
+        }
+
+        /// <summary>The host's lobby roster, with every member's name.</summary>
+        public static void OnLobbyRoster(LobbyRoster roster)
+        {
+            MainThreadDispatcher.Enqueue(() =>
+            {
+                LobbyRosterEvents?.Invoke(roster);
+            });
+        }
+
         public static void SubscribeLobbyReadyStateEvents(Action<LobbyReadyState> action)
         {
             LobbyReadyStateEvents += action;
