@@ -56,8 +56,8 @@ namespace MegabonkTogether.Common
         private const string UPDATE_FILE_PREFIX = ".update_download_";
         private static readonly TimeSpan UPDATE_CHECK_COOLDOWN = TimeSpan.FromMinutes(5);
 
-        private const string GITHUB_OWNER = "Fcornaire";
-        private const string GITHUB_REPO = "megabonk-together";
+        private const string GITHUB_OWNER = "CEOYap";
+        private const string GITHUB_REPO = "OmniBonk";
         private string currentVersion;
         private string pluginPath;
         private ManualLogSource logger;
@@ -90,7 +90,7 @@ namespace MegabonkTogether.Common
 
         static AutoUpdaterService()
         {
-            httpClient.DefaultRequestHeaders.Add("User-Agent", "MegabonkTogether-AutoUpdater");
+            httpClient.DefaultRequestHeaders.Add("User-Agent", "OmniBonk-AutoUpdater");
         }
 
 
@@ -246,7 +246,7 @@ namespace MegabonkTogether.Common
             try
             {
                 var asset = release.Assets.FirstOrDefault(a =>
-                    Regex.IsMatch(a.Name ?? string.Empty, @"^Megabonk\-Together\-\d+\.\d+\.\d+\.zip$", RegexOptions.IgnoreCase)); //this should pick Megabonk-Together-X.Y.Z.zip
+                    Regex.IsMatch(a.Name ?? string.Empty, @"^OmniBonk\-\d+\.\d+\.\d+\.zip$", RegexOptions.IgnoreCase)); //this should pick OmniBonk-X.Y.Z.zip
 
                 if (asset == null)
                 {
@@ -341,7 +341,7 @@ namespace MegabonkTogether.Common
                 batchContent.AppendLine("setlocal enabledelayedexpansion");
                 batchContent.AppendLine();
                 batchContent.AppendLine("REM ========================================");
-                batchContent.AppendLine("REM  MegabonkTogether Auto-Updater");
+                batchContent.AppendLine("REM  OmniBonk Auto-Updater");
                 batchContent.AppendLine("REM  Applies updates after game exits");
                 batchContent.AppendLine("REM ========================================");
                 batchContent.AppendLine();
@@ -364,7 +364,7 @@ namespace MegabonkTogether.Common
                 batchContent.AppendLine();
                 batchContent.AppendLine("cls");
                 batchContent.AppendLine("echo ========================================");
-                batchContent.AppendLine($"echo   MegabonkTogether Auto-Updater v{version}");
+                batchContent.AppendLine($"echo   OmniBonk Auto-Updater v{version}");
                 batchContent.AppendLine("echo ========================================");
                 batchContent.AppendLine("echo.");
                 batchContent.AppendLine();
@@ -398,7 +398,7 @@ namespace MegabonkTogether.Common
                 batchContent.AppendLine("echo.");
                 batchContent.AppendLine();
                 batchContent.AppendLine("REM backup");
-                batchContent.AppendLine("set PLUGIN_DLL=%PLUGIN_DIR%\\MegabonkTogether.Plugin.dll");
+                batchContent.AppendLine($"set PLUGIN_DLL=%PLUGIN_DIR%\\{MyPluginInfo.PLUGIN_GUID}.dll");
                 batchContent.AppendLine("set BACKUP_DLL=%PLUGIN_DLL%.backup");
                 batchContent.AppendLine();
                 batchContent.AppendLine("if exist \"%PLUGIN_DLL%\" (");

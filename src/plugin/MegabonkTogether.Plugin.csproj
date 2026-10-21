@@ -2,9 +2,9 @@
 
   <PropertyGroup>
     <TargetFramework>net6.0</TargetFramework>
-    <AssemblyName>MegabonkTogether</AssemblyName>
-    <Product>MegabonkTogether</Product>
-    <Version>5.1.0</Version>
+    <AssemblyName>OmniBonk</AssemblyName>
+    <Product>OmniBonk</Product>
+    <Version>1.0.0</Version>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <LangVersion>latest</LangVersion>
     <RestoreAdditionalProjectSources>
@@ -160,7 +160,7 @@
 
 	<!-- Skip PostBuild copy when running in CI (GitHub Actions or other CI systems setting CI env var) -->
 	<Target Name="PostBuild" AfterTargets="PostBuildEvent" Condition=" '$(GITHUB_ACTIONS)' != 'true' And '$(CI)' != 'true' ">
-		<Exec Command="xcopy /Y /I &quot;$(TargetDir)&quot; &quot;$(PluginPath)\\MegabonkTogether&quot;" Condition=" '$(PluginPath)' != '' And '$(Configuration)' == 'Debug' And '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Windows)))' " />
-		<Exec Command="mkdir -p &quot;$(PluginPath)/MegabonkTogether&quot; &amp;&amp; cp -r &quot;$(TargetDir)&quot;* &quot;$(PluginPath)/MegabonkTogether/&quot;" Condition=" '$(PluginPath)' != '' And '$(Configuration)' == 'Debug' And '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))' " />
+		<Exec Command="xcopy /Y /I &quot;$(TargetDir)&quot; &quot;$(PluginPath)\\$(AssemblyName)&quot;" Condition=" '$(PluginPath)' != '' And '$(Configuration)' == 'Debug' And '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Windows)))' " />
+		<Exec Command="mkdir -p &quot;$(PluginPath)/$(AssemblyName)&quot; &amp;&amp; cp -r &quot;$(TargetDir)&quot;* &quot;$(PluginPath)/$(AssemblyName)/&quot;" Condition=" '$(PluginPath)' != '' And '$(Configuration)' == 'Debug' And '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))' " />
 	</Target>
 </Project>

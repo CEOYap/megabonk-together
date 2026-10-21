@@ -29,7 +29,9 @@ namespace MegabonkTogether.Services
             { ("MegabonkTogether", "FriendliesClientSuccess"), "Friendlies" },
             { ("MegabonkTogether", "FriendliesClientSuccessDesc"), "Joined {0} lobby" },
             { ("MegabonkTogether", "FriendliesClientJoinSuccess"), "Friendlies" },
-            { ("MegabonkTogether", "FriendliesClientJoinSuccessDesc"), "{0} joined " }
+            { ("MegabonkTogether", "FriendliesClientJoinSuccessDesc"), "{0} joined " },
+            { ("MegabonkTogether", "VersionMismatch"), "Different version" },
+            { ("MegabonkTogether", "VersionMismatch_Description"), "{0} has a different mod version. Everyone needs the same version to start." }
         };
 
         private readonly Queue<IEnumerable<string>> NextLocalizedDescription = new();

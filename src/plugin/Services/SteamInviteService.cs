@@ -209,7 +209,7 @@ namespace MegabonkTogether.Services
                     Plugin.Log.LogWarning(
                         "[steam-invite] This lobby runs on the Steam transport and this install does "
                         + "not. Set Network/UseSteamTransport = true in "
-                        + "BepInEx/config/MegabonkTogether.cfg, with the game closed, and accept the "
+                        + $"BepInEx/config/{MyPluginInfo.PLUGIN_GUID}.cfg, with the game closed, and accept the "
                         + "invite again. There is deliberately no automatic fallback: joining on the "
                         + "other transport would silently put you in a session nobody else is in.");
                     return;

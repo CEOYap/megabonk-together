@@ -43,6 +43,10 @@ namespace MegabonkTogether
     }
 
     [BepInPlugin(MyPluginInfo.PLUGIN_GUID, MyPluginInfo.PLUGIN_NAME, MyPluginInfo.PLUGIN_VERSION)]
+    // Megabonk Together, the upstream plugin this was renamed from. Both patch the same game
+    // methods, so with both installed every patch would run twice. BepInEx skips this plugin and
+    // logs why rather than loading the pair.
+    [BepInIncompatibility("MegabonkTogether")]
     public class Plugin : BasePlugin
     {
         public static Plugin Instance = null!;

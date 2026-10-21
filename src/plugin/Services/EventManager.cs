@@ -80,6 +80,7 @@ namespace MegabonkTogether.Services
         private static event Action<LobbyReadyChanged> LobbyReadyChangedEvents;
         private static event Action<LobbyReadyState> LobbyReadyStateEvents;
         private static event Action<LobbyRoster> LobbyRosterEvents;
+        private static event Action<ProtocolHello> ProtocolHelloEvents;
         private static event Action<GoldChanged> GoldChangedEvents;
 
         public static void OnSpawnedObject(SpawnedObject spawnedObject)
@@ -1018,6 +1019,20 @@ namespace MegabonkTogether.Services
             MainThreadDispatcher.Enqueue(() =>
             {
                 LobbyRosterEvents?.Invoke(roster);
+            });
+        }
+
+        /// <summary>Both sides. A peer's wire protocol version; see <see cref="ProtocolHello"/>.</summary>
+        public static void SubscribeProtocolHelloEvents(Action<ProtocolHello> action)
+        {
+            ProtocolHelloEvents += action;
+        }
+
+        public static void OnProtocolHello(ProtocolHello hello)
+        {
+            MainThreadDispatcher.Enqueue(() =>
+            {
+                ProtocolHelloEvents?.Invoke(hello);
             });
         }
 

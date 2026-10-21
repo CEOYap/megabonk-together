@@ -9,7 +9,7 @@ namespace MegabonkTogether.Services
     /// One row of the lobby panel's member list, in the terms the panel draws rather than the terms
     /// the network layer stores.
     /// </summary>
-    public readonly struct LobbyMemberView(uint connectionId, string name, bool isHost, bool isLocal, bool isReady, ulong steamId = 0UL)
+    public readonly struct LobbyMemberView(uint connectionId, string name, bool isHost, bool isLocal, bool isReady, ulong steamId = 0UL, bool isIncompatible = false)
     {
         public uint ConnectionId { get; } = connectionId;
         public string Name { get; } = name;
@@ -29,6 +29,12 @@ namespace MegabonkTogether.Services
         /// finished loading a level.
         /// </summary>
         public bool IsReady { get; } = isReady;
+
+        /// <summary>
+        /// This member speaks a different wire protocol, or has said nothing for longer than
+        /// <c>ProtocolHelloGraceMs</c>. The host cannot start while any row has it.
+        /// </summary>
+        public bool IsIncompatible { get; } = isIncompatible;
     }
 
     /// <summary>
@@ -66,8 +72,9 @@ namespace MegabonkTogether.Services
         bool IsLocalPlayerReady { get; }
 
         /// <summary>
-        /// True when every member is ready. What the host's Start button is gated on, computed from
-        /// the one set rather than from a second local tally.
+        /// True when every member is ready and, on the host, every client has confirmed the same
+        /// wire protocol. What the host's Start button is gated on, computed from the one set
+        /// rather than from a second local tally.
         /// </summary>
         bool AreAllMembersReady { get; }
 
@@ -213,6 +220,7 @@ namespace MegabonkTogether.Services
             EventManager.SubscribeLobbyReadyChangedEvents(OnLobbyReadyChanged);
             EventManager.SubscribeLobbyReadyStateEvents(OnLobbyReadyState);
             EventManager.SubscribeLobbyRosterEvents(OnLobbyRoster);
+            EventManager.SubscribeProtocolHelloEvents(OnProtocolHello);
         }
 
         private void OnLobbyReadyChanged(Common.Messages.GameNetworkMessages.LobbyReadyChanged changed) =>
@@ -272,6 +280,175 @@ namespace MegabonkTogether.Services
             netTransport.SendToAllClients(new Common.Messages.GameNetworkMessages.LobbyRoster { Entries = entries }, NetDelivery.ReliableOrdered);
         }
 
+        // ------------------------------------------------------------------ protocol handshake
+
+        /// <summary>
+        /// How long a member may stay silent before it counts as incompatible. An older build
+        /// cannot read <c>ProtocolHello</c> and never answers, so silence is the only signal it
+        /// gives. Generous on purpose: being wrong here only greys out Start for a moment longer,
+        /// while being too short would mark a slow but compatible peer as the wrong version.
+        /// </summary>
+        private const long ProtocolHelloGraceMs = 10000;
+
+        private const long ProtocolHelloResendMs = 3000;
+
+        /// <summary>Host only: every client's hello.</summary>
+        private readonly ConcurrentDictionary<uint, Common.Messages.GameNetworkMessages.ProtocolHello> helloByConnectionId = [];
+
+        /// <summary>
+        /// Client only: the host's answer. Its own field rather than a dictionary entry because the
+        /// host may not be in its own roster yet when it answers, so the id it puts in the hello can
+        /// be 0. A client exchanges hellos with the host and nobody else, so it needs no id.
+        /// </summary>
+        private volatile Common.Messages.GameNetworkMessages.ProtocolHello hostHello;
+
+        /// <summary>Host: when each client was first seen in the roster, to time its grace.</summary>
+        private readonly ConcurrentDictionary<uint, long> firstSeenTicksByConnectionId = [];
+
+        /// <summary>Connections already reported as incompatible, so each is announced once.</summary>
+        private readonly ConcurrentDictionary<uint, bool> reportedIncompatible = [];
+
+        private long firstHelloSentTicks;
+        private long lastHelloSentTicks;
+
+        private Common.Messages.GameNetworkMessages.ProtocolHello OwnHello(uint connectionId) => new()
+        {
+            ConnectionId = connectionId,
+            ProtocolVersion = Common.Protocol.Version,
+            ModVersion = MyPluginInfo.PLUGIN_VERSION,
+        };
+
+        /// <summary>
+        /// Client, from the panel's refresh: sends a hello until the host has answered. Resent
+        /// rather than sent once because the host may not have registered this peer yet when the
+        /// first one arrives, and a resend every few seconds costs a few bytes.
+        /// </summary>
+        private void SendProtocolHelloIfDue(uint? localId)
+        {
+            if (netTransport.IsHost() != false || !localId.HasValue)
+            {
+                return;
+            }
+
+            if (hostHello != null)
+            {
+                return;
+            }
+
+            var host = playerManagerService.GetHost();
+
+            var now = Environment.TickCount64;
+            if (firstHelloSentTicks == 0)
+            {
+                firstHelloSentTicks = now;
+            }
+            else if (now - lastHelloSentTicks < ProtocolHelloResendMs)
+            {
+                return;
+            }
+
+            lastHelloSentTicks = now;
+            netTransport.SendToHost(OwnHello(localId.Value), NetDelivery.ReliableOrdered);
+
+            if (now - firstHelloSentTicks >= ProtocolHelloGraceMs)
+            {
+                ReportIncompatible(host?.ConnectionId ?? 0u, host?.Name ?? "The host", null);
+            }
+        }
+
+        /// <summary>
+        /// Host: records a client's hello and answers it. Client: records the host's answer. Either
+        /// side reports a version that differs.
+        /// </summary>
+        private void OnProtocolHello(Common.Messages.GameNetworkMessages.ProtocolHello hello)
+        {
+            var isHost = netTransport.IsHost() == true;
+            if (isHost)
+            {
+                helloByConnectionId[hello.ConnectionId] = hello;
+                var local = playerManagerService.GetLocalPlayer();
+                netTransport.SendToClient(hello.ConnectionId, OwnHello(local?.ConnectionId ?? 0u));
+            }
+            else
+            {
+                hostHello = hello;
+            }
+
+            // A client reports under the host's id from its own roster, matching the silent case.
+            var reportId = isHost ? hello.ConnectionId : playerManagerService.GetHost()?.ConnectionId ?? 0u;
+
+            if (Common.Protocol.IsCompatible(hello.ProtocolVersion.ToString()))
+            {
+                if (reportedIncompatible.TryRemove(reportId, out _))
+                {
+                    Plugin.Log.LogInfo($"[protocol] {reportId} answered late with a matching protocol {hello.ProtocolVersion}.");
+                }
+
+                return;
+            }
+
+            var name = playerManagerService.GetPlayer(reportId)?.Name ?? (isHost ? "A player" : "The host");
+            ReportIncompatible(reportId, name, hello);
+        }
+
+        private void ReportIncompatible(uint connectionId, string name, Common.Messages.GameNetworkMessages.ProtocolHello hello)
+        {
+            if (!reportedIncompatible.TryAdd(connectionId, true))
+            {
+                return;
+            }
+
+            var theirs = hello == null ? "an older mod build (no answer)" : $"version {hello.ModVersion}, protocol {hello.ProtocolVersion}";
+            Plugin.Log.LogWarning(
+                $"[protocol] {name} ({connectionId}) is on {theirs}; this build is {MyPluginInfo.PLUGIN_VERSION}, " +
+                $"protocol {Common.Protocol.Version}. The run cannot start until everyone has the same version.");
+
+            Plugin.StartNotification(
+                ("MegabonkTogether", "VersionMismatch"),
+                ("MegabonkTogether", "VersionMismatch_Description"),
+                [string.IsNullOrWhiteSpace(name) ? "Player" : name]);
+        }
+
+        /// <summary>
+        /// Whether a member has confirmed a matching protocol. On the host, a client still inside
+        /// its grace window is "not yet compatible" for the Start gate but not yet shown as wrong.
+        /// </summary>
+        private bool IsIncompatible(uint connectionId, long now, bool isHost)
+        {
+            var hello = isHost
+                ? helloByConnectionId.TryGetValue(connectionId, out var clientHello) ? clientHello : null
+                : hostHello;
+
+            if (hello != null)
+            {
+                return !Common.Protocol.IsCompatible(hello.ProtocolVersion.ToString());
+            }
+
+            // A client times the host from its first hello, not from the roster.
+            if (!isHost)
+            {
+                return firstHelloSentTicks != 0 && now - firstHelloSentTicks >= ProtocolHelloGraceMs;
+            }
+
+            if (now - firstSeenTicksByConnectionId.GetOrAdd(connectionId, now) < ProtocolHelloGraceMs)
+            {
+                return false;
+            }
+
+            ReportIncompatible(connectionId, playerManagerService.GetPlayer(connectionId)?.Name ?? "A player", null);
+            return true;
+        }
+
+        /// <summary>
+        /// Host only. Every client has sent a hello with this build's protocol. Silence is not
+        /// enough: an older build never sends one.
+        /// </summary>
+        private bool AreAllClientsCompatible() =>
+            playerManagerService.GetAllPlayersExceptLocal()
+                .Where(p => !p.IsHost)
+                .All(p => helloByConnectionId.TryGetValue(p.ConnectionId, out var hello)
+                          && Common.Protocol.IsCompatible(hello.ProtocolVersion.ToString()));
+
         public bool IsInLobby =>
             Plugin.Instance?.Mode != null
             && !string.IsNullOrEmpty(Plugin.Instance.Mode.RoomCode);
@@ -301,6 +478,10 @@ namespace MegabonkTogether.Services
 
             var roster = playerManagerService.GetAllPlayers().ToList();
             BroadcastRosterIfDue(roster);
+            SendProtocolHelloIfDue(localId);
+
+            var now = Environment.TickCount64;
+            var isHost = netTransport.IsHost() == true;
 
             var members = roster
                 .OrderByDescending(p => p.IsHost)
@@ -311,7 +492,13 @@ namespace MegabonkTogether.Services
                     p.IsHost,
                     localId.HasValue && p.ConnectionId == localId.Value,
                     IsReady(p.ConnectionId),
-                    steamIdsByConnectionId.TryGetValue(p.ConnectionId, out var steamId) ? steamId : 0UL))
+                    steamIdsByConnectionId.TryGetValue(p.ConnectionId, out var steamId) ? steamId : 0UL,
+
+                    // The host judges every client; a client judges only the host, the one peer it
+                    // exchanges hellos with. Its own row is never marked.
+                    isIncompatible: !(localId.HasValue && p.ConnectionId == localId.Value)
+                        && (isHost ? !p.IsHost : p.IsHost)
+                        && IsIncompatible(p.ConnectionId, now, isHost)))
                 .ToList();
 
             // A host alone in a fresh lobby is in no roster, so the list would be empty and the
@@ -394,7 +581,9 @@ namespace MegabonkTogether.Services
                 // opposite view for its own barrier, deliberately: there, an empty participant set
                 // means a round with nobody to wait for, and refusing to complete it would hang.
                 // Here it means nobody has arrived yet.
-                return members.Count > 0 && members.All(p => IsReady(p.ConnectionId));
+                return members.Count > 0
+                    && members.All(p => IsReady(p.ConnectionId))
+                    && (netTransport.IsHost() != true || AreAllClientsCompatible());
             }
         }
 
@@ -437,6 +626,14 @@ namespace MegabonkTogether.Services
         {
             readyByConnectionId.Clear();
             pendingLocalReady = null;
+
+            // Per lobby as well. Connection ids can be reused by the next session.
+            helloByConnectionId.Clear();
+            hostHello = null;
+            firstSeenTicksByConnectionId.Clear();
+            reportedIncompatible.Clear();
+            firstHelloSentTicks = 0;
+            lastHelloSentTicks = 0;
         }
 
         public void RequestStart()
@@ -452,7 +649,7 @@ namespace MegabonkTogether.Services
             // the authority for "may we start" has to be the set, not the pixel.
             if (!AreAllMembersReady)
             {
-                Plugin.Log.LogInfo("[lobby] Start ignored: not every member is ready.");
+                Plugin.Log.LogInfo("[lobby] Start ignored: not every member is ready, or a client has not confirmed the same mod version.");
                 return;
             }
 

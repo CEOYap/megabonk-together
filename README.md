@@ -1,4 +1,4 @@
-# megabonk-together
+# OmniBonk
 
 <p align="center">
   <img src="images/togetherButton.png" alt="logo" />
@@ -6,7 +6,6 @@
 
 <!-- Shield -->
 
-[![Support me on Patreon](https://img.shields.io/endpoint.svg?url=https%3A%2F%2Fshieldsio-patreon.vercel.app%2Fapi%3Fusername%3DDShadModdingAdventure%26type%3Dpatrons&style=for-the-badge)](https://patreon.com/DShadModdingAdventure)
 [![Contributors][contributors-shield]][contributors-url]
 [![Download][download-shield]][download-url]
 [![Forks][forks-shield]][forks-url]
@@ -16,7 +15,15 @@
 
 # About The Mod
 
-Megabonk together is a WIP mod that bring netplay to megabonk.
+OmniBonk brings online co-op to Megabonk. It is a fork of
+[Megabonk Together](https://github.com/Fcornaire/megabonk-together) by Fcornaire (DShad), renamed
+at version 1.0. All credit for the original mod goes to its author; you can support them on
+[Patreon](https://patreon.com/DShadModdingAdventure). Like the original, OmniBonk is GPL-2.0.
+
+> [!IMPORTANT]
+> OmniBonk is a separate mod from Megabonk Together. **Remove the old `MegabonkTogether` folder
+> from `BepInEx/plugins`** before installing it: with both present, OmniBonk does not load. Your
+> settings start fresh in `BepInEx/config/OmniBonk.cfg`.
 
 This mod feature:
 
@@ -38,9 +45,9 @@ This mod feature:
 
 More info at [Notable Network Changes](./NETPLAY_CHANGES.md)
 
-## New in this build
+## New in OmniBonk 1.0
 
-These are new since v5.1.0 and not released yet. Each one is in the lobby's **Options** page.
+These are new since Megabonk Together v5.1.0. Each one is in the lobby's **Options** page.
 **Only the host's choice counts**: it applies to everyone in the session.
 
 ### Endless Run (`Endless: ON`)
@@ -148,14 +155,23 @@ The full per-issue history is in [`docs/netplay/08-observed-bugs.md`](docs/netpl
 and the Endless design is in [`docs/netplay/18-endless-and-projectile-cap-plan.md`](docs/netplay/18-endless-and-projectile-cap-plan.md).
 
 > [!IMPORTANT]
-> **Everyone in a session must run the same build.** The mod does not check this. An older build
-> cannot read the new lobby settings or the Endless route, and its game drifts from everyone
-> else's without any error.
+> **Everyone in a session must run the same version.** In the lobby, a player on a different
+> version (or on Megabonk Together) shows **WRONG VERSION**, and the host cannot start until they
+> update. On the Steam transport, a lobby from a different version cannot be joined at all.
 
 ## Changelog
 
 <details>
 <summary>📋 Click to view full changelog</summary>
+
+### OmniBonk v1.0.0
+
+- 🏷️ **Megabonk Together is now OmniBonk.** A separate mod with its own settings file; remove the old `MegabonkTogether` folder first
+- 🔒 **Version check in the lobby.** A player on a different version shows WRONG VERSION, and the host cannot start until it is fixed
+- ♾️ **Endless Run**, **No Projectile Cap** and the lobby **Options** page (see above)
+- 🛠️ **Many sync fixes** (see "What's confirmed working" above)
+
+#### Megabonk Together history
 
 ### v5.1.0
 
@@ -274,9 +290,9 @@ Start by downloading the BepInex loader [BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.7
 
 - Launch the game first at least one time to confirm BepInEx is working (Wait for the main menu as BepInEx need to make some dummy dll). Yous should see a terminal opened along side with the game with some logs in it
 
-- After exiting the game,grab and download the [latest release](https://github.com/Fcornaire/megabonk-together/releases/latest)
+- After exiting the game,grab and download the [latest release](https://github.com/CEOYap/OmniBonk/releases/latest)
 
-- Extract the zip and copy the folder `Megabonk-Together` to the plugins path of BepInEx , something like `../steamapps/common/Megabonk/BepInEx/plugins`
+- Extract the zip and copy the folder `OmniBonk` to the plugins path of BepInEx , something like `../steamapps/common/Megabonk/BepInEx/plugins`
 
 - Launch the game and confirm a new weird `Togther!` button is at the bottom of the main screen
 
@@ -284,7 +300,7 @@ Start by downloading the BepInex loader [BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.7
 > The button is not navigable right now, you won't be able to select it with a controller , use your mouse to interact with it (You can pick your controller later)
 > Will try to fix later
 
-- Enjoy ! Do not hesitate to open an [issue](https://github.com/Fcornaire/megabonk-together/issues) if you encounter a bug or something isn't working
+- Enjoy ! Do not hesitate to open an [issue](https://github.com/CEOYap/OmniBonk/issues) if you encounter a bug or something isn't working
 
 # How to play
 
@@ -316,7 +332,7 @@ You should now have the macthmaking server built and also the mod file
 > [!IMPORTANT]  
 > The IDE will copy the result mod file in your game directory. This is super practical when developing locally but remember to delete it after.
 
-To target a local server, modify the file `{your game path}/BepInEx/config/MegabonkTogether.cfg` and update [Network].ServerUrl to `ws://127.0.0.1:5000`
+To target a local server, modify the file `{your game path}/BepInEx/config/OmniBonk.cfg` and update [Network].ServerUrl to `ws://127.0.0.1:5000`
 
 ## Developer testing tools
 
@@ -362,8 +378,8 @@ The mod is compatible with Linux via **Proton**. Native Linux support is current
    - Launch the game once to let BepInEx generate the interop assemblies. This might take a minute on the splash screen.
 
 5. **Install the Mod:**
-   - Download the latest proton [release](https://github.com/Fcornaire/megabonk-together/releases/latest) (in the release page, grab the -proton zip).
-   - Extract the `Megabonk-Together` folder into `.../Megabonk/BepInEx/plugins/`.
+   - Download the latest proton [release](https://github.com/CEOYap/OmniBonk/releases/latest) (in the release page, grab the -proton zip).
+   - Extract the `OmniBonk` folder into `.../Megabonk/BepInEx/plugins/`.
 
 After installation, your Megabonk directory should look like this:
 
@@ -375,8 +391,8 @@ Megabonk/
 │   ├── interop/             <-- Generated on first run
 │   ├── unity-libs/          <-- Generated on first run
 │   └── plugins/
-│       └── MegabonkTogether/
-│           ├── MegabonkTogether.dll
+│       └── OmniBonk/
+│           ├── OmniBonk.dll
 │           ├── MegabonkTogether.Common.dll
 │           └── (other dependency DLLs)
 ├── Megabonk_Data/
@@ -420,15 +436,15 @@ Discord : dshad (was DShad#4670)
 <!-- MARKDOWN LINKS & IMAGES -->
 <!-- https://www.markdownguide.org/basic-syntax/#reference-style-links -->
 
-[contributors-shield]: https://img.shields.io/github/contributors/Fcornaire/megabonk-together.svg?style=for-the-badge
-[contributors-url]: https://github.com/Fcornaire/megabonk-together/graphs/contributors
-[forks-shield]: https://img.shields.io/github/forks/Fcornaire/megabonk-together.svg?style=for-the-badge
-[forks-url]: https://github.com/Fcornaire/megabonk-together/network/members
-[stars-shield]: https://img.shields.io/github/stars/Fcornaire/megabonk-together.svg?style=for-the-badge
-[stars-url]: https://github.com/Fcornaire/megabonk-together/stargazers
-[issues-shield]: https://img.shields.io/github/issues/Fcornaire/megabonk-togethersvg?style=for-the-badge
-[issues-url]: https://github.com/Fcornaire/megabonk-together/issues
-[license-shield]: https://img.shields.io/github/license/Fcornaire/megabonk-together.svg?style=for-the-badge
-[download-shield]: https://img.shields.io/github/downloads/Fcornaire/megabonk-together/total?style=for-the-badge
-[download-url]: https://github.com/Fcornaire/megabonk-together/releases
-[license-url]: https://github.com/Fcornaire/megabonk-together/blob/master/LICENSE.txt
+[contributors-shield]: https://img.shields.io/github/contributors/CEOYap/OmniBonk.svg?style=for-the-badge
+[contributors-url]: https://github.com/CEOYap/OmniBonk/graphs/contributors
+[forks-shield]: https://img.shields.io/github/forks/CEOYap/OmniBonk.svg?style=for-the-badge
+[forks-url]: https://github.com/CEOYap/OmniBonk/network/members
+[stars-shield]: https://img.shields.io/github/stars/CEOYap/OmniBonk.svg?style=for-the-badge
+[stars-url]: https://github.com/CEOYap/OmniBonk/stargazers
+[issues-shield]: https://img.shields.io/github/issues/CEOYap/OmniBonk.svg?style=for-the-badge
+[issues-url]: https://github.com/CEOYap/OmniBonk/issues
+[license-shield]: https://img.shields.io/github/license/CEOYap/OmniBonk.svg?style=for-the-badge
+[download-shield]: https://img.shields.io/github/downloads/CEOYap/OmniBonk/total?style=for-the-badge
+[download-url]: https://github.com/CEOYap/OmniBonk/releases
+[license-url]: https://github.com/CEOYap/OmniBonk/blob/master/LICENSE.txt

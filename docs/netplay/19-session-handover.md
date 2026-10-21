@@ -92,7 +92,34 @@ host last.
 
 ---
 
-## 3. The rename to OmniBonk 1.0 (planned, nothing done)
+## 3. The rename to OmniBonk 1.0
+
+### Status, 2026-10-21: done on branch `claude/omnibonk-1.0`, not run in game, not tagged
+
+The project owner's decisions on the five items below:
+
+| # | Decision | What was done |
+|---|---|---|
+| 1. GUID | **New GUID, `OmniBonk`** | `<AssemblyName>` and `<Product>` are `OmniBonk`, so `PLUGIN_GUID`, the config file (`OmniBonk.cfg`), the Harmony id and the DLL all follow. `[BepInIncompatibility("MegabonkTogether")]` stops it loading next to the old plugin. `<RootNamespace>` and the `Common` assembly keep `MegabonkTogether`. |
+| 2. Updater | **A new `CEOYap/OmniBonk` repo** | `AutoUpdaterService` reads releases there and expects `OmniBonk-X.Y.Z.zip`. **The repo does not exist yet**: until it does, the update check logs a failed fetch and nothing else. The updater batch also backed up a `MegabonkTogether.Plugin.dll` that never existed; it now names the real DLL. |
+| 3. Version | **1.0.0** | Works because of 1: a separate plugin, so 1.0.0 is never compared with 5.1.0. |
+| 4. Server | **Self-host, URL to follow** | `ServerUrl` still defaults to upstream's server. Change the default in `ModConfig.cs` once the URL exists. |
+| 5. Mixed versions | **Version handshake** | `ProtocolHello`, union tag 83; `Protocol.Version` 2 → 3. The host cannot start the lobby until every client has confirmed protocol 3. See `01-critical-fixes.md`, P1-3, last section. |
+
+Also renamed: the four workflows (zip and folder names, workflow names that chain on each other),
+the Thunderstore package (`CEOYap-OmniBonk`; **the namespace must match the owner's Thunderstore
+team, and is a guess**), `CHANGELOG.toml` (restarted at 1.0.0), `README.md`, the main-menu version
+label (`OmniBonk v1.0.0`), the changelog modal title, and `CLAUDE.md`. Kept on purpose: the
+`TOGETHER!` main-menu button, which says what it does rather than naming the mod, and the
+`MegabonkTogether` localization table key, which no player sees.
+
+**Left to do before tagging 1.0.0:** create the `CEOYap/OmniBonk` repo (or rename this one) and push;
+set the Thunderstore namespace; a playtest with the handshake, including one peer on 5.1.0 to see
+WRONG VERSION and a disabled Start; the 2–5% packet-loss run from section 2. On every test install,
+delete `BepInEx/plugins/MegabonkTogether` first, or OmniBonk will refuse to load.
+
+The original plan follows, unchanged.
+
 
 The project owner plans to release this fork as **OmniBonk**, version **1.0**. Most of the rename
 is find-and-replace. The items below need a decision first.

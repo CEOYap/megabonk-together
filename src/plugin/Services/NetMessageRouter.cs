@@ -248,6 +248,9 @@ namespace MegabonkTogether.Services
                 case LobbyRoster lobbyRoster:
                     EventManager.OnLobbyRoster(lobbyRoster);
                     break;
+                case ProtocolHello protocolHello:
+                    EventManager.OnProtocolHello(protocolHello);
+                    break;
                 case LobbyStartRequested:
                     EventManager.OnLobbyStartRequested();
                     break;
@@ -272,6 +275,9 @@ namespace MegabonkTogether.Services
             {
                 case LobbyReadyChanged lobbyReadyChanged:
                     EventManager.OnLobbyReadyChanged(lobbyReadyChanged);
+                    break;
+                case ProtocolHello protocolHello:
+                    EventManager.OnProtocolHello(protocolHello);
                     break;
                 case ClientReadyStamped clientReadyStamped:
                     OnClientReadyStamped(clientReadyStamped);

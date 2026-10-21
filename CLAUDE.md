@@ -1,10 +1,13 @@
-# MegabonkTogether
+# OmniBonk (MegabonkTogether)
 
 Peer-to-peer multiplayer mod for **Megabonk** (IL2CPP Unity, BepInEx 6). Up to 6 players,
 host-authoritative, LiteNetLib UDP + MemoryPack, with a WebSocket matchmaking server that
 relays when a direct connection can't be established.
 
-Fork of [`Fcornaire/megabonk-together`](https://github.com/Fcornaire/megabonk-together).
+Fork of [`Fcornaire/megabonk-together`](https://github.com/Fcornaire/megabonk-together), released
+as **OmniBonk** from 1.0.0: plugin GUID, assembly and release zips say `OmniBonk`; the C# namespaces,
+project files and the `Common` assembly keep `MegabonkTogether`. Rename record:
+[`docs/netplay/19-session-handover.md`](docs/netplay/19-session-handover.md), section 3.
 Fork goals, the CONFIRMED / LIKELY / UNVERIFIED status legend, and standing ground rules:
 [`docs/README.md`](docs/README.md).
 
@@ -13,7 +16,7 @@ Fork goals, the CONFIRMED / LIKELY / UNVERIFIED status legend, and standing grou
 | Project | Path | Constraint |
 |---|---|---|
 | `Common` | `src/common/` | The wire format. **No `UnityEngine` types** — this compiles into the server. |
-| `Plugin` | `src/plugin/` | BepInEx 6 IL2CPP plugin. Ships as `MegabonkTogether.dll`. |
+| `Plugin` | `src/plugin/` | BepInEx 6 IL2CPP plugin. Ships as `OmniBonk.dll`. |
 | `Server` | `src/server/` | ASP.NET matchmaking + UDP relay. Dockerized. |
 
 Inside the plugin: `Patches/` detect, `Services/` decide, `Scripts/` are injected
@@ -53,7 +56,7 @@ dotnet build MegabonkTogether.sln -c Debug
 ```
 
 Set `MegabonkPath` to a Megabonk install to compile against that install's interop assemblies
-and auto-copy Debug output into `BepInEx/plugins/MegabonkTogether`:
+and auto-copy Debug output into `BepInEx/plugins/OmniBonk`:
 
 ```powershell
 $env:MegabonkPath = "<path-to>\steamapps\common\Megabonk"

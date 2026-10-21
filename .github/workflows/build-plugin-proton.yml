@@ -1,8 +1,8 @@
-name: Build MegabonkTogether Plugin (Proton)
+name: Build OmniBonk Plugin (Proton)
 
 on:
   workflow_run:
-    workflows: ["Build MegabonkTogether Plugin"]
+    workflows: ["Build OmniBonk Plugin"]
     types:
       - completed
   workflow_dispatch:
@@ -47,7 +47,7 @@ jobs:
             VERSION=${VERSION#v}
           fi
           echo "VERSION=$VERSION" >> $GITHUB_ENV
-          echo "ARCHIVE_NAME=Megabonk-Together-Proton-${VERSION}.zip" >> $GITHUB_ENV
+          echo "ARCHIVE_NAME=OmniBonk-Proton-${VERSION}.zip" >> $GITHUB_ENV
           echo "Using version: $VERSION"
 
       - name: Restore
@@ -86,14 +86,14 @@ jobs:
 
           REPO_ROOT="$(pwd)"
           TMPDIR=$(mktemp -d)
-          DESTDIR="$TMPDIR/MegabonkTogether"
+          DESTDIR="$TMPDIR/OmniBonk"
           mkdir -p "$DESTDIR"
 
           for src in "${FILES[@]}"; do
             cp "$src" "$DESTDIR/"
           done
 
-          (cd "$TMPDIR" && zip -r "$REPO_ROOT/$ZIP" "MegabonkTogether")
+          (cd "$TMPDIR" && zip -r "$REPO_ROOT/$ZIP" "OmniBonk")
 
           rm -rf "$TMPDIR"
 

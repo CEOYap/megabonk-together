@@ -87,6 +87,7 @@ namespace MegabonkTogether.Common.Messages
     [MemoryPackUnion(80, typeof(LobbySettings))]
     [MemoryPackUnion(81, typeof(EndlessNextRoom))]
     [MemoryPackUnion(82, typeof(LobbyRoster))]
+    [MemoryPackUnion(83, typeof(ProtocolHello))]
     public partial interface IGameNetworkMessage
     {
 

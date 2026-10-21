@@ -50,11 +50,11 @@ jobs:
           schemaVersion = "0.0.1"
 
           [package]
-          namespace = "DShad"
-          name = "MegabonkTogether"
+          namespace = "CEOYap"
+          name = "OmniBonk"
           versionNumber = "${{ env.VERSION }}"
-          description = "Play Megabonk over netplay!"
-          websiteUrl = "https://github.com/Fcornaire/megabonk-together"
+          description = "Play Megabonk with up to 6 friends over netplay. Fork of Megabonk Together."
+          websiteUrl = "https://github.com/CEOYap/OmniBonk"
           containsNsfwContent = false
 
           [package.dependencies]
@@ -66,8 +66,8 @@ jobs:
           outdir = "./build"
 
           [[build.copy]]
-          source = "./artifacts/MegabonkTogether"
-          target = "MegabonkTogether"
+          source = "./artifacts/OmniBonk"
+          target = "OmniBonk"
 
           [publish]
           repository = "https://thunderstore.io"
@@ -89,7 +89,7 @@ jobs:
       - name: Prepare artifacts for Thunderstore
         run: |
           OUTPUT_DIR="src/plugin/bin/Release/net6.0"
-          THUNDERSTORE_DIR="artifacts/MegabonkTogether"
+          THUNDERSTORE_DIR="artifacts/OmniBonk"
           
           mkdir -p "$THUNDERSTORE_DIR"
 
@@ -130,6 +130,6 @@ jobs:
       - name: Publish to Thunderstore with tcli
         run: |
           echo "Publishing to Thunderstore..."
-          tcli publish --config-path thunderstore.toml --file build/DShad-MegabonkTogether-${{ env.VERSION }}.zip
+          tcli publish --config-path thunderstore.toml --file build/CEOYap-OmniBonk-${{ env.VERSION }}.zip
         env:
           TCLI_AUTH_TOKEN: ${{ secrets.THUNDERSTORE_TOKEN }}

@@ -25,8 +25,12 @@
         /// *layout*, because MemoryPack serializes positionally and peers on different mod versions
         /// still handshake, so the mismatch corrupts a session silently instead of failing loudly.
         /// That is the whole reason this constant exists.</para>
+        ///
+        /// <para>3: OmniBonk 1.0. Tags 80 to 83 are sent where no earlier build sent anything, and a
+        /// v2 peer ignores the lobby settings and the Endless route without an error.
+        /// <c>ProtocolHello</c> (tag 83) carries this number on the matchmaker path.</para>
         /// </summary>
-        public const int Version = 2;
+        public const int Version = 3;
 
         /// <summary>
         /// The lobby metadata key carrying <see cref="Version"/>.

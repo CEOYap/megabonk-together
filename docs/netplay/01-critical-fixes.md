@@ -1123,6 +1123,31 @@ throws in the deserializer rather than reporting a mismatch, and rejecting old b
 either a disconnect timer (which can fire wrongly on a laggy link and kill a legitimate
 player) or a new gate at lobby start. Not worth it for a stopgap that Steamworks removes.
 
+### The matchmaker path: an application-level hello, after all (2026-10-21)
+
+The Steamworks gate shipped (`Protocol.Version`, lobby key `mt_protocol`) and covers the Steam
+transport only. For OmniBonk 1.0 the rejected intermediate option was built for the matchmaker
+path, because that path can still pair this mod with an older Megabonk Together build. Each of
+the three objections above is answered rather than ignored:
+
+- **A new union tag.** Tag 83, `ProtocolHello`. Appending a tag is the safe kind of change.
+- **An old peer throws on the unknown tag.** It does, inside `MemoryPackSerializer.Deserialize`, and
+  `UdpClientService`'s receive handler already catches `MemoryPackSerializationException` and drops
+  the packet at Debug level. Nothing else happens on the old peer.
+- **Rejecting needs a disconnect timer or a gate at lobby start.** It is the gate at lobby start.
+  `LobbyViewService.AreAllMembersReady` is false on the host until every client has sent a hello
+  with a matching `Protocol.Version`, so Start stays disabled. Nobody is disconnected. A client
+  silent for 10 s is shown as **WRONG VERSION** and announced once; a late matching answer clears it.
+
+`Protocol.Version` went to **3** with this change, so v2 Steam lobbies (pre-1.0 test builds that send
+no hello and ignore tags 80 to 82) are refused too.
+
+**Known gaps.** The Random queue has no gate, but nothing in the UI reaches it any more (no
+Quickplay button; see `docs/ui/05-drop-the-netplay-menu.md`), so every session starts from the
+lobby panel's Start. If Random comes back, it needs a gate of its own. A client only judges the host, not the other clients, but
+the host judges everyone, which is enough to block the start. **UNVERIFIED in game**: built and
+compiled on 2026-10-21, not yet run against a 5.1.0 peer.
+
 ### Consequence for P1-2
 
 P1-2 adds a field to `Specific`, and this entry was supposed to unblock it. **It does not.**

@@ -26,4 +26,4 @@ WINEDLLOVERRIDES="winhttp=n,b" %command%
 ## 5. Mod Deployment
 Run the `./build.sh` script from the project root. It will:
 1. Compile the C# code.
-2. Copy the DLLs to `BepInEx/plugins/MegabonkTogether/`.
+2. Copy the DLLs to `BepInEx/plugins/OmniBonk/`.

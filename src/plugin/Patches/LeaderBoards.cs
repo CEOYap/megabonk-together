@@ -37,7 +37,7 @@ namespace MegabonkTogether.Patches
         [HarmonyPatch(nameof(Leaderboards.UploadScore))]
         public static bool UploadScore_Prefix()
         {
-            Plugin.Log.LogInfo("Blocking leaderboard upload (MegabonkTogether is installed)");
+            Plugin.Log.LogInfo("Blocking leaderboard upload (OmniBonk is installed)");
             return false;
         }
     }

@@ -1047,8 +1047,10 @@ namespace MegabonkTogether.Scripts.Modal
             var readyLabel = row.transform.Find("Ready")?.GetComponent<TextMeshProUGUI>();
             if (readyLabel != null)
             {
-                readyLabel.text = member.IsReady ? "READY" : "";
-                readyLabel.color = new Color(0.55f, 0.95f, 0.55f);
+                // The version warning takes the ready column: a member who cannot play cannot be
+                // ready in any sense that matters, and it is the one place a row has room for it.
+                readyLabel.text = member.IsIncompatible ? "WRONG VERSION" : member.IsReady ? "READY" : "";
+                readyLabel.color = member.IsIncompatible ? new Color(1f, 0.45f, 0.45f) : new Color(0.55f, 0.95f, 0.55f);
             }
 
             return row;

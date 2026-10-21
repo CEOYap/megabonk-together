@@ -1,4 +1,4 @@
-name: Build MegabonkTogether Plugin
+name: Build OmniBonk Plugin
 
 on:
   push:
@@ -35,7 +35,7 @@ jobs:
           VERSION=${GITHUB_REF#refs/tags/}
           VERSION=${VERSION#v}
           echo "VERSION=$VERSION" >> $GITHUB_ENV
-          echo "ARCHIVE_NAME=Megabonk-Together-${VERSION}.zip" >> $GITHUB_ENV
+          echo "ARCHIVE_NAME=OmniBonk-${VERSION}.zip" >> $GITHUB_ENV
 
       - name: Create zip of DLLs
         run: |
@@ -65,14 +65,14 @@ jobs:
 
           REPO_ROOT="$(pwd)"
           TMPDIR=$(mktemp -d)
-          DESTDIR="$TMPDIR/MegabonkTogether"
+          DESTDIR="$TMPDIR/OmniBonk"
           mkdir -p "$DESTDIR"
 
           for src in "${FILES[@]}"; do
             cp "$src" "$DESTDIR/"
           done
 
-          (cd "$TMPDIR" && zip -r "$REPO_ROOT/$ZIP" "MegabonkTogether")
+          (cd "$TMPDIR" && zip -r "$REPO_ROOT/$ZIP" "OmniBonk")
 
           rm -rf "$TMPDIR"
 

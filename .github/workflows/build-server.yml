@@ -1,8 +1,8 @@
-name: Build MegabonkTogether Server
+name: Build OmniBonk Server
 
 on:
   workflow_run:
-    workflows: ["Build MegabonkTogether Plugin"]
+    workflows: ["Build OmniBonk Plugin"]
     types: [completed]
   workflow_dispatch:
 
@@ -33,7 +33,7 @@ jobs:
           VERSION=${TAG#v}
           echo "TAG=$TAG" >> $GITHUB_ENV
           echo "VERSION=$VERSION" >> $GITHUB_ENV
-          echo "SERVER_ARCHIVE_NAME=MegabonkTogether-Server-win-x64-${VERSION}.zip" >> $GITHUB_ENV
+          echo "SERVER_ARCHIVE_NAME=OmniBonk-Server-win-x64-${VERSION}.zip" >> $GITHUB_ENV
           echo "Resolved version: $VERSION (tag: $TAG)"
 
       - name: Check if server asset already exists
@@ -82,12 +82,12 @@ jobs:
 
           REPO_ROOT="$(pwd)"
           TMPDIR=$(mktemp -d)
-          DESTDIR="$TMPDIR/MegabonkTogether-Server"
+          DESTDIR="$TMPDIR/OmniBonk-Server"
           mkdir -p "$DESTDIR"
 
           cp -r publish/server/* "$DESTDIR/"
 
-          (cd "$TMPDIR" && zip -r "$REPO_ROOT/$ZIP" "MegabonkTogether-Server")
+          (cd "$TMPDIR" && zip -r "$REPO_ROOT/$ZIP" "OmniBonk-Server")
 
           rm -rf "$TMPDIR"
 

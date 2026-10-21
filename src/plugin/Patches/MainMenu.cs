@@ -59,7 +59,7 @@ namespace MegabonkTogether.Patches
             versionTmp.fontSize = tmpText.fontSize * 0.45f;
             versionTmp.alignment = tmpText.alignment;
             versionTmp.color = tmpText.color;
-            versionTmp.text = $"v{MyPluginInfo.PLUGIN_VERSION}";
+            versionTmp.text = $"{MyPluginInfo.PLUGIN_NAME} v{MyPluginInfo.PLUGIN_VERSION}";
 
 
             go.transform.SetParent(playBtn.transform.parent);

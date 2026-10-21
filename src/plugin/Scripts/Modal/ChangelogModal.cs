@@ -55,7 +55,7 @@ namespace MegabonkTogether.Scripts.Modal
             rectTransform.sizeDelta = new Vector2(600, 60);
 
             var text = titleObj.AddComponent<TextMeshProUGUI>();
-            text.text = "MegabonkTogether : What's New ?";
+            text.text = $"{MyPluginInfo.PLUGIN_NAME} : What's New ?";
             text.alignment = TextAlignmentOptions.Center;
             text.fontSize = 30;
             text.fontStyle = FontStyles.Bold;
