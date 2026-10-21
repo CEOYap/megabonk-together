@@ -242,4 +242,47 @@ namespace MegabonkTogether.Patches
             return false;
         }
     }
+    /// <summary>
+    /// Endless: a later room is the same run, not a new one.
+    ///
+    /// <para><b>The defect</b> (decompiled, build 21750826). <c>GameManager.Start</c>
+    /// (0x180504200) raises <c>A_StageStarted</c> on every stage and <c>A_RunStarted</c> when
+    /// <c>MapController.IsFirstStage()</c>, which is just <c>index == 0</c> (0x1804219B0). Endless
+    /// sets index 0 for every stage-1 room (Forest 1, Desert 1, every Graveyard room), so each of
+    /// those started a new run for the game's listeners: <c>RunStats.OnNewRun</c> (0x180411AE0,
+    /// kills, damage and the end screen's figures) and <c>MoneyUtility.OnNewRun</c> (0x18046A580),
+    /// which zeroes <c>chestsPurchased</c>, the chest price. 2026-10-21: after nine rooms the end
+    /// screen showed 0:48 alive and 35 kills, and chest prices fell back.</para>
+    ///
+    /// <para><b>The fix.</b> While <c>GameManager.Start</c> runs after a stage change,
+    /// <c>IsFirstStage</c> answers false, so the stage starts as any later stage would. Only that
+    /// call: everything else that asks still sees the real index. Every peer runs this for its own
+    /// stage start; nothing is sent. <b>UNVERIFIED, not run in-game.</b></para>
+    /// </summary>
+    [HarmonyPatch]
+    internal static class EndlessRunContinuityPatches
+    {
+        private static readonly IEndlessRunService endlessRunService = Plugin.Services.GetService<IEndlessRunService>();
+
+        private static bool continuingRun;
+
+        [HarmonyPrefix]
+        [HarmonyPatch(typeof(GameManager), "Start")]
+        public static void Start_Prefix()
+            => continuingRun = endlessRunService.Active && endlessRunService.Transitions > 0;
+
+        [HarmonyFinalizer]
+        [HarmonyPatch(typeof(GameManager), "Start")]
+        public static void Start_Finalizer() => continuingRun = false;
+
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(MapController), nameof(MapController.IsFirstStage))]
+        public static void IsFirstStage_Postfix(ref bool __result)
+        {
+            if (continuingRun)
+            {
+                __result = false;
+            }
+        }
+    }
 }

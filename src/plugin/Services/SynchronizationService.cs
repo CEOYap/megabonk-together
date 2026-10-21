@@ -622,20 +622,42 @@ namespace MegabonkTogether.Services
             return true;
         }
 
+        /// <summary>
+        /// Matches a host-registered crypt object to this peer's copy. True when done with it,
+        /// matched or not; false to retry. The crypt can be gone by the time the message lands
+        /// (Endless clears it when arriving in a Graveyard room past it), and a throw here used to
+        /// end <see cref="NewObjectToSpawnRoutine"/> for the rest of the level (2026-10-21).
+        /// </summary>
         private bool UpdateObject(SpawnedObjectInCrypt toUpdate)
         {
-            var allPieces = RsgController.Instance.allPieces;
+            var rsg = RsgController.Instance;
+            if (rsg == null || rsg.allPieces == null)
+            {
+                return true;
+            }
+
+            var allPieces = rsg.allPieces;
             var position = toUpdate.Position;
 
             if (toUpdate.IsCryptLeave)
             {
-                spawnedObjectManagerService.SetSpawnedObject(toUpdate.NetplayId, RsgController.Instance.rsgEnd.gameObject);
-                DynamicData.For(RsgController.Instance.rsgEnd.gameObject).Set("netplayId", toUpdate.NetplayId);
+                if (rsg.rsgEnd == null)
+                {
+                    return true;
+                }
+
+                spawnedObjectManagerService.SetSpawnedObject(toUpdate.NetplayId, rsg.rsgEnd.gameObject);
+                DynamicData.For(rsg.rsgEnd.gameObject).Set("netplayId", toUpdate.NetplayId);
                 return true;
             }
 
             foreach (var piece in allPieces)
             {
+                if (piece == null || piece.children == null)
+                {
+                    continue;
+                }
+
                 var children = Il2CppFindHelper.RuntimeGetComponentsInChildren<Component>(piece.children);
 
                 foreach (var child in children)
@@ -1319,7 +1341,17 @@ namespace MegabonkTogether.Services
                     {
                         if (toUpdate.TryTake(out var toUpd))
                         {
-                            var success = UpdateObject(toUpd);
+                            bool success;
+                            try
+                            {
+                                success = UpdateObject(toUpd);
+                            }
+                            catch (Exception ex)
+                            {
+                                logger.LogWarning($"Dropped a crypt object update that failed: {ex.Message}");
+                                success = true;
+                            }
+
                             if (!success)
                             {
                                 unupdatedYet.Add(toUpd);
@@ -1628,10 +1660,17 @@ namespace MegabonkTogether.Services
 
             if (MapController.currentMap.eMap == Assets.Scripts._Data.MapsAndStages.EMap.Graveyard) //TODO to test
             {
-                if (enemy.enemyData.enemyName == EEnemy.GhostGrave1
+                // A vanilla coffin's ghosts. Not our revive ghost, which is a GhostGrave4 too and
+                // spawns with no coffin open: currentCoffin was null, this threw, and the throw
+                // skipped the registration below, so the ghost never moved or took hits on that
+                // client (2026-10-21, a revive in the Ghost King's room: six "Failed to process
+                // spawned enemy" on one bot).
+                if (!spawnedEnemy.ReviverId.HasValue
+                && currentCoffin?.minibossEnemies != null
+                && (enemy.enemyData.enemyName == EEnemy.GhostGrave1
                 || enemy.enemyData.enemyName == EEnemy.GhostGrave2
                 || enemy.enemyData.enemyName == EEnemy.GhostGrave3
-                || enemy.enemyData.enemyName == EEnemy.GhostGrave4)
+                || enemy.enemyData.enemyName == EEnemy.GhostGrave4))
                 {
                     currentCoffin.minibossEnemies.Add(enemy);
                 }

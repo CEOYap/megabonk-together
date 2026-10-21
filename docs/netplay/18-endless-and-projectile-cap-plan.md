@@ -374,6 +374,56 @@ host reached the surface, and both bots' games ended.
 
 **UNVERIFIED, not run in-game.**
 
+### Second run, 2026-10-21: the route works; every stage-1 room restarted the run's stats
+
+**The run.** Graveyard start, nine stage changes:
+
+1. Crypt 1
+2. Forest 1
+3. Crypt 1
+4. **Ent**
+5. Desert 3
+6. Desert 1
+7. Forest 3
+8. **Ghost King**
+9. Forest 2
+10. Crypt 2
+
+A boss room came every fourth change, and every peer logged the same sequence. The host's end
+screen still read **0:48 alive, 35 kills**, and chest prices fell back during the run.
+
+**Cause** (decompiled):
+
+- **`GameManager.Start`** (`0x180504200`) raises `A_StageStarted` on every stage, and
+  `A_RunStarted` when `MapController.IsFirstStage()`, which is `index == 0` (`0x1804219B0`).
+- **Endless sets index 0** for every stage-1 room: Forest 1, Desert 1 and all the Graveyard
+  rooms. So each of those raised `A_RunStarted`, and two listeners reset run state:
+  - `RunStats.OnNewRun` (`0x180411AE0`): the end screen's kills, time and damage.
+  - `MoneyUtility.OnNewRun` (`0x18046A580`): zeroes `chestsPurchased`, which is the chest price.
+    `MoneyUtility.OnNewStage` leaves it alone.
+- **The end screen therefore counted only what came after Crypt 2,** the last stage-1 room.
+
+**Fixed.** While `GameManager.Start` runs after a stage change, `IsFirstStage` answers false, so
+the room starts as a later stage would. Every other caller still sees the real index. That the
+end screen's time comes from the same reset is **LIKELY**: the time matched a reset at Crypt 2.
+
+**Also found in that run:**
+
+- **The revive ghost on the Graveyard.** On the Graveyard map, a client added every
+  `GhostGrave1–4` to `currentCoffin.minibossEnemies`. Our revive ghost is a `GhostGrave4` and
+  spawns with no coffin open, so the add threw and skipped the enemy's registration: six
+  `Failed to process spawned enemy` on one bot during a revive in the Ghost King's room. This is
+  not specific to Endless. It is now limited to non-revive ghosts with a coffin open.
+- **Crypt objects.** `UpdateObject` threw on a crypt object whose crypt Endless had cleared, and
+  the throw ended `NewObjectToSpawnRoutine` for the rest of the level. It is now guarded, and
+  wrapped so that one bad update is dropped rather than killing the routine.
+- **Not fixed:** one `GraveyardBossRoom.CheckSpawnBoss` NRE before the Ghost King spawned. The
+  fight then ran normally.
+- **Phase 4 note.** `GameBalanceService` re-initialises per room by stage index, so a stage-1 room
+  late in an Endless run gets stage-1 balance.
+
+**UNVERIFIED, not run in-game.**
+
 ### Phases
 
 | Phase | Scope | Risk |
