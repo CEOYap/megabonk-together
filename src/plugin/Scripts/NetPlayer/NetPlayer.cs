@@ -1,4 +1,4 @@
-﻿using Assets.Scripts.Camera;
+using Assets.Scripts.Camera;
 using Assets.Scripts.Game.Combat.ConstantAttacks;
 using Assets.Scripts.Inventory__Items__Pickups.Items;
 using Assets.Scripts.Inventory__Items__Pickups.Stats;
@@ -620,6 +620,15 @@ namespace MegabonkTogether.Scripts.NetPlayer
         private void UpdateNameplateRotation()
         {
             if (nameplate == null || nameplateText == null || GameManager.Instance?.playerCamera == null || Model == null) return;
+
+            // Only over a stage in play. The plate sits on the HUD canvas, so at a run's end it was
+            // drawn over the end screen (2026-10-21: the other players' names across a client's
+            // summary panel), and through loading screens.
+            if (!synchronizationService.HasNetplaySessionStarted())
+            {
+                nameplate.SetActive(false);
+                return;
+            }
 
             try
             {

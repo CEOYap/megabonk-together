@@ -449,15 +449,26 @@ The `IsFirstStage` fix and the Phase 2 and 3 room handling therefore hold.
   gets 20 passes (10 s, enough for a crypt that generates late on a client). After that it is
   dropped with one log line. The queue is also cleared in `PrepareForNextLevel`, so an object from
   one level cannot match one at the same position in a later Graveyard visit.
-- **Scripted kills on the damage panel.** The host's panel read `Unkown 51,247,009,792`.
-  `Enemy.Kill` (`0x1804AEC60`) kills by dealing an enemy its own HP in one hit. A final boss's
-  death runs it on every remaining enemy, and so does the Ghost King's arena. The panel recorded
-  each of those hits, and in Endless that repeats after every boss room at late-run enemy HP. The
-  panel now skips hits made inside `Kill`; the kills still count.
+- **The "Unkown 51,247,009,792" row: not a bug, and the patch is reverted.** The host's report
+  had that row, but the host player was using a one-hit-kill cheat in the Ent room, and the end
+  screen itself does not show an "Unkown" row. A patch that kept `Enemy.Kill` hits off the panel
+  was built on the guess that Endless boss rooms inflate it. Nothing showed that, so it was
+  removed.
 - **`UiFocusManager.Update` exceptions.** That method (`0x180393840`) dereferences
   `EventSystem.current` unchecked. The host's Player.log had 8,564 exceptions from it, starting in
   the lobby, and a bot's had the same. It is now skipped on frames with no event system. This is
   not specific to Endless.
+
+**Also from the end screens of that run:**
+
+- **The other players' nameplates showed over a client's end screen.** They sit on the HUD canvas
+  and were never hidden when the run stopped. They now show only while a stage is in play.
+- **A LVL 0 Cactus row** (24 damage) on Player3's panel. A teammate's Cactus hit was replayed at
+  the run's end. By then the teammates' inventories were cleared, and the tracker was only read
+  while Started, so nothing matched it. A replayed hit now reads its attacker from the tracker in
+  every state; `OnReceivedEnemyDamaged` always sets it.
+- **`ArgumentNullException` in `RunStats.OnEnemyDamaged`,** twice per bot near the end: a hit
+  with a null damage source. The original can only throw there, so such hits are dropped.
 
 **UNVERIFIED, not run in-game.**
 
