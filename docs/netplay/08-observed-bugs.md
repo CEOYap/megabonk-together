@@ -1882,7 +1882,7 @@ paused too and stops sending hits during the window. This gate is the backstop f
 Reported fixed by the player. The host log carries 53 `OB-13: suppressed N enemy hit(s) while paused`
 lines and the client 14, so the gate at `Enemy.Damage` is what held, not a coincidence of timing.
 
-## OB-14 — The end-of-run damage panel credits you with your teammate's weapons — **FIX BUILT 2026-10-19 (LVL 0 rows recorded outside Started); not yet confirmed in play**
+## OB-14 — The end-of-run damage panel credits you with your teammate's weapons — **FIXED, CONFIRMED in play 2026-10-21** (one run-end edge fixed after, in `cd0b388`)
 
 **Reported 2026-08-17, with screenshots.** The DAMAGE column on the summary screen lists ~23 damage
 sources for a player whose inventory held **4 weapons and 4 tomes**. The extras are the other
@@ -1946,6 +1946,12 @@ comment says it drives "money flying, item procs, kills", so **gold and kill cre
 misassigned too** rather than only the end screen. Worth checking before this is filed as cosmetic.
 
 ---
+
+**Confirmed, 2026-10-21 Endless run (host plus two bots, eleven stage changes, the host's log kept; each bot carried a TestItems loadout).**
+
+- **Host:** the end screen had 0 LVL 0 rows, and three `OB-14: kept '...' off our damage panel` lines.
+- **Player2:** also 0 LVL 0 rows.
+- **Player3: one left, `Cactus LVL 0` (24).** A teammate's Cactus hit was replayed after the run ended, once the teammates' inventories had been cleared and while the tracker was still read only when Started. That is fixed in `cd0b388`, which reads the tracker for replayed hits in every state; the fix itself is **UNVERIFIED**.
 
 <a name="ob-15"></a>
 ### 2026-10-12 — confirmed from both end screens, and fixed
@@ -3732,7 +3738,7 @@ ratio is consistent with the Desert map's size against 600, but that size is not
 **UNVERIFIED, not run in-game.** Confirmed when a fall off the final arena logs `600 -> 600` and the
 `[boss] ... sees` positions keep matching across peers.
 
-## OB-37 — A teammate's weapon hits ran the host's on-hit items, never their own — **FIXED 2026-10-19, not yet confirmed in play**
+## OB-37 — A teammate's weapon hits ran the host's on-hit items, never their own — **FIXED, CONFIRMED in play 2026-10-21**
 
 **Found 2026-10-19** from OB-14's filter. On Player2, the host's items (`GlovePower`, `IceCube`,
 `Bonker`, `SpicyMeatball`) arrived in replays carrying Player2's id. See OB-14's "second run"
@@ -3809,9 +3815,15 @@ Mitts, Big Bonk, Spicy Meatball). Then check three things:
 - **The host's items** no longer appear in `OB-14: kept` lines on the client.
 - **The host's log** carries the `[items] OB-37` line.
 
+**Confirmed, 2026-10-21 Endless run (host plus two bots, eleven stage changes, the host's log kept; each bot carried a TestItems loadout).** Each player's on-hit item rows showed at that player's own level, on that player's own panel:
+
+- **Player2:** Cursed Doll 20.0K, Moldy Gloves, Cactus, Mirror.
+- **Player3:** Power Gloves, Spicy Meatball, Snek, Slutty Cannon.
+
+The host's panel held only the host's own sources.
 
 <a name="ob-38"></a>
-## OB-38 — The host built every teammate's hits from the host's own stats — **FIXED 2026-10-20, not yet confirmed in play**
+## OB-38 — The host built every teammate's hits from the host's own stats — **FIXED, CONFIRMED in play 2026-10-21**
 
 **Decompiled, build 21750826.** Every stat read on a hit is the static `PlayerStats.GetStat(EStat)`.
 It takes no player and answers for the local one. The host builds every teammate's hits, so those
@@ -3859,6 +3871,8 @@ Some numbers bypass `GetStat` entirely:
 - **To confirm:** give a teammate a much higher damage or crit build than the host's. Their end
   screen should track their build rather than the host's.
 - **Known:** the OB-1 stats (Projectiles, Size, Bounces) keep their own per-accessor correction.
+
+**Confirmed, 2026-10-21 Endless run (host plus two bots, eleven stage changes, the host's log kept; each bot carried a TestItems loadout).** The host player reported damage and procs that fit each player's own build. No `Kill-attribution anomalies` warning appeared, and no `has no owner` sample, on any peer.
 
 <a name="ob-39"></a>
 ## OB-39 — Hit and kill listeners on items and passives fired for everyone's hits, on every machine — **FIXED, CLOSED 2026-10-20 on play evidence**
@@ -3912,7 +3926,7 @@ The classification of each listener comes from reading its decompiled body.
 Reopen if a heal, stack or proc is seen landing on a player who does not own the item.
 
 <a name="ob-40"></a>
-## OB-40 — A teammate's burn and poison ticked as the host's — **FIXED 2026-10-20, not yet confirmed in play**
+## OB-40 — A teammate's burn and poison ticked as the host's — **FIXED, CONFIRMED in play 2026-10-21**
 
 **Decompiled:**
 
@@ -3936,6 +3950,12 @@ the host's damage panel.
 - **Cleared on a level change.**
 
 **UNVERIFIED, not run in-game.**
+
+**Confirmed, 2026-10-21 Endless run (host plus two bots, eleven stage changes, the host's log kept; each bot carried a TestItems loadout).**
+
+- **Debuffs stay with their owners.** Bloodmark and Poison appear only on the panels of the players who hold their items: Bloody Cleaver and Glove Poison on the bots.
+- **The host's Poison row is its own.** The host held Moldy Cheese.
+- **No Bloodmark on the host's panel.**
 
 <a name="ob-41"></a>
 ## OB-41 — Some teammate hits had no owner and ran as the host's — **FIXED, CONFIRMED by log 2026-10-20**
@@ -3972,7 +3992,7 @@ as running unattributed. Only Holy Book did; see [OB-42](#ob-42). **UNVERIFIED, 
 **Confirmed by log, 2026-10-20 21:01 run (host plus two bots, Forest stage 1, ended in a game over before any stage boss died).** No peer logged an `[attribution] OB-41: ... has no owner` sample, and the host never printed its `Kill-attribution anomalies` warning. That warning prints only when a 5 s window has an unbalanced unset, an overwrite, or an `UNRESOLVED-WEAPON` hit, so no teammate hit lost its owner all session.
 
 <a name="ob-42"></a>
-## OB-42 — Holy Book ran on every machine and counted every player's healing; forwarded item hits lost their procs — **FIXED 2026-10-20, not yet confirmed in play**
+## OB-42 — Holy Book ran on every machine and counted every player's healing; forwarded item hits lost their procs — **FIXED, CONFIRMED in play 2026-10-21**
 
 **Sources.** The item pages on megabonkinfo.org (Cursed Doll, Bob (Dead), Holy Book) were read
 against the decompiled bodies, build 21750826:
@@ -4016,9 +4036,10 @@ Bob and Holy Book (0.5) hits procced nothing.
 - **Procs.** A teammate with Cursed Doll and an on-hit item (Ice Cube, Big Bonk) should see that
   item's row grow on their end screen.
 
+**Confirmed, 2026-10-21 Endless run (host plus two bots, eleven stage changes, the host's log kept; each bot carried a TestItems loadout).** Holy Book damage appears on its holder's panel only (Player3, 55). The host player confirmed in an earlier run that the effect no longer plays on players who do not hold it (OB-48).
 
 <a name="ob-43"></a>
-## OB-43 — Item audit: every item now runs on one machine, as its owner — **FIXED 2026-10-20, not yet confirmed in play**
+## OB-43 — Item audit: every item now runs on one machine, as its owner — **FIXED, CONFIRMED in play 2026-10-21**
 
 **Method.** All 86 `ItemBase` subclasses in `dump.cs` were listed with their real (non-stub)
 method bodies. Every `Tick`, event handler and spawn body was decompiled (80 functions). The
@@ -4073,6 +4094,7 @@ teammate.
 **UNVERIFIED, not run in-game.** First check: the BepInEx log at startup has no Harmony errors.
 This pass adds about 30 hooks, each checked against `dump.cs` names and parameters.
 
+**Confirmed, 2026-10-21 Endless run (host plus two bots, eleven stage changes, the host's log kept; each bot carried a TestItems loadout).** Across both bots' loadouts, every item's damage landed on its owner's panel, at its owner's level. The only exception was Player3's run-end Cactus replay, which is a separate edge (OB-14). The host player reported no item running for the wrong player.
 
 <a name="ob-44"></a>
 ## OB-44 — With two stage bosses, clients opened the portal after the first died — **FIXED, CONFIRMED by log 2026-10-21**
@@ -4215,7 +4237,7 @@ design.** Only the decompiled rule above is established.
   game's own difficulty curve is time-based (`EStat.Difficulty`, OB-26).
 
 <a name="ob-47"></a>
-## OB-47 — A teammate's row slipped past the damage-panel filter while the local inventory was missing — **FIXED 2026-10-20, not yet confirmed in play**
+## OB-47 — A teammate's row slipped past the damage-panel filter while the local inventory was missing — **FIXED, CONFIRMED in play 2026-10-21**
 
 **What the 2026-10-20 report showed.** The host's end-screen report showed `Mirror LVL 0 997`. The
 host held no Mirror; a bot did. The host log had neither an `OB-14: kept 'Mirror'` line nor an
@@ -4243,6 +4265,7 @@ ghost lost about 15K in 90 s. During the revive fight the bot now teleports next
 ghost's HP itself is unchanged: boss HP scaled by team difficulty and cut to 2/12 on the first
 revive (`EnemyManagerService.RebalanceIfNeededReviverEnemy`).
 
+**Confirmed, 2026-10-21 Endless run (host plus two bots, eleven stage changes, the host's log kept; each bot carried a TestItems loadout).** No teammate row slipped through on the host, or on Player2, across eleven stage changes. Each stage change is exactly when the local inventory goes missing.
 
 <a name="ob-48"></a>
 ## OB-48 — The Holy Book effect played on the host, who held no Holy Book — **FIXED (visual), CONFIRMED in play 2026-10-20 21:01**
