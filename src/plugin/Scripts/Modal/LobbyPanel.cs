@@ -803,6 +803,22 @@ namespace MegabonkTogether.Scripts.Modal
                 return;
             }
 
+            // Marked first: if anything below fails, the panel's refresh must not fail with it on
+            // every pass. A wrong layout is cosmetic; a dead refresh is not.
+            columnInOptionsLayout = options;
+            try
+            {
+                ApplyOptionsColumnLayout(options);
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning($"[lobby] Could not move the options button column: {ex.Message}");
+            }
+        }
+
+        private void ApplyOptionsColumnLayout(bool options)
+        {
+
             // GetComponent, not a cast: see WarnIfButtonColumnOverflows.
             var column = buttonContainer.GetComponent<RectTransform>();
             var members = memberListRoot.GetComponent<RectTransform>();
@@ -820,16 +836,12 @@ namespace MegabonkTogether.Scripts.Modal
 
             if (options)
             {
-                // World corners: index 1 is top-left. The gap between the two top edges, in the
-                // column's parent space, is how far its top edge moves.
-                var memberCorners = new Vector3[4];
-                var columnCorners = new Vector3[4];
-                members.GetWorldCorners(memberCorners);
-                column.GetWorldCorners(columnCorners);
-
-                var parent = column.parent;
-                var memberTop = parent != null ? parent.InverseTransformPoint(memberCorners[1]).y : memberCorners[1].y;
-                var columnTop = parent != null ? parent.InverseTransformPoint(columnCorners[1]).y : columnCorners[1].y;
+                // Top edges in their shared parent's space (Panel/Members and Panel/Buttons are
+                // siblings). Not GetWorldCorners: it compiles against the stubs but is missing at
+                // runtime (MissingMethodException, 2026-10-21), so the first version threw on every
+                // refresh.
+                var memberTop = members.localPosition.y + members.rect.yMax;
+                var columnTop = column.localPosition.y + column.rect.yMax;
 
                 var shift = new Vector2(0f, Mathf.Max(0f, memberTop - columnTop));
                 column.offsetMin = columnOffsetMin + shift;
@@ -840,8 +852,6 @@ namespace MegabonkTogether.Scripts.Modal
                 column.offsetMin = columnOffsetMin;
                 column.offsetMax = columnOffsetMax;
             }
-
-            columnInOptionsLayout = options;
         }
 
         private void OnOptionsClicked()
