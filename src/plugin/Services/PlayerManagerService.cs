@@ -157,12 +157,15 @@ namespace MegabonkTogether.Services
         public bool IsRemoteTomeInventory(TomeInventory instance)
         {
             var player = GameManager.Instance.player;
-            if (player == null || player.inventory == null)
+            if (player == null || player.inventory == null || player.inventory.tomeInventory == null || instance == null)
             {
                 logger.LogWarning("Local player or inventory is null when checking remote TomeInventory.");
                 return false;
             }
-            return instance != player.inventory.tomeInventory;
+            // Compared by native pointer, as WeaponInventory and RemoteItemCopies do. `!=` compares
+            // the managed wrappers, and nothing guarantees one native object gets one wrapper; a
+            // false "remote" here would suppress the local player's own Chaos/Gambler roll.
+            return instance.Pointer != player.inventory.tomeInventory.Pointer;
         }
 
         public IEnumerable<Player> GetAllNonHostPlayers()

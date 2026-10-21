@@ -13,7 +13,13 @@ namespace MegabonkTogether.Patches.Inventories
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
 
         /// <summary>
-        /// Track netplayer adding a chaos tome so we can prevent triggering chaos tome effect for everyone
+        /// Track netplayer adding a chaos or gambler tome so we can prevent triggering its effect for everyone.
+        ///
+        /// <para>Decompiled <c>TomeUtility$$CheckSpecialTomes</c> (VA 0x1804304C0) handles exactly
+        /// these two: for Chaos (24) and Gambler (25) it rolls a random stat offer and applies it
+        /// through <c>MyPlayer.Instance.inventory.statInventory.ChangeStat</c>, the LOCAL player,
+        /// whichever inventory AddTome ran on. Gambler was missing here, so every teammate's
+        /// Gambler level-up gave this peer an extra random roll, which can be negative.</para>
         /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(TomeInventory.AddTome))]
@@ -25,7 +31,7 @@ namespace MegabonkTogether.Patches.Inventories
             }
 
             ETome tome = tomeData.eTome;
-            if (tome == ETome.Chaos && playerManagerService.IsRemoteTomeInventory(__instance))
+            if ((tome == ETome.Chaos || tome == ETome.Gambler) && playerManagerService.IsRemoteTomeInventory(__instance))
             {
                 Plugin.Instance.IS_NETPLAYER_ADDING_TOME = true;
             }

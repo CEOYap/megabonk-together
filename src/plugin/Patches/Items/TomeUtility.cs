@@ -11,7 +11,7 @@ namespace MegabonkTogether.Patches.Items
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
 
         /// <summary>
-        /// Prevent triggering tome effect if the tome is added by a netplayer. (Chaos tome)
+        /// Prevent triggering tome effect if the tome is added by a netplayer. (Chaos and Gambler tomes)
         /// </summary>
         /// <returns></returns>
         [HarmonyPrefix]
