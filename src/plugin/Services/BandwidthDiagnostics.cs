@@ -164,7 +164,7 @@ namespace MegabonkTogether.Services
 
             Plugin.Log.LogInfo(
                 $"[bw] {totalBytes / 1024f / elapsed:F1} KB/s payload out over {elapsed:F1}s at {players} player(s). " +
-                "Payload only — excludes LiteNetLib, relay-envelope and UDP/IP overhead.");
+                "Payload only - excludes LiteNetLib, relay-envelope and UDP/IP overhead.");
 
             // Alignment specifiers ({x,8:F2}) do not compile against BepInEx's interpolated-string
             // log handler, so the columns are padded by hand.

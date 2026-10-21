@@ -313,7 +313,7 @@ namespace MegabonkTogether.Services
             {
                 Plugin.Log.LogError(
                     $"[UiAssets] Embedded resource '{BundleResourceName}' is missing. The plugin was "
-                    + "built without a UI bundle — run MegabonkTogether/Build UI Bundle in unity-ui, "
+                    + "built without a UI bundle - run MegabonkTogether/Build UI Bundle in unity-ui, "
                     + "then rebuild.");
                 return false;
             }
@@ -351,7 +351,7 @@ namespace MegabonkTogether.Services
             {
                 Plugin.Log.LogError(
                     $"[UiAssets] LoadFromStream returned null for {bytes.Length} bytes. This is "
-                    + "almost always a Unity version mismatch — the bundle must be built with the "
+                    + "almost always a Unity version mismatch - the bundle must be built with the "
                     + "editor version the game ships (see docs/ui/01-ui-asset-bundle.md).");
                 return false;
             }

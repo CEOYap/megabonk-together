@@ -12,7 +12,7 @@ This guide explains how to set up and run your own OmniBonk matchmaking/relay se
 1. Go to the [latest GitHub release](https://github.com/CEOYap/OmniBonk/releases/latest).
 2. Download the **`OmniBonk-Server-win-x64-*.zip`** archive.
 3. Extract it to a folder of your choice.
-4. Run `MegabonkTogether.Server.exe`.
+4. Run `OmniBonk.Server.exe`.
 
 ### Option B - Build from Source
 

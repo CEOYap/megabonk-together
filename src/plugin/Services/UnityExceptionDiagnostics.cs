@@ -113,7 +113,7 @@ namespace MegabonkTogether.Services
         {
             Plugin.Log.LogWarning(
                 "[unity-exc] Session ended. If this run had an exception storm, the stack traces " +
-                $"are ONLY in: {ResolvePlayerLogPath()} — LogOutput.log does not contain them.");
+                $"are ONLY in: {ResolvePlayerLogPath()}. LogOutput.log does not contain them.");
         }
 
         /// <summary>Nothing per-session to clear; kept so the call in NetworkHandler stays valid.</summary>

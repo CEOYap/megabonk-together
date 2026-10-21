@@ -184,13 +184,42 @@ and extract it into the folder that holds `Megabonk.exe`, something like
 - Close the game, then download the [latest release](https://github.com/CEOYap/OmniBonk/releases/latest).
 - Extract the zip and copy the `OmniBonk` folder into `BepInEx/plugins`, something like
   `../steamapps/common/Megabonk/BepInEx/plugins`.
-- Launch the game. A `TOGETHER!` button appears at the bottom of the main menu.
+- Launch the game. An `OmniBonk` button, with the version underneath, appears at the bottom of the main menu.
 
 > [!NOTE]
 > The button cannot be selected with a controller yet. Click it with the mouse; you can switch back
 > to the controller afterwards.
 
 Found a bug? Open an [issue](https://github.com/CEOYap/OmniBonk/issues).
+
+# Updating
+
+## Updating OmniBonk
+
+- **Automatic (GitHub install).** With `[Updates] CheckForUpdates = true` (the default), OmniBonk
+  checks for a new release when the game starts and downloads it. The update is applied when you
+  quit the game: a small window opens, waits for the game to close, then replaces the files. Start
+  the game again and the changelog shows what changed.
+- **By hand.** Close the game, download the [latest release](https://github.com/CEOYap/OmniBonk/releases/latest),
+  and replace the `BepInEx/plugins/OmniBonk` folder with the one in the zip. Your settings in
+  `BepInEx/config/OmniBonk.cfg` are kept.
+- **Thunderstore or r2modman.** Update through the mod manager. That build still tells you when a
+  new version is out, but does not download it.
+
+Everyone in a session needs the same OmniBonk version; the lobby shows **WRONG VERSION** otherwise.
+
+## When Megabonk itself updates
+
+Steam updates the game on its own. On the first launch after a game update, BepInEx rebuilds the
+files it generates for the game (`BepInEx/interop`), so that launch takes a minute longer on the
+splash screen. Nothing else is needed if OmniBonk still works.
+
+A game update can change what OmniBonk patches. If the game crashes, the OmniBonk button is
+missing, or multiplayer misbehaves after a game update:
+
+1. Check for a new OmniBonk release and update (above).
+2. To play solo until then, move the `BepInEx/plugins/OmniBonk` folder out of `plugins`.
+3. Everyone in a session also needs the same game version, so let Steam update every player's game.
 
 # How to play
 
@@ -213,16 +242,56 @@ If you want to run your own matchmaking/relay server, check the [Self-Hosting Gu
 
 # Building (Developer)
 
-- Clone this repository
-- Set the environment variable **MegabonkPath** pointing to your own game install (something like _../steamapps/common/Megabonk_) for your IDE to know where to get the required DLLs to load for building the mod
-- Build the solution
+You need the [.NET SDK](https://dotnet.microsoft.com/download) (6.0 or later) and Git. Build from
+a terminal (PowerShell on Windows) in the repository folder.
 
-You should now have the macthmaking server built and also the mod file
+1. Clone the repository and go into it:
 
-> [!IMPORTANT]  
-> The IDE will copy the result mod file in your game directory. This is super practical when developing locally but remember to delete it after.
+   ```powershell
+   git clone https://github.com/CEOYap/OmniBonk.git
+   cd OmniBonk
+   ```
+
+2. Point the build at your game install, so it compiles against your game's own files and copies
+   the result into its `BepInEx/plugins/OmniBonk` folder. Run the game once with BepInEx first,
+   so `BepInEx/interop` exists:
+
+   ```powershell
+   $env:MegabonkPath = "C:\Program Files (x86)\Steam\steamapps\common\Megabonk"
+   ```
+
+   This lasts for the current terminal only. Without it, the build uses the copies in
+   `src/plugin/stripped-libs/` and copies nothing into the game.
+
+3. Build the solution:
+
+   ```powershell
+   dotnet build MegabonkTogether.sln
+   ```
+
+   This builds the mod (`src/plugin/bin/Debug/net6.0/OmniBonk.dll`, with `OmniBonk.Common.dll`)
+   and the matchmaking server (`src/server/bin/Debug/net6.0/OmniBonk.Server.dll`). Add
+   `-c Release` for a release build; only Debug builds are copied into the game.
+
+> [!IMPORTANT]
+> A Debug build with `MegabonkPath` set overwrites `BepInEx/plugins/OmniBonk` in your game folder
+> each time. Close the game before building, or the copy fails because the DLL is in use.
 
 `[Network] ServerUrl` in `{your game path}/BepInEx/config/OmniBonk.cfg` defaults to `ws://127.0.0.1:5000`, a server on the same PC. It is only used when `[Network] UseSteamTransport` is `false`.
+
+## After a game update (developers)
+
+1. Launch the game once so BepInEx regenerates `BepInEx/interop` for the new game build.
+2. Rebuild with `MegabonkPath` set (see above) and fix any compile errors: a renamed or removed
+   game member shows up here.
+3. Start the game and read `BepInEx/LogOutput.log` for Harmony errors. A patch whose target
+   method changed fails when the plugin loads, not later.
+4. Refresh the committed signature-only copies in `src/plugin/stripped-libs/`, so builds without a
+   game install (CI) match the new game. From `src/plugin`, with `MegabonkPath` set and
+   [`assembly-publicizer`](https://github.com/BepInEx/BepInEx.AssemblyPublicizer) installed
+   (`dotnet tool install -g BepInEx.AssemblyPublicizer.Cli`), run `strip-dlls.bat`.
+5. Game method addresses in the reverse-engineering notes are build-specific. Re-dump the new
+   build before trusting one; see [`docs/reverse-engineering/00-decompilation-guide.md`](docs/reverse-engineering/00-decompilation-guide.md).
 
 ## Developer testing tools
 
@@ -283,7 +352,7 @@ Megabonk/
 │   └── plugins/
 │       └── OmniBonk/
 │           ├── OmniBonk.dll
-│           ├── MegabonkTogether.Common.dll
+│           ├── OmniBonk.Common.dll
 │           └── (other dependency DLLs)
 ├── Megabonk_Data/
 ├── winhttp.dll

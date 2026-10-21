@@ -188,7 +188,7 @@ namespace MegabonkTogether.Services
             unavailable = true;
             Plugin.Log.LogWarning(
                 $"[steam-net] Connection status is unavailable ({reason}), so rtt and link quality "
-                + "will not be reported. Everything else is unaffected — this is the diagnostic "
+                + "will not be reported. Everything else is unaffected - this is the diagnostic "
                 + "read, not the transport.");
         }
     }

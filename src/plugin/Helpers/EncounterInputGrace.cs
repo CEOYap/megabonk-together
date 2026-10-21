@@ -133,7 +133,7 @@ namespace MegabonkTogether.Helpers
                 // with confirm already down, which is the accident this guard exists for.
                 loggedBinding = true;
                 Plugin.Log.LogInfo(
-                    "[input] A reward window opened with the confirm action already held — the " +
+                    "[input] A reward window opened with the confirm action already held - the " +
                     "carry-over press guard is doing its job. Holding the choice until release " +
                     $"(capped at {HoldCapSeconds:F1}s).");
             }

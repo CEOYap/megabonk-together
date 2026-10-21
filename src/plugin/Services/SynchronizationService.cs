@@ -849,7 +849,7 @@ namespace MegabonkTogether.Services
                 {
                     logger.LogWarning(
                         $"[netplayer] {netPlayer.ConnectionId} is in the roster but has no avatar, so "
-                        + "it gets no minimap arrow. EnsureNetPlayerSpawned refused to build one — "
+                        + "it gets no minimap arrow. EnsureNetPlayerSpawned refused to build one - "
                         + "look for its reason above this line.");
                     continue;
                 }

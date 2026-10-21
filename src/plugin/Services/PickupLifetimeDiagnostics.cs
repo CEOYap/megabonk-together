@@ -108,7 +108,7 @@ namespace MegabonkTogether.Services
 
             Plugin.Log.LogWarning(
                 $"[pickup] {neverTotal + removedTotal} unresolved pickup instruction(s) in the last " +
-                $"~{REPORT_INTERVAL_SECONDS:F0}s — " +
+                $"~{REPORT_INTERVAL_SECONDS:F0}s - " +
                 $"NEVER-REGISTERED {neverTotal} [{Describe(never)}], " +
                 $"registered-then-removed {removedTotal} [{Describe(removed)}]. " +
                 "NEVER-REGISTERED means the spawn did not reach this peer and is the replication " +

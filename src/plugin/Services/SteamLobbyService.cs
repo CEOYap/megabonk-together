@@ -823,10 +823,10 @@ namespace MegabonkTogether.Services
             return reason switch
             {
                 ESteamAPICallFailure.k_ESteamAPICallFailureInvalidHandle =>
-                    "InvalidHandle — the result was already consumed, almost certainly by the game's "
+                    "InvalidHandle - the result was already consumed, almost certainly by the game's "
                     + "own callback pump draining the shared manual-dispatch pipe before we read it",
                 ESteamAPICallFailure.k_ESteamAPICallFailureMismatchedCallback =>
-                    "MismatchedCallback — the expected callback id does not match the call",
+                    "MismatchedCallback - the expected callback id does not match the call",
                 ESteamAPICallFailure.k_ESteamAPICallFailureNetworkFailure => "NetworkFailure",
                 ESteamAPICallFailure.k_ESteamAPICallFailureSteamGone => "SteamGone",
                 ESteamAPICallFailure.k_ESteamAPICallFailureNone => "None reported, which is itself odd",

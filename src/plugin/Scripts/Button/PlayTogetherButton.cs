@@ -22,7 +22,7 @@ namespace MegabonkTogether.Scripts.Button
             Plugin.Services.GetRequiredService<INetplaySessionService>();
 
         /// <summary>
-        /// TOGETHER! goes straight to the lobby, hosting.
+        /// The OmniBonk button goes straight to the lobby, hosting.
         ///
         /// <para><b>It always hosts, and that is the design rather than a simplification.</b> One
         /// button cannot both create a lobby and join one, and joining already has two better

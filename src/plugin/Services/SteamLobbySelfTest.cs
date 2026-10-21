@@ -164,7 +164,7 @@ namespace MegabonkTogether.Services
             Finish(
                 false,
                 $"code {searchedCode} never came back from the lobby list after {MaxSearchAttempts} "
-                + "attempts. Inconclusive on one machine — this is either a broken search or Steam "
+                + "attempts. Inconclusive on one machine - this is either a broken search or Steam "
                 + "not listing a lobby back to its own member. A second player settles it.");
         }
 
@@ -236,7 +236,7 @@ namespace MegabonkTogether.Services
             step = Step.Done;
 
             var summary =
-                $"[steam-lobby] Self-test finished: {(passed ? "PASSED" : "FAILED")} — {detail}. "
+                $"[steam-lobby] Self-test finished: {(passed ? "PASSED" : "FAILED")} - {detail}. "
                 + $"Strings {(stringsPassed ? "ok" : "FAILED")}.";
 
             if (passed && stringsPassed)

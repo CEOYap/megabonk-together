@@ -197,7 +197,7 @@ namespace MegabonkTogether.Scripts.Modal
         /// The panel currently on screen, or null.
         ///
         /// <para>Exists because the panel is now the netplay entry point rather than something a
-        /// menu opens at the end of a flow, so two callers — the TOGETHER! button and an arriving
+        /// menu opens at the end of a flow, so two callers — the OmniBonk button and an arriving
         /// Steam invite — both need to ask "is it already up" before opening a second one. That
         /// question used to be <c>Plugin.Instance.NetworkTab != null</c>.</para>
         ///
@@ -448,7 +448,7 @@ namespace MegabonkTogether.Scripts.Modal
             if (titleText == null || memberListRoot == null || buttonContainer == null || memberRowTemplate == null)
             {
                 Plugin.Log.LogError(
-                    "[lobby] Prefab contract broken — missing Title, Members, Buttons or MemberRow. "
+                    "[lobby] Prefab contract broken - missing Title, Members, Buttons or MemberRow. "
                     + "See docs/ui/01-ui-asset-bundle.md; child names are API.");
                 return false;
             }
@@ -677,7 +677,7 @@ namespace MegabonkTogether.Scripts.Modal
 
             // Going somewhere else is offered while there is nobody here to abandon.
             //
-            // `!inLobby` alone would have made both of these unreachable. Step 2 made TOGETHER!
+            // `!inLobby` alone would have made both of these unreachable. Step 2 made the OmniBonk button
             // host immediately, so a player is in a lobby of their own within about a second of
             // opening the panel and the not-in-a-lobby state is only ever seen behind the
             // connecting window or after a failure. Leaving a lobby you are alone in costs nobody
@@ -1370,7 +1370,7 @@ namespace MegabonkTogether.Scripts.Modal
         /// Abandons the attempt the connecting window is covering and closes the panel.
         ///
         /// <para>Closing rather than returning to an idle panel: this button is reached from
-        /// TOGETHER!, so the thing behind it is the main menu, and leaving a lobby-less lobby panel
+        /// the OmniBonk button, so the thing behind it is the main menu, and leaving a lobby-less lobby panel
         /// on screen would be a state with one button on it. <c>Cancel</c> is what actually ends the
         /// session — the panel closing is only the part the player sees.</para>
         /// </summary>

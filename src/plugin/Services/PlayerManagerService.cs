@@ -932,7 +932,7 @@ namespace MegabonkTogether.Services
             logger.LogWarning(
                 $"Dropped {stalePositionRequests} stale netplayer position request(s) in the last ~5s " +
                 $"(most recent: ConnectionId {connectionId}, {ageInFrames} frames old). A push was not " +
-                "matched by its pop — without this the local player's transforms would keep resolving " +
+                "matched by its pop - without this the local player's transforms would keep resolving " +
                 "to that netplayer.");
 
             stalePositionRequests = 0;

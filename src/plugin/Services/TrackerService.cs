@@ -234,7 +234,7 @@ namespace MegabonkTogether.Services
             }
 
             Plugin.Log.LogWarning(
-                "Kill-attribution anomalies in the last ~5s — " +
+                "Kill-attribution anomalies in the last ~5s - " +
                 $"UNBALANCED-UNSET: {unbalanced}, " +
                 $"overwrite-while-set: {overwrites} (last {lastOverwrite}), " +
                 $"unset-while-clear: {strayUnsets}, " +

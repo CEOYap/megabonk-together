@@ -3,6 +3,8 @@
 	<PropertyGroup>
         <OutputType>Exe</OutputType>
 	      <TargetFramework>net6.0</TargetFramework>
+	      <AssemblyName>OmniBonk.Server</AssemblyName>
+	      <RootNamespace>MegabonkTogether.Server</RootNamespace>
 	      <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>

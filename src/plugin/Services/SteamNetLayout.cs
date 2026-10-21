@@ -213,7 +213,7 @@ namespace MegabonkTogether.Services
             SteamNetEndReason.SessionClosed => "the session ended",
             >= 1000 and <= 1999 => $"closed by the mod ({endReason})",
             >= 2000 and <= 2999 => $"the other side hit an error ({endReason})",
-            >= 3000 and <= 3999 => "a local network problem — no route to Steam's relays",
+            >= 3000 and <= 3999 => "a local network problem - no route to Steam's relays",
             >= 4000 and <= 4999 => "the other player stopped responding",
             _ => $"Steam infrastructure ({endReason})",
         };

@@ -230,7 +230,7 @@ namespace MegabonkTogether.Services
             {
                 // Steam P2P does not loop back. Saying so is worth a line, because the two-instance
                 // test harness is the obvious way somebody arrives here.
-                return Fail("Cannot connect to yourself — Steam peer-to-peer has no loopback.");
+                return Fail("Cannot connect to yourself - Steam peer-to-peer has no loopback.");
             }
 
             if (!PrepareToConnect())
@@ -1198,7 +1198,7 @@ namespace MegabonkTogether.Services
             Plugin.Log.LogWarning(
                 $"[steam-net] Promoted an unreliable send to reliable: {label} at {bytes} B is over "
                 + $"the {MaxUnreliableBytes} B single-datagram limit. It arrives, but ordered and "
-                + "acked, so it is no longer superseded by the next tick — this message wants "
+                + "acked, so it is no longer superseded by the next tick - this message wants "
                 + "splitting at the sender."
                 + (suppressed > 0 ? $" (+{suppressed} more in the last {PromotionLogIntervalMs / 1000}s)" : string.Empty));
         }

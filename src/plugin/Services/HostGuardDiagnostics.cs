@@ -99,7 +99,7 @@ namespace MegabonkTogether.Services
 
             Plugin.Log.LogWarning(
                 $"[host-guard] {total} host-only send(s) rejected on this peer {window}: {ranked}. " +
-                "Each names a path missing an ownership check — see OB-10. The send was dropped, " +
+                "Each names a path missing an ownership check - see OB-10. The send was dropped, " +
                 "so nothing is broken, but the work leading up to it was done for nothing.");
         }
 

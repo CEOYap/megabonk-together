@@ -769,7 +769,7 @@ namespace MegabonkTogether.Services
             }
 
             logger.LogInfo(
-                $"OB-11: re-centred a boss spawn on peer {targetId} — {pos} -> {recentred} " +
+                $"OB-11: re-centred a boss spawn on peer {targetId} - {pos} -> {recentred} " +
                 $"({radius:F1}u ring, slot {pick} of {slots}).");
 
             return recentred;

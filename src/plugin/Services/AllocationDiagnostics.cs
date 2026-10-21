@@ -83,7 +83,7 @@ namespace MegabonkTogether.Services
                 $"[alloc] {bytesPerSecond / 1024f:F0} KB/s managed over {elapsed:F1}s " +
                 $"(gen0 +{gen0 - lastGen0}, gen1 +{gen1 - lastGen1}, gen2 +{gen2 - lastGen2}, " +
                 $"heap {GC.GetTotalMemory(false) / (1024f * 1024f):F1} MB). " +
-                "Mod allocations only — IL2CPP game allocations are not counted.");
+                "Mod allocations only - IL2CPP game allocations are not counted.");
 
             lastReportTime = now;
             lastAllocatedBytes = allocated;

@@ -19,4 +19,4 @@ EXPOSE 5432
 EXPOSE 5678/udp
 WORKDIR /app
 COPY --from=build /app/publish .
-ENTRYPOINT ["dotnet", "MegabonkTogether.Server.dll"]
+ENTRYPOINT ["dotnet", "OmniBonk.Server.dll"]

@@ -106,7 +106,7 @@ namespace MegabonkTogether.Patches
                 $"opened and are null now (added={ItemInventory.A_ItemAdded == null} " +
                 $"removed={ItemInventory.A_ItemRemoved == null}). The mod borrows and restores those " +
                 "around NetPlayer.AddItem/RemoveItem, so something threw in between and the game's " +
-                "item callbacks are dead for the rest of the process — the suspected cause of " +
+                "item callbacks are dead for the rest of the process - the suspected cause of " +
                 "chests only offering banish after the first one.");
         }
 

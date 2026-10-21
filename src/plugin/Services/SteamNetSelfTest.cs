@@ -98,13 +98,13 @@ namespace MegabonkTogether.Services
             if (passed)
             {
                 Plugin.Log.LogInfo(
-                    $"[steam-net] Self-test finished: PASSED — {detail}. This proves the setup path "
+                    $"[steam-net] Self-test finished: PASSED - {detail}. This proves the setup path "
                     + "only; no peer connected, so the receive path and the delivery mapping are "
                     + "still unverified.");
                 return;
             }
 
-            Plugin.Log.LogWarning($"[steam-net] Self-test finished: FAILED — {detail}");
+            Plugin.Log.LogWarning($"[steam-net] Self-test finished: FAILED - {detail}");
         }
     }
 }

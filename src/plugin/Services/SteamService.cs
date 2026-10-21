@@ -345,8 +345,8 @@ namespace MegabonkTogether.Services
             disabled = true;
             Plugin.Log.LogError(
                 $"[steam] {call} failed, so every Steam call is now disabled: "
-                + $"{ex.GetType().Name}: {ex.Message}. Netplay is unaffected — nothing depends on "
-                + "Steam yet — but the Steamworks migration cannot proceed until this is understood.");
+                + $"{ex.GetType().Name}: {ex.Message}. Netplay is unaffected - nothing depends on "
+                + "Steam yet - but the Steamworks migration cannot proceed until this is understood.");
         }
     }
 }

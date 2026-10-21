@@ -225,7 +225,7 @@ namespace MegabonkTogether.Patches.Unity
             lastReportTime = now;
 
             Plugin.Log.LogWarning(
-                "Transform fallbacks fired in the last ~5s — " +
+                "Transform fallbacks fired in the last ~5s - " +
                 $"get_transform: {danglingTransformHits}, " +
                 $"get_position: {danglingPositionHits}, " +
                 $"get_rotation: {danglingRotationHits}, " +
@@ -233,7 +233,7 @@ namespace MegabonkTogether.Patches.Unity
                 $"Destroyed instance type: {lastDestroyedTypeSample}. " +
                 $"Sampled caller: {lastCallerSample}. " +
                 "Dangling hits are a destroyed reference the mod still holds; falling back to the " +
-                "local player. The type above is the destroyed object itself — measured, unlike " +
+                "local player. The type above is the destroyed object itself - measured, unlike " +
                 "the NetPlayer this line used to guess at, which the measurement disproved.");
 
             danglingTransformHits = 0;

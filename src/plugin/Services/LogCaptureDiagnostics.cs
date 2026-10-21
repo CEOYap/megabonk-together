@@ -111,7 +111,7 @@ namespace MegabonkTogether.Services
                         $"[log-capture] BepInEx {bepinexVersion}; [{SECTION}] {KEY} = false. " +
                         "Unity-sourced lines (NullReferenceException, Look rotation, etc.) will NOT " +
                         "reach LogOutput.log on this install, even though [Logging] UnityLogListening " +
-                        $"is true — they are separate gates. To capture them, set {KEY} = true under " +
+                        $"is true - they are separate gates. To capture them, set {KEY} = true under " +
                         $"[{SECTION}] in {configPath} and relaunch. Both peers must match before any " +
                         "two logs are compared.");
                     break;
