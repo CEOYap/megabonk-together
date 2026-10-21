@@ -1,4 +1,4 @@
-﻿using MegabonkTogether.Configuration;
+using MegabonkTogether.Configuration;
 using Assets.Scripts.Actors.Enemies;
 using Assets.Scripts.Managers;
 using System;
@@ -10,6 +10,9 @@ namespace MegabonkTogether.Services
     {
         public float GetCreditsTimerMultiplier();
         public float GetEnemyHpMultiplier(EEnemyFlag enemyFlag);
+
+        /// <summary>Endless (Phase 4): enemy damage to players. 1 outside Endless.</summary>
+        public float GetEnemyDamageMultiplier();
         public float GetFreeChestSpawnRateMultiplier();
         public int GetPickupXpValue();
         public void Initialize();
@@ -27,7 +30,7 @@ namespace MegabonkTogether.Services
         Six
     }
 
-    internal class GameBalanceService(IPlayerManagerService playerManagerService) : IGameBalanceService
+    internal class GameBalanceService(IPlayerManagerService playerManagerService, IEndlessRunService endlessRunService) : IGameBalanceService
     {
         private const float hpScalingPerAdditionalPlayer = Tunables.HP_SCALING_PER_ADDITIONAL_PLAYER;
         // FIX P1-4: was GetAllPlayersAlive().Count(), which materialised a Player[] plus two LINQ
@@ -94,6 +97,24 @@ namespace MegabonkTogether.Services
         }
 
 
+        /// <summary>
+        /// The stage the balance tables use. Outside Endless, the stage's place in its map. In
+        /// Endless the room's place in its map says nothing about how far the run is, and a
+        /// stage-1 room late in a run used to get stage-1 balance: there it is the run's progress
+        /// instead, the stage index or the number of stage changes so far, whichever is greater,
+        /// held at the last stage's tables.
+        /// </summary>
+        private int BalanceStageIndex => endlessRunService.Active
+            ? System.Math.Min(2, System.Math.Max(StageIndex, endlessRunService.Transitions))
+            : StageIndex;
+
+        /// <summary>Endless (Phase 4): compounding per boss loop cleared. 1 otherwise.</summary>
+        private float LoopFactor(float perLoop) => endlessRunService.Active && endlessRunService.CompletedLoops > 0
+            ? (float)System.Math.Pow(perLoop, endlessRunService.CompletedLoops)
+            : 1f;
+
+        public float GetEnemyDamageMultiplier() => LoopFactor(Tunables.ENDLESS_LOOP_DAMAGE_MULTIPLIER);
+
         public int GetMaxEnemiesSpawnable()
         {
             if (GameManager.Instance.IsFinalSwarm())
@@ -120,7 +141,7 @@ namespace MegabonkTogether.Services
                 _ => 1.0f,
             };
 
-            float stageMultiplier = StageIndex switch
+            float stageMultiplier = BalanceStageIndex switch
             {
                 0 => 1.0f,
                 1 => 1.05f,
@@ -146,7 +167,7 @@ namespace MegabonkTogether.Services
 
             float playerScaling = 1f + (PlayersCount - 1) * hpScalingPerAdditionalPlayer;
 
-            float stageMultiplier = StageIndex switch
+            float stageMultiplier = BalanceStageIndex switch
             {
                 0 => 1.0f,
                 1 => 1.1f,
@@ -154,7 +175,7 @@ namespace MegabonkTogether.Services
                 _ => 1.0f
             };
 
-            return baseMultiplier * playerScaling * stageMultiplier;
+            return baseMultiplier * playerScaling * stageMultiplier * LoopFactor(Tunables.ENDLESS_LOOP_HP_MULTIPLIER);
         }
 
         public float GetFreeChestSpawnRateMultiplier()
@@ -169,7 +190,7 @@ namespace MegabonkTogether.Services
                 _ => 1f,
             };
 
-            float stageMultiplier = StageIndex switch
+            float stageMultiplier = BalanceStageIndex switch
             {
                 0 => 1.0f,
                 1 => 1.1f,
@@ -198,7 +219,7 @@ namespace MegabonkTogether.Services
             var chestSpawnMultiplier = GetFreeChestSpawnRateMultiplier();
             var xpValue = GetPickupXpValue();
 
-            Plugin.Log.LogInfo($"[GameBalance] Initialized for {PlayersCount} players, Stage {StageIndex + 1}, Difficulty: {GetDifficultyLevelByPlayers()}");
+            Plugin.Log.LogInfo($"[GameBalance] Initialized for {PlayersCount} players, Stage {StageIndex + 1} (balanced as {BalanceStageIndex + 1}), Difficulty: {GetDifficultyLevelByPlayers()}" + (endlessRunService.Active ? $", Endless loop {endlessRunService.CompletedLoops}, enemy damage x{GetEnemyDamageMultiplier():F2}" : ""));
             Plugin.Log.LogInfo($"[GameBalance] Credits Timer Multiplier (Disabled): {creditsMultiplier:F2}x");
             Plugin.Log.LogInfo($"[GameBalance] Basic Enemy HP Base Multiplier: {enemyHpMultiplier:F2}x");
             Plugin.Log.LogInfo($"[GameBalance] Free Chest Spawn Rate Multiplier: {chestSpawnMultiplier:F2}x");

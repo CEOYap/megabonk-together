@@ -1,4 +1,4 @@
-﻿namespace MegabonkTogether.Configuration
+namespace MegabonkTogether.Configuration
 {
     /// <summary>
     /// Every number in the mod that is worth tuning, in one place.
@@ -303,6 +303,20 @@
         /// <see cref="ModConfig"/> flag is set.</para>
         /// </summary>
         internal const float DIAGNOSTIC_REPORT_INTERVAL_SECONDS = 10f;
+
+        #endregion
+
+        #region Endless Run scaling (Phase 4)
+
+        /// <summary>
+        /// Enemy HP and damage multiply by these once per boss loop cleared: three regular rooms
+        /// and a boss. Compounding, on top of the game's own time-based difficulty. Chosen by the
+        /// host player as "moderate": after four loops about x5 HP and x2.4 damage. Every peer
+        /// computes the same factor from the loop count, which the shared route makes identical, so
+        /// these are safe to tune without a protocol change, provided every peer runs the same build.
+        /// </summary>
+        internal const float ENDLESS_LOOP_HP_MULTIPLIER = 1.5f;
+        internal const float ENDLESS_LOOP_DAMAGE_MULTIPLIER = 1.25f;
 
         #endregion
     }

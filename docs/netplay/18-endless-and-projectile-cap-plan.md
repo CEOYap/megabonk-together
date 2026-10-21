@@ -1,6 +1,6 @@
 # Endless Run and No Projectile Cap — research and plan
 
-**Status:** Phases 1 to 3 built 2026-10-20: lobby settings, No Projectile Cap, and Endless on Forest, Desert and Graveyard. **UNVERIFIED, not run in-game.** Phase 4 (scaling) is still a plan. Written 2026-10-20 from two sources:
+**Status:** Phases 1 to 4 built (2026-10-20 to 2026-10-21): lobby settings, No Projectile Cap, Endless on Forest, Desert and Graveyard, and Endless scaling. Phases 1 to 3 are confirmed in play. **Phase 4 is UNVERIFIED, not run in-game.** Written 2026-10-20 from two sources:
 
 - **Our own decompile** of build 21750826. That is authoritative.
 - **A single-player reference mod** (MelonLoader, not BepInEx), decompiled for research only. It is
@@ -471,6 +471,49 @@ The `IsFirstStage` fix and the Phase 2 and 3 room handling therefore hold.
   with a null damage source. The original can only throw there, so such hits are dropped.
 
 **UNVERIFIED, not run in-game.**
+
+### Phase 4, as built (2026-10-21): Endless scaling
+
+**The host player's choices:** scaling is always on with Endless (no separate toggle, so no new
+message), at "moderate" strength.
+
+**Balance follows the run.** `GameBalanceService`'s tables (enemy HP, the credits timer, free
+chest rate) are keyed on stage 0/1/2. In Endless that index is a room's place in its map, so a
+stage-1 room late in a run got stage-1 balance. `BalanceStageIndex` is now
+`min(2, max(stage index, stage changes so far))`: the run's progress, held at the last stage's
+tables.
+
+**Scaling per boss loop.** A loop is three regular rooms and a boss. `EndlessRunService` counts
+`CompletedLoops`: one each time a boss room is left. Every peer has the same count, because every
+peer follows the host's route. Per loop, compounding, on top of the game's own time-based
+difficulty:
+
+| | Per loop | After 4 loops | Applied |
+|---|---|---|---|
+| Enemy HP | ×1.5 (`ENDLESS_LOOP_HP_MULTIPLIER`) | ≈ ×5.1 | Host only, through the existing `EnemyStats.GetHp` postfix. Clients get it in the spawn message. |
+| Enemy damage | ×1.25 (`ENDLESS_LOOP_DAMAGE_MULTIPLIER`) | ≈ ×2.4 | Every peer: a new `EnemyStats.GetDamage` postfix |
+
+`GetDamage` (`0x18041B290`) feeds `DamageUtility.GetPlayerDamage` and the enemies' special
+attacks (xrefs). A player takes damage on their own machine, so the damage factor must be the same
+on every peer, which the shared loop count guarantees.
+
+**Logs:**
+
+- `[endless] Boss loop N cleared; enemies now xA HP, xB damage.`
+- The per-stage `[GameBalance] Initialized ... (balanced as S), Endless loop N, enemy damage xB`.
+
+**Not changed:**
+
+- **Enemy speed.**
+- **Enemy counts.** Those follow `GetMaxEnemiesSpawnable` and the game's own spawn timeline.
+- **Tunables.** The constants live in `Configuration/Tunables.cs`, and every peer must run the same
+  build.
+
+**Confirm in play:**
+
+- **All peers agree.** After each boss room, every peer logs the same `Boss loop N` line.
+- **Each loop is harder,** noticeably but survivably at moderate.
+- **No late easy rooms.** A late Forest 1 no longer logs `balanced as 1`.
 
 ### Phases
 

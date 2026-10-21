@@ -39,6 +39,12 @@ namespace MegabonkTogether.Services
         /// <summary>Stage changes so far this run; 0 in the starting room.</summary>
         int Transitions { get; }
 
+        /// <summary>
+        /// Boss rooms left behind this run: the boss loops cleared. The same on every peer, since
+        /// every peer follows the host's route. Drives Phase 4's scaling.
+        /// </summary>
+        int CompletedLoops { get; }
+
         /// <summary>A run has started on this peer, with this config.</summary>
         void BeginRun(bool isHost, RunConfig config);
 
@@ -103,6 +109,8 @@ namespace MegabonkTogether.Services
         public EndlessRoom CurrentRoom => current;
 
         public int Transitions => transitions;
+
+        public int CompletedLoops { get; private set; }
 
         public bool NextRoomKnown => Active && (isHost || received.ContainsKey(transitions + 1));
 
@@ -188,6 +196,12 @@ namespace MegabonkTogether.Services
             MapController.currentMap = mapData;
             MapController.currentStage = stageData;
             MapController.isFinalBossStage = false;
+
+            if (EndlessRooms.IsBoss(current))
+            {
+                CompletedLoops++;
+                logger.LogInfo($"[endless] Boss loop {CompletedLoops} cleared; enemies now x{System.Math.Pow(Configuration.Tunables.ENDLESS_LOOP_HP_MULTIPLIER, CompletedLoops):0.##} HP, x{System.Math.Pow(Configuration.Tunables.ENDLESS_LOOP_DAMAGE_MULTIPLIER, CompletedLoops):0.##} damage.");
+            }
 
             transitions = sequence;
             current = room;
@@ -296,6 +310,7 @@ namespace MegabonkTogether.Services
         {
             Active = false;
             transitions = 0;
+            CompletedLoops = 0;
             regularCompleted = 0;
             redirecting = false;
             graveyardPreparedFor = -1;

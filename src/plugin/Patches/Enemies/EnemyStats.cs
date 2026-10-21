@@ -1,4 +1,4 @@
-﻿using Assets.Scripts.Actors.Enemies;
+using Assets.Scripts.Actors.Enemies;
 using Assets.Scripts.Inventory.Stats;
 using HarmonyLib;
 using MegabonkTogether.Services;
@@ -32,6 +32,26 @@ namespace MegabonkTogether.Patches.Enemies
 
             var multiplier = gameBalanceService.GetEnemyHpMultiplier(enemy.enemyFlag);
             __result *= multiplier;
+        }
+
+        /// <summary>
+        /// Endless (Phase 4): enemy damage to players grows per boss loop. <c>GetDamage</c>
+        /// (VA 0x18041B290) feeds <c>DamageUtility.GetPlayerDamage</c> and the enemies' special
+        /// attacks (xrefs, decompiled), and a player takes damage on their own machine, so this runs
+        /// on every peer, unlike the host-only HP above. Every peer has the same loop count, since
+        /// every peer follows the host's route. No ownership check: each peer scales the damage its
+        /// own player takes. <b>UNVERIFIED, not run in-game.</b>
+        /// </summary>
+        [HarmonyPostfix]
+        [HarmonyPatch(nameof(EnemyStats.GetDamage))]
+        private static void GetDamagePostfix(ref float __result)
+        {
+            if (!synchronizationService.HasNetplaySessionInitialized())
+            {
+                return;
+            }
+
+            __result *= gameBalanceService.GetEnemyDamageMultiplier();
         }
     }
 }
