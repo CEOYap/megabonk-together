@@ -1,4 +1,4 @@
-﻿using Assets.Scripts.Actors.Enemies;
+using Assets.Scripts.Actors.Enemies;
 using Assets.Scripts.Managers;
 using HarmonyLib;
 using MegabonkTogether.Services;
@@ -150,6 +150,20 @@ namespace MegabonkTogether.Patches.Enemies
                 return true;
             }
 
+            // A boss that comes out of an object spawns at the object: a Graveyard coffin's ghosts
+            // (whose fight raises a barrier round the coffin), a Desert grave's, a bush or bandit
+            // challenge, the Skeleton King statue, the Ghost King's arena, and our revive coffin's
+            // ghost. The game gives those the object's position on purpose; only the timeline's
+            // miniboss (SummonerController.EventMiniboss) is placed round the local player, which is
+            // all OB-11 was about. 2026-10-21: coffin and grave bosses appeared next to a random
+            // player.
+            if (ObjectBossSpawns.Source != null || Plugin.Instance.CurrentReviver.HasValue)
+            {
+                Plugin.Log.LogInfo(
+                    $"OB-11: leaving a boss spawned by {ObjectBossSpawns.Source ?? "a revive coffin"} where it came from (flag {(int)enemyFlag}).");
+                return true;
+            }
+
             // Logged unconditionally, at Info, because this line is the only thing that
             // distinguishes "the re-centring ran and chose the host" from "the patch never fired".
             // Two runs were called fixed on the strength of a counter that only counted exceptions,
@@ -192,5 +206,58 @@ namespace MegabonkTogether.Patches.Enemies
 
             //Plugin.Log.LogInfo($"GetNumMaxEnemies: {__instance.numEnemies} / {__result} ");
         }
+    }
+    /// <summary>
+    /// The callers of <c>EnemyManager.SpawnBoss</c> (VA 0x18041A200, xrefs) that spawn a boss out of
+    /// an object, at that object. While one runs, <see cref="Source"/> names it, and the OB-11
+    /// re-centring in <c>SpawnBoss_Prefix</c> leaves its position alone. The other callers are the
+    /// timeline miniboss (re-centred, by design), the stage and final bosses (exempt by flag) and
+    /// the dungeon's overtime spawns in <c>GameManager</c> (unchanged).
+    ///
+    /// <para>Void prefixes and finalizers: they only name the scope, on whichever peer runs the
+    /// method; only the host's <c>SpawnBoss</c> reads it. <b>UNVERIFIED, not run in-game.</b></para>
+    /// </summary>
+    [HarmonyPatch]
+    internal static class ObjectBossSpawns
+    {
+        internal static string Source { get; private set; }
+
+        private static void Enter(string source, out string previous)
+        {
+            previous = Source;
+            Source = source;
+        }
+
+        private static void Exit(string previous) => Source = previous;
+
+        [HarmonyPrefix, HarmonyPatch(typeof(InteractableCoffin), nameof(InteractableCoffin.Interact))]
+        public static void Coffin_Prefix(out string __state) => Enter("a coffin", out __state);
+
+        [HarmonyFinalizer, HarmonyPatch(typeof(InteractableCoffin), nameof(InteractableCoffin.Interact))]
+        public static void Coffin_Finalizer(string __state) => Exit(__state);
+
+        [HarmonyPrefix, HarmonyPatch(typeof(InteractableDesertGrave), "SpawnEnemy")]
+        public static void DesertGrave_Prefix(out string __state) => Enter("a desert grave", out __state);
+
+        [HarmonyFinalizer, HarmonyPatch(typeof(InteractableDesertGrave), "SpawnEnemy")]
+        public static void DesertGrave_Finalizer(string __state) => Exit(__state);
+
+        [HarmonyPrefix, HarmonyPatch(typeof(InteractableCharacterFight), "SpawnEnemy")]
+        public static void CharacterFight_Prefix(out string __state) => Enter("a challenge character", out __state);
+
+        [HarmonyFinalizer, HarmonyPatch(typeof(InteractableCharacterFight), "SpawnEnemy")]
+        public static void CharacterFight_Finalizer(string __state) => Exit(__state);
+
+        [HarmonyPrefix, HarmonyPatch(typeof(InteractableSkeletonKingStatue), "SpawnEnemy")]
+        public static void SkeletonKingStatue_Prefix(out string __state) => Enter("the Skeleton King statue", out __state);
+
+        [HarmonyFinalizer, HarmonyPatch(typeof(InteractableSkeletonKingStatue), "SpawnEnemy")]
+        public static void SkeletonKingStatue_Finalizer(string __state) => Exit(__state);
+
+        [HarmonyPrefix, HarmonyPatch(typeof(GraveyardBossRoom), "CheckSpawnBoss")]
+        public static void GraveyardBossRoom_Prefix(out string __state) => Enter("the Ghost King's arena", out __state);
+
+        [HarmonyFinalizer, HarmonyPatch(typeof(GraveyardBossRoom), "CheckSpawnBoss")]
+        public static void GraveyardBossRoom_Finalizer(string __state) => Exit(__state);
     }
 }

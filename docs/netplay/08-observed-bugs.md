@@ -1128,6 +1128,28 @@ exists to prevent — and the same reasoning that makes `SpawnBoss_Prefix` suppr
 
 ---
 
+### 2026-10-21: second scope correction, bosses that come out of an object
+
+**Reported in play.** Bosses from a Graveyard coffin, a Desert grave and a bush or bandit
+challenge appeared next to a random player, not at their object. For a coffin that breaks the
+fight: activating it raises a small barrier round the coffin.
+
+**Cause.** The re-centring applied to every `SpawnBoss` except arena bosses. An xref on
+`EnemyManager.SpawnBoss` (`0x18041A200`) gives its callers:
+
+| Caller | Re-centred? |
+|---|---|
+| The timeline's miniboss (`SummonerController.EventMiniboss`) | **Yes.** The only one placed round the local player; what OB-11 is about. |
+| The stage boss and final boss | Already exempt, by flag (the first correction). |
+| `InteractableCoffin.Interact`, `InteractableDesertGrave.SpawnEnemy`, `InteractableCharacterFight.SpawnEnemy`, `InteractableSkeletonKingStatue.SpawnEnemy`, `GraveyardBossRoom.CheckSpawnBoss` | **No longer.** They spawn at their object on purpose. |
+| Our own revive coffin's ghost (`InteractableReviver`) | **No longer.** It was being moved too. |
+| `GameManager`'s dungeon overtime spawns | Unchanged. |
+
+**Fixed.** `ObjectBossSpawns` names the object while each of those callers runs, and so does the
+revive coffin's existing `CurrentReviver` flag. `SpawnBoss_Prefix` then leaves the position alone
+and logs `OB-11: leaving a boss spawned by <object> where it came from`. **UNVERIFIED, not run
+in-game.**
+
 <a name="ob-12"></a>
 ### 2026-09-04 — third report, and why the previous two "confirmations" were worthless
 
