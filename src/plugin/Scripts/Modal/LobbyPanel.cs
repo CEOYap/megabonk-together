@@ -161,6 +161,13 @@ namespace MegabonkTogether.Scripts.Modal
         /// column could not afford, which is why this is a view and not a button.
         /// </summary>
         private bool showingOptions;
+
+        // The options view's layout: the button column, stretched up into the member list's space.
+        // Saved from the prefab the first time, so the lobby view gets the original back exactly.
+        private bool columnLayoutSaved;
+        private bool columnInOptionsLayout;
+        private Vector2 columnOffsetMin;
+        private Vector2 columnOffsetMax;
         private CustomButton leaveLobbyButton;
         private CustomButton readyButton;
         private CustomButton startButton;
@@ -650,6 +657,8 @@ namespace MegabonkTogether.Scripts.Modal
                 memberListRoot.gameObject.SetActive(true);
             }
 
+            SetOptionsColumnLayout(false);
+
             // Hide rather than grey out, so the panel never offers an action that cannot work.
             var inLobby = lobbyViewService.IsInLobby;
 
@@ -752,6 +761,8 @@ namespace MegabonkTogether.Scripts.Modal
                 memberListRoot.gameObject.SetActive(false);
             }
 
+            SetOptionsColumnLayout(true);
+
             SetButtonVisible(inviteButton, false);
             SetButtonVisible(copyCodeButton, false);
             SetButtonVisible(joinFromClipboardButton, false);
@@ -774,6 +785,63 @@ namespace MegabonkTogether.Scripts.Modal
             lobbyWindow?.FindAllButtonsInWindow();
 
             WarnIfButtonColumnOverflows();
+        }
+
+        /// <summary>
+        /// The options view has no member list, and left the button column where the lobby view
+        /// needs it, under an empty list (2026-10-21: the whole top half of the card blank). Here the
+        /// whole column moves up until its top edge is the member list's, keeping its size, so the
+        /// options start under the title and the free space ends up below them, where more buttons
+        /// will go. Moved rather than stretched: re-aligning the layout group needs
+        /// <c>TextAnchor</c>, from a Unity module the plugin does not reference. The lobby view gets
+        /// the prefab's own layout back. Only on a change of view: Refresh runs twice a second.
+        /// </summary>
+        private void SetOptionsColumnLayout(bool options)
+        {
+            if (columnInOptionsLayout == options || buttonContainer == null || memberListRoot == null)
+            {
+                return;
+            }
+
+            // GetComponent, not a cast: see WarnIfButtonColumnOverflows.
+            var column = buttonContainer.GetComponent<RectTransform>();
+            var members = memberListRoot.GetComponent<RectTransform>();
+            if (column == null || members == null)
+            {
+                return;
+            }
+
+            if (!columnLayoutSaved)
+            {
+                columnOffsetMin = column.offsetMin;
+                columnOffsetMax = column.offsetMax;
+                columnLayoutSaved = true;
+            }
+
+            if (options)
+            {
+                // World corners: index 1 is top-left. The gap between the two top edges, in the
+                // column's parent space, is how far its top edge moves.
+                var memberCorners = new Vector3[4];
+                var columnCorners = new Vector3[4];
+                members.GetWorldCorners(memberCorners);
+                column.GetWorldCorners(columnCorners);
+
+                var parent = column.parent;
+                var memberTop = parent != null ? parent.InverseTransformPoint(memberCorners[1]).y : memberCorners[1].y;
+                var columnTop = parent != null ? parent.InverseTransformPoint(columnCorners[1]).y : columnCorners[1].y;
+
+                var shift = new Vector2(0f, Mathf.Max(0f, memberTop - columnTop));
+                column.offsetMin = columnOffsetMin + shift;
+                column.offsetMax = columnOffsetMax + shift;
+            }
+            else
+            {
+                column.offsetMin = columnOffsetMin;
+                column.offsetMax = columnOffsetMax;
+            }
+
+            columnInOptionsLayout = options;
         }
 
         private void OnOptionsClicked()
