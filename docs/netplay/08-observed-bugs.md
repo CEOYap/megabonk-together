@@ -3210,7 +3210,7 @@ per-frame site now returns instead of throwing when either is null.
 
 <a name="ob-28"></a>
 
-## OB-28 — The client's minimap throws every frame after the boss dies — **FIXED 2026-10-18, not yet confirmed in play**
+## OB-28 — The client's minimap throws every frame after the boss dies — **FIXED, CONFIRMED by log 2026-10-21**
 
 **Seen in the 2026-10-18 evening client log**, never before in any log: **948**
 `ArgumentException: An item with the same key has already been added. Key: BossSpawner(Clone)`,
@@ -3226,6 +3226,8 @@ labels were off by a slot again.
 
 **Fix.** A prefix on `AddArrow` skips a target already in `arrowDict`, so `TrySpotBossSpawner` sets
 its flag and stops asking. **Confirms fixed as:** no `same key has already been added` lines.
+
+**Confirmed by log, 2026-10-21 Endless run (host plus two bots; Graveyard start, nine stage changes across Forest, Desert and Graveyard, with Ent and the Ghost King as boss rooms). The host's log was overwritten by a relaunch, so this rests on both bots' logs.** Stage bosses died on several stages (`Boss defeated` on both bots), and neither bot logged `same key has already been added`.
 
 <a name="ob-29"></a>
 
@@ -3324,7 +3326,7 @@ not part of this report.
 
 <a name="ob-31"></a>
 
-## OB-31 — Levels drift apart at a stage transition, and never come back — **FIXED 2026-10-19, not yet confirmed in play**
+## OB-31 — Levels drift apart at a stage transition, and never come back — **FIXED, CONFIRMED by log 2026-10-21**
 
 **Reported 2026-10-19** (owner hosting, test bot as client): "level discrepancy which makes my gameplay
 not smooth". Every level-up opens a shared-experience reward window for both players, so a peer that
@@ -3379,6 +3381,8 @@ away, out of its weapons' reach (5.75M HP, about 4k lost a minute). Fixed in the
 the ghost during the revive fight. Separately worth a look: the ghost's HP scales with run time and
 revive count (`RebalanceIfNeededReviverEnemy`: x1/6, x1/3, x1/2 ...), 5.75M at the third final-stage
 revive, which may be a lot for one surviving player.
+
+**Confirmed by log, 2026-10-21 Endless run (host plus two bots; Graveyard start, nine stage changes across Forest, Desert and Graveyard, with Ent and the Ghost King as boss rooms). The host's log was overwritten by a relaunch, so this rests on both bots' logs.** Nine stage changes passed with no `level host N / local M` line and no `[xp] behind` line, and every digest stayed in sync.
 
 <a name="ob-32"></a>
 
@@ -3502,7 +3506,7 @@ restarting — both directions — and B's log shows the owner-changed and leavi
 
 <a name="ob-34"></a>
 
-## OB-34 — Item hits echoed between peers until the enemy died; one client never saw the final boss die — **FIXED; echo CONFIRMED by log 2026-10-20, final-boss death not yet seen**
+## OB-34 — Item hits echoed between peers until the enemy died; one client never saw the final boss die — **FIXED, CONFIRMED by log 2026-10-21**
 
 **Reported 2026-10-19** (host plus two test bots, host on a god-mode testing plugin): the final boss died
 for the host and player 2, but player 3 kept a boss bar at 14.8K / 8.4M and the objective unticked.
@@ -3679,7 +3683,7 @@ Both clients' logs have zero `TumbleWeedInterpolator` exceptions, against about 
 previous run. No `[tumbleweed] OB-35: dropped` line appeared, so the clear on a level change was
 enough on its own.
 
-## OB-36 — Falling off the final arena desyncs every position on that peer — **FIXED 2026-10-19, not yet confirmed in play**
+## OB-36 — Falling off the final arena desyncs every position on that peer — **FIXED, CONFIRMED by log 2026-10-21 (bounds); positions not cross-checked**
 
 **Observed 2026-10-19**, three players, final arena. The final boss's HP matched on all three peers
 at every sample. Its position matched for the first three samples, then both clients' copies sat at
@@ -4069,7 +4073,7 @@ This pass adds about 30 hooks, each checked against `dump.cs` names and paramete
 
 
 <a name="ob-44"></a>
-## OB-44 — With two stage bosses, clients opened the portal after the first died — **FIXED 2026-10-20, not yet confirmed in play**
+## OB-44 — With two stage bosses, clients opened the portal after the first died — **FIXED, CONFIRMED by log 2026-10-21**
 
 **Reported 2026-10-19.** In stage 2, after the host killed the boss, the host saw no portal but
 both bots did. A bot walked through it and the run moved on.
@@ -4109,6 +4113,7 @@ portal at all; see [OB-46](#ob-46).
 **UNVERIFIED, not run in-game.** To confirm, a stage with two bosses (stage 2 in this run) should
 show its portal on all peers only after the second boss dies.
 
+**Confirmed by log, 2026-10-21 Endless run (host plus two bots; Graveyard start, nine stage changes across Forest, Desert and Graveyard, with Ent and the Ghost King as boss rooms). The host's log was overwritten by a relaunch, so this rests on both bots' logs.** With two stage bosses, both bots logged `OB-44: a stage boss died but another (id ...) is still alive; the portal waits for it.`, then went on together.
 
 <a name="ob-45"></a>
 ## OB-45 — Test tooling: a fixed item loadout and an end-screen report in the log — **ADDED 2026-10-20**
@@ -4681,4 +4686,8 @@ the revive completes.
 - **The echo is gone.** The clients' `[bw] EnemyDamaged` ran at 0.1 to 3.7 messages a second, against the storm of 2026-10-19.
 - **Aggregation was not exercised.** The host's line read 31 to 45 hits a second at 1.0 hits per message, a load where nothing combines.
 - **Not seen yet:** the final boss's death reaching every client. The run never reached the final arena.
+
+**Confirmed by log, 2026-10-21 Endless run (host plus two bots; Graveyard start, nine stage changes across Forest, Desert and Graveyard, with Ent and the Ghost King as boss rooms). The host's log was overwritten by a relaunch, so this rests on both bots' logs.** The final boss (Ent3, 9.5M HP) lost HP identically on both bots. Every peer then left through the portal its death opens (`Stage change 4` on both). The clients' `[bw] EnemyDamaged` peaked at 2.8 messages a second.
+
+**Confirmed by log, 2026-10-21 Endless run (host plus two bots; Graveyard start, nine stage changes across Forest, Desert and Graveyard, with Ent and the Ghost King as boss rooms). The host's log was overwritten by a relaunch, so this rests on both bots' logs.** In the Ent arena a bot logged `[world] OB-36: teleported back to bounds; position range 600 -> 600.` That `[boss]` positions kept matching afterwards could not be compared against the host.
 
