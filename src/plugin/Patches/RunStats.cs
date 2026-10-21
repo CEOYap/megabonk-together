@@ -49,6 +49,12 @@ namespace MegabonkTogether.Patches
                 return true;
             }
 
+            // A scripted kill is nobody's damage. See ScriptedKillPatches.
+            if (ScriptedKillPatches.InScriptedKill)
+            {
+                return false;
+            }
+
             uint? attacker = null;
             if (synchronizationService.HasNetplaySessionStarted())
             {
@@ -264,5 +270,40 @@ namespace MegabonkTogether.Patches
             checkedSources.Clear();
             droppedSources.Clear();
         }
+    }
+    /// <summary>
+    /// <c>Enemy.Kill</c> (VA 0x1804AEC60, decompiled) kills by dealing the enemy its own HP plus a
+    /// little, in one hit, under its caller's source. It is the game's scripted "kill everything"
+    /// call: a final boss's death clearing the field (<c>FinalFightController</c>), the Ghost King's
+    /// arena (<c>GraveyardBossRoom.BossFightOver</c>), kill triggers. The damage panel recorded each
+    /// such hit. In a normal run that lands just before the end screen; in Endless it repeats after
+    /// every boss room at late-run enemy HP, and on 2026-10-21 the host's panel read
+    /// "Unkown 51,247,009,792" beside Rockets LVL 40 at 204M. While it runs, the panel skips the
+    /// hit; the kill itself still counts.
+    ///
+    /// <para>Void prefix and finalizer: they only set the flag. No ownership check: every machine
+    /// keeps its own panel. <b>UNVERIFIED</b> that every one of those 51 billion came from here.</para>
+    /// </summary>
+    [HarmonyPatch(typeof(Enemy))]
+    internal static class ScriptedKillPatches
+    {
+        private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
+
+        internal static bool InScriptedKill { get; private set; }
+
+        [HarmonyPrefix]
+        [HarmonyPatch(nameof(Enemy.Kill))]
+        public static void Kill_Prefix(out bool __state)
+        {
+            __state = InScriptedKill;
+            if (synchronizationService.HasNetplaySessionInitialized())
+            {
+                InScriptedKill = true;
+            }
+        }
+
+        [HarmonyFinalizer]
+        [HarmonyPatch(nameof(Enemy.Kill))]
+        public static void Kill_Finalizer(bool __state) => InScriptedKill = __state;
     }
 }

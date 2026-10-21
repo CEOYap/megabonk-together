@@ -171,6 +171,16 @@ namespace MegabonkTogether.Services
         private readonly ManualLogSource logger;
         private readonly ConcurrentBag<SpawnedObject> toSpawns = [];
         private readonly ConcurrentBag<SpawnedObjectInCrypt> toUpdate = [];
+
+        /// <summary>
+        /// Crypt objects the host registered that this peer has not matched yet, by netplay id, and
+        /// how many half-second passes each has had. The retry exists for a crypt that generates
+        /// here a little after the host's; past the cap the object is not coming. 2026-10-21: an
+        /// Endless arrival clears the first crypt on every peer, so ~24 objects the host had already
+        /// registered were retried, and logged, every half second for the whole room: 19,000 lines.
+        /// </summary>
+        private readonly Dictionary<uint, int> cryptUpdateAttempts = [];
+        private const int MAX_CRYPT_UPDATE_ATTEMPTS = 20;
         private readonly ConcurrentQueue<SpawnedEnemy> pendingEnemySpawns = new();
         private readonly HashSet<uint> enemiesDiedBeforeSpawn = [];
 
@@ -397,6 +407,7 @@ namespace MegabonkTogether.Services
             pendingSharedXp = 0;
             toSpawns.Clear();
             toUpdate.Clear();
+            cryptUpdateAttempts.Clear();
 
             shrineChargingPlayers.Clear();
             pylonChargingPlayers.Clear();
@@ -1051,6 +1062,11 @@ namespace MegabonkTogether.Services
 
             pendingEnemySpawns.Clear();
             enemiesDiedBeforeSpawn.Clear();
+
+            // A crypt object belongs to its level's crypt. Left queued, it could match an object at
+            // the same position in a later Graveyard visit.
+            while (toUpdate.TryTake(out _)) { }
+            cryptUpdateAttempts.Clear();
             requestedShrineCompletions.Clear();
             Patches.Enemies.EnemyPatch.EnemiesDistanceThrottler.ClearAll();
 
@@ -1352,17 +1368,30 @@ namespace MegabonkTogether.Services
                                 success = true;
                             }
 
-                            if (!success)
+                            if (success)
                             {
-                                unupdatedYet.Add(toUpd);
+                                cryptUpdateAttempts.Remove(toUpd.NetplayId);
+                            }
+                            else
+                            {
+                                cryptUpdateAttempts.TryGetValue(toUpd.NetplayId, out var attempts);
+                                if (++attempts >= MAX_CRYPT_UPDATE_ATTEMPTS)
+                                {
+                                    cryptUpdateAttempts.Remove(toUpd.NetplayId);
+                                    logger.LogInfo($"Gave up matching crypt object {toUpd.NetplayId} after {MAX_CRYPT_UPDATE_ATTEMPTS / 2} s; its crypt is not here.");
+                                }
+                                else
+                                {
+                                    cryptUpdateAttempts[toUpd.NetplayId] = attempts;
+                                    unupdatedYet.Add(toUpd);
+                                }
                             }
                         }
                         canUpdate = toUpdate.Count > 0;
                     }
 
-                    foreach (var item in unupdatedYet) //Add back to retry later
+                    foreach (var item in unupdatedYet) //Add back to retry later; logged once, when given up
                     {
-                        logger.LogWarning($"Retrying update for object in crypt at position: x:{item.Position.QuantizedX} y:{item.Position.QuantizedY} z:{item.Position.QuantizedZ}");
                         toUpdate.Add(item);
                     }
                 }

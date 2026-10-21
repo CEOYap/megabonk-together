@@ -3386,7 +3386,7 @@ revive, which may be a lot for one surviving player.
 
 <a name="ob-32"></a>
 
-## OB-32 — A Desert tumbleweed spawns on both peers in every stage's ready barrier — **FIXED 2026-10-19, not yet confirmed in play**
+## OB-32 — A Desert tumbleweed spawns on both peers in every stage's ready barrier — **FIXED, CONFIRMED in play 2026-10-21**
 
 Found by an audit, not a report: after OB-8 and OB-31, every Harmony patch that enforces host
 authority and opens with `if (!HasNetplaySessionStarted()) return true;` was checked for whether game
@@ -3470,6 +3470,8 @@ not-Started states above. VAs are from `megabonk-re/build-21750826/dump.cs`.
 **Not covered by this audit:** the `LoadingNextLevel` window (portal entered, old scene still
 alive for a few frames) and `Endgame` are also not-Started, so the same guard opens there; nothing
 there was looked at.
+
+**Confirmed, 2026-10-21 Endless run (host plus two bots, eleven stage changes, including Desert rooms and the Ent and Pharaoh arenas; the host's log was kept).** The host's log has no `TumbleWeed not found ... OnTumbleWeedDespawned` line across several Desert rooms, and the host player saw no motionless tumbleweed.
 
 <a name="ob-33"></a>
 
@@ -3683,7 +3685,7 @@ Both clients' logs have zero `TumbleWeedInterpolator` exceptions, against about 
 previous run. No `[tumbleweed] OB-35: dropped` line appeared, so the clear on a level change was
 enough on its own.
 
-## OB-36 — Falling off the final arena desyncs every position on that peer — **FIXED, CONFIRMED by log 2026-10-21 (bounds); positions not cross-checked**
+## OB-36 — Falling off the final arena desyncs every position on that peer — **FIXED, CONFIRMED in play 2026-10-21**
 
 **Observed 2026-10-19**, three players, final arena. The final boss's HP matched on all three peers
 at every sample. Its position matched for the first three samples, then both clients' copies sat at
@@ -4690,4 +4692,6 @@ the revive completes.
 **Confirmed by log, 2026-10-21 Endless run (host plus two bots; Graveyard start, nine stage changes across Forest, Desert and Graveyard, with Ent and the Ghost King as boss rooms). The host's log was overwritten by a relaunch, so this rests on both bots' logs.** The final boss (Ent3, 9.5M HP) lost HP identically on both bots. Every peer then left through the portal its death opens (`Stage change 4` on both). The clients' `[bw] EnemyDamaged` peaked at 2.8 messages a second.
 
 **Confirmed by log, 2026-10-21 Endless run (host plus two bots; Graveyard start, nine stage changes across Forest, Desert and Graveyard, with Ent and the Ghost King as boss rooms). The host's log was overwritten by a relaunch, so this rests on both bots' logs.** In the Ent arena a bot logged `[world] OB-36: teleported back to bounds; position range 600 -> 600.` That `[boss]` positions kept matching afterwards could not be compared against the host.
+
+**Confirmed, 2026-10-21 Endless run (host plus two bots, eleven stage changes, including Desert rooms and the Ent and Pharaoh arenas; the host's log was kept).** Falls off the final arena logged `[world] OB-36: teleported back to bounds; position range 600 -> 600.` three times across the peers, and the host player reported no desync afterwards.
 

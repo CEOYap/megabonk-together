@@ -424,6 +424,43 @@ end screen's time comes from the same reset is **LIKELY**: the time matched a re
 
 **UNVERIFIED, not run in-game.**
 
+### Third run, 2026-10-21: confirmed, and four leftovers fixed
+
+**Confirmed in play** (host player and logs). The run made eleven stage changes and passed
+through every room kind:
+
+- **Graveyard rooms:** the surface, Crypt 1 and Crypt 2.
+- **Boss rooms:** Ent, Pharaoh with its pylons, and the Ghost King.
+- **Other rooms:** Forest and Desert.
+
+It confirmed:
+
+- **The end screen covers the whole run:** 647 kills on the host.
+- **Chest prices** kept rising throughout.
+- **Bosses and pylons** worked on every peer.
+
+The `IsFirstStage` fix and the Phase 2 and 3 room handling therefore hold.
+
+**Fixed after it:**
+
+- **Crypt objects retried forever.** An Endless arrival clears the first crypt on every peer.
+  Clients then retried about 24 crypt objects the host had registered, every half second for the
+  whole room, with no limit, logging each attempt: about 19,000 lines per bot. Each object now
+  gets 20 passes (10 s, enough for a crypt that generates late on a client). After that it is
+  dropped with one log line. The queue is also cleared in `PrepareForNextLevel`, so an object from
+  one level cannot match one at the same position in a later Graveyard visit.
+- **Scripted kills on the damage panel.** The host's panel read `Unkown 51,247,009,792`.
+  `Enemy.Kill` (`0x1804AEC60`) kills by dealing an enemy its own HP in one hit. A final boss's
+  death runs it on every remaining enemy, and so does the Ghost King's arena. The panel recorded
+  each of those hits, and in Endless that repeats after every boss room at late-run enemy HP. The
+  panel now skips hits made inside `Kill`; the kills still count.
+- **`UiFocusManager.Update` exceptions.** That method (`0x180393840`) dereferences
+  `EventSystem.current` unchecked. The host's Player.log had 8,564 exceptions from it, starting in
+  the lobby, and a bot's had the same. It is now skipped on frames with no event system. This is
+  not specific to Endless.
+
+**UNVERIFIED, not run in-game.**
+
 ### Phases
 
 | Phase | Scope | Risk |
