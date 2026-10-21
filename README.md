@@ -12,7 +12,7 @@
 [![Forks][forks-shield]][forks-url]
 [![Stargazers][stars-shield]][stars-url]
 [![Issues][issues-shield]][issues-url]
-[![MIT License][license-shield]][license-url]
+[![GPL-2.0 License][license-shield]][license-url]
 
 # About The Mod
 
@@ -38,60 +38,119 @@ This mod feature:
 
 More info at [Notable Network Changes](./NETPLAY_CHANGES.md)
 
-## What's confirmed working (as of 2026-10-18)
+## New in this build
 
-The rest of this README is older than the current build. This list is kept up to date. Everything
-below has been **played and confirmed in sync** in two-player online runs. Things that are built but
-not yet confirmed in play are listed separately, and are not counted as working.
+These are new since v5.1.0 and not released yet. Each one is in the lobby's **Options** page.
+**Only the host's choice counts**: it applies to everyone in the session.
 
-**Combat and attacks**
-- Teammates' attacks look the same on every screen: shield orb count, aura size, projectile count
-  and projectile size use the owner's stats, not yours
+### Endless Run (`Endless: ON`)
+
+The run no longer ends at the tier's last stage. It carries on until everyone is dead.
+
+- **The route.** Every portal leads to the next room on a shuffled route through Forest
+  (stages 1–3), Desert (stages 1–3) and the Graveyard (the first crypt, the surface and the second
+  crypt).
+- **Boss rooms.** After every three rooms comes a boss room: the **Ent**, the **Pharaoh** with its
+  pylons, or the **Ghost King**. Its exit leads on to the next room.
+- **Starting.** Start the run on Forest, Desert or Graveyard.
+- **Getting harder.** Difficulty follows how far the run has gone. A late "stage 1" room is not easy
+  again. After every boss room, enemies get **×1.5 HP** and deal **×1.25 damage**, on top of the
+  game's own difficulty that rises with time.
+- **What carries over.** Your items, weapons, level, gold, chest prices and run stats (kills, time
+  alive, damage) all carry across every room. The end screen covers the whole run.
+- **Every tier.** Portals open after each stage boss on every tier, including Tier 1.
+- **Everyone together.** The host picks the route, and every player always travels to the same room.
+
+### No Projectile Cap (`No Proj. Cap: ON`)
+
+The game fires at most **80 projectiles** in one burst and drops the rest. This lets a weapon fire
+all of them.
+
+- **When it matters.** Only very late in a run, once a weapon's Quantity is above 80. Before that it
+  changes nothing.
+- **Same for everyone.** The host applies it to the weapons it simulates for teammates too, so
+  everyone sees the same volley.
+
+### Lobby
+
+- **Names.** Every player sees everyone's name in the lobby, not only the host's.
+- **Options page.** Saves, Shared XP, No Proj. Cap and Endless.
+
+## What's confirmed working (as of 2026-10-21)
+
+Everything below has been **played and confirmed in sync**, in online runs with up to three
+players, including Endless runs of 11 rooms. Things that are built but not yet confirmed are listed
+separately, and are not counted as working.
+
+**Combat, items and the damage panel**
+- Teammates' attacks look the same on every screen: shield orbs, aura size, and projectile count and
+  size all use the owner's stats
+- Every item works for the player who owns it, with that player's own stats. That covers on-hit
+  items, items that react to you being hit, and timed items. A teammate's item no longer fires for
+  you, heals you, or uses your stats
+- Burn, poison and Bloodmark count as the damage of the player who applied them
+- The end-of-run damage panel shows only your own weapons and items, at their real levels. No more
+  teammate rows at LVL 0
 - Enemies stop taking damage while an encounter window has the game paused (shared experience)
-- Enemy and boss max health is the same for everyone. Summoned bosses (bush, bandit) and the final
-  boss's health bar now move on every screen
+- Enemy and boss max health is the same for everyone
+
+**Enemies and bosses**
+- Every player sees the same enemies. A client no longer keeps enemies that the host has already
+  killed
+- Minibosses from the stage's own timeline spawn near a random player, not always next to the host
+- Bosses that come out of an object spawn at that object: Graveyard coffins (inside their barrier),
+  Desert graves, bush and bandit challenges, and the Skeleton King statue
+- Desert final boss: the boss moves for everyone, the pylons can be charged by everyone, and
+  returned weapons go back to their real owner
+- With two stage bosses, the portal waits until both are dead
+- On the tier's last stage, no player gets a portal that the game never meant to exist
+
+**Revives**
+- A dead player's coffin appears on the ground where it can be reached, also on Desert hills
+- The revived player comes back on the map, not outside it
 
 **Spawning and the world**
-- Minibosses appear near the players, not always next to the host
 - Ghost-item summons only appear for the player who owns the Ghost item
-- The run's interactable counters (chests, pots, greed shrines, moais, microwaves, boss curses)
-  agree between players
-- Charge shrines: the charge value is the same for every player
+- The run's interactable counters agree between players
+- Charge shrines have the same charge value for every player
 - Magnet pickups work when a client collects them
+- Desert tumbleweeds no longer spawn twice
+- Falling off the final arena puts you back on it without desyncing anyone
 
 **Shared experience (pause and rewards)**
 - The failsafe no longer closes a window you are still using, and no longer freezes the run at an
   encounter
-- The repeating "Waiting for other player(s) choices…" message has not come back since 2026-08-18
-- XP is shared as gains, so players' levels no longer drift apart
-
-**Bosses**
-- Desert final boss: the boss moves for every player, and returned weapons go back to their real
-  owner
+- XP is shared as gains, so players' levels stay the same
+- Levels no longer drift apart at a stage change
 
 **Lobby and runs**
 - A player who dies and spectates comes back at the next level. Their death no longer ends the run
 - Steam avatars show for every player in the lobby
-- No more client error flood (the old `NullReferenceException` storm) or host map-arrow errors
+- Character select no longer floods the log once a friend joins
+- No more client error floods
 
 **Built, waiting for a play test**
-- Desert final-boss pylons show and can be charged for every player (an earlier "confirmed" turned
-  out to be luck; now fixed properly)
-- Enemy HP is back to normal on the host. A bug in the team Difficulty change had removed the
-  time-based HP scaling from every enemy the host spawned
-- No more minimap error flood after a boss dies
-- Enemies no longer vanish when they are more than a short distance away
-- Team Difficulty: enemy toughness and spawns follow the **average** of all players' Difficulty.
-  Each player still takes damage according to their own Difficulty
-
-**Known, not fixed yet**
-- The end-of-run damage panel still lists some of your teammate's weapons and items at LVL 0
+- No Projectile Cap's effect (needs a weapon with Quantity above 80)
+- Lobby names for every player
+- Re-hosting over Steam without the other player having to restart (needs two real players)
 
 **Known and parked**
 - Clients log `Look rotation viewing vector is zero` warnings while the host fires rockets. This is
   cosmetic only
+- Teammates' HUD cards may show no weapon and tome icons. This dates from the original mod and has
+  not been investigated
 
-The full per-issue history is in [`docs/netplay/08-observed-bugs.md`](docs/netplay/08-observed-bugs.md).
+**Not tested yet**
+- Every playtest so far was on a local network with no packet loss. Bad connections may still show
+  problems that local tests cannot
+
+The full per-issue history is in [`docs/netplay/08-observed-bugs.md`](docs/netplay/08-observed-bugs.md),
+and the Endless design is in [`docs/netplay/18-endless-and-projectile-cap-plan.md`](docs/netplay/18-endless-and-projectile-cap-plan.md).
+
+> [!IMPORTANT]
+> **Everyone in a session must run the same build.** The mod does not check this. An older build
+> cannot read the new lobby settings or the Endless route, and its game drifts from everyone
+> else's without any error.
 
 ## Changelog
 
