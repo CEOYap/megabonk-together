@@ -4786,3 +4786,44 @@ retried until given up.
   been overwritten by another copy of the game, so there was no stack trace.
 
 **UNVERIFIED, not run in-game.**
+
+## OB-55 — Shared-experience failsafe fired three times in Endless Crypt2, then the client left for Forest3 alone — **PARTLY FIXED 2026-10-22, not yet confirmed in play**
+
+**Seen:** 2026-10-22, Steam transport, host plus one friend, Endless with Shared Experience on.
+Rounds 0 to 5 released normally. Rounds 6, 7 and 8 each paused the host with no reward window
+(`[pause] encounterWindow=False MyTime.paused=True`), the client never reported, and the host's
+failsafe released each after 20 s. No error was logged. During round 8 the client used the Crypt2
+exit and loaded Forest3 alone; the host stayed in Crypt2, the client waited on "Still waiting for
+the host to name a round" and the connection dropped.
+
+**Cause, CONFIRMED from the logs and code:** in Crypt2 the host could not find any object the
+client interacted with by its netplay id. The client's `Crypt Pots` counter climbed to 8 while the
+host's stayed at 2, and every host stall follows one of the client's `InteractableUsed`. On a miss,
+`OnReceivedInteractableUsed` in shared experience paused, showed "Waiting for other player(s)
+choices..." and joined the barrier, assuming the sender had a reward window open. For a pot the
+sender opens none and never reports, so the receiver was frozen until the failsafe. The crypt exit
+hit the same branch, so the host paused instead of following the client out.
+
+**Fixed:** a miss now logs `[interactable] ... has no match here (N registered); skipped.` and
+never pauses or joins the barrier. If the missing object really was a reward the sender is
+choosing from, the sender waits on its own failsafe instead of freezing the receiver.
+
+**Not fixed, UNVERIFIED:** why the host's registry has no match for Crypt2's objects. In Crypt1 it
+matched. `SpawnedObjectManagerService.ResetForNextLevel` clears the registry and restarts ids at
+1; if it runs after Crypt2's `RsgController` registration, the client holds ids the host has
+forgotten or reused. Two diagnostics now log the order: `[objects] Crypt generated: registered N
+...` and `[objects] Next level: clearing N registered object(s)`. Until this is fixed, a client
+leaving a crypt can still split the session across two maps.
+
+**2026-10-22, later run (9 stage changes, 2 boss loops): the reset-order hypothesis is DISPROVED.**
+On every stage change the host logged `Next level: clearing` *before* `Stage change` and before
+`Crypt generated`, including Forest1 to Crypt2. Two new facts: Crypt2 logged `Crypt generated`
+**twice** in a row (125 objects each; the second pass is a no-op per object), and the host also
+generates a crypt in the Ghost King and Graveyard surface rooms, where the client has none and gives
+up matching 25 objects each time. The failing case (Crypt1 to Crypt2, crypt to crypt) was not
+repeated, so its cause is still open.
+
+**Related fix, same day:** `OnReceivedInteractableUsed` fell through after a successful final-portal
+exit and looked up object 0. In shared experience that used to pause the receiving peer behind the
+barrier on every final-boss exit; it now returns. The final-portal lookup also threw instead of
+warning when no portal existed.

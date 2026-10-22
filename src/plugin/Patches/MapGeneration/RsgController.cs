@@ -39,6 +39,7 @@ namespace OmniBonk.Patches.MapGeneration
                 Plugin.Instance.SetWorldSize(new UnityEngine.Vector3(5000f, 5000f, 5000f)); //Is the crypt outside of the map ? Using a large size fix Quantization issues
             }
 
+            var registered = 0;
             foreach (var piece in __instance.__4__this.allPieces)
             {
                 var children = Il2CppFindHelper.RuntimeGetComponentsInChildren<Component>(piece.children);
@@ -47,11 +48,15 @@ namespace OmniBonk.Patches.MapGeneration
                     if (child.name.StartsWith("Pot") || child.name.StartsWith("ChestFreeCrypt"))
                     {
                         synchronizationService.OnSpawnedObjectInCrypt(child.gameObject);
+                        registered++;
                     }
                 }
             }
 
             synchronizationService.OnSpawnedObjectInCrypt(__instance.__4__this.rsgEnd.gameObject);
+
+            // Diagnostic for crypt ids lost after an Endless stage change (2026-10-22). Once per crypt.
+            Plugin.Log.LogInfo($"[objects] Crypt generated: registered {registered} pot/chest object(s) and the exit.");
         }
     }
 }

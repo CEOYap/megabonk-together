@@ -10,8 +10,9 @@
         /// Not the plugin version. Bump when any <c>Messages/</c> layout changes (field added or
         /// reordered): MemoryPack is positional and mismatches corrupt silently. Appending a union tag alone needs no bump.
         /// <para>3: OmniBonk 1.0 (tags 80 to 83; <c>ProtocolHello</c> carries this on the matchmaker path).</para>
+        /// <para>4: <c>LobbySettings.SharedExperience</c>.</para>
         /// </summary>
-        public const int Version = 3;
+        public const int Version = 4;
 
         /// <summary>Prefixed: lobby data is a flat namespace shared with the base game.</summary>
         public const string VersionKey = "mt_protocol";

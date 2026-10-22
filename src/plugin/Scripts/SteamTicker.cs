@@ -40,7 +40,6 @@ namespace OmniBonk.Scripts
         private bool settled;
         private bool loggedGiveUp;
         private bool reappliedStackTraces;
-        private bool openedMenuForInvite;
 
         public void Awake()
         {
@@ -158,13 +157,13 @@ namespace OmniBonk.Scripts
         }
 
         /// <summary>
-        /// Joins the lobby for a resolved invite, once, and only on the main menu (PLAY TOGETHER exists)
-        /// so a mid-run invite waits. A layering compromise: move to its own MonoBehaviour if it grows.
+        /// Opens the lobby for each resolved invite, only on the main menu (PLAY TOGETHER exists) so a
+        /// mid-run invite waits. Consuming the code makes it once per invite; a once-per-launch latch
+        /// here made every later invite join the Steam lobby with no panel, until a restart.
         /// </summary>
         private void OpenNetplayMenuForInvite()
         {
-            if (openedMenuForInvite
-                || steamInviteService == null
+            if (steamInviteService == null
                 || string.IsNullOrEmpty(steamInviteService.PendingJoinCode))
             {
                 return;
@@ -182,7 +181,6 @@ namespace OmniBonk.Scripts
                 return;
             }
 
-            openedMenuForInvite = true;
             Plugin.Log.LogInfo($"[steam-invite] Opening the lobby to join room {code} from an invite.");
             playTogether.JoinLobby(code);
         }

@@ -3139,7 +3139,7 @@ namespace OmniBonk.Services
 
             if (used.IsFinalPortal)
             {
-                var finalPortal = Il2CppFindHelper.FindAllGameObjects().FirstOrDefault(go => go.GetComponent<InteractablePortalFinal>() != null).GetComponent<InteractablePortalFinal>(); //Find the componnt somehow instead of whole gameobject search
+                var finalPortal = Il2CppFindHelper.FindAllGameObjects().FirstOrDefault(go => go.GetComponent<InteractablePortalFinal>() != null)?.GetComponent<InteractablePortalFinal>(); //Find the componnt somehow instead of whole gameobject search
                 if (finalPortal != null)
                 {
                     // Read before Interact: in Endless that already counts the stage change.
@@ -3149,6 +3149,10 @@ namespace OmniBonk.Services
                         finalPortal.Interact();
                         TransitionToState(endlessExit ? GameEvent.PortalOpened : GameEvent.FinalPortalOpened);
                     }
+
+                    // Done: falling through looked up object 0 and, in shared experience, used to pause
+                    // this peer behind the barrier on every final-boss exit (2026-10-22 logs).
+                    return;
                 }
                 else
                 {
@@ -3173,19 +3177,14 @@ namespace OmniBonk.Services
 
             var interactableObj = spawnedObjectManagerService.GetSpawnedObject(used.NetplayId);
 
+            // Not found: warn and skip. This used to pause and join the shared-experience barrier,
+            // assuming a reward window on the sender. For a pot or crypt exit the sender opens none,
+            // never reports, and this peer sat frozen until the 20 s failsafe (2026-10-22 playtest).
             if (interactableObj == null)
             {
-                if (IsSharedExperienceEnabled())
-                {
-                    MyTime.Pause();
-                    ScreenTextHelper.Show("Waiting for other player(s) choices...", new Vector2(0, -350));
-                    RewardFinished();
-                }
-                else
-                {
-                    logger.LogWarning("Interactable object not found in SpawnedObjectManagerService when processing OnReceivedInteractableUsed.");
-                }
-
+                logger.LogWarning(
+                    $"[interactable] {used.OwnerId}'s interaction with object {used.NetplayId} ({used.Action}) "
+                    + $"has no match here ({spawnedObjectManagerService.GetAllSpawnedObjects().Count()} registered); skipped.");
                 return;
             }
 

@@ -135,6 +135,9 @@ namespace OmniBonk.Services
 
         public void ResetForNextLevel()
         {
+            // Diagnostic for crypt ids lost after an Endless stage change (2026-10-22). Once per level.
+            Plugin.Log.LogInfo($"[objects] Next level: clearing {spawnedObjects.Count} registered object(s); ids restart at 1.");
+
             Interlocked.Exchange(ref currentObjectId, 0);
             previousTumbleWeedsDelta.Clear();
             //spawnedObjects.Values.ToList().ForEach(Object.Destroy);

@@ -46,7 +46,11 @@ namespace OmniBonk.Services
             {
                 NoProjectileCap = ModConfig.NoProjectileCap.Value,
                 EndlessEnabled = ModConfig.EndlessRun.Value,
+                SharedExperience = ModConfig.EnabledSharedExperience.Value,
             };
+
+            // At run start, not lobby creation: the toggle lives in the open lobby.
+            Plugin.Instance.Mode.EnabledSharedExperience = current.SharedExperience;
 
             transport.SendToAllClients(current, NetDelivery.ReliableOrdered);
             logger.LogInfo($"[lobby-settings] Host settings for this session: {Describe(current)}.");
@@ -55,6 +59,7 @@ namespace OmniBonk.Services
         private void OnReceivedLobbySettings(LobbySettings settings)
         {
             current = settings ?? new LobbySettings();
+            Plugin.Instance.Mode.EnabledSharedExperience = current.SharedExperience;
             logger.LogInfo($"[lobby-settings] Applying the host's settings: {Describe(current)}.");
         }
 
@@ -65,6 +70,7 @@ namespace OmniBonk.Services
         }
 
         private static string Describe(LobbySettings settings)
-            => $"no projectile cap {(settings.NoProjectileCap ? "ON" : "off")}, endless {(settings.EndlessEnabled ? "ON" : "off")}";
+            => $"no projectile cap {(settings.NoProjectileCap ? "ON" : "off")}, endless {(settings.EndlessEnabled ? "ON" : "off")}, "
+               + $"shared experience {(settings.SharedExperience ? "ON" : "off")}";
     }
 }

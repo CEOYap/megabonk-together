@@ -252,7 +252,7 @@ namespace OmniBonk.Configuration
                 "Gameplay",
                 "EnabledSharedExperience",
                 false,
-                "Enable Host experience (Same XP and pause enabled). Disable for no pause and separate XP."
+                "Shared Experience: same XP for everyone, and the game pauses while anyone has a reward window open. Off for separate XP and no pause. Only the host's setting counts: it applies to everyone in the session."
             );
             NoProjectileCap = config.Bind(
                 "Lobby",
