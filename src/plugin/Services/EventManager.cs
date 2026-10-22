@@ -35,6 +35,7 @@ namespace OmniBonk.Services
         private static event Action<StoppingChargingShrine> StoppingChargingShrineEvents;
         private static event Action<EnemyExploder> EnemyExploderEvents;
         private static event Action<EnemyDamaged> EnemyDamagedEvents;
+        private static event Action<EnemyDamagedBatch> EnemyDamagedBatchEvents;
         private static event Action<SpawnedEnemySpecialAttack> SpawnedEnemySpecialAttackEvents;
         private static event Action<StartingChargingPylon> StartingChargingPylonEvents;
         private static event Action<StoppingChargingPylon> StoppingChargingPylonEvents;
@@ -419,6 +420,19 @@ namespace OmniBonk.Services
             MainThreadDispatcher.Enqueue(() =>
             {
                 EnemyDamagedEvents?.Invoke(enemyDamaged);
+            });
+        }
+
+        public static void SubscribeEnemyDamagedBatchEvents(Action<EnemyDamagedBatch> action)
+        {
+            EnemyDamagedBatchEvents += action;
+        }
+
+        public static void OnEnemyDamagedBatch(EnemyDamagedBatch enemyDamagedBatch)
+        {
+            MainThreadDispatcher.Enqueue(() =>
+            {
+                EnemyDamagedBatchEvents?.Invoke(enemyDamagedBatch);
             });
         }
 

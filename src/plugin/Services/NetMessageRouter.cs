@@ -119,6 +119,9 @@ namespace OmniBonk.Services
                 case EnemyDamaged enemyDamaged:
                     EventManager.OnEnemyDamaged(enemyDamaged);
                     break;
+                case EnemyDamagedBatch enemyDamagedBatch:
+                    EventManager.OnEnemyDamagedBatch(enemyDamagedBatch);
+                    break;
                 case SpawnedEnemySpecialAttack spawnedEnemySpecialAttack:
                     EventManager.OnSpawnedEnemySpecialAttack(spawnedEnemySpecialAttack);
                     break;
