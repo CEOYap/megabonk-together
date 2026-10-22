@@ -36,6 +36,7 @@ namespace OmniBonk.Services
         private static event Action<EnemyExploder> EnemyExploderEvents;
         private static event Action<EnemyDamaged> EnemyDamagedEvents;
         private static event Action<EnemyDamagedBatch> EnemyDamagedBatchEvents;
+        private static event Action<ItemProjectilesSpawned> ItemProjectilesSpawnedEvents;
         private static event Action<SpawnedEnemySpecialAttack> SpawnedEnemySpecialAttackEvents;
         private static event Action<StartingChargingPylon> StartingChargingPylonEvents;
         private static event Action<StoppingChargingPylon> StoppingChargingPylonEvents;
@@ -433,6 +434,20 @@ namespace OmniBonk.Services
             MainThreadDispatcher.Enqueue(() =>
             {
                 EnemyDamagedBatchEvents?.Invoke(enemyDamagedBatch);
+            });
+        }
+
+        /// <summary>Both sides. Item projectiles another machine spawned; see <see cref="ItemProjectilesSpawned"/>.</summary>
+        public static void SubscribeItemProjectilesSpawnedEvents(Action<ItemProjectilesSpawned> action)
+        {
+            ItemProjectilesSpawnedEvents += action;
+        }
+
+        public static void OnItemProjectilesSpawned(ItemProjectilesSpawned spawned)
+        {
+            MainThreadDispatcher.Enqueue(() =>
+            {
+                ItemProjectilesSpawnedEvents?.Invoke(spawned);
             });
         }
 

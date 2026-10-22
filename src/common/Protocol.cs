@@ -12,8 +12,10 @@
         /// <para>3: OmniBonk 1.0 (tags 80 to 83; <c>ProtocolHello</c> carries this on the matchmaker path).</para>
         /// <para>4: <c>LobbySettings.SharedExperience</c>; tag 84 <c>EnemyDamagedBatch</c> (added before 4 shipped:
         /// a build without it drops every host damage batch).</para>
+        /// <para>5: tag 85 <c>ItemProjectilesSpawned</c>. Bumped so a protocol-4 build, with or without
+        /// tag 84, is refused rather than silently missing either message.</para>
         /// </summary>
-        public const int Version = 4;
+        public const int Version = 5;
 
         /// <summary>Prefixed: lobby data is a flat namespace shared with the base game.</summary>
         public const string VersionKey = "mt_protocol";

@@ -239,6 +239,7 @@ namespace OmniBonk
                 services.AddSingleton<IUiAssetService, UiAssetService>();
                 services.AddSingleton<ITrackerService, TrackerService>();
                 services.AddSingleton<ILobbySettingsService, LobbySettingsService>();
+                services.AddSingleton<IItemProjectileVisualService, ItemProjectileVisualService>();
                 services.AddSingleton<IEndlessRunService, EndlessRunService>();
                 services.AddSingleton<ISteamService, SteamService>();
                 services.AddSingleton<ISteamLobbyService, SteamLobbyService>();
@@ -261,6 +262,7 @@ namespace OmniBonk
 
 
             _ = Services.GetRequiredService<ISynchronizationService>(); // Initialize SynchronizationService
+            _ = Services.GetRequiredService<IItemProjectileVisualService>(); // Subscribes to peers' item projectiles
             _ = Host.StartAsync(cancellationToken);
             var autoUpdaterService = Services.GetRequiredService<IAutoUpdaterService>();
 

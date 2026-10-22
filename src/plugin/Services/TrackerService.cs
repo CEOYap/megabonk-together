@@ -202,7 +202,6 @@ namespace OmniBonk.Services
     public class Tracks
     {
         public uint moneyFlying { get; set; } = 0;
-        public uint itemProcs { get; set; } = 0;
         public uint kills { get; set; } = 0;
     }
 
@@ -243,26 +242,8 @@ namespace OmniBonk.Services
         {
             uint moneyFlying = 1;
             uint kill = 1;
-            uint itemProcs = 0;
-
-            var inventory = GameManager.Instance.player.inventory;
-            if (inventory.itemInventory.items.Keys.System_Collections_Generic_ICollection_TKey__Contains(EItem.SoulHarvester))
-            {
-                itemProcs += 1;
-            }
-
-            if (inventory.itemInventory.items.Keys.System_Collections_Generic_ICollection_TKey__Contains(EItem.SluttyCannon))
-            {
-                itemProcs += 1;
-            }
-
-            if (inventory.itemInventory.items.Keys.System_Collections_Generic_ICollection_TKey__Contains(EItem.MoldyCheese))
-            {
-                itemProcs += 1;
-            }
 
             playerTrack.moneyFlying += moneyFlying;
-            playerTrack.itemProcs += itemProcs;
             playerTrack.kills += kill;
         }
 

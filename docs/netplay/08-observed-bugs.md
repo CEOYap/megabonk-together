@@ -4836,3 +4836,45 @@ repeated, so its cause is still open.
 exit and looked up object 0. In shared experience that used to pause the receiving peer behind the
 barrier on every final-boss exit; it now returns. The final-portal lookup also threw instead of
 warning when no portal existed.
+
+## OB-56 — Item visuals drawn on one machine only; a teammate's Soul Harvester never fired — **PARTLY FIXED 2026-10-23, not yet confirmed in play**
+
+**Seen:** 2026-10-22, the client could not see the Soul Harvester "red ghosts" or Energy Core orbs,
+although both items worked (their end-screen damage panels list them).
+
+**Cause, CONFIRMED by decompiling (build 21750826):** the mod runs each item on exactly one machine
+(kill and on-hit listeners on the host, OB-37/OB-39; timed and self-reaction items on the owner,
+OB-43). Anything the item spawns exists only there; nothing replicated it. An audit of all ~86
+items found four families:
+
+| Family | Items | Chokepoint |
+|---|---|---|
+| `ItemProjectile` | Soul Harvester, Energy Core, Ghost, Bob (Dead) | `Set` (0x1804D1CC0) creates; `CheckCollision` (0x1804D0C90) is the only damage path |
+| `Rocket` (item) | Slutty Cannon | `Rocket.Set` with `weaponBase == null`; damage in `Rocket.HitEnemy` (0x1804F3CB0) |
+| `EffectManager` / `EffectPlayer.Play` | Zooma, Mirror, Electric Plug, Cactus, Holy Book, the 5 gloves, Toxic Barrel | visual-only methods, capturable inside a scope set at the ownership decision points |
+| Pooled one-shot effects | Bonker, Ice Cube, Grandma's Tonic, Quin's Mask, Spicy Meatball, Snek, Cursed Doll, Plague, Bullseye | no shared game method; a scoped capture on `ObjectPool<GameObject>.Get` (UNVERIFIED that Harmony can patch it) or per-item hooks |
+
+A client never sees even its **own** on-hit effects, since the host runs `PostDamage` for it.
+
+**Fixed (family 1):** tag 85 `ItemProjectilesSpawned` (protocol 5). A postfix on `ItemProjectile.Set`
+queues the values `Set` computed (direction, speed, lifetime, up-time, index, range, source) and the
+owner; one batch per frame goes host-to-all or client-to-host (the host draws and relays). Receivers
+take the same pool, mark the instance, call `Set` with zero damage and overwrite the computed fields;
+an orb copy orbits the owner's model. `CheckCollision` on a marked copy ends it on any enemy without
+damage (prefix-false). Homing targets are picked locally, so copies can diverge cosmetically.
+
+**Also fixed:** `ItemSoulHarvesterPatches` (pre-OB-39) only let the local player's own copy run, so
+together with OB-39's `RunOnHost` a teammate's Soul Harvester never fired on the host. Removed, with
+its `itemProcs` counter. The 2026-10-22 panels showed 36.9M for the host's copy and 542K for the
+client's.
+
+**Not done:** families 2 to 4. Not visuals and needing their own sync: Borgor (a host-only burger
+pickup that heals `MyPlayer`), Dragonfire's damaging firefield, Golden Shield money, Campfire and Bob's
+Lantern (instantiated once, not pooled).
+
+**Leads from the audit, UNVERIFIED (read from source, not logs):**
+- Lightning Orb: the client's replay of `LightningStrike` (tag 41) may re-forward the host's hit to
+  the host, which applies it again (the damage forward does not check `CAN_SEND_MESSAGES`).
+- Weapon rockets: clients skip `Rocket.ProjectileDone`, which spawns the explosion, so clients likely
+  never see weapon-rocket explosions.
+

@@ -122,6 +122,9 @@ namespace OmniBonk.Services
                 case EnemyDamagedBatch enemyDamagedBatch:
                     EventManager.OnEnemyDamagedBatch(enemyDamagedBatch);
                     break;
+                case ItemProjectilesSpawned itemProjectilesSpawned:
+                    EventManager.OnItemProjectilesSpawned(itemProjectilesSpawned);
+                    break;
                 case SpawnedEnemySpecialAttack spawnedEnemySpecialAttack:
                     EventManager.OnSpawnedEnemySpecialAttack(spawnedEnemySpecialAttack);
                     break;
@@ -248,6 +251,9 @@ namespace OmniBonk.Services
             {
                 case LobbyReadyChanged lobbyReadyChanged:
                     EventManager.OnLobbyReadyChanged(lobbyReadyChanged);
+                    break;
+                case ItemProjectilesSpawned itemProjectilesSpawned:
+                    EventManager.OnItemProjectilesSpawned(itemProjectilesSpawned);
                     break;
                 case ProtocolHello protocolHello:
                     EventManager.OnProtocolHello(protocolHello);
