@@ -3022,6 +3022,15 @@ without touching the design question.
 **Confirms fixed as:** a run where the host fires rockets heavily and the client log has no
 `Look rotation viewing vector is zero` lines.
 
+### 2026-10-23 — the 10-19 caller does not explain the current spam
+
+The 2026-10-22 run still logged **15,080** of these on the client, about a third of its log. But
+`RocketPatches.MyFixedUpdate_Prefix` already returns false on clients for every rocket carrying an
+`ownerId`, so `Rocket.FixedUpdate` → `StepMovement` → `LookRotation` cannot run for received rockets.
+Either some client rockets carry no `ownerId`, or another `LookRotation` call is logging. Next step:
+one run with `[Diagnostics] LogUnityStackTraces = true` and `LogUnityMessageStackTraces = true` on the
+client; its `Player.log` then names the caller.
+
 ### 2026-10-19 — decompiled: the caller is `Rocket.StepMovement`
 
 - `ProjectileRocket` itself moves nothing (its `StepMovement` / `MyUpdate` / `MyFixedUpdate` overrides
