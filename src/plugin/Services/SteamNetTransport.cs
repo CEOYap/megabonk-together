@@ -90,6 +90,9 @@ namespace OmniBonk.Services
         /// <summary>Latched after a Steam call throws; retrying across the IL2CPP boundary risks a crash.</summary>
         private bool disabled;
 
+        /// <summary>Latched if <see cref="FlushPendingSends"/> throws; unreliable sends then go NoNagle again.</summary>
+        private bool flushUnavailable;
+
         public SteamNetTransportState State => state;
 
         public event Action<uint, ulong> PeerConnected;
@@ -178,6 +181,8 @@ namespace OmniBonk.Services
             {
                 return Fail($"Steam refused to start a connection to {hostSteamId}.");
             }
+
+            ApplySendRate(hostConnection.m_HSteamNetConnection);
 
             state = SteamNetTransportState.Starting;
             SeedLocalPlayer(isLocalHost: false);
@@ -350,7 +355,53 @@ namespace OmniBonk.Services
                 return;
             }
 
+            ApplySendRate(change.Connection);
+
             Plugin.Log.LogInfo($"[steam-net] Accepted a connection from {change.RemoteSteamId}.");
+        }
+
+        /// <summary>
+        /// Min and max set equal: Steam does no bandwidth estimation, so this is the rate it paces to.
+        /// The default (256 KB/s per Steam's header) saturated at a 479-enemy swarm.
+        /// </summary>
+        private static void ApplySendRate(uint connection)
+        {
+            const int rate = Tunables.STEAM_SEND_RATE_BYTES_PER_SECOND;
+
+            // Max first: a min above the current max may be rejected or clamped.
+            var maxSet = SteamNetNative.TrySetConnectionConfigInt32(connection, SteamNetNative.ConfigSendRateMax, rate);
+            var minSet = SteamNetNative.TrySetConnectionConfigInt32(connection, SteamNetNative.ConfigSendRateMin, rate);
+
+            if (!maxSet || !minSet)
+            {
+                Plugin.Log.LogWarning(
+                    $"[steam-net] Steam refused the {rate} B/s send rate on connection {connection} "
+                    + $"(max {(maxSet ? "set" : "refused")}, min {(minSet ? "set" : "refused")}); "
+                    + "it keeps Steam's default.");
+            }
+        }
+
+        /// <summary>Once per connection, at Connected, when the realtime rate is first meaningful.</summary>
+        private static void LogSendRate(uint connection, ulong remoteSteamId)
+        {
+            static string Read(int configValue, int scope, uint scopeObject) =>
+                SteamNetNative.TryGetConfigInt32(configValue, scope, scopeObject, out var value)
+                    ? value.ToString()
+                    : "?";
+
+            var live = SteamNetNative.TryGetLinkStatus(connection, out var status)
+                ? status.SendRateBytesPerSecond.ToString()
+                : "?";
+
+            Plugin.Log.LogInfo(
+                $"[steam-net] Send rate to {remoteSteamId}: min/max "
+                + $"{Read(SteamNetNative.ConfigSendRateMin, SteamNetNative.ScopeConnection, connection)}/"
+                + $"{Read(SteamNetNative.ConfigSendRateMax, SteamNetNative.ScopeConnection, connection)} B/s, "
+                + $"live {live} B/s, send buffer "
+                + $"{Read(SteamNetNative.ConfigSendBufferSize, SteamNetNative.ScopeConnection, connection)} B "
+                + $"(Steam global defaults: min/max "
+                + $"{Read(SteamNetNative.ConfigSendRateMin, SteamNetNative.ScopeGlobal, 0U)}/"
+                + $"{Read(SteamNetNative.ConfigSendRateMax, SteamNetNative.ScopeGlobal, 0U)} B/s).");
         }
 
         private void OnConnectionEstablished(SteamConnectionStatusChange change)
@@ -364,6 +415,7 @@ namespace OmniBonk.Services
             }
 
             Plugin.Log.LogInfo($"[steam-net] Connected to {change.RemoteSteamId}.");
+            LogSendRate(change.Connection, change.RemoteSteamId);
             PeerConnected?.Invoke(change.Connection, change.RemoteSteamId);
 
             // Client speaks first. Reliable: one-shot that everything else is gated behind.
@@ -1006,13 +1058,52 @@ namespace OmniBonk.Services
 
         /// <summary>
         /// Steam's reliable channel is always ordered, so every reliable kind maps to it.
-        /// NoNagle on unreliable only: superseded state should not wait to coalesce.
+        /// Unreliable is Nagled so one tick's sends share packets; <see cref="FlushPendingSends"/>
+        /// ends the wait each frame. NoNagle per message cost a packet header each (~1,400 msgs/s at a
+        /// 479-enemy swarm). Falls back to NoNagle if flushing is unavailable.
         /// </summary>
-        private static int ToSteamFlags(NetDelivery delivery) => delivery switch
+        private int ToSteamFlags(NetDelivery delivery) => delivery switch
         {
-            NetDelivery.Unreliable => Constants.k_nSteamNetworkingSend_UnreliableNoNagle,
+            NetDelivery.Unreliable => flushUnavailable
+                ? Constants.k_nSteamNetworkingSend_UnreliableNoNagle
+                : Constants.k_nSteamNetworkingSend_Unreliable,
             _ => Constants.k_nSteamNetworkingSend_Reliable,
         };
+
+        /// <summary>
+        /// Once per frame, after the tick's sends. Without it, Nagled sends wait out Steam's Nagle
+        /// timer (5 ms by default, <b>UNVERIFIED</b> on the Steam client build) instead.
+        /// </summary>
+        public void FlushPendingSends()
+        {
+            if (disabled || flushUnavailable || state != SteamNetTransportState.Running)
+            {
+                return;
+            }
+
+            try
+            {
+                if (isHost == true)
+                {
+                    foreach (var handle in peerSteamIds.Keys)
+                    {
+                        SteamNetworkingSockets.FlushMessagesOnConnection(new HSteamNetConnection(handle));
+                    }
+                }
+                else if (hostConnection != HSteamNetConnection.Invalid)
+                {
+                    SteamNetworkingSockets.FlushMessagesOnConnection(hostConnection);
+                }
+            }
+            catch (Exception ex)
+            {
+                // Not Disable(): sends still work, they just go back to NoNagle.
+                flushUnavailable = true;
+                Plugin.Log.LogWarning(
+                    $"[steam-net] FlushMessagesOnConnection threw ({ex.GetType().Name}: {ex.Message}); "
+                    + "unreliable sends go back to NoNagle, one packet each.");
+            }
+        }
 
         // ---------------------------------------------------------------- peers
 
@@ -1079,7 +1170,9 @@ namespace OmniBonk.Services
 
             return $"rtt {status.PingMs} ms  quality {Quality(status.QualityLocal)}/{Quality(status.QualityRemote)} (local/remote)  "
                 + $"pending {status.PendingReliableBytes} B reliable, {status.PendingUnreliableBytes} B unreliable  "
-                + $"unacked {status.SentUnackedReliableBytes} B  queue {status.QueueTimeMs:F1} ms";
+                + $"unacked {status.SentUnackedReliableBytes} B  queue {status.QueueTimeMs:F1} ms  "
+                + $"out {status.OutPacketsPerSec:F0} pkt/s {status.OutBytesPerSec / 1024f:F1} KB/s "
+                + $"of {status.SendRateBytesPerSecond / 1024} KB/s";
         }
 
         /// <summary>Steam reports an unknown quality as -1.</summary>

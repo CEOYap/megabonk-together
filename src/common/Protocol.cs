@@ -10,7 +10,8 @@
         /// Not the plugin version. Bump when any <c>Messages/</c> layout changes (field added or
         /// reordered): MemoryPack is positional and mismatches corrupt silently. Appending a union tag alone needs no bump.
         /// <para>3: OmniBonk 1.0 (tags 80 to 83; <c>ProtocolHello</c> carries this on the matchmaker path).</para>
-        /// <para>4: <c>LobbySettings.SharedExperience</c>.</para>
+        /// <para>4: <c>LobbySettings.SharedExperience</c>; tag 84 <c>EnemyDamagedBatch</c> (added before 4 shipped:
+        /// a build without it drops every host damage batch).</para>
         /// </summary>
         public const int Version = 4;
 

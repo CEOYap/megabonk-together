@@ -41,6 +41,12 @@ namespace OmniBonk.Services
         /// </summary>
         void Poll();
 
+        /// <summary>
+        /// Call once per frame after the tick's sends: unreliable sends are Nagled so they coalesce,
+        /// and this sends them without waiting for Steam's Nagle timer.
+        /// </summary>
+        void FlushPendingSends();
+
         /// <summary>Until called, sends by connection id cannot reach that peer.</summary>
         void AssignConnectionId(uint peerHandle, uint connectionId);
 

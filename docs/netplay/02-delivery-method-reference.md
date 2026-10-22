@@ -235,13 +235,24 @@ variation is entirely on the host half.
 
 | Method | Message (tag) | Why it is safe |
 |---|---|---|
-| `OnEnemyDamaged` | `EnemyDamaged` (20) | Superseded: `EnemyModel.Hp` rides the 40 Hz enemy delta stream, and `HP_TRESHOLD = 1` means an HP change marks the enemy as changed. The refresh sweep bounds the worst case at ~1 s regardless. |
+| `OnEnemyDamaged` → `FlushEnemyDamage` | `EnemyDamagedBatch` (**84**) | Superseded: `EnemyModel.Hp` rides the 40 Hz enemy delta stream, and `HP_TRESHOLD = 1` means an HP change marks the enemy as changed. The refresh sweep bounds the worst case at ~1 s regardless. |
 
 Since 2026-10-19 the host does not send this per hit: `EnemyDamageAggregator` sums the hits per
-enemy, attacker, source and flags and sends each sum once per enemy tick, on the same `Unreliable`
-channel. The reason it is safe is unchanged, though a lost packet now drops a summed tick rather than
-one hit. See OB-34 in [`08-observed-bugs.md`](08-observed-bugs.md). The stale
-`//TODO: Can be unreliable i think ?` went with that change.
+enemy, attacker, source and flags once per enemy tick, on the same `Unreliable` channel. The reason
+it is safe is unchanged, though a lost packet now drops a summed tick rather than one hit. See OB-34
+in [`08-observed-bugs.md`](08-observed-bugs.md). The stale `//TODO: Can be unreliable i think ?` went
+with that change.
+
+**Since 2026-10-23 the sums go out as `EnemyDamagedBatch` (tag 84), not one `EnemyDamaged` (20)
+each.** Summing per enemy saved nothing in a swarm: at 479 enemies it measured 1.0 hits per message,
+1,128 msgs/s. A batch holds every enemy's sums for the tick, as parallel primitive lists with
+byte-indexed source and attacker tables. It is still `Unreliable`, and the list does not break the
+MTU rule: the aggregator closes each batch at 900 B (`MAX_PACKET_SIZE_BYTES - 100`, the stream
+chunker's budget). The sender also checks the serialized size and promotes anything at or over
+1000 B to `ReliableOrdered`, the same backstop `SendStreamUpdate` uses. `EnemyDied` (reliable)
+still flushes first, but it flushes the whole aggregator, and only when the dying enemy has
+pending hits. Tag 20 is still on the wire, client → host only. **UNVERIFIED** in game; see
+[`04-performance-and-gc.md`](04-performance-and-gc.md#steam-send-headroom-at-a-479-enemy-swarm-2026-10-23).
 
 ### Host half — `ReliableUnordered` (7 methods)
 
@@ -393,7 +404,7 @@ way: [`01-critical-fixes.md`](01-critical-fixes.md#p1-1) under *Sender exclusion
 
 ## Full union tag → channel index
 
-Tags are **append-only**; 0–68 are allocated. This table says which channel each tag's traffic
+Tags are **append-only**; 0–84 are allocated. This table says which channel each tag's traffic
 rides, so a Phase 1 translation can be checked tag by tag.
 
 | Tag | Type | Origin | Channel |
@@ -417,7 +428,7 @@ rides, so a Phase 1 translation can be checked tag by tag.
 | 16 | `InteractableUsed` | both | `ReliableOrdered` |
 | 17, 18 | `StartingChargingShrine` / `StoppingChargingShrine` | both | `ReliableOrdered` |
 | 19 | `EnemyExploder` | both | `ReliableOrdered` |
-| 20 | `EnemyDamaged` | both | `Unreliable` host forward, summed per tick (client → host `ReliableOrdered`); no rebroadcast since 2026-10-19 |
+| 20 | `EnemyDamaged` | client | `ReliableOrdered` client → host. The host has sent tag 84 instead since 2026-10-23, and has not rebroadcast since 2026-10-19. A client still accepts 20 from a host. |
 | 21 | `SpawnedEnemySpecialAttack` | host | `ReliableOrdered` |
 | 22, 23 | `StartingChargingPylon` / `StoppingChargingPylon` | both | `ReliableOrdered`, **double-sent** |
 | 24 | `FinalBossOrbSpawned` | host | `ReliableUnordered` |
@@ -465,6 +476,7 @@ rides, so a Phase 1 translation can be checked tag by tag.
 | 81 | `EndlessNextRoom` | host | `ReliableOrdered`. One-shot per stage change, sent one change ahead, so a client holds the room before its own portal fires ([plan](18-endless-and-projectile-cap-plan.md)). |
 | 82 | `LobbyRoster` | host | `ReliableOrdered`. Carries strings. Sent while the lobby panel is open, on a roster change and every 3 s, so each client learns the other clients' names. They otherwise arrive only through the pairwise `Introduced` handshake (host only) or, once a run starts, `LobbyUpdates`. |
 | 83 | `ProtocolHello` | both | `ReliableOrdered`. Carries a string. A client sends it to the host every 3 s while the lobby panel is open, until the host answers with its own; the host answers each one. The host's Start is gated on every client having sent a matching `Protocol.Version`. An older build cannot read the tag and never answers, which is how it is caught. See `LobbyView.cs`. |
+| 84 | `EnemyDamagedBatch` | host periodic (enemy tick) | `Unreliable`. Each batch is 900 B or less, and the sender promotes anything at or over 1000 B to `ReliableOrdered`. It holds one enemy tick's summed hits across every enemy, and also goes out just before an `EnemyDied` whose enemy has pending hits. Ships under protocol 4: a build without it drops every batch, so clients would see no host damage numbers. |
 
 "both" means the host broadcasts it and the client requests it; the two halves may differ, and
 where they do the cell says so.
@@ -539,8 +551,29 @@ more specific.
    head-of-line blocking without giving up delivery. Safe for anything with no paired sibling —
    `OnItemAdded`, `OnHatChanged`, the remaining spawn notifications. **Not** for charging
    start/stop.
-5. **Batch small messages.** Not currently done. Comes free with the Steamworks migration (Nagle
-   is on by default). See [`../steamworks/01-api-mapping.md`](../steamworks/01-api-mapping.md).
+5. ~~**Batch small messages.**~~ Done on the Steam transport on 2026-10-23, in two parts.
+   `EnemyDamagedBatch` (tag 84) replaced about 1,100 small damage messages/s in a swarm. Unreliable
+   Steam sends lost `NoNagle`: they are Nagled, and `NetworkHandler` calls
+   `ISteamNetTransport.FlushPendingSends()` once per frame after the tick loop, so a tick's sends
+   share packets without waiting for Steam's Nagle timer. LiteNetLib is unchanged. See below.
+
+### Steam transport: send rate and Nagle (2026-10-23)
+
+`SteamNetTransport` maps every reliable `NetDelivery` to `k_nSteamNetworkingSend_Reliable`. That is
+always ordered, and Nagled by default. `Unreliable` used to map to `UnreliableNoNagle`, which put
+roughly one packet on the wire per message. It now maps to `k_nSteamNetworkingSend_Unreliable`,
+with one explicit flush per frame. If `FlushMessagesOnConnection` ever throws, the transport goes
+back to NoNagle rather than disabling itself.
+
+Separately, each connection gets `SendRateMin = SendRateMax = Tunables.STEAM_SEND_RATE_BYTES_PER_SECOND`
+(512 KB/s). Steam's header documents a **256 KB/s** default and no bandwidth estimation, so
+without this the rate is fixed at 256 KB/s. A 479-enemy swarm's host went over it
+(267 KB/s of payload, 313 KB of unreliable backlog). A queued unreliable message is late, not lost,
+so the delivery policy above is unchanged. What changes is how stale the "superseding" state is
+when it arrives. Both settings, and the defaults this Steam client actually reports, are logged
+once per connection as `[steam-net] Send rate to …`. **UNVERIFIED** in game. The diagnosis and
+what to look for are in
+[`04-performance-and-gc.md`](04-performance-and-gc.md#steam-send-headroom-at-a-479-enemy-swarm-2026-10-23).
 
 `BandwidthDiagnostics` already records per-message-type bytes, sends and rate; measure before and
 after. When you add a counter, ask what it *cannot* distinguish before trusting what it says —
@@ -552,7 +585,7 @@ the merged `LobbyUpdates` bucket sent three sessions after the wrong stream.
 
 1. Define it under `src/common/Messages/GameNetworkMessages/`. Quantized/primitive types only —
    no `UnityEngine` types; `src/common/` compiles into the server.
-2. Add a `[MemoryPackUnion(N, ...)]` line with the **next free N** (73 at this stamp). Never
+2. Add a `[MemoryPackUnion(N, ...)]` line with the **next free N** (85 as of 2026-10-23). Never
    reuse, renumber, or remove a tag: MemoryPack is positional and peers on different mod versions
    still handshake, so a changed tag corrupts sessions silently rather than failing loudly.
    Adding a field to an existing message is the same hazard.

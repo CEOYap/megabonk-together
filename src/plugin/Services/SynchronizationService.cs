@@ -1,4 +1,4 @@
-using OmniBonk.Configuration;
+﻿using OmniBonk.Configuration;
 using Actors.Enemies;
 using Assets.Scripts._Data.Hats;
 using Assets.Scripts._Data.Tomes;
@@ -32,6 +32,7 @@ using OmniBonk.Helpers;
 using OmniBonk.Patches;
 using OmniBonk.Scripts.Interactables;
 using OmniBonk.Scripts.Snapshot;
+using MemoryPack;
 using MonoMod.Utils;
 using System;
 using System.Collections;
@@ -179,9 +180,9 @@ namespace OmniBonk.Services
         private readonly ConcurrentQueue<SpawnedEnemy> pendingEnemySpawns = new();
         private readonly HashSet<uint> enemiesDiedBeforeSpawn = [];
 
-        // Host only. Hits applied this enemy tick, summed per enemy, attacker, source and flags.
+        // Host only. Hits applied this enemy tick, summed per enemy, attacker, source and flags, sent batched.
         private readonly EnemyDamageAggregator enemyDamageAggregator = new();
-        private readonly Action<EnemyDamaged> sendEnemyDamagedToClients;
+        private readonly Action<EnemyDamagedBatch> sendEnemyDamagedToClients;
 
         private readonly Dictionary<EEnemy, Material> clonedExtraEnemyMaterials = [];
         private Coroutine newObjectToSpawnRoutine;
@@ -251,7 +252,7 @@ namespace OmniBonk.Services
             this.logger = logger;
 
             // Cached so a flush does not allocate a delegate per tick.
-            sendEnemyDamagedToClients = message => udpClientService.SendToAllClients(message, NetDelivery.Unreliable);
+            sendEnemyDamagedToClients = SendEnemyDamagedBatch;
 
             EventManager.SubscribeSpawnedObjectsEvents(OnNewObjectToSpawn);
             EventManager.SubscribePlayerUpdatesEvents(OnPlayerUpdate);
@@ -274,6 +275,7 @@ namespace OmniBonk.Services
             EventManager.SubscribeStoppingChargingShrineEvents(OnReceivedStoppingChargingShrine);
             EventManager.SubscribeEnemyExploderEvents(OnReceivedEnemyExploder);
             EventManager.SubscribeEnemyDamagedEvents(OnReceivedEnemyDamaged);
+            EventManager.SubscribeEnemyDamagedBatchEvents(OnReceivedEnemyDamagedBatch);
             EventManager.SubscribeSpawnedEnemySpecialAttackEvents(OnReceivedSpawnedEnemySpecialAttack);
             EventManager.SubscribeStartingChargingPylonEvents(OnReceivedStartingToChargingPylon);
             EventManager.SubscribeStoppingChargingPylonEvents(OnReceivedStoppingChargingPylon);
@@ -2094,34 +2096,101 @@ namespace OmniBonk.Services
             enemyDamageAggregator.Flush(sendEnemyDamagedToClients);
         }
 
+        /// <summary>
+        /// Serialized here to check the size: the aggregator's estimate keeps batches under the cap, and a
+        /// miss is promoted rather than sent unreliable over the MTU, where it would be lost.
+        /// </summary>
+        private void SendEnemyDamagedBatch(EnemyDamagedBatch batch)
+        {
+            var payload = MemoryPackSerializer.Serialize<IGameNetworkMessage>(batch);
+            var delivery = payload.Length >= Tunables.MAX_PACKET_SIZE_BYTES
+                ? NetDelivery.ReliableOrdered
+                : NetDelivery.Unreliable;
+
+            udpClientService.SendToAllClients(payload, delivery, nameof(EnemyDamagedBatch));
+        }
+
+        /// <summary>Client side. Each entry replays exactly like one <see cref="EnemyDamaged"/>.</summary>
+        private void OnReceivedEnemyDamagedBatch(EnemyDamagedBatch batch)
+        {
+            if (!batch.IsWellFormed())
+            {
+                logger.LogWarning($"Dropped a malformed EnemyDamagedBatch ({batch.EnemyIds?.Count ?? 0} entries).");
+                return;
+            }
+
+            for (var i = 0; i < batch.EnemyIds.Count; i++)
+            {
+                ApplyReceivedEnemyDamage(
+                    batch.EnemyIds[i],
+                    batch.AttackerIds[batch.AttackerIndices[i]],
+                    batch.DamageSources[batch.SourceIndices[i]],
+                    batch.Damages[i],
+                    batch.DamageEffects[i],
+                    batch.DamagesBlockedByArmor[i],
+                    batch.ProcCoefficients[i],
+                    batch.DamageElements[i],
+                    batch.DamageFlags[i],
+                    batch.Knockbacks[i],
+                    batch.DamageIsCrits[i]);
+            }
+        }
+
         private void OnReceivedEnemyDamaged(EnemyDamaged damaged)
         {
-            var enemy = enemyManagerService.GetEnemyById(damaged.EnemyId);
+            ApplyReceivedEnemyDamage(
+                damaged.EnemyId,
+                damaged.AttackerId,
+                damaged.DamageSource,
+                damaged.Damage,
+                damaged.DamageEffect,
+                damaged.DamageBlockedByArmor,
+                damaged.DamageProcCoefficient,
+                damaged.DamageElement,
+                damaged.DamageFlags,
+                damaged.DamageKnockback,
+                damaged.DamageIsCrit);
+        }
+
+        private void ApplyReceivedEnemyDamage(
+            uint enemyId,
+            uint attackerId,
+            string rawDamageSource,
+            float damage,
+            int damageEffect,
+            int damageBlockedByArmor,
+            float damageProcCoefficient,
+            int damageElement,
+            int damageFlags,
+            float damageKnockback,
+            bool damageIsCrit)
+        {
+            var enemy = enemyManagerService.GetEnemyById(enemyId);
             if (enemy == null)
             {
                 return; //Might already be dead
             }
 
             // A null source makes RunStats.OnEnemyDamaged throw inside enemy.Damage.
-            var damageSource = DamageSourceHelper.Normalize(damaged.DamageSource);
+            var damageSource = DamageSourceHelper.Normalize(rawDamageSource);
 
-            var damageContainer = new DamageContainer(damaged.DamageProcCoefficient, damageSource)
+            var damageContainer = new DamageContainer(damageProcCoefficient, damageSource)
             {
-                damage = damaged.Damage,
-                damageEffect = (EDamageEffect)damaged.DamageEffect,
-                damageBlockedByArmor = damaged.DamageBlockedByArmor,
-                crit = damaged.DamageIsCrit,
-                element = (EElement)damaged.DamageElement,
-                flags = (DcFlags)damaged.DamageFlags,
-                knockback = damaged.DamageKnockback,
+                damage = damage,
+                damageEffect = (EDamageEffect)damageEffect,
+                damageBlockedByArmor = damageBlockedByArmor,
+                crit = damageIsCrit,
+                element = (EElement)damageElement,
+                flags = (DcFlags)damageFlags,
+                knockback = damageKnockback,
                 damageSource = damageSource
             };
 
             // All three globals are restored in finally (P1-10, P0-6 shape). A latched
             // CAN_DAMAGE_ENEMIES would let this client resolve enemy damage locally for the run.
             Plugin.Instance.CAN_DAMAGE_ENEMIES = true;
-            playerManagerService.AddGetNetplayerPositionRequest(damaged.AttackerId);
-            trackerService.SetCurrentPlayerId(damaged.AttackerId);
+            playerManagerService.AddGetNetplayerPositionRequest(attackerId);
+            trackerService.SetCurrentPlayerId(attackerId);
 
             try
             {
@@ -2169,7 +2238,7 @@ namespace OmniBonk.Services
             if (isHost)
             {
                 // Flush pending hits first; clients drop hits for an already removed enemy.
-                enemyDamageAggregator.FlushEnemy(enemySpawned.Key, sendEnemyDamagedToClients);
+                enemyDamageAggregator.FlushIfPending(enemySpawned.Key, sendEnemyDamagedToClients);
                 udpClientService.SendToAllClients(message, NetDelivery.ReliableOrdered);
             }
             else

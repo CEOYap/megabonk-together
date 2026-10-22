@@ -30,8 +30,9 @@ namespace OmniBonk.Services
 
         private static volatile bool enabled;
 
-        // Host EnemyDamaged aggregation (hits vs messages sent).
+        // Host EnemyDamaged aggregation: hits -> summed entries -> EnemyDamagedBatch messages.
         private static long aggregatedHits;
+        private static long aggregatedEntries;
         private static long aggregatedMessages;
         private static float lastReportTime = -999f;
         private static bool primed;
@@ -50,7 +51,8 @@ namespace OmniBonk.Services
             Interlocked.Increment(ref counter.Sends);
         }
 
-        internal static void RecordEnemyDamageAggregated(int hits)
+        /// <summary>One call per <c>EnemyDamagedBatch</c> sent.</summary>
+        internal static void RecordEnemyDamageBatch(int hits, int entries)
         {
             if (!enabled)
             {
@@ -58,6 +60,7 @@ namespace OmniBonk.Services
             }
 
             Interlocked.Add(ref aggregatedHits, hits);
+            Interlocked.Add(ref aggregatedEntries, entries);
             Interlocked.Increment(ref aggregatedMessages);
         }
 
@@ -147,10 +150,11 @@ namespace OmniBonk.Services
             ReportLinkQuality(udpClientService, playerManagerService);
         }
 
-        /// <summary>OB-34: hits per message; 1.0 means aggregation saved nothing.</summary>
+        /// <summary>OB-34: hits per entry is the summing, entries per message the batching.</summary>
         private static void ReportAggregation(float elapsed)
         {
             var hits = Interlocked.Exchange(ref aggregatedHits, 0);
+            var entries = Interlocked.Exchange(ref aggregatedEntries, 0);
             var messages = Interlocked.Exchange(ref aggregatedMessages, 0);
             if (messages == 0)
             {
@@ -158,16 +162,20 @@ namespace OmniBonk.Services
             }
 
             var hitsPerSecond = (hits / elapsed).ToString("F1");
+            var entriesPerSecond = (entries / elapsed).ToString("F1");
             var messagesPerSecond = (messages / elapsed).ToString("F1");
-            var ratio = ((double)hits / messages).ToString("F1");
+            var hitsPerEntry = entries == 0 ? "0" : ((double)hits / entries).ToString("F1");
+            var entriesPerMessage = ((double)entries / messages).ToString("F1");
 
             Plugin.Log.LogInfo(
-                $"[bw]   EnemyDamaged aggregation: {hitsPerSecond} hits/s -> {messagesPerSecond} msgs/s, {ratio} hits per message");
+                $"[bw]   EnemyDamaged aggregation: {hitsPerSecond} hits/s -> {entriesPerSecond} entries/s -> "
+                + $"{messagesPerSecond} batches/s ({hitsPerEntry} hits per entry, {entriesPerMessage} entries per batch)");
         }
 
         private static void ClearAggregation()
         {
             Interlocked.Exchange(ref aggregatedHits, 0);
+            Interlocked.Exchange(ref aggregatedEntries, 0);
             Interlocked.Exchange(ref aggregatedMessages, 0);
         }
 
