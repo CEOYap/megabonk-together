@@ -1,9 +1,9 @@
 ﻿using Assets.Scripts.MapGeneration.ProceduralTiles;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches.MapGeneration
+namespace OmniBonk.Patches.MapGeneration
 {
     [HarmonyPatch(typeof(MazeHeightGenerator))]
     internal static class MazeHeightGeneratorPatches
@@ -11,9 +11,7 @@ namespace MegabonkTogether.Patches.MapGeneration
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetRequiredService<ISynchronizationService>();
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetRequiredService<IPlayerManagerService>();
 
-        /// <summary>
-        /// Use the same seed for all players in a netplay session
-        /// </summary>
+        /// <summary>Same seed for every peer.</summary>
 
         [HarmonyPrefix]
         [HarmonyPatch(nameof(MazeHeightGenerator.GenerateHeight))]
@@ -26,9 +24,7 @@ namespace MegabonkTogether.Patches.MapGeneration
             seed = playerManagerService.GetSeed();
         }
 
-        /// <summary>
-        /// Use the same seed for all players in a netplay session
-        /// </summary>
+        /// <summary>Same seed for every peer.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(MazeHeightGenerator.GenerateHeightHein))]
         public static void GenerateHeightHein_Prefix(ref int seed)
@@ -40,9 +36,7 @@ namespace MegabonkTogether.Patches.MapGeneration
             seed = playerManagerService.GetSeed();
         }
 
-        /// <summary>
-        /// Use the same seed for all players in a netplay session
-        /// </summary>
+        /// <summary>Same seed for every peer.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(MazeHeightGenerator.GenerateHeightMe))]
         public static void GenerateHeightMe_Prefix(ref int seed)

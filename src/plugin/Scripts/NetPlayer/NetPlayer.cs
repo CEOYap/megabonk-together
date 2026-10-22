@@ -3,11 +3,11 @@ using Assets.Scripts.Game.Combat.ConstantAttacks;
 using Assets.Scripts.Inventory__Items__Pickups.Items;
 using Assets.Scripts.Inventory__Items__Pickups.Stats;
 using Assets.Scripts.Utility;
-using MegabonkTogether.Common.Messages;
-using MegabonkTogether.Extensions;
-using MegabonkTogether.Helpers;
-using MegabonkTogether.Scripts.Snapshot;
-using MegabonkTogether.Services;
+using OmniBonk.Common.Messages;
+using OmniBonk.Extensions;
+using OmniBonk.Helpers;
+using OmniBonk.Scripts.Snapshot;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using MonoMod.Utils;
 using System.Collections.Generic;
@@ -15,7 +15,7 @@ using System.Linq;
 using TMPro;
 using UnityEngine;
 
-namespace MegabonkTogether.Scripts.NetPlayer
+namespace OmniBonk.Scripts.NetPlayer
 {
     internal class SnapshotUpdate
     {
@@ -131,9 +131,7 @@ namespace MegabonkTogether.Scripts.NetPlayer
                 return;
             }
 
-            // The pop used to sit inside the try, so the catch below swallowed the exception and
-            // left the request stranded — position reads stayed redirected for the rest of the run
-            // (P1-11). The catch is still wanted; the pop just has to outlive it.
+            // P1-11: the pop must be in finally, or position reads stay redirected.
             playerManagerService.AddGetNetplayerPositionRequest(connectionId);
             try
             {
@@ -164,11 +162,7 @@ namespace MegabonkTogether.Scripts.NetPlayer
 
                 var moveDir = (camForward * axisInput.y + camRight * axisInput.x).normalized;
 
-                // axisInput is already guarded above, but moveDir can still come out zero when both
-                // camera vectors flatten to nothing — a camera pointing straight up or down, or a
-                // pair quantized to zero. LookRotation would then log "Look rotation viewing vector
-                // is zero" every tick for that player and return identity anyway, so this returns
-                // the identical value without the log. Behaviour is unchanged; only the noise goes.
+                // Avoids LookRotation's zero-vector log spam (vertical camera).
                 if (moveDir == Vector3.zero)
                 {
                     return Quaternion.identity;
@@ -194,17 +188,11 @@ namespace MegabonkTogether.Scripts.NetPlayer
         }
 
 
-        /// <summary>
-        /// What this avatar was actually built as. Kept so a late <c>SelectedCharacter</c> can be
-        /// noticed: the record's character and the model's can disagree, and only this says which
-        /// one is on screen.
-        /// </summary>
+        /// <summary>The character on screen; lets a late <c>SelectedCharacter</c> be noticed.</summary>
         public ECharacter BuiltAs { get; private set; }
 
-        /// <summary>The skin this avatar was built with, so a later change can be noticed.</summary>
         public string BuiltWithSkin { get; private set; } = "";
 
-        /// <summary>The hat currently on this avatar. Set by whoever applies it.</summary>
         public uint BuiltWithHat { get; set; }
 
         public void Initialize(ECharacter eCharacter, uint connectionId, string skin)
@@ -222,9 +210,7 @@ namespace MegabonkTogether.Scripts.NetPlayer
 
             if (inventory == null)
             {
-                // try/finally: the game's PlayerInventory constructor runs between two nulled-out
-                // game statics. A throw in there used to leave A_WeaponAdded and A_StatUpdate
-                // silenced for the rest of the process — the same shape as P0-6's latched flags.
+                // finally: a throw would leave the game statics silenced (cf. P0-6).
                 Plugin.Instance.SavePlayerInventoryActions();
                 try
                 {
@@ -240,10 +226,6 @@ namespace MegabonkTogether.Scripts.NetPlayer
 
             this.Model.transform.position = GameManager.Instance.player.GetFeetPosition() + new Vector3(2, 0, 0);
 
-            // Third LookRotation site, missed when the other two were guarded. Only runs ~twice a
-            // run (once per NetPlayer creation) so it is not the source of the residual warnings,
-            // but a zero spawnDir would log and hand back identity — which is what this returns
-            // anyway, minus the log.
             var spawnDir = GameManager.Instance.player.spawnDir;
             this.Model.transform.rotation = spawnDir == Vector3.zero
                 ? Quaternion.identity
@@ -296,13 +278,7 @@ namespace MegabonkTogether.Scripts.NetPlayer
             CreateNameplate();
         }
 
-        /// <summary>
-        /// <para><b>Nothing may escape here.</b> This runs inside a Unity callback, so an exception
-        /// crosses the IL2CPP trampoline and is swallowed by Il2CppInterop under its own log tag —
-        /// which is how a level transition produced an unbroken wall of NullReferenceException with
-        /// nothing naming the mod. Teardown is also the least useful place to fail: whatever went
-        /// wrong, the object is going away regardless.</para>
-        /// </summary>
+        /// <summary>Nothing may escape: exceptions crossing the IL2CPP trampoline are logged anonymously.</summary>
         private void OnDestroy()
         {
             try
@@ -360,10 +336,7 @@ namespace MegabonkTogether.Scripts.NetPlayer
                 GameObject.Destroy(ReturnWeaponWui.gameObject);
             }
 
-            // Null-checked, and this is the line that was throwing. An avatar can be destroyed
-            // before Initialize has given it an inventory - a scene load takes every NetPlayer with
-            // it, including one created moments earlier by an inbound position update - and the
-            // Cleanup that matters is on instances that got far enough to have one.
+            // Can be destroyed before Initialize gave it an inventory.
             inventory?.Cleanup(); //Cleanup is important to prevent interference with local player
 
             if (this.Model != null)
@@ -400,14 +373,8 @@ namespace MegabonkTogether.Scripts.NetPlayer
         //}
 
         /// <summary>
-        /// OB-1. Replays this player's changed global stats into their constant attacks, the way
-        /// PlayerStatsNew.A_StatUpdate does for the local player.
-        ///
-        /// <para>Without it, attacks that cache a stat -- ChunkersAttack.OnStatUpdate (VA
-        /// 0x180352590) is the only thing that re-reads its count and size -- kept the values they
-        /// were built with, the same defect as the Aegis count. Every OnStatUpdate this reaches was
-        /// decompiled or is already called by RefreshConstantAttack, and Aegis's only adjusts its
-        /// cooldown timers: no sound, no static event.</para>
+        /// OB-1: replays changed stats into constant attacks, as A_StatUpdate does locally
+        /// (e.g. ChunkersAttack.OnStatUpdate, VA 0x180352590, decompiled, caches count and size).
         /// </summary>
         public void OnRemoteStatsChanged(System.Collections.Generic.List<int> changedStats)
         {
@@ -621,9 +588,7 @@ namespace MegabonkTogether.Scripts.NetPlayer
         {
             if (nameplate == null || nameplateText == null || GameManager.Instance?.playerCamera == null || Model == null) return;
 
-            // Only over a stage in play. The plate sits on the HUD canvas, so at a run's end it was
-            // drawn over the end screen (2026-10-21: the other players' names across a client's
-            // summary panel), and through loading screens.
+            // Hidden outside play, or it draws over end and loading screens.
             if (!synchronizationService.HasNetplaySessionStarted())
             {
                 nameplate.SetActive(false);
@@ -679,12 +644,7 @@ namespace MegabonkTogether.Scripts.NetPlayer
             }
         }
 
-        // FIX P1-9: both of these bracket game code with TWO pieces of global state swapped out —
-        // a game static, and an entry on the netplayer-position request queue. A throw from
-        // AddItem/RemoveItem or the EffectManager call used to leak both: the static stayed null
-        // (item callbacks dead for the rest of the process) and the queue entry stayed on the
-        // front, where PeakNetplayerPositionRequest feeds it to the transform patches — so the
-        // LOCAL player's transform reads would keep resolving to this netplayer, permanently.
+        // FIX P1-9: restore the game static and the position-request queue in finally, or both leak.
         public void AddItem(EItem item)
         {
             var original = ItemInventory.A_ItemAdded;
@@ -723,10 +683,7 @@ namespace MegabonkTogether.Scripts.NetPlayer
 
         public void ToggleWeapon(EWeapon eWeapon, bool enabled)
         {
-            // A toggle can arrive for an avatar rebuilt at a stage transition before its inventory
-            // is filled in, or for a weapon it does not hold yet. The final boss toggles weapons
-            // right after the arena loads, which is exactly that window: 2026-10-19, one bot threw a
-            // NullReferenceException here on every toggle. Nothing to toggle is not an error.
+            // May arrive before the inventory is filled (final boss arena load); not an error.
             var weapons = Inventory?.weaponInventory?.weapons;
             if (weapons == null || !weapons.ContainsKey(eWeapon))
             {
@@ -740,17 +697,8 @@ namespace MegabonkTogether.Scripts.NetPlayer
 
                 var weapon = weapons[eWeapon];
 
-                // OB-19. WeaponInventory.A_WeaponToggled is a STATIC event: a toggle on ANY
-                // inventory notifies every listener, including the LOCAL player's AuraAttacks
-                // (OnWeaponToggle). So when the final boss gave this peer's weapon back and we
-                // replayed the toggle on their avatar, the local player was handed the visual of a
-                // weapon they never had -- the reported "both players received each other's stolen
-                // weapons". The [weapon-owner] diagnostic never fired because nothing was ADDED:
-                // FinalFightController.TakeWeapon / GiveWeaponBack (VA 0x180495340 / 0x1804929E0,
-                // decompiled) only ever call ToggleWeapon, and only on MyPlayer's own inventory.
-                //
-                // Silenced exactly as the add path already silences A_WeaponAdded, restored in a
-                // finally so a throw cannot leave the game's own toggle event dead.
+                // OB-19: A_WeaponToggled is static and would reach the local player's attacks; silence it.
+                // (TakeWeapon/GiveWeaponBack, VA 0x180495340 / 0x1804929E0, decompiled, only toggle.)
                 var originalToggled = Assets.Scripts.Inventory__Items__Pickups.Weapons.WeaponInventory.A_WeaponToggled;
                 Assets.Scripts.Inventory__Items__Pickups.Weapons.WeaponInventory.A_WeaponToggled = null;
                 try
@@ -762,9 +710,7 @@ namespace MegabonkTogether.Scripts.NetPlayer
                     Assets.Scripts.Inventory__Items__Pickups.Weapons.WeaponInventory.A_WeaponToggled = originalToggled;
                 }
 
-                // With the event silenced, this avatar's own constant attack (aura, aegis, ...) is
-                // shown or hidden here directly, so a stolen weapon actually disappears from this
-                // player on everyone else's screen and comes back with it.
+                // Event is silenced, so toggle this avatar's constant attack directly.
                 if (constantAttacks.TryGetValue(eWeapon, out var constantAttack) && constantAttack != null)
                 {
                     constantAttack.gameObject.SetActive(enabled);

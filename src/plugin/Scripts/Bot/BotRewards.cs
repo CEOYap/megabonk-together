@@ -4,20 +4,12 @@
 using Assets.Scripts.UI.InGame.Rewards;
 using UnityEngine;
 
-namespace MegabonkTogether.Scripts.Bot
+namespace OmniBonk.Scripts.Bot
 {
     /// <summary>
-    /// Test bot: picks a random reward in whichever encounter window is open, through the window's
-    /// own controls, so the mod's reward patches (shared experience, <c>EncounterWindow.cs</c>) see an
-    /// ordinary pick.
-    ///
-    /// <para>Decompiled / dumped: <c>LevelupScreen.ChooseOffer</c> and <c>ChestWindowUi.ChooseOffer</c>
-    /// are the shared empty stub, so a level-up choice is a click on one of
-    /// <c>upgradePicker.buttons</c> (an <c>UpgradeButton</c>, which runs <c>SelectUpgrade</c>). The
-    /// chest is <c>b_open</c> then <c>b_take</c>. <c>EncounterUi</c> (shrines and other generic
-    /// encounters) has a real <c>ChooseOffer(int)</c> (VA <c>0x18054D6F0</c>). <c>MicrowaveUi</c> is
-    /// handled too, although the design does not name it: the bot can walk into a microwave, and an
-    /// open window it cannot close would stall the run.</para>
+    /// Test bot: picks a random reward via the window's own controls, so reward patches see an ordinary pick.
+    /// <para>Decompiled: <c>LevelupScreen</c>/<c>ChestWindowUi.ChooseOffer</c> are empty stubs, so those
+    /// use button clicks; <c>EncounterUi.ChooseOffer(int)</c> (VA 0x18054D6F0) is real.</para>
     /// </summary>
     internal static class BotRewards
     {
@@ -94,11 +86,7 @@ namespace MegabonkTogether.Scripts.Bot
             return false;
         }
 
-        /// <summary>
-        /// Last resort for a window <see cref="TryPick"/> could not close: take the chest item, skip
-        /// or leave a level-up, close the microwave, or take the first shrine offer. A window the bot
-        /// never closes holds the host on "Waiting for other player(s)" with shared experience on.
-        /// </summary>
+        /// <summary>Last resort when <see cref="TryPick"/> fails; an unclosed window stalls the shared barrier.</summary>
         internal static void Fallback(BaseEncounterWindow window)
         {
             if (window == null || Time.unscaledTime < nextActionTime)

@@ -1,10 +1,10 @@
-﻿using MegabonkTogether.Common;
-using MegabonkTogether.Scripts.Button;
+﻿using OmniBonk.Common;
+using OmniBonk.Scripts.Button;
 using Microsoft.Extensions.DependencyInjection;
 using TMPro;
 using UnityEngine;
 
-namespace MegabonkTogether.Scripts.Modal
+namespace OmniBonk.Scripts.Modal
 {
     internal class UpdateAvailableModal : ModalBase
     {

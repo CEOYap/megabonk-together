@@ -1,10 +1,10 @@
 ﻿using Assets.Scripts._Data.Tomes;
 using Assets.Scripts.Inventory__Items__Pickups;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches.Inventories
+namespace OmniBonk.Patches.Inventories
 {
     [HarmonyPatch(typeof(TomeInventory))]
     internal static class TomeInventoryPatches
@@ -13,13 +13,8 @@ namespace MegabonkTogether.Patches.Inventories
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
 
         /// <summary>
-        /// Track netplayer adding a chaos or gambler tome so we can prevent triggering its effect for everyone.
-        ///
-        /// <para>Decompiled <c>TomeUtility$$CheckSpecialTomes</c> (VA 0x1804304C0) handles exactly
-        /// these two: for Chaos (24) and Gambler (25) it rolls a random stat offer and applies it
-        /// through <c>MyPlayer.Instance.inventory.statInventory.ChangeStat</c>, the LOCAL player,
-        /// whichever inventory AddTome ran on. Gambler was missing here, so every teammate's
-        /// Gambler level-up gave this peer an extra random roll, which can be negative.</para>
+        /// Flags a teammate adding a Chaos or Gambler tome. Decompiled <c>TomeUtility$$CheckSpecialTomes</c>
+        /// (VA 0x1804304C0) applies their random stat roll to the LOCAL player whichever inventory ran it.
         /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(TomeInventory.AddTome))]

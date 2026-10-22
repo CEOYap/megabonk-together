@@ -1,6 +1,6 @@
-﻿using MegabonkTogether.Common;
+﻿using OmniBonk.Common;
 
-namespace MegabonkTogether.Services
+namespace OmniBonk.Services
 {
     public enum SteamSessionState
     {
@@ -18,25 +18,9 @@ namespace MegabonkTogether.Services
     }
 
     /// <summary>
-    /// Turns a Steam lobby into a live session: opens the host's socket, tells the lobby it is
-    /// open, and connects each client to the owner once it is.
-    ///
-    /// <para><b>The handshake is one-way through the lobby, and that is the whole design.</b> The
-    /// host publishes <see cref="SteamLobbyKeys.ServerReady"/> only after
-    /// <c>CreateListenSocketP2P</c> has succeeded; a client connects only after reading it, and
-    /// connects to <c>GetLobbyOwner</c> rather than to anyone's idea of who the host is. Steam
-    /// permits only the lobby owner to write lobby data, so there is exactly one writer, one moment,
-    /// and nothing for the two ends to disagree about.</para>
-    ///
-    /// <para><b>Why not just let the client connect when it joins.</b> Connecting before the host's
-    /// socket exists fails in a way that reads like a NAT problem, so a client would have to retry
-    /// on its own schedule — and two peers running their own retry timers over their own idea of
-    /// whether the other is ready is exactly the shape that broke Steam-backed readiness and got it
-    /// reverted. A published flag replaces both timers with one fact.</para>
-    ///
-    /// <para><b>The seed comes through the lobby too</b>, for the same reason: on the rendezvous
-    /// path it arrives inside <c>MatchInfo</c>, and with the Steam lobby as the session there is no
-    /// such message.</para>
+    /// Turns a Steam lobby into a live session. The host publishes <see cref="SteamLobbyKeys.ServerReady"/>
+    /// (and the seed) only after its socket opens; clients wait for it and connect to the lobby owner.
+    /// One writer, no retry timers.
     /// </summary>
     public interface ISteamNetSessionService
     {
@@ -44,14 +28,9 @@ namespace MegabonkTogether.Services
 
         string StatusMessage { get; }
 
-        /// <summary>
-        /// Drives the session forward. Cheap and idempotent when there is nothing to do; safe to
-        /// call every frame, and it needs to be, because the client's connect is gated on lobby data
-        /// that can change at any tick.
-        /// </summary>
+        /// <summary>Idempotent; call every frame.</summary>
         void Poll();
 
-        /// <summary>Tears the session down and forgets everything. Safe when idle.</summary>
         void Reset();
     }
 
@@ -67,10 +46,7 @@ namespace MegabonkTogether.Services
 
         public string StatusMessage { get; private set; } = string.Empty;
 
-        /// <summary>
-        /// Latched so a failed start is not retried every frame. A Steam socket that refused to open
-        /// will refuse again, and the log would be the only thing that grew.
-        /// </summary>
+        /// <summary>Latched so a failed start is not retried every frame.</summary>
         private bool attempted;
 
         private bool seedApplied;
@@ -87,8 +63,6 @@ namespace MegabonkTogether.Services
 
             if (steamLobbyService.State != SteamLobbyState.InLobby)
             {
-                // Left the lobby, or never entered one. A session cannot outlive the lobby that
-                // identifies it.
                 if (State != SteamSessionState.Idle)
                 {
                     Reset();
@@ -108,12 +82,11 @@ namespace MegabonkTogether.Services
             PollAsClient();
         }
 
-        /// <summary>
-        /// The connection id we hold, written into our own lobby member data so other peers can tell
-        /// which Steam account is which row. See <see cref="SteamLobbyKeys.MemberConnectionId"/> for
-        /// why the join lives here rather than on the wire.
-        /// </summary>
+        /// <summary>See <see cref="SteamLobbyKeys.MemberConnectionId"/>.</summary>
         private uint? publishedConnectionId;
+
+        /// <summary>Member data is per lobby: a new lobby needs the id again even if it is unchanged.</summary>
+        private ulong publishedLobbyId;
 
         private void PublishLocalConnectionId()
         {
@@ -123,9 +96,8 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            // Written once per value, not once per poll. SetLobbyMemberData is a network round trip
-            // on Steam's side and this runs on the session tick.
-            if (publishedConnectionId == local.ConnectionId)
+            // Once per value: SetLobbyMemberData is a network round trip.
+            if (publishedConnectionId == local.ConnectionId && publishedLobbyId == steamLobbyService.LobbyId)
             {
                 return;
             }
@@ -133,6 +105,7 @@ namespace MegabonkTogether.Services
             if (steamLobbyService.SetLocalMemberData(SteamLobbyKeys.MemberConnectionId, local.ConnectionId.ToString()))
             {
                 publishedConnectionId = local.ConnectionId;
+                publishedLobbyId = steamLobbyService.LobbyId;
                 Plugin.Log.LogInfo($"[steam-lobby] Published connection id {local.ConnectionId} for this member.");
             }
         }
@@ -143,14 +116,7 @@ namespace MegabonkTogether.Services
             {
                 State = SteamSessionState.Waiting;
 
-                // Checked here rather than left to StartHost, because the two failures are not the
-                // same kind. SDR relay access takes a few seconds to come up after launch, and
-                // pressing Host in those first seconds is completely ordinary - so "not ready yet"
-                // must be waited out, not latched. The first internet test of this path failed
-                // exactly here: readiness was "Working, relay attempting", the attempt was marked
-                // as made, State went to Failed, and Poll then returned early forever. The host sat
-                // with no socket, never published readiness, and the client waited on a flag that
-                // was never coming.
+                // "Not ready yet" (SDR warming up) must be waited out before latching the attempt.
                 if (!IsSteamReady())
                 {
                     return;
@@ -164,16 +130,11 @@ namespace MegabonkTogether.Services
                     return;
                 }
 
-                // Published only now, after the socket is actually open. Announcing readiness first
-                // and opening second would invite exactly the connection failures this flag exists
-                // to prevent.
+                // Only after the socket is open.
                 PublishSessionSettings();
 
                 if (!steamLobbyService.SetLobbyData(SteamLobbyKeys.ServerReady, ServerReadyValue))
                 {
-                    // The socket is up and peers already in the lobby can still be accepted; what is
-                    // lost is the signal that tells a client it is safe to connect. Worth a loud
-                    // line rather than a silent half-session.
                     Plugin.Log.LogError(
                         "[steam-session] The listen socket is open but publishing ServerReady failed, "
                         + "so clients will not know to connect.");
@@ -198,8 +159,7 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            // The gate. Until the owner says its socket is open, connecting is a failure that looks
-            // like a network fault, so this simply waits — there is no timer here on purpose.
+            // Wait (no timer) until the owner's socket is open.
             if (steamLobbyService.GetLobbyData(SteamLobbyKeys.ServerReady) != ServerReadyValue)
             {
                 LogWaitingThrottled("the host has not opened its socket yet");
@@ -209,15 +169,11 @@ namespace MegabonkTogether.Services
             var ownerSteamId = steamLobbyService.OwnerSteamId;
             if (ownerSteamId == 0UL)
             {
-                // Steam has not told us who owns the lobby yet. Not a failure — the next tick will
-                // have it — and deliberately not latched.
+                // Owner not known yet; not latched.
                 return;
             }
 
-            // Gated on the seed, not merely followed by it. The host publishes the seed before it
-            // publishes readiness, so by the time this gate opens the seed is there; if it somehow
-            // is not, waiting one more tick costs nothing and connecting anyway would build a
-            // different world from the host's.
+            // Gated on the seed, or this client would build a different world.
             if (!ApplySessionSettings())
             {
                 return;
@@ -235,10 +191,7 @@ namespace MegabonkTogether.Services
             Plugin.Log.LogInfo($"[steam-session] Connecting to lobby owner {ownerSteamId}.");
         }
 
-        /// <summary>
-        /// Whether Steam's own prerequisites are up. Transient by nature — this is false for the
-        /// first few seconds of every launch — so callers wait rather than fail.
-        /// </summary>
+        /// <summary>False for the first seconds of every launch; callers wait rather than fail.</summary>
         private bool IsSteamReady()
         {
             var readiness = steamService.Readiness;
@@ -258,10 +211,6 @@ namespace MegabonkTogether.Services
             return false;
         }
 
-        /// <summary>
-        /// Says what is being waited for, once a second. Silence is what made the first failure of
-        /// this path unreadable: both ends were waiting on each other and neither said so.
-        /// </summary>
         private void LogWaitingThrottled(string reason)
         {
             var now = System.Environment.TickCount64;
@@ -274,23 +223,11 @@ namespace MegabonkTogether.Services
             Plugin.Log.LogInfo($"[steam-session] Waiting: {reason}.");
         }
 
-        /// <summary>
-        /// Publishes the seed the host has already given the player manager, so every peer generates
-        /// the same world.
-        /// </summary>
         private void PublishSessionSettings()
         {
             var seed = playerManagerService.GetSeed();
 
-            // Generated here, because on this path nothing else does. The rendezvous server picks
-            // the seed and ships it in MatchInfo; with the Steam lobby as the session there is no
-            // server and no such message, so a host that did not generate one would publish 0 and
-            // every run would use the same world — which the first internet test did, and logged as
-            // "Seed 0 taken from the lobby".
-            //
-            // Mixed from the clock and the lobby id rather than taken from either: two lobbies
-            // created in the same tick would otherwise share a seed, and the id alone is stable for
-            // the life of a lobby that can host several runs.
+            // No MatchInfo on the Steam path, so the host generates the seed (clock xor lobby id).
             if (seed == 0)
             {
                 seed = (int)((((ulong)System.DateTime.UtcNow.Ticks) ^ steamLobbyService.LobbyId) & 0x7FFFFFFFUL);
@@ -306,12 +243,7 @@ namespace MegabonkTogether.Services
                     + "failure.");
             }
 
-            // The host's setting decides the run, so it is recorded on Mode here as well as
-            // published — on the rendezvous path HandleMatch does both from MatchInfo, and the
-            // Steam path reached the game with Mode.EnabledSharedExperience never set at all, which
-            // GameBalanceService reads as "not shared".
-            // Published before readiness, like everything else here, so a client that is about to
-            // be told the socket is open can already tell what kind of session this is.
+            // Published before readiness; the host's settings decide the run and are also set on Mode.
             if (!steamLobbyService.SetLobbyData(SteamLobbyKeys.Transport, SteamLobbyKeys.TransportSteam))
             {
                 Plugin.Log.LogWarning(
@@ -334,11 +266,7 @@ namespace MegabonkTogether.Services
                 + $"{(sharedExperience ? "on" : "off")}.");
         }
 
-        /// <summary>
-        /// Reads the host's seed out of the lobby before connecting. Deliberately before rather than
-        /// after: world generation is downstream of this, and a client that connected first could
-        /// start building a world from a seed it has not read yet.
-        /// </summary>
+        /// <summary>Reads the host's settings before connecting, since world generation depends on the seed.</summary>
         private bool ApplySessionSettings()
         {
             if (seedApplied)
@@ -346,8 +274,7 @@ namespace MegabonkTogether.Services
                 return true;
             }
 
-            // Zero is rejected rather than accepted, because it is what an unset seed looks like
-            // and it is indistinguishable from a host that has not published yet.
+            // Zero means unpublished.
             var published = steamLobbyService.GetLobbyData(SteamLobbyKeys.Seed);
             if (!int.TryParse(published, out var seed) || seed == 0)
             {
@@ -359,8 +286,7 @@ namespace MegabonkTogether.Services
             seedApplied = true;
             playerManagerService.SetSeed(seed);
 
-            // Taken from the host, never from this client's own config. Two players reading their
-            // own setting is how one run ends up with two sets of XP rules.
+            // From the host, never local config.
             var sharedExperience = steamLobbyService.GetLobbyData(SteamLobbyKeys.SharedExperience) == "1";
             Plugin.Instance.Mode.EnabledSharedExperience = sharedExperience;
 

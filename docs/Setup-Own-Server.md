@@ -23,7 +23,7 @@ This guide explains how to set up and run your own OmniBonk matchmaking/relay se
    ```
 2. Build and run the server:
    ```bash
-   dotnet run --project src/server/MegabonkTogether.Server.csproj
+   dotnet run --project src/server/OmniBonk.Server.csproj
    ```
    By default it will listen on `http://127.0.0.1:5000`.
 
@@ -52,7 +52,7 @@ If you expose the server to the internet, it is **strongly recommended** to put 
 Players would then set their server URL to something like:
 
 ```
-wss://megabonk.example.com
+wss://omnibonk.example.com
 ```
 
 You can use [acme-companion](https://github.com/nginx-proxy/acme-companion) for lestencrypt certificates + auto renewal , used in tandem with a [nginx proxy](https://github.com/nginx-proxy/nginx-proxy)

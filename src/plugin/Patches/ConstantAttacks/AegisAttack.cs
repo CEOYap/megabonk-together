@@ -1,19 +1,17 @@
 using Assets.Scripts.Inventory__Items__Pickups.Weapons;
 ﻿using Assets.Scripts.Game.Combat.ConstantAttacks;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using MonoMod.Utils;
 
-namespace MegabonkTogether.Patches.ConstantAttacks
+namespace OmniBonk.Patches.ConstantAttacks
 {
     [HarmonyPatch(typeof(AegisAttack))]
     internal static class AegisAttackPatches
     {
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
-        /// <summary>
-        /// Prevent update on remote player
-        /// </summary>
+        /// <summary>Blocks FixedUpdate for remote players' Aegis.</summary>
 
         [HarmonyPrefix]
         [HarmonyPatch(nameof(AegisAttack.FixedUpdate))]
@@ -44,22 +42,9 @@ namespace MegabonkTogether.Patches.ConstantAttacks
         }
 
         /// <summary>
-        /// OB-1, Aegis. Keeps a remote player's shield count on screen in step with their stats.
-        ///
-        /// <para>This prefix blocks FixedUpdate for a remote avatar's Aegis, and FixedUpdate is the
-        /// only thing that grows the count: it calls AmplifyShield (VA 0x1804A43D0, decompiled),
-        /// which raises currentAmount up to WeaponUtility.GetAttackQuantity(weaponBase) and calls
-        /// aegisRenderer.SetAmount. Blocked, the remote shield stayed at its initial value forever
-        /// -- reported 2026-10-11 as one shield on the host's screen while the owner saw more.</para>
-        ///
-        /// <para>FixedUpdate stays blocked: AmplifyShield also plays the regen sound and raises the
-        /// static AegisAttack.A_Regen, both of which would act on the LOCAL player. Instead the
-        /// count is set to the maximum directly. GetAttackQuantity is already corrected to the
-        /// owner's own Projectiles stat by the OB-1 WeaponUtility postfix. Only written when it
-        /// changes, so this costs one quantity read per physics tick per remote Aegis.</para>
-        ///
-        /// <para>Shows the owner's maximum, not shields they have just spent: shield use is not
-        /// replicated, so a remote shield that blocks a hit still reads full here.</para>
+        /// OB-1: sets a remote Aegis count to its maximum directly. FixedUpdate stays blocked because
+        /// AmplifyShield (VA 0x1804A43D0, decompiled) plays sound and raises the static A_Regen on the local player.
+        /// Shows the maximum; shield use is not replicated.
         /// </summary>
         private static void ShowRemoteShieldCount(AegisAttack aegis)
         {

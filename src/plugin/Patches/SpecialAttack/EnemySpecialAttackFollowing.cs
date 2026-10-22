@@ -1,10 +1,10 @@
 ﻿using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using MonoMod.Utils;
 using static Assets.Scripts.Game.Combat.EnemySpecialAttacks.Implementations.EnemySpecialAttackFollowing;
 
-namespace MegabonkTogether.Patches.SpecialAttack
+namespace OmniBonk.Patches.SpecialAttack
 {
     [HarmonyPatch(typeof(_DoAttack_d__5))]
     internal static class EnemySpecialAttackFollowingPatches
@@ -12,9 +12,7 @@ namespace MegabonkTogether.Patches.SpecialAttack
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
 
-        /// <summary>
-        /// Intercept projectile to target the correct player instead of the orignal function targeting always the local player.
-        /// </summary>
+        /// <summary>Targets the enemy's actual target; the original always targets the local player.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(_DoAttack_d__5.MoveNext))]
         public static void MoveNext_Prefix(_DoAttack_d__5 __instance, out bool __state)
@@ -34,9 +32,6 @@ namespace MegabonkTogether.Patches.SpecialAttack
             }
         }
 
-        /// <summary>
-        /// Remove queued request after attack is over.
-        /// </summary>
         [HarmonyFinalizer]
         [HarmonyPatch(nameof(_DoAttack_d__5.MoveNext))]
         public static void MoveNext_Finalizer(bool __state)

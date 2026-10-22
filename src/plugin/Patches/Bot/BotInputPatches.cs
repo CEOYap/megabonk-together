@@ -2,22 +2,16 @@
 // workflows build Release). See docs/netplay/05-local-testing.md.
 #if DEBUG
 using HarmonyLib;
-using MegabonkTogether.Configuration;
-using MegabonkTogether.Scripts.Bot;
-using MegabonkTogether.Services;
+using OmniBonk.Configuration;
+using OmniBonk.Scripts.Bot;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches.Bot
+namespace OmniBonk.Patches.Bot
 {
     /// <summary>
-    /// Test bot: hands <see cref="BotInput"/> to the game through the same input read a controller
-    /// goes through, so the bot moves like a player and its movement reaches the host as an ordinary
-    /// <c>PlayerUpdate</c>.
-    ///
-    /// <para>Decompiled: <c>PlayerInput.MovementInput</c> (the only gameplay caller of
-    /// <c>MyInputManager.GetAxis</c>, VA <c>0x1804D4C30</c>) reads the axes named by the static
-    /// fields <c>MyInputManager.MoveHorizontal</c> (0x60) and <c>MoveVertical</c> (0x68). Only those
-    /// two names are answered; every other axis runs the original.</para>
+    /// Test bot: feeds <see cref="BotInput"/> through the controller input read, so it replicates like a player.
+    /// Decompiled: <c>PlayerInput.MovementInput</c> is the only gameplay caller of <c>GetAxis</c> (VA 0x1804D4C30).
     /// </summary>
     [HarmonyPatch(typeof(MyInputManager))]
     internal static class BotInputPatches
@@ -29,12 +23,7 @@ namespace MegabonkTogether.Patches.Bot
         private static string moveVertical;
         private static string interact;
 
-        /// <summary>
-        /// Installed only on a BotMode copy. Without this every player's copy paid a
-        /// native-to-managed trampoline, with a managed string copy, on every GetAxis and
-        /// GetButtonDown call, and a bot patch that failed to resolve would abort PatchAll for
-        /// everyone. Turning BotMode on therefore needs a restart.
-        /// </summary>
+        /// <summary>Installed only with BotMode on (trampoline cost; a failure would abort PatchAll). Needs a restart.</summary>
         [HarmonyPrepare]
         public static bool Prepare() => ModConfig.BotMode.Value;
 
@@ -80,13 +69,7 @@ namespace MegabonkTogether.Patches.Bot
             return true;
         }
 
-        /// <summary>
-        /// Decompiled: <c>PlayerInput.MovementInput</c> reads interact as
-        /// <c>GetButtonDown(MyInputManager.Interact)</c> once a frame, so one latched press from
-        /// <see cref="BotInput.PressInteract"/> lands as exactly one interact. The auto-updater prefix
-        /// on the same method (<c>Patches/MyInputManager.cs</c>) still runs; it only blocks input
-        /// while an update is pending.
-        /// </summary>
+        /// <summary>Decompiled: interact is read once a frame, so one latched press is one interact.</summary>
         // Prefix-false on purpose: the bot presses interact itself.
         [HarmonyPrefix]
         [HarmonyPatch(nameof(MyInputManager.GetButtonDown))]

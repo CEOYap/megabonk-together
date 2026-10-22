@@ -1,11 +1,11 @@
 ﻿using LiteNetLib;
 using LiteNetLib.Utils;
-using MegabonkTogether.Common.Messages;
+using OmniBonk.Common.Messages;
 using MemoryPack;
 using System.Collections.Concurrent;
 using System.Net;
 
-namespace MegabonkTogether.Server.Services
+namespace OmniBonk.Server.Services
 {
     public class HostInfo
     {
@@ -44,10 +44,7 @@ namespace MegabonkTogether.Server.Services
         public ConcurrentDictionary<uint, RelayPeer> Clients = new();
         public ConcurrentQueue<PendingRelayMessage> PendingToHost = new();
 
-        /// <summary>
-        /// When the session was created. Only used to sweep sessions that never got a UDP peer —
-        /// a live session is kept by its peers, not by its age. See SESSION_SETUP_RETENTION.
-        /// </summary>
+        /// <summary>Only used to sweep sessions that never got a UDP peer (SESSION_SETUP_RETENTION).</summary>
         public DateTime CreatedAt = DateTime.UtcNow;
     }
 
@@ -97,11 +94,7 @@ namespace MegabonkTogether.Server.Services
         private static readonly TimeSpan PROCESSED_PAIR_RETENTION = TimeSpan.FromSeconds(45);
         private static readonly TimeSpan PENDING_RELAY_RETENTION = TimeSpan.FromSeconds(30);
 
-        /// <summary>
-        /// How long a relay session may exist with no UDP peer attached at all. This only catches
-        /// sessions whose peers never arrived; once a peer is attached the session lives until the
-        /// peers disconnect, however long the run lasts.
-        /// </summary>
+        /// <summary>Max life of a relay session with no UDP peer; attached sessions live until peers disconnect.</summary>
         private static readonly TimeSpan SESSION_SETUP_RETENTION = TimeSpan.FromSeconds(60);
 
         public RendezVousServer(ILogger<RendezVousServer> logger)
@@ -210,9 +203,7 @@ namespace MegabonkTogether.Server.Services
                 }
             };
 
-            // The relay session's lifetime lives here, on the UDP peers that actually use it.
-            // It used to live on the matchmaking WebSocket, which is a different connection with a
-            // different lifetime - see CleanRelaySession.
+            // Relay session lifetime follows its UDP peers, not the matchmaking WebSocket.
             listener.PeerDisconnectedEvent += (peer, disconnectInfo) =>
             {
                 try
@@ -724,9 +715,7 @@ namespace MegabonkTogether.Server.Services
                 }
             }
 
-            // Relay sessions are no longer removed when the matchmaking socket closes, so this is
-            // what stops one leaking if its peers never arrive. Age alone is deliberately not
-            // enough: a session with a bound peer is in use and may outlive any fixed timeout.
+            // Sweeps only sessions with no bound peer; a bound session may outlive any timeout.
             int sessionsRemoved = 0;
             foreach (var kvp in sessions.ToList())
             {
@@ -765,12 +754,8 @@ namespace MegabonkTogether.Server.Services
         }
 
         /// <summary>
-        /// Called when a peer's matchmaking WebSocket closes. That socket is not the relay: the mod
-        /// closes it during the relay handover, and this used to destroy the session the peer was
-        /// in the middle of connecting to, so the relay bind that followed found nothing
-        /// ("Session for host N not found!") and the client was rejected. A relay that is bound, or
-        /// still binding, is therefore left alone here and ends via its UDP peers instead - see
-        /// HandleRelayPeerDisconnected and the SESSION_SETUP_RETENTION sweep.
+        /// A peer's matchmaking WebSocket closed. The mod closes it during relay handover, so a bound or
+        /// binding relay is left alone and ends via its UDP peers (<see cref="HandleRelayPeerDisconnected"/>).
         /// </summary>
         public void CleanRelaySession(uint connectionId)
         {
@@ -812,10 +797,7 @@ namespace MegabonkTogether.Server.Services
             }
         }
 
-        /// <summary>
-        /// Drops one client from a relay session, tearing the session down with it if it was the
-        /// last one. Shared by the UDP disconnect path and <see cref="CleanRelaySession"/>.
-        /// </summary>
+        /// <summary>Drops one client from a relay session; tears it down if it was the last.</summary>
         private void RemoveRelayClient(RelaySession session, uint connectionId)
         {
             if (!session.Clients.TryRemove(connectionId, out var clientPeer))
@@ -834,9 +816,7 @@ namespace MegabonkTogether.Server.Services
                 return;
             }
 
-            // Was guarded by nothing: a client can leave in the window between the session being
-            // created and the host's own relay peer binding, and this send is the only place that
-            // dereferenced Host.NetPeer without a null check.
+            // Host.NetPeer is null until the host's relay peer binds.
             if (session.Host?.NetPeer == null)
             {
                 logger.LogInformation(
@@ -856,10 +836,7 @@ namespace MegabonkTogether.Server.Services
             session.Host.NetPeer.Send(writer, DeliveryMethod.ReliableOrdered);
         }
 
-        /// <summary>
-        /// True while <paramref name="connectionId"/> has a relay connection that is either bound
-        /// or still being set up. Such a session must outlive the matchmaking WebSocket.
-        /// </summary>
+        /// <summary>True while the connection's relay is bound or binding; it must outlive the WebSocket.</summary>
         private bool HasLiveOrPendingRelay(uint connectionId)
         {
             if (pendingRelayConnections.ContainsKey(connectionId))
@@ -883,11 +860,7 @@ namespace MegabonkTogether.Server.Services
             return false;
         }
 
-        /// <summary>
-        /// A relay peer's UDP connection dropped. This is what ends a relay session now: the host
-        /// leaving tears the session down, the last client leaving does too, and any other client
-        /// leaving is announced to the rest exactly as the WebSocket path used to.
-        /// </summary>
+        /// <summary>A relay peer's UDP connection dropped: this is what ends relay sessions.</summary>
         private void HandleRelayPeerDisconnected(NetPeer peer, DisconnectInfo disconnectInfo)
         {
             if (peer == null || !peerLookup.TryRemove(peer, out var relayPeer))
@@ -907,8 +880,7 @@ namespace MegabonkTogether.Server.Services
 
             if (relayPeer.IsHost)
             {
-                // Unconditional: this is the UDP side going away, which is the authority on the
-                // session's lifetime. Going through CleanRelaySession would defer to itself.
+                // Unconditional: the UDP side is the authority on session lifetime.
                 DestroyRelaySessionOrClient(session.HostConnectionId);
                 return;
             }

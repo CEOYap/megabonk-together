@@ -1,6 +1,6 @@
 using System;
 
-namespace MegabonkTogether.Services
+namespace OmniBonk.Services
 {
     public enum NetplayConnectState
     {
@@ -19,19 +19,7 @@ namespace MegabonkTogether.Services
         Failed,
     }
 
-    /// <summary>
-    /// Starting and watching a netplay session: host, join by code, quickplay.
-    ///
-    /// <para><b>Extracted out of <c>NetworkMenuTab</c>, which is scheduled for deletion.</b> That
-    /// class held this logic inside button handlers and two near-identical coroutines that also
-    /// drove a loader, a Stop button and three screens' worth of visibility flags — so anything
-    /// wanting to start a session had to open a menu and press its buttons. That is why accepting a
-    /// Steam invite had to reach into the menu to join. See
-    /// <c>docs/ui/05-drop-the-netplay-menu.md</c>.</para>
-    ///
-    /// <para>Nothing here touches UI. It exposes a state and a message; whoever is on screen shows
-    /// them.</para>
-    /// </summary>
+    /// <summary>Starts and watches a netplay session (host, join by code, quickplay). No UI here.</summary>
     public interface INetplaySessionService
     {
         NetplayConnectState State { get; }
@@ -54,10 +42,7 @@ namespace MegabonkTogether.Services
         /// <summary>Aborts an attempt and resets networking. Safe when idle.</summary>
         void Cancel();
 
-        /// <summary>
-        /// Raised on the main thread whenever <see cref="State"/> changes, so a screen can react
-        /// without polling. Also raised for <see cref="NetplayConnectState.Failed"/>.
-        /// </summary>
+        /// <summary>Raised on the main thread when <see cref="State"/> changes.</summary>
         event Action StateChanged;
     }
 }

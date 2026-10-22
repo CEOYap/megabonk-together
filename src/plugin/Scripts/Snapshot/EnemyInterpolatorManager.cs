@@ -1,24 +1,11 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace MegabonkTogether.Scripts.Snapshot
+namespace OmniBonk.Scripts.Snapshot
 {
     /// <summary>
-    /// The same fix PERF 1A applied to <see cref="Enemies.TargetSwitcher"/>, for
-    /// <see cref="EnemyInterpolator"/> — which has the identical shape and was missed.
-    ///
-    /// <para>An interpolator is added to every enemy <b>on the client</b>
-    /// (`SynchronizationService.OnReceivedSpawnedEnemy`), so at a full swarm the client was making
-    /// ~600 managed <c>Update()</c> calls per frame, each crossing the IL2CPP managed↔native
-    /// boundary — the crossing 1A identified as the dominant cost, and this one lands on the peer
-    /// that is already doing the most work per frame. Most of those calls returned immediately
-    /// because the snapshot buffer held fewer than two entries.</para>
-    ///
-    /// <para>This ticks every registered interpolator from one <c>Update</c>. The per-interpolator
-    /// work becomes an ordinary C# call.</para>
-    ///
-    /// <para><b>Unmeasured</b>, like 1A: no profiler capture has been taken. The reasoning is
-    /// structural and the pattern is the one already shipped for target switchers.</para>
+    /// PERF 1A for <see cref="EnemyInterpolator"/>: one <c>Update</c> ticks every client interpolator,
+    /// avoiding ~600 IL2CPP managed/native crossings per frame. <b>Unmeasured</b>.
     /// </summary>
     public class EnemyInterpolatorManager : MonoBehaviour
     {
@@ -56,11 +43,7 @@ namespace MegabonkTogether.Scripts.Snapshot
             RemoveAt(index);
         }
 
-        /// <summary>
-        /// Separate from <see cref="Unregister"/> for the same reason as the switcher registry: a
-        /// destroyed interpolator compares equal to null through Unity's operator, so Unregister's
-        /// null guard would reject it and leave the dead entry in place forever.
-        /// </summary>
+        /// <summary>Separate from <see cref="Unregister"/>, whose null guard rejects destroyed (Unity-null) entries.</summary>
         private static void RemoveAt(int index)
         {
             var last = interpolators.Count - 1;
@@ -76,7 +59,6 @@ namespace MegabonkTogether.Scripts.Snapshot
             interpolators.RemoveAt(last);
         }
 
-        /// <summary>Drops every registration so a new session starts clean.</summary>
         internal static void Clear()
         {
             foreach (var interpolator in interpolators)
@@ -97,11 +79,9 @@ namespace MegabonkTogether.Scripts.Snapshot
                 return; // host, singleplayer, or no enemies yet — one no-op call per frame
             }
 
-            // One native Time read for the whole sweep instead of one per enemy.
             var renderTime = Time.timeAsDouble;
 
-            // Backwards: if a tick causes an unregister, swap-remove moves a later element into
-            // the freed slot, and going backwards means that slot is already done.
+            // Backwards, so swap-remove during a tick only moves already-ticked entries.
             for (var i = interpolators.Count - 1; i >= 0; i--)
             {
                 if (i >= interpolators.Count)
@@ -122,8 +102,7 @@ namespace MegabonkTogether.Scripts.Snapshot
                 }
                 catch (System.Exception ex)
                 {
-                    // One bad enemy must not stop every other enemy interpolating for the rest of
-                    // the run — the P1-7 lesson, applied to a loop that runs every frame.
+                    // P1-7: one bad enemy must not stop the rest.
                     Plugin.Log.LogWarning($"EnemyInterpolator tick failed: {ex.Message}");
                 }
             }

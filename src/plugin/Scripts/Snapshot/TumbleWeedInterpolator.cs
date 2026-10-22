@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace MegabonkTogether.Scripts.Snapshot
+namespace OmniBonk.Scripts.Snapshot
 {
     public class TumbleWeedInterpolator : MonoBehaviour
     {
@@ -11,10 +11,8 @@ namespace MegabonkTogether.Scripts.Snapshot
         protected float interpolationDelayMs = 0.1f;
         protected int maxBufferSize = 200;
 
-        /// <summary>Reused by Update so pruning allocates nothing per frame.</summary>
         private readonly List<uint> destroyedIds = new List<uint>();
 
-        /// <summary>Whether the OB-35 prune has been logged since the last Clear.</summary>
         private bool loggedPrune = false;
 
         protected void Update()
@@ -25,9 +23,7 @@ namespace MegabonkTogether.Scripts.Snapshot
             {
                 var tumbleWeedId = kv.Key;
 
-                // OB-35. A tumbleweed destroyed natively (scene unload, or by the game) without a
-                // despawn message is Unity-null while its managed proxy lives on, and GetComponent on
-                // it threw every frame: ~290 NullReferenceExceptions per client on 2026-10-19.
+                // OB-35: destroyed natively without a despawn message; GetComponent would throw.
                 if (kv.Value == null)
                 {
                     destroyedIds.Add(tumbleWeedId);
@@ -64,10 +60,7 @@ namespace MegabonkTogether.Scripts.Snapshot
             }
         }
 
-        /// <summary>
-        /// OB-35. Forgets every tracked tumbleweed. Called on level change: this object is
-        /// DontDestroyOnLoad but the tumbleweeds are scene objects, and their ids restart from 0.
-        /// </summary>
+        /// <summary>OB-35: on level change; tumbleweeds are scene objects and ids restart.</summary>
         public void Clear()
         {
             activeTumbleWeeds.Clear();
@@ -93,10 +86,7 @@ namespace MegabonkTogether.Scripts.Snapshot
                 snapshotsBuffers[snapshot.Id] = buffer;
             }
 
-            // Same ordering guard as EnemyInterpolator. These streams are unreliable, so a late
-            // packet can arrive after a newer one, and the pair scan and the front-pruning below
-            // both assume the buffer is sorted by timestamp. Out of order the interpolator walks
-            // backwards and the remote object visibly snaps back.
+            // Unreliable stream: drop out-of-order snapshots; the buffer must stay sorted.
             if (buffer.Count > 0 && snapshot.Timestamp <= buffer[buffer.Count - 1].Timestamp)
             {
                 return;

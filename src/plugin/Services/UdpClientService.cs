@@ -1,14 +1,14 @@
-﻿using MegabonkTogether.Configuration;
+﻿using OmniBonk.Configuration;
 using Assets.Scripts.Inventory__Items__Pickups.Items;
 using Assets.Scripts.Managers;
 using BepInEx.Logging;
 using LiteNetLib;
 using LiteNetLib.Utils;
-using MegabonkTogether.Common.Messages;
-using MegabonkTogether.Common.Messages.GameNetworkMessages;
-using MegabonkTogether.Common.Models;
-using MegabonkTogether.Extensions;
-using MegabonkTogether.Helpers;
+using OmniBonk.Common.Messages;
+using OmniBonk.Common.Messages.GameNetworkMessages;
+using OmniBonk.Common.Models;
+using OmniBonk.Extensions;
+using OmniBonk.Helpers;
 using MemoryPack;
 using Microsoft.Extensions.DependencyInjection;
 using System;
@@ -18,7 +18,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace MegabonkTogether.Services
+namespace OmniBonk.Services
 {
     internal class PeerIntroduction
     {
@@ -39,16 +39,8 @@ namespace MegabonkTogether.Services
     }
 
     /// <summary>
-    /// The LiteNetLib session: matchmaking handshake, NAT introduction, relay fallback, and putting
-    /// bytes on a wire. Gameplay code depends on <see cref="INetTransport"/>; the members declared
-    /// here are session lifecycle and are expected to change shape during the Steamworks migration.
-    ///
-    /// <para><b>Two things this used to own and no longer does.</b> The per-tick outbound streams
-    /// are <see cref="IStateBroadcastService"/> and the receive switch is
-    /// <see cref="INetMessageRouter"/> — neither depends on what carries the bytes, and while they
-    /// lived here they called this class's own methods directly, so pointing
-    /// <see cref="INetTransport"/> at a second transport would have split a session across
-    /// both.</para>
+    /// LiteNetLib session: NAT introduction, relay fallback, sending. Gameplay code should depend on
+    /// <see cref="INetTransport"/>, not this.
     /// </summary>
     public interface IUdpClientService : INetTransport
     {
@@ -67,9 +59,6 @@ namespace MegabonkTogether.Services
         public void ResetHandledHost();
         public void RemovePeer(uint clientConnectionId);
     }
-    // Six dependencies went with the streams and the receive switch: the enemy, projectile, boss-orb
-    // and spawned-object managers, plus the encounter and readiness services. What is left is what a
-    // transport actually needs — the player roster, for the introduction handshake, and a log.
     internal class UdpClientService(
             IPlayerManagerService playerManagerService,
             ManualLogSource logger) : IUdpClientService
@@ -102,10 +91,7 @@ namespace MegabonkTogether.Services
         private ConcurrentDictionary<string, bool> tokens = new();
         private bool hasTriedForceRelay = false;
 
-        /// <summary>
-        /// Everything the receive switch used to do that was not about the connection. Resolved
-        /// lazily rather than injected — see <see cref="HandleMessage"/>.
-        /// </summary>
+        /// <summary>Resolved lazily; see <see cref="HandleMessage"/>.</summary>
         private INetMessageRouter netMessageRouter;
 
         private const int POLL_INTERVAL_MS = 5;
@@ -183,11 +169,8 @@ namespace MegabonkTogether.Services
                     if (netManager != null && netManager.IsRunning)
                     {
                         Plugin.Log.LogInfo($"Connecting...");
-                        // The connect key is write-only here: after NAT introduction both peers
-                        // Connect at each other, and LiteNetLib reconciles that cross-connect
-                        // internally without ever raising ConnectionRequestEvent. A protocol
-                        // version sent here is never read. Tried and disproved in-game — see
-                        // P1-3 in docs/netplay/01-critical-fixes.md before reaching for this again.
+                        // P1-3: this key is never read (cross-connect skips ConnectionRequestEvent),
+                        // so no version gate can go here.
                         netManager.Connect(target, "yourKey");
                     }
                     else
@@ -203,10 +186,7 @@ namespace MegabonkTogether.Services
 
             listener.ConnectionRequestEvent += request =>
             {
-                // NOTE: this handler does NOT run on the normal NAT-punch path — the cross-connect
-                // is resolved inside LiteNetLib. Absence of this log line in a successful session
-                // is the evidence. Do not put a version gate here; see P1-3 in
-                // docs/netplay/01-critical-fixes.md.
+                // P1-3: not run on the NAT-punch path. Do not put a version gate here.
                 Plugin.Log.LogInfo($"Got a connection request from remote");
                 request.Accept();
             };
@@ -252,12 +232,7 @@ namespace MegabonkTogether.Services
                             || Plugin.Instance.Mode.Mode == NetworkModeType.Friendlies && Plugin.Instance.Mode.Role == Role.Host
                     };
 
-                    // Explicit, and this is the last caller that was not. The implicit default is
-                    // ReliableSequenced — a channel that guarantees only the newest packet — which
-                    // is the wrong guarantee for a one-shot handshake and has no Steam equivalent
-                    // at all. For a message sent exactly once the two channels behave identically
-                    // on LiteNetLib, so naming the one that was always meant costs nothing here and
-                    // stops Phase 4 having to invent a translation for a semantic nobody wanted.
+                    // Explicit: the default ReliableSequenced is wrong for a one-shot handshake.
                     SendToHost(introduced, NetDelivery.ReliableOrdered);
                 }
             };
@@ -391,8 +366,8 @@ namespace MegabonkTogether.Services
                     gamePeersIntroducedByRelay.Clear();
 
                     Plugin.StartNotification(
-                    ("MegabonkTogether", "ClientDisconnected"),
-                    ("MegabonkTogether", "ClientDisconnected_Description"),
+                    ("OmniBonk", "ClientDisconnected"),
+                    ("OmniBonk", "ClientDisconnected_Description"),
                     [],
                     AudioManager.Instance.uiAbort,
                     item: EItem.BobDead);
@@ -437,8 +412,8 @@ namespace MegabonkTogether.Services
             if (introInfo.IsHost)
             {
                 Plugin.StartNotification(
-                    ("MegabonkTogether", "HostDisconnected"),
-                    ("MegabonkTogether", "HostDisconnected_Description"),
+                    ("OmniBonk", "HostDisconnected"),
+                    ("OmniBonk", "HostDisconnected_Description"),
                     [introInfo.Name],
                     AudioManager.Instance.uiAbort,
                     item: EItem.BobDead
@@ -452,8 +427,8 @@ namespace MegabonkTogether.Services
                     Plugin.Log.LogInfo($"All players disconnected, returning to main menu. : is host : {isHost.Value}");
 
                     Plugin.StartNotification(
-                        ("MegabonkTogether", "AllPlayerDisconnected"),
-                        ("MegabonkTogether", "AllPlayerDisconnected_Description"),
+                        ("OmniBonk", "AllPlayerDisconnected"),
+                        ("OmniBonk", "AllPlayerDisconnected_Description"),
                         [introInfo.Name],
                         AudioManager.Instance.uiAbort,
                         item: EItem.BobDead
@@ -516,16 +491,8 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>
-        /// The receive path's front door. Handles the messages whose meaning depends on <b>which
-        /// peer they arrived on</b>, and hands everything else to <see cref="INetMessageRouter"/>.
-        ///
-        /// <para><b>That split is the whole point, and it is not "plumbing versus logic".</b> Eight
-        /// cases below read or write the peer introduction maps, the relay peer, or tear a
-        /// connection down — none of which has a transport-neutral meaning, and all of which are
-        /// keyed on a LiteNetLib <c>NetPeer.Id</c>. Every other message is a function of its own
-        /// contents, so it can be applied identically no matter what carried it. Only the second
-        /// group could ever be shared with a second transport, and it is all but eight of them.
-        /// </para>
+        /// Handles peer-scoped messages (keyed on <c>NetPeer.Id</c>) here; everything else goes to
+        /// the transport-neutral <see cref="INetMessageRouter"/>.
         /// </summary>
         private void HandleMessage(IGameNetworkMessage message, int netPeerId)
         {
@@ -534,8 +501,7 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            // Resolved once, on first use. Constructor injection would be a cycle: the router needs
-            // INetTransport, and INetTransport is this object.
+            // Lazy: constructor injection would be a DI cycle (router needs INetTransport, which is us).
             netMessageRouter ??= Plugin.Services.GetService<INetMessageRouter>();
 
             if (!netMessageRouter.Route(message, isHost.Value))
@@ -544,10 +510,7 @@ namespace MegabonkTogether.Services
             }
         }
 
-        /// <summary>
-        /// The messages that cannot leave this class, because they are about the connection rather
-        /// than about the game. Returns true when handled.
-        /// </summary>
+        /// <summary>Connection-level messages. Returns true when handled.</summary>
         private bool TryHandlePeerScopedMessage(IGameNetworkMessage message, int netPeerId)
         {
             if (!isHost.Value)
@@ -638,7 +601,7 @@ namespace MegabonkTogether.Services
 
                         if (Plugin.Instance.Mode.Mode == Common.Models.NetworkModeType.Friendlies)
                         {
-                            Plugin.StartNotification(("MegabonkTogether", "FriendliesClientJoinSuccess"), ("MegabonkTogether", "FriendliesClientJoinSuccessDesc"), [introduced.Name]);
+                            Plugin.StartNotification(("OmniBonk", "FriendliesClientJoinSuccess"), ("OmniBonk", "FriendliesClientJoinSuccessDesc"), [introduced.Name]);
                         }
 
                         return true;
@@ -654,7 +617,7 @@ namespace MegabonkTogether.Services
 
                     if (Plugin.Instance.Mode.Mode == Common.Models.NetworkModeType.Friendlies)
                     {
-                        Plugin.StartNotification(("MegabonkTogether", "FriendliesClientJoinSuccess"), ("MegabonkTogether", "FriendliesClientJoinSuccessDesc"), [introduced.Name]);
+                        Plugin.StartNotification(("OmniBonk", "FriendliesClientJoinSuccess"), ("OmniBonk", "FriendliesClientJoinSuccessDesc"), [introduced.Name]);
                     }
 
                     IGameNetworkMessage introducedResponse = new Introduced
@@ -750,12 +713,7 @@ namespace MegabonkTogether.Services
             }
             usesRelay.Clear();
 
-            // Null-conditional to match the Stop() above. On a Steam session this transport is
-            // constructed but never started, so netManager is null and this threw on every
-            // teardown — observed on both peers of a Steam run, caught by the caller and logged as
-            // "Error resetting UDP client". Harmless in that it is the last statement here, but it
-            // put a NullReferenceException in both logs at the end of every clean session, which
-            // is exactly the kind of standing noise that hides a real one.
+            // netManager is null on Steam sessions (never started).
             netManager?.DisconnectAll();
         }
 
@@ -953,20 +911,8 @@ namespace MegabonkTogether.Services
         private readonly HashSet<string> misroutedTypesReported = new();
 
         /// <summary>
-        /// True, after a one-time warning per message type, when this LiteNetLib service is asked to
-        /// send while the session runs on the Steam transport.
-        ///
-        /// <para>Under Steam nothing legitimate reaches here. Gameplay traffic goes through
-        /// INetTransport, which the factory in Plugin.cs points at SteamNetTransport, and the
-        /// matchmaker has its own WebSocket client. A call arriving here comes from code that
-        /// injected IUdpClientService directly, and its send lands in a LiteNetLib socket with no
-        /// peers -- nothing leaves the machine and nothing reports it. That is how the desync
-        /// detector and OB-1's stat replication sent nothing for whole sessions, found only on
-        /// 2026-10-08 because the detector's silence was conspicuous.</para>
-        ///
-        /// <para>The send is dropped, which changes nothing: it was going nowhere. What changes is
-        /// that the next mistake of this kind names its message type in the log on its first
-        /// send.</para>
+        /// True (warning once per type) when sending here under the Steam transport, where it would
+        /// silently go nowhere. The caller should depend on INetTransport instead.
         /// </summary>
         private bool IsMisroutedUnderSteam(string messageTypeName)
         {
@@ -1035,7 +981,6 @@ namespace MegabonkTogether.Services
                 peer.Send(writer, deliveryMethod);
             }
 
-            // Counted after the fan-out, not before: a broadcast costs its payload once per peer.
             BandwidthDiagnostics.Record(data.GetType().Name, msgBytes.Length, gamePeers.Count + (usesRelay.Any() ? 1 : 0));
         }
 
@@ -1090,11 +1035,6 @@ namespace MegabonkTogether.Services
             BandwidthDiagnostics.Record(data.GetType().Name, msgBytes.Length, 1);
         }
 
-        /// <summary>
-        /// Takes a game connection id rather than a <c>NetPeer</c>, per <see cref="INetTransport"/>.
-        /// The peer lookup that the single caller used to do inline now happens here, which is the
-        /// point of the seam: no caller outside this class names a LiteNetLib handle.
-        /// </summary>
         public void SendToClient<T>(uint connectionId, T data) where T : IGameNetworkMessage
         {
             if (IsMisroutedUnderSteam(typeof(T).Name))
@@ -1129,9 +1069,6 @@ namespace MegabonkTogether.Services
 
             if (!TryResolvePeer(connectionId, out var client))
             {
-                // Previously impossible to reach: the one caller resolved the peer itself and
-                // skipped the send when it came back null, so a miss was silent. Now that the
-                // lookup lives here it can say so.
                 Plugin.Log.LogWarning($"SendToClient: no connected peer for connection id {connectionId}; message dropped.");
                 return;
             }
@@ -1144,18 +1081,12 @@ namespace MegabonkTogether.Services
         }
 
 
-        /// <summary>
-        /// OB-10. The identifier a rejected host-only send is worth recording under. Falls back to
-        /// the runtime type when the caller only had an explicit name, and tolerates null on both.
-        /// </summary>
+        /// <summary>OB-10: name to record a rejected host-only send under.</summary>
         private static string HostGuardMessageName(object data, string messageTypeName = null)
         {
             return !string.IsNullOrEmpty(messageTypeName) ? messageTypeName : data?.GetType().Name;
         }
-        /// <summary>
-        /// OB-10. See the note on the Steam transport's copy: the message type is the identifier
-        /// worth having, because the caller is always one of four send methods.
-        /// </summary>
+        /// <summary>OB-10.</summary>
         private bool EnsureIsHost(
             string messageTypeName = null,
             [System.Runtime.CompilerServices.CallerMemberName] string sendMethod = null)
@@ -1232,38 +1163,10 @@ namespace MegabonkTogether.Services
             return -1;
         }
 
-        /// <summary>
-        /// Round-trip time only.
-        ///
-        /// <para>Deliberately thinner than the Steam transport's, which adds delivery ratio and
-        /// reliable backlog. Those exist there to make the lossy-link run readable, and that run is
-        /// on Steam sockets — this transport is behind <c>Network/UseSteamTransport</c> for one
-        /// release and then deleted (Phase 5). Building out a statistics read for it would be work
-        /// with a known expiry date, so this reports what it already knows and no more.</para>
-        /// </summary>
+        /// <summary>RTT only; this transport is slated for removal.</summary>
         public string DescribeLink(uint connectionId) => $"rtt {GetLatency(connectionId)} ms";
 
-        /// <summary>
-        /// One id, one space — see <see cref="INetTransport.SendToAllClientsExcept"/>. The two-id
-        /// signature this replaces took a LiteNetLib <c>NetPeer.Id</c> for the direct path and a
-        /// game connection id for the relay path.
-        ///
-        /// <para><b>This is the one deliberate behaviour change in Phase 1.</b> The old direct path
-        /// excluded <i>the peer the packet arrived on</i>; this excludes <i>the player that
-        /// originated it</i>. In the star topology the mod actually runs, the host receives a
-        /// client's message directly from that client and the two coincide, which is why the old
-        /// code worked. They are not the same concept, though, and the originator is the one that
-        /// must not receive its own delta back — that is what the exclusion is for (P1-1). Where
-        /// they ever diverge, the new behaviour is the correct one.</para>
-        ///
-        /// <para>Both defects the Phase 0 trace found are collapsed here rather than carried across
-        /// the seam, as the migration plan requires: the old relay branch looked <c>sender</c> up in
-        /// <c>gamePeersIntroducedByRelay</c> and read back <c>.ConnectionId</c> — which equals the
-        /// key by construction, so it was an identity function — and then re-scanned the same
-        /// dictionary on that same field whenever the result was <c>0</c>, a fallback that could
-        /// never produce a different answer and that existed only because <c>0</c> was doing double
-        /// duty as "not found" and as a legal connection id.</para>
-        /// </summary>
+        /// <summary>P1-1: excludes the originating player (game connection id), not the arrival peer.</summary>
         public void SendToAllClientsExcept<T>(uint excludedConnectionId, T data) where T : IGameNetworkMessage
         {
             if (IsMisroutedUnderSteam(typeof(T).Name))
@@ -1280,9 +1183,7 @@ namespace MegabonkTogether.Services
 
             if (usesRelay.Any())
             {
-                // Membership, not a lookup: the value's ConnectionId is the key. A relayed peer that
-                // is not in the map is a direct peer, and direct peers are not in the relay
-                // session's client list, so an empty filter cannot echo to them.
+                // Not in the relay map means a direct peer, which the relay never sends to anyway.
                 RelayEnvelope relayEnvelope = new()
                 {
                     ToFilters = gamePeersIntroducedByRelay.ContainsKey(excludedConnectionId)
@@ -1307,8 +1208,6 @@ namespace MegabonkTogether.Services
             NetDataWriter writer = new NetDataWriter();
             writer.Put(msgBytes);
 
-            // Resolved once, outside the loop. A miss means the excluded player is not a direct peer
-            // — relayed, or already gone — in which case nothing here needs excluding.
             var excludedPeerId = ResolvePeerId(excludedConnectionId);
 
             var sent = 0;
@@ -1323,19 +1222,10 @@ namespace MegabonkTogether.Services
                 sent++;
             }
 
-            // Counted from the loop rather than gamePeers.Count, because this is the exclusion path
-            // and the count must reflect what was actually sent.
             BandwidthDiagnostics.Record(data.GetType().Name, msgBytes.Length, sent + (usesRelay.Any() ? 1 : 0));
         }
 
-        /// <summary>
-        /// Game connection id → LiteNetLib peer id, the mapping the seam moved inside the transport.
-        /// Null when the id is not a currently-connected direct peer.
-        ///
-        /// <para>A linear scan over at most six peers, on paths that already allocate and serialize.
-        /// A maintained reverse map would be faster and would be a second thing to keep in sync
-        /// across connect, disconnect and relay promotion — the scan cannot go stale.</para>
-        /// </summary>
+        /// <summary>Connection id to LiteNetLib peer id, or null. A scan over six peers cannot go stale.</summary>
         private int? ResolvePeerId(uint connectionId)
         {
             foreach (var (peerId, intro) in gamePeersIntroduced)
@@ -1349,7 +1239,6 @@ namespace MegabonkTogether.Services
             return null;
         }
 
-        /// <summary>Game connection id → connected <c>NetPeer</c>. See <see cref="ResolvePeerId"/>.</summary>
         private bool TryResolvePeer(uint connectionId, out NetPeer peer)
         {
             var peerId = ResolvePeerId(connectionId);
@@ -1363,10 +1252,6 @@ namespace MegabonkTogether.Services
             return false;
         }
 
-        /// <summary>
-        /// The single place the mod's delivery vocabulary meets LiteNetLib's. Phase 4 adds the
-        /// Steam equivalent beside it rather than editing any call site.
-        /// </summary>
         private static DeliveryMethod ToLiteNetLib(NetDelivery delivery) => delivery switch
         {
             NetDelivery.Unreliable => DeliveryMethod.Unreliable,
@@ -1375,14 +1260,7 @@ namespace MegabonkTogether.Services
             _ => DeliveryMethod.ReliableOrdered,
         };
 
-        /// <summary>
-        /// <paramref name="messageTypeName"/> exists only for the bandwidth counters: this overload
-        /// takes bytes, so the message type is gone by the time it arrives, and the first baseline
-        /// reported 95% of all host traffic under a single "(pre-serialized)" bucket — a split that
-        /// could not split the thing that mattered. Every caller is inside this class and already
-        /// holds the typed message, so the name is passed down rather than inferred. Optional so a
-        /// future caller cannot fail to compile, but it should always be supplied.
-        /// </summary>
+        /// <summary><paramref name="messageTypeName"/> labels the bandwidth counters; always supply it.</summary>
         public void SendToAllClients(byte[] data, NetDelivery delivery, string messageTypeName = null)
         {
             if (IsMisroutedUnderSteam(messageTypeName ?? "raw payload"))
@@ -1416,10 +1294,6 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            // Bucketed as "(pre-serialized)" because this overload takes bytes, so the message type
-            // is already gone by the time it gets here. Counted anyway — leaving it out would make
-            // the reported total quietly lower than the real one, which is worse for a baseline than
-            // an unnamed bucket.
             BandwidthDiagnostics.Record(messageTypeName ?? "(pre-serialized)", data.Length, gamePeers.Count + (usesRelay.Any() ? 1 : 0));
 
             NetDataWriter writer = new NetDataWriter();

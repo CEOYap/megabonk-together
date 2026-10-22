@@ -2,36 +2,16 @@
 using Assets.Scripts.Menu.Shop;
 using Assets.Scripts.Inventory__Items__Pickups.Weapons;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches.Weapons
+namespace OmniBonk.Patches.Weapons
 {
     /// <summary>
-    /// OB-1. Redraws a remote player's attack with the owner's globals instead of the observer's.
-    ///
-    /// <para><b>The defect.</b> Both accessors below have the shape
-    /// <c>weaponStats[stat] + PlayerStats.GetStat(stat)</c> — decompiled at VA <c>0x1804346F0</c>
-    /// and <c>0x1804347A0</c> — and <c>PlayerStats.GetStat</c> is static: it takes no player and
-    /// reads whoever is asking. So a remote attack was built from their weapon and <i>your</i>
-    /// globals. Shield orbit count, aura size, projectile count and projectile size were all this
-    /// one bug.</para>
-    ///
-    /// <para><b>The correction is exact, not a re-implementation.</b> The result already contains
-    /// the observer's contribution as a plain sum, so subtracting <c>PlayerStats.GetStat</c> and
-    /// adding the owner's value yields precisely what the owner's machine computed — without
-    /// needing the per-weapon half, which is not separately reachable. That matters: reproducing
-    /// the formula would silently drift the moment the game changes it.</para>
-    ///
-    /// <para><b>Patched here rather than at each visual.</b> These two methods are where every
-    /// affected visual converges, so one correction covers the ones that were reported and the ones
-    /// that were only predicted. The opposite mistake — patching a funnel that carries more than
-    /// intended — is what OB-16 cost, so both patches bail immediately unless the weapon belongs to
-    /// a <i>remote</i> player.</para>
-    ///
-    /// <para><b>UNVERIFIED.</b> Not run in-game. Confirms as a teammate's aura and shield looking
-    /// the same on both screens after one of you takes a Projectiles or Size upgrade — before that
-    /// upgrade the two agree anyway, which is what made this look intermittent.</para>
+    /// OB-1: remote attacks use the owner's global stats, not the observer's. Decompiled (VA
+    /// <c>0x1804346F0</c>, <c>0x1804347A0</c>): <c>PlayerStats.GetStat</c> is static and reads the local player.
+    /// Each patch bails unless the weapon belongs to a remote player.
+    /// <para><b>UNVERIFIED.</b> Not run in-game.</para>
     /// </summary>
     [HarmonyPatch(typeof(WeaponUtility))]
     internal static class WeaponUtilityPatches
@@ -67,8 +47,7 @@ namespace MegabonkTogether.Patches.Weapons
 
             var corrected = __result - (int)PlayerStats.GetStat(EStat.Projectiles) + (int)ownerStat.Value;
 
-            // The game clamps this to a floor; a peer whose stat is lower must still get at least
-            // one projectile rather than none.
+            // At least one projectile.
             __result = corrected < 1 ? 1 : corrected;
         }
 
@@ -88,17 +67,9 @@ namespace MegabonkTogether.Patches.Weapons
                 return;
             }
 
-            // Recomputed the game's way. GetAttackSizeMultiplier (VA 0x1804347A0, decompiled) is
-            //   PlayerStats.GetStat(Size) * weaponStats[Size], capped at weaponData.maxSizeMultiplier
-            //   when that cap is above 1.
-            // It MULTIPLIES. The first version of this correction subtracted the observer's global
-            // and added the owner's, which is right only while the weapon's own Size stat is 1; with
-            // Size upgrades on the weapon the error grows with each one. Reported 2026-10-18: the
-            // host's aura looked slightly smaller on the client's screen than on the host's own.
-            //
-            // (The decompile names the cap field projectileSpeed. Ghidra's applied names slip on this
-            // struct; the field is used as "if 1 < x && x < size then size = x", which is
-            // maxSizeMultiplier, two fields earlier in the dump.cs layout.)
+            // Decompiled (VA 0x1804347A0): GetStat(Size) * weaponStats[Size], capped at
+            // maxSizeMultiplier when above 1. It multiplies, so subtract-and-add is wrong here.
+            // (Ghidra mislabels the cap as projectileSpeed; dump.cs says maxSizeMultiplier.)
             var weaponSize = 1f;
             var weaponStats = weaponBase.weaponStats;
             if (weaponStats != null && weaponStats.ContainsKey(EStat.SizeMultiplier))
@@ -114,8 +85,6 @@ namespace MegabonkTogether.Patches.Weapons
                 corrected = weaponData.maxSizeMultiplier;
             }
 
-            // A non-positive multiplier would collapse the attack to nothing, which is worse than
-            // the wrong size this is fixing.
             if (corrected > 0f)
             {
                 __result = corrected;
@@ -123,15 +92,8 @@ namespace MegabonkTogether.Patches.Weapons
         }
 
         /// <summary>
-        /// OB-18. Same correction as the two above: <c>GetProjectileBounces</c> (VA
-        /// <c>0x180435930</c>) is <c>weaponStats[ProjectileBounces] + PlayerStats.GetStat(45)</c>,
-        /// so a remote player's projectile bounced the observer's number of times.
-        ///
-        /// <para><b>This does not address OB-18 as reported.</b> That report is the stat panel
-        /// showing the <i>local</i> player's own bounces as zero, which nothing here touches — the
-        /// correction only ever applies to a weapon owned by somebody else. It is included because
-        /// bounces is demonstrably in the same class as quantity and size, and leaving one member of
-        /// a class uncorrected is how the next report gets filed.</para>
+        /// OB-18 class: <c>GetProjectileBounces</c> (VA <c>0x180435930</c>) has the same additive shape.
+        /// Does not fix OB-18 as reported (the local stat panel).
         /// </summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(WeaponUtility.GetProjectileBounces))]
@@ -155,13 +117,7 @@ namespace MegabonkTogether.Patches.Weapons
             __result = corrected < 0 ? 0 : corrected;
         }
 
-        /// <summary>
-        /// The connection id of the remote player owning this weapon, or null when it is the local
-        /// player's — in which case the game's own answer is already right and nothing is touched.
-        ///
-        /// <para>This runs on a per-attack path, so the session check comes first and is the
-        /// cheapest thing here.</para>
-        /// </summary>
+        /// <summary>Remote owner's id, or null for the local player. Also the netplay guard (cheap check first).</summary>
         private static uint? ResolveRemoteOwner(WeaponBase weaponBase)
         {
             if (weaponBase == null || !synchronizationService.HasNetplaySessionStarted())

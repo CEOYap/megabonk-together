@@ -1,43 +1,13 @@
-﻿using MegabonkTogether.Configuration;
+﻿using OmniBonk.Configuration;
 using System;
 using UnityEngine;
 
-namespace MegabonkTogether.Services
+namespace OmniBonk.Services
 {
     /// <summary>
-    /// Managed allocation-rate sampler — the measurement `09-performance-audit.md` needs, without a
-    /// Unity Profiler.
-    ///
-    /// <para><b>Why this exists.</b> That document's first recommendation was a Unity Profiler
-    /// GC-Alloc capture. The Unity Profiler can only attach to a **development** player, and
-    /// Megabonk ships a retail IL2CPP build — so that capture cannot be taken, and every allocation
-    /// claim in the audit was going to stay unmeasured indefinitely. BepInEx 6 runs the plugin on
-    /// .NET 6, and the CoreCLR GC counts our own allocations, which is exactly the population in
-    /// question: `EnemyModel` churn, the per-tick delta dictionary, LINQ closures. Game-side IL2CPP
-    /// allocations are invisible here, and that is the point — this measures the mod, not the
-    /// game.</para>
-    ///
-    /// <para>Reports once per <see cref="REPORT_INTERVAL_SECONDS"/> and only while a session is
-    /// running, in the same throttled shape as the other diagnostics in this build. Reading
-    /// <see cref="GC.GetTotalAllocatedBytes(bool)"/> imprecisely is a cheap counter read, so the
-    /// sampler cannot meaningfully distort what it is measuring.</para>
-    ///
-    /// <para>What to do with the number: at 40 Hz on the host, `GetAllEnemiesDeltaAndUpdate`
-    /// allocates one `EnemyModel` per enemy per tick. If the reported rate at a full swarm is in the
-    /// region predicted below and drops when the swarm ends, the audit's hypothesis is confirmed and
-    /// pooling those models is worth doing. If it is far lower, the hypothesis is wrong and the
-    /// effort belongs elsewhere. **Do not pool before measuring** — that is what this exists for.</para>
-    ///
-    /// <para><b>The prediction, corrected 2026-08-16.</b> This originally read "at 600 enemies that
-    /// predicts roughly 24,000 objects a second", which was written before the budgeted priority
-    /// stream landed and is no longer reachable. `MAX_ENEMY_TICK_BYTES / ENEMY_MODEL_WIRE_BYTES`
-    /// caps the tick at <b>189</b> enemies regardless of how many are alive, so the ceiling is
-    /// 189 x 40 Hz = <b>~7,560 `EnemyModel` per second</b>. Judge the reading against that number,
-    /// not the old one — the enemy count in the world no longer sets the rate. (240/9,600 until
-    /// 2026-08-17, when ENEMY_MODEL_WIRE_BYTES was corrected from 15 to a measured 19.)</para>
-    ///
-    /// <para><b>Read the contrast, not the absolute.</b> A rate that does not move between a full
-    /// swarm and an empty field is not this stream, whatever its magnitude.</para>
+    /// Managed (mod-only) allocation-rate sampler; the Unity Profiler cannot attach to a retail build.
+    /// <para>Expected ceiling for EnemyModel churn: 189 enemies/tick x 40 Hz = ~7,560/s. Compare a full
+    /// swarm against an empty field. Do not pool before measuring.</para>
     /// </summary>
     internal static class AllocationDiagnostics
     {

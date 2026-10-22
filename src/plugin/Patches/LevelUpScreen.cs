@@ -1,11 +1,11 @@
 ﻿using Assets.Scripts.Utility;
 using HarmonyLib;
-using MegabonkTogether.Helpers;
+using OmniBonk.Helpers;
 using Microsoft.Extensions.DependencyInjection;
 using System.Collections;
 using UnityEngine;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     //TODO: Refacto with ChestWindowUiPatch and EncounterUiPatch
     [HarmonyPatch(typeof(LevelupScreen))]
@@ -15,10 +15,7 @@ namespace MegabonkTogether.Patches
         public static Coroutine CurrentRoutine;
         private static TMPro.TextMeshProUGUI infoText;
 
-        /// <summary>
-        /// Unpause timeStep (To prevent pause) and let the player breath for 5 seconds on shared experience only
-        /// Unless interacting with a shady guy
-        /// </summary>
+        /// <summary>Unpauses and grants 5 s of invulnerability, unless at a shady guy.</summary>
 
         [HarmonyPostfix]
         [HarmonyPatch(nameof(LevelupScreen.ShowLevelupScreen))]
@@ -74,9 +71,7 @@ namespace MegabonkTogether.Patches
             CurrentRoutine = CoroutineRunner.Instance.Run(Wait5SecBeforeCanTakeDamageAgain(__instance));
         }
 
-        /// <summary>
-        /// Add again 1 second of invulnerability after closing the level up screen (unless interacting with shady guy)
-        /// </summary>
+        /// <summary>1 s of invulnerability after closing, unless at a shady guy.</summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(LevelupScreen.OnClose))]
         public static void OnClose_Postfix(LevelupScreen __instance)
@@ -112,11 +107,7 @@ namespace MegabonkTogether.Patches
             CurrentRoutine = CoroutineRunner.Instance.Run(CancelWaitForVulnerabilityAfter1sec(__instance));
         }
 
-        /// <summary>
-        /// Same reasoning as ChestWindowUiPatches.Reset: a Coroutine handle and a TMP component
-        /// from a finished session are stale references, and infoText is parented to UI that the
-        /// session destroys.
-        /// </summary>
+        /// <summary>Drops stale coroutine and TMP references from a finished session.</summary>
         internal static void Reset()
         {
             CurrentRoutine = null;

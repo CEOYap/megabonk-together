@@ -1,19 +1,16 @@
 ﻿using Assets.Scripts.Inventory__Items__Pickups;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches.Items
+namespace OmniBonk.Patches.Items
 {
     [HarmonyPatch(typeof(TomeUtility))]
     internal static class TomeUtilityPatches
     {
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
 
-        /// <summary>
-        /// Prevent triggering tome effect if the tome is added by a netplayer. (Chaos and Gambler tomes)
-        /// </summary>
-        /// <returns></returns>
+        /// <summary>No Chaos/Gambler tome effect when a netplayer adds the tome.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(TomeUtility.CheckSpecialTomes))]
         public static bool CheckSpecialTomes_Prefix()

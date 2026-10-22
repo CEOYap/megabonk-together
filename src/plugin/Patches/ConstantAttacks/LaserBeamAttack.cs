@@ -1,9 +1,9 @@
 ﻿using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using MonoMod.Utils;
 
-namespace MegabonkTogether.Patches.ConstantAttacks
+namespace OmniBonk.Patches.ConstantAttacks
 {
     //TODO: Synchronize laser beam attacks properly
     [HarmonyPatch(typeof(LaserBeamAttack))]
@@ -11,14 +11,9 @@ namespace MegabonkTogether.Patches.ConstantAttacks
     {
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
 
-        // Was resolved per call inside the prefix, on LaserBeamAttack.Update — a DI lookup every
-        // frame per beam. Cached to match every other patch class, and needed by the finalizer.
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
 
-        /// <summary>
-        /// Queue net player position used for the attack spawn position
-        /// </summary>
-        /// 
+        /// <summary>Queues the owner's position for the attack's spawn point.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(LaserBeamAttack.Update))]
         public static void FixedUpdate_Prefix(LaserBeamAttack __instance, out bool __state)
@@ -43,9 +38,6 @@ namespace MegabonkTogether.Patches.ConstantAttacks
             }
         }
 
-        /// <summary>
-        /// Unqueue net player position request after use
-        /// </summary>
         [HarmonyFinalizer]
         [HarmonyPatch(nameof(LaserBeamAttack.Update))]
         public static void FixedUpdate_Finalizer(bool __state)
@@ -58,9 +50,7 @@ namespace MegabonkTogether.Patches.ConstantAttacks
             playerManagerService.UnqueueNetplayerPositionRequest();
         }
 
-        /// <summary>
-        /// Prevent remote attacks from hitting enemies
-        /// </summary>
+        /// <summary>Remote players' beams do not hit enemies locally.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(LaserBeamAttack.HitEnemy))]
         public static bool HitEnemy_Prefix(LaserBeamAttack __instance)

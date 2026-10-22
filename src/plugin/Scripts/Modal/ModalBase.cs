@@ -1,10 +1,10 @@
-using MegabonkTogether.Helpers;
+using OmniBonk.Helpers;
 using System.Collections;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
-namespace MegabonkTogether.Scripts.Modal
+namespace OmniBonk.Scripts.Modal
 {
     internal abstract class ModalBase : MonoBehaviour
     {

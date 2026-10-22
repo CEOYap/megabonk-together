@@ -2,20 +2,18 @@
 using Assets.Scripts.Inventory__Items__Pickups.Weapons.Attacks;
 using Assets.Scripts.Objects.Pooling;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using MonoMod.Utils;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     [HarmonyPatch(typeof(PoolManager))]
     internal class PoolManagerPatches
     {
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
 
-        /// <summary>
-        /// Set the ownerId on the WeaponAttack when it's retrieved from the pool (for remote players' attacks)
-        /// </summary>
+        /// <summary>Stamps ownerId on pooled WeaponAttacks for remote players' attacks.</summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(PoolManager.GetAttack))]
         public static void GetAttack_Postfix(ref WeaponAttack __result, WeaponBase weaponBase)

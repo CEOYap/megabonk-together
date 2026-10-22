@@ -1,18 +1,16 @@
 ﻿using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using UnityEngine;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     [HarmonyPatch(typeof(PlayerMovement))]
     internal static class PlayerMovementPatches
     {
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
 
-        /// <summary>
-        /// Reset world size when teleporting player back to bounds (used when leaving graveyard boss room)
-        /// </summary>
+        /// <summary>Resets world size on teleport back to bounds (e.g. leaving the graveyard boss room).</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(PlayerMovement.TeleportPlayerBackToBounds))]
         public static void TeleportPlayerBackToBounds_Prefix()
@@ -22,8 +20,7 @@ namespace MegabonkTogether.Patches
                 return;
             }
 
-            // OB-36. Every peer must quantize positions over the same range, so a change here is
-            // worth one line: it is rare (a fall off the map, or leaving the graveyard boss room).
+            // OB-36: every peer must quantize over the same range; logged since it is rare.
             var before = Plugin.Instance.GetWorldSize().x;
             Plugin.Instance.SetWorldSize(Plugin.Instance.OriginalWorldSize);
             Plugin.Log.LogInfo($"[world] OB-36: teleported back to bounds; position range {before} -> {Plugin.Instance.OriginalWorldSize.x}.");

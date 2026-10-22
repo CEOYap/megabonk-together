@@ -5,50 +5,21 @@ using Assets.Scripts.Inventory__Items__Pickups.Items;
 using Assets.Scripts.Inventory__Items__Pickups.Items.ItemImplementations;
 using Assets.Scripts.Inventory__Items__Pickups.Weapons.WeaponPassives;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches.Items
+namespace OmniBonk.Patches.Items
 {
     /// <summary>
-    /// OB-39. Item, passive and weapon-passive listeners on the global enemy-hit and enemy-death
-    /// events react only to their owner's hits and kills, on the one machine that should apply the
-    /// effect.
-    ///
-    /// <para><b>The defect.</b> These are static game events (<c>Enemy</c>'s damage and death
-    /// actions), raised on a machine for every hit and kill applied there, whoever made it. Each
-    /// machine holds a live copy of every player's items and passive (OB-14, RemoteItemCopies), so
-    /// every copy reacted to every player's events, and the effect went to the local player:</para>
+    /// OB-39: listeners on the static enemy-hit/death events fired for every player's copy (OB-14),
+    /// applying effects to the local player. Now each runs once, for its owner's event:
     /// <list type="bullet">
-    /// <item><b>Lifesteal</b> (<c>PlayerHealth.OnEnemyDamaged</c>, VA 0x180429320, and
-    /// <c>TryLifestealHit</c>, 0x18042A330): rolls the local Lifesteal stat and heals the local
-    /// player. The host healed off everyone's hits; each client off every replayed hit.</item>
-    /// <item><b>Demon Blade</b> (heal on crit, 0x1804409B0), <b>Kevin</b> (counts hits, then damages
-    /// its owner, 0x18045F900), <b>Demonic Soul</b> and <b>Demonic Blood</b> (kill stacks,
-    /// 0x180454910 / 0x180454280): the same, with stacks and heals.</item>
-    /// <item><b>Joe's Dagger</b> (stacks its pre-attack bonus, 0x18045ED60), <b>Borgor</b> (drops a
-    /// burger, 0x18043BCE0), <b>Soul Harvester</b> (death projectile, 0x180465B70), the <b>Zap</b>,
-    /// <b>Plague</b> and <b>Bullseye</b> passives (0x1804800F0, 0x18047B730, 0x180474EA0) and
-    /// <b>Blood Magic</b> (weapon stacks, 0x1804334C0): every copy fired, so these hit or stacked
-    /// once per player per event, and on clients the damage applied there only.</item>
+    /// <item><b>Owner's machine</b> for player-side effects (heal, self-damage, stat stacks):
+    /// Lifesteal, Demon Blade, Kevin, Demonic Soul/Blood.</item>
+    /// <item><b>Host</b> for simulation effects (damage, projectiles, pickups): Joe's Dagger, Borgor,
+    /// Soul Harvester, Zap, Plague, Bullseye, Blood Magic.</item>
     /// </list>
-    ///
-    /// <para><b>Two rules,</b> by where the effect lives:</para>
-    /// <list type="bullet">
-    /// <item><b>Owner's machine</b> (the effect is on a player: heal, self-damage, stat stacks): only
-    /// the local player's copy runs, and only for its own hit or kill. Clients own their HP and
-    /// their stats travel to the host, so this is the one place it is real.</item>
-    /// <item><b>Host</b> (the effect is in the simulation: damage, a projectile, a pickup, stacks
-    /// that feed a hit the host builds): only on the host, and only the copy belonging to whoever
-    /// made the hit or kill.</item>
-    /// </list>
-    /// <para>"Whose hit" is the tracker: on the host the attacker the hit was scoped to (null is the
-    /// host's own), on a client the replay's <c>AttackerId</c> or the death's
-    /// <c>DiedByOwnerId</c>.</para>
-    ///
-    /// <para><b>UNVERIFIED.</b> Not run in-game. The classification of each listener comes from
-    /// reading its decompiled body; an item that also does something not listed here would need
-    /// another look.</para>
+    /// <para>Classification from decompiled bodies. <b>UNVERIFIED.</b> Not run in-game.</para>
     /// </summary>
     internal static class EventListenerOwnership
     {
@@ -65,7 +36,7 @@ namespace MegabonkTogether.Patches.Items
         /// <summary>Who made the hit or kill being handled. On the host, an unscoped hit is the host's.</summary>
         private static uint? Actor() => trackerService.GetCurrentPlayerId() ?? (IsHost ? LocalId : null);
 
-        /// <summary>A player-side effect: the local copy only, for the local player's own event.</summary>
+        /// <summary>Local copy only, for the local player's own event.</summary>
         internal static bool RunOnOwnerMachine(bool isLocalCopy)
         {
             if (!InSession)
@@ -77,7 +48,7 @@ namespace MegabonkTogether.Patches.Items
             return isLocalCopy && local.HasValue && Actor() == local;
         }
 
-        /// <summary>A simulation effect: on the host, the copy belonging to whoever made the event.</summary>
+        /// <summary>Host only, the copy belonging to whoever made the event.</summary>
         internal static bool RunOnHost(uint? copyOwner)
         {
             if (!InSession)

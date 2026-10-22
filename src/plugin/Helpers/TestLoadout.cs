@@ -1,19 +1,14 @@
-// Developer test tooling: compiled into Debug builds only, never into a release (the release
-// workflows build Release). See docs/netplay/05-local-testing.md.
+// Debug builds only. See docs/netplay/05-local-testing.md.
 #if DEBUG
 using Assets.Scripts.Inventory__Items__Pickups.Items;
-using MegabonkTogether.Configuration;
+using OmniBonk.Configuration;
 using System;
 
-namespace MegabonkTogether.Helpers
+namespace OmniBonk.Helpers
 {
     /// <summary>
-    /// OB-45. Developer tool: gives this copy of the game the items in <c>[Testing] TestItems</c>
-    /// once per multiplayer session, when the run starts, so a test run exercises chosen items
-    /// instead of whatever the chests roll. Empty by default, and then does nothing.
-    ///
-    /// <para>Granted through <c>ItemInventory.AddItem(EItem)</c>, the path a chest uses, so the
-    /// mod's item-add postfix replicates each one to every peer exactly like a real pickup.</para>
+    /// OB-45: grants <c>[Testing] TestItems</c> once per session at run start, via
+    /// <c>ItemInventory.AddItem</c> so they replicate like real pickups.
     /// </summary>
     internal static class TestLoadout
     {

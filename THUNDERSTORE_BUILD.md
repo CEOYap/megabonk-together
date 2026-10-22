@@ -11,14 +11,14 @@ This project supports building specifically for Thunderstore, which disables aut
 $env:THUNDERSTORE_BUILD="true"
 
 # Build the project
-dotnet build src/plugin/MegabonkTogether.Plugin.csproj -c Release
+dotnet build src/plugin/OmniBonk.Plugin.csproj -c Release
 ```
 
 ### CI/CD (GitHub Actions)
 
 ```yaml
 - name: Build for Thunderstore
-  run: dotnet build src/plugin/MegabonkTogether.Plugin.csproj -c Release
+  run: dotnet build src/plugin/OmniBonk.Plugin.csproj -c Release
   env:
     THUNDERSTORE_BUILD: true
 ```

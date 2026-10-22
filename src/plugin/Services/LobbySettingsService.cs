@@ -1,32 +1,24 @@
 using BepInEx.Logging;
-using MegabonkTogether.Common.Messages.GameNetworkMessages;
-using MegabonkTogether.Configuration;
-using MegabonkTogether.Patches;
+using OmniBonk.Common.Messages.GameNetworkMessages;
+using OmniBonk.Configuration;
+using OmniBonk.Patches;
 
-namespace MegabonkTogether.Services
+namespace OmniBonk.Services
 {
     /// <summary>
-    /// The session's lobby settings: the host's choice, applied identically on every peer.
-    ///
-    /// <para><b>Host.</b> At run start it snapshots its own config (<c>[Lobby]</c>) and sends that
-    /// to every client just before <c>RunStarted</c>. The snapshot, not the live config, is what
-    /// applies for the rest of the session, so a mid-run config edit cannot split the peers.</para>
-    ///
-    /// <para><b>Client.</b> Applies whatever the host sent and never reads its own config for
-    /// these. Until a message arrives everything is off, the vanilla behaviour.</para>
+    /// The host's <c>[Lobby]</c> config, snapshotted at run start and applied on every peer.
+    /// Clients never read their own config for these; all off until the host's message arrives.
     /// </summary>
     public interface ILobbySettingsService
     {
-        /// <summary>No Projectile Cap is in effect for this session.</summary>
         bool NoProjectileCap { get; }
 
-        /// <summary>Endless Run is on for this session.</summary>
         bool EndlessEnabled { get; }
 
-        /// <summary>Host: snapshot the config and send it to every client.</summary>
+        /// <summary>Host only, just before <c>RunStarted</c>.</summary>
         void BroadcastToClients();
 
-        /// <summary>Session over: back to vanilla, and undo what the settings changed.</summary>
+        /// <summary>Back to vanilla, undoing what the settings changed.</summary>
         void Reset();
     }
 

@@ -1,6 +1,6 @@
 using BepInEx.Configuration;
 
-namespace MegabonkTogether.Configuration
+namespace OmniBonk.Configuration
 {
     public static class ModConfig
     {

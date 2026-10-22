@@ -2,7 +2,7 @@
 using System.Collections.Concurrent;
 using UnityEngine;
 
-namespace MegabonkTogether.Scripts
+namespace OmniBonk.Scripts
 {
     public class MainThreadDispatcher : MonoBehaviour
     {

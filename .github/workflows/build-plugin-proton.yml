@@ -51,10 +51,10 @@ jobs:
           echo "Using version: $VERSION"
 
       - name: Restore
-        run: dotnet restore src/plugin/MegabonkTogether.Plugin.csproj
+        run: dotnet restore src/plugin/OmniBonk.Plugin.csproj
 
       - name: Build (Release) with PROTON flag
-        run: dotnet build src/plugin/MegabonkTogether.Plugin.csproj --configuration Release --no-restore
+        run: dotnet build src/plugin/OmniBonk.Plugin.csproj --configuration Release --no-restore
         env:
           PROTON_BUILD: "true"
 
@@ -77,6 +77,9 @@ jobs:
           for f in "$OUTPUT_DIR"/*.pdb; do
             [ -e "$f" ] && FILES+=("$f")
           done
+
+          # In-game changelog: offline fallback when GitHub can't be reached.
+          [ -e "$OUTPUT_DIR/CHANGELOG.toml" ] && FILES+=("$OUTPUT_DIR/CHANGELOG.toml")
 
           if [ ${#FILES[@]} -eq 0 ]; then
             echo "No DLL, PDB files found to zip in $OUTPUT_DIR"

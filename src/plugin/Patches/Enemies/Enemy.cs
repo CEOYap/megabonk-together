@@ -2,16 +2,16 @@ using Assets.Scripts.Actors;
 using Assets.Scripts.Actors.Enemies;
 using Assets.Scripts.Inventory__Items__Pickups.Items;
 using HarmonyLib;
-using MegabonkTogether.Helpers;
-using MegabonkTogether.Scripts.Enemies;
-using MegabonkTogether.Services;
+using OmniBonk.Helpers;
+using OmniBonk.Scripts.Enemies;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using MonoMod.Utils;
 using System;
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace MegabonkTogether.Patches.Enemies
+namespace OmniBonk.Patches.Enemies
 {
     [HarmonyPatch(typeof(Enemy))]
     internal static class EnemyPatch
@@ -25,10 +25,7 @@ namespace MegabonkTogether.Patches.Enemies
 
         public static readonly DistanceThrottler EnemiesDistanceThrottler = new();
 
-        /// <summary>
-        /// Randomly target a player (Not necessarly the local player)
-        /// Also adds TargetSwitcher component to the enemy for target switching
-        /// </summary>
+        /// <summary>Host: target a random player and attach a TargetSwitcher.</summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(Enemy.InitEnemy))]
         public static void init_PostFix(Enemy __instance)
@@ -48,12 +45,7 @@ namespace MegabonkTogether.Patches.Enemies
             var isServer = synchronizationService.IsServerMode();
             if (isServer.HasValue && isServer.Value)
             {
-                // FIX P0-4: GetLocalPlayer() is nullable and was dereferenced unguarded on every
-                // branch below. Hoisted to a single lookup so all three uses share one guard.
-                // A null host means the local Player record is gone, which only happens as the
-                // session is tearing down — leave targetId unset rather than throwing out of
-                // InitEnemy and aborting the rest of enemy initialisation. Deliberately not
-                // logged: InitEnemy runs per spawn, so a warning here would flood during a swarm.
+                // FIX P0-4: null only during teardown; leave targetId unset. Not logged (per spawn).
                 var host = playerManagerService.GetLocalPlayer();
 
                 if (playerManagerService.TryGetGetNetplayerPosition(out uint id)) //TODO: this could be simplifed but too lazy
@@ -73,9 +65,7 @@ namespace MegabonkTogether.Patches.Enemies
                         }
                         else if (host != null)
                         {
-                            // FIX P0-4: that peer's netplayer is gone — they disconnected. Fall
-                            // back to the host so targetId is never left unset; TargetSwitcher
-                            // moves it onto a real peer on its next switch.
+                            // FIX P0-4: peer disconnected; fall back to the host.
                             DynamicData.For(__instance).Set("targetId", host.ConnectionId);
                         }
                     }
@@ -85,11 +75,7 @@ namespace MegabonkTogether.Patches.Enemies
                     DynamicData.For(__instance).Set("targetId", host.ConnectionId);
                 }
 
-                // PERF 1A: reuse an existing switcher rather than adding a second one. This method
-                // is InitEnemy's postfix, and enemies are pooled — the Cleanup + renderer re-enable
-                // at the top of this method only make sense for a recycled GameObject — so an
-                // unconditional AddComponent stacked a new TargetSwitcher on the same object every
-                // time it came back out of the pool. Each one ticked independently.
+                // PERF 1A: enemies are pooled; reuse the switcher instead of stacking another.
                 var switcher = __instance.gameObject.GetComponent<TargetSwitcher>();
                 if (switcher == null)
                 {
@@ -136,10 +122,6 @@ namespace MegabonkTogether.Patches.Enemies
             trackerService.RegisterTrack();
         }
 
-        /// <summary>
-        /// Synchronize enemy death
-        /// </summary>
-
         [HarmonyPostfix]
         [HarmonyPatch(nameof(Enemy.EnemyDied), typeof(DamageContainer))]
         public static void EnemyDied_Postfix(Enemy __instance, DamageContainer dc)
@@ -175,9 +157,6 @@ namespace MegabonkTogether.Patches.Enemies
             trackerService.RegisterTrack();
         }
 
-        /// <summary>
-        /// Same as above 
-        /// </summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(Enemy.EnemyDied), new System.Type[0])]
         public static void EnemyDiedWithoutDc_Postfix(Enemy __instance)
@@ -195,16 +174,12 @@ namespace MegabonkTogether.Patches.Enemies
             synchronizationService.OnEnemyDied(__instance, ownerId: trackerService.GetCurrentPlayerId());
         }
 
-        /// <summary>
-        /// Damage applied server-side only
-        /// </summary>
+        /// <summary>Damage is host-authoritative.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(Enemy.Damage))]
         public static bool Damage_Prefix(Enemy __instance, DamageContainer damageContainer, out bool __state)
         {
-            // __state = "this damage was suppressed". The postfix below still runs when this
-            // prefix returns false -- Harmony does not skip postfixes -- and it broadcasts the hit,
-            // so without this it would announce damage that never happened.
+            // __state = suppressed; the postfix still runs after a false prefix and must not broadcast.
             __state = false;
 
             if (!synchronizationService.HasNetplaySessionStarted())
@@ -212,17 +187,7 @@ namespace MegabonkTogether.Patches.Enemies
                 return true;
             }
 
-            // OB-13, at the real funnel. The first fix gated DamageFromPlayerWeapon,
-            // DamageFromPlayerOther and DamageExternal, and decompiling them shows all three do
-            // nothing but call this private method -- but they are not the only way in. Our own
-            // OnReceivedEnemyDamaged calls enemy.Damage(...) DIRECTLY (Il2CppInterop exposes
-            // private members as public), so every hit replicated from the other peer walked past
-            // all three gates and landed while the game was paused. An xref on Damage
-            // (VA 0x1804AC7B0) gives exactly four callers: those three and Kill. This covers all
-            // of them and ours.
-            //
-            // That route matters most under OB-21's phase slip, where the other peer was usually
-            // NOT actually paused at the barrier and kept fighting through this peer's window.
+            // OB-13: Damage (VA 0x1804AC7B0) is the funnel for all game callers and our replicated hits.
             if (EnemyDamageWhilePausedPatches.IsSuppressedForPause())
             {
                 __state = true;
@@ -244,10 +209,6 @@ namespace MegabonkTogether.Patches.Enemies
             return true;
         }
 
-        /// <summary>
-        /// Synchronize enemy damage to all clients, synchronize item damage for client
-        /// </summary>
-
         [HarmonyPostfix]
         [HarmonyPatch(nameof(Enemy.Damage))]
         public static void Damage_Postfix(Enemy __instance, DamageContainer damageContainer, bool __state)
@@ -257,8 +218,6 @@ namespace MegabonkTogether.Patches.Enemies
                 return;
             }
 
-            // Suppressed by the OB-13 pause gate in the prefix: no damage was applied, so there is
-            // nothing to replicate.
             if (__state)
             {
                 return;
@@ -266,13 +225,7 @@ namespace MegabonkTogether.Patches.Enemies
 
             var isServer = synchronizationService.IsServerMode() ?? false;
 
-            // OB-34. A client applies damage only while replaying a hit the host sent it
-            // (OnReceivedEnemyDamaged opens CAN_DAMAGE_ENEMIES for exactly that call). Such a hit is
-            // never this client's to forward. Without this, an item hit the host forwarded was
-            // forwarded straight back as new, and with two clients it ping-ponged through the host
-            // until the enemy died, applying again on every lap: 2026-10-19, three players, 16-24k
-            // EnemyDamaged/s from EACH client and 33k/s from the host (2.6 MB/s), a client so far
-            // behind it never received the final boss's death.
+            // OB-34: a replayed host hit must not be forwarded back (it ping-ponged between peers).
             if (!isServer && Plugin.Instance.CAN_DAMAGE_ENEMIES)
             {
                 return;
@@ -347,9 +300,7 @@ namespace MegabonkTogether.Patches.Enemies
             return true;
         }
 
-        /// <summary>
-        /// Heal applied server-side only
-        /// </summary>
+        /// <summary>Heal is host-only.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(Enemy.Heal))]
         public static bool Heal_Prefix(Enemy __instance)
@@ -400,8 +351,7 @@ namespace MegabonkTogether.Patches.Enemies
         }
 
         /// <summary>
-        /// Distance-based throttling for non boss enemies
-        /// only disables renderer at far distance for server and full throttling for clients
+        /// Distance throttling for non-boss enemies: host only hides far renderers, clients fully throttle.
         /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(Enemy.MyUpdate))]
@@ -422,10 +372,6 @@ namespace MegabonkTogether.Patches.Enemies
             return EnemiesDistanceThrottler.ShouldUpdate(__instance.gameObject, instanceId, isServer);
         }
 
-        /// <summary>
-        /// Distance-based throttling for non boss enemies
-        /// only disables renderer at far distance for server and full throttling for clients
-        /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(Enemy.MyFixedUpdate))]
         public static bool MyFixedUpdate_Prefix(Enemy __instance)
@@ -445,9 +391,7 @@ namespace MegabonkTogether.Patches.Enemies
             return EnemiesDistanceThrottler.ShouldUpdate(__instance.gameObject, instanceId, isServer);
         }
 
-        /// <summary>
-        /// Cleanup throttler tracking when enemy dies
-        /// </summary>
+        // No netplay guard: cleanup is harmless in singleplayer.
         [HarmonyPostfix]
         [HarmonyPatch(nameof(Enemy.EnemyDied), typeof(DamageContainer))]
         public static void EnemyDied_Cleanup(Enemy __instance)
@@ -459,20 +403,9 @@ namespace MegabonkTogether.Patches.Enemies
         private static int pooledWhileRegistered;
 
         /// <summary>
-        /// OB-51. <c>ReleaseToPool</c> (VA 0x1804AFC50, decompiled) is where every enemy leaves the
-        /// field: <c>SetActive(false)</c>, pool release, <c>ClearAllDebuffs</c>,
-        /// <c>A_EnemyReleasedFromPool</c>.
-        ///
-        /// <para><b>Client:</b> the object is gone here, so whatever id it held is unregistered. A
-        /// pooled object that kept its id came back for a later spawn under a second id, and from
-        /// then on one death left the other id registered for the stage (2026-10-20 17:55: +114 on
-        /// a bot, 99 of them with their death received, 575 alive releases logged).</para>
-        ///
-        /// <para><b>Host:</b> read-only. Its deaths unregister in <c>OnEnemyDied</c>, which runs in
-        /// the <c>EnemyDied</c> postfix and must find the entry there to broadcast; a removal here
-        /// could beat it if a death listener pools synchronously. A live release on the host (a
-        /// timed despawn: <c>TryDespawn</c>, 0x1804B0640, never calls <c>EnemyDied</c>) is only
-        /// logged; it read 0 in that run.</para>
+        /// OB-51: <c>ReleaseToPool</c> (VA 0x1804AFC50, decompiled) is where every enemy leaves the field.
+        /// Client: unregister its id so a reused object cannot alias. Host: read-only, since
+        /// <c>OnEnemyDied</c> must still find the entry to broadcast.
         /// </summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(Enemy.ReleaseToPool))]
@@ -520,13 +453,9 @@ namespace MegabonkTogether.Patches.Enemies
         }
 
         /// <summary>
-        /// OB-51. Only the host decides that an enemy despawns. <c>TryDespawn</c> (VA 0x1804B0640,
-        /// decompiled) starts the <c>Despawn</c> coroutine once <c>MyTime.time</c> passes
-        /// <c>despawnAtTime</c> (+0x98); the coroutine ends in <c>ReleaseToPool</c> with no
-        /// <c>EnemyDied</c>. On 2026-10-20 a bot pooled 575 live enemies the host still had (the
-        /// host logged none), so they vanished on that client only. Prefix-false on purpose, on
-        /// clients: the host's death and explosion messages remove an enemy there.
-        /// <b>UNVERIFIED</b> that every one of those 575 came from here.
+        /// OB-51: only the host despawns. <c>TryDespawn</c> (VA 0x1804B0640, decompiled) pools without
+        /// <c>EnemyDied</c>; returns false on clients, which remove enemies via host messages.
+        /// <b>UNVERIFIED</b> that this explains every client-only despawn observed (575 on 2026-10-20).
         /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch("TryDespawn")]
@@ -534,32 +463,8 @@ namespace MegabonkTogether.Patches.Enemies
             => !synchronizationService.HasNetplaySessionStarted() || (synchronizationService.IsServerMode() ?? false);
 
         /// <summary>
-        /// OB-9. Replicate an enemy's HP after it has been rescaled post-spawn.
-        ///
-        /// <para><b>The ordering that caused the bug.</b> Every scaler runs in the *caller* of
-        /// <c>EnemyManager.SpawnEnemy</c>, after it has returned — and
-        /// <c>EnemyManagerPatches.SpawnEnemy_Postfix</c> fires in between. So the
-        /// <c>SpawnedEnemy</c> message went out carrying the enemy's *unscaled* HP. The client sets
-        /// <c>hp</c>, <c>controlHp</c> and <c>maxHp</c> from that single value, and the 40 Hz
-        /// <c>EnemyModel</c> delta carries current HP and nothing else — so current HP converged and
-        /// the maximum stayed at the unscaled number for the rest of the run. That is exactly the
-        /// report: current agrees between peers, maximum does not.</para>
-        ///
-        /// <para><b>Why this method and not each spawner.</b> An xref gives
-        /// <c>SetSwarmMultiplierHp</c> five callers — <c>EnemyManager.SpawnBoss</c>,
-        /// <c>SwarmSummoner.SpendCredits</c>, and the <c>SpawnEnemy</c> of
-        /// <c>InteractableCharacterFight</c>, <c>InteractableDesertGrave</c> and
-        /// <c>InteractableSkeletonKingStatue</c>. They share no other hook, and the three
-        /// interactables are the "interactables that spawn bosses" in the report. Patching the one
-        /// scaler covers all five and any future caller.</para>
-        ///
-        /// <para><b>The multiplier is <c>GameManager.bossCurses</c>-driven</b> (<c>SpawnBoss</c>
-        /// applies it only when <c>bossCurses &gt; 0</c>), which is why an early-run boss can look
-        /// correct and a late-run one cannot.</para>
-        ///
-        /// <para>Host only: the client never runs the scaler, because its spawn was suppressed. The
-        /// enemy already carries a netplay id here — <c>SpawnEnemy_Postfix</c> registered it before
-        /// the caller got the reference back.</para>
+        /// OB-9: replicate HP rescaled after spawn (the SpawnedEnemy message carried unscaled max HP).
+        /// Patching the scaler covers all five callers (xref). Host only.
         /// </summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(Enemy.SetSwarmMultiplierHp))]

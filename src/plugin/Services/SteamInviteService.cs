@@ -3,20 +3,11 @@ using Steamworks;
 using System;
 using System.Runtime.InteropServices;
 
-namespace MegabonkTogether.Services
+namespace OmniBonk.Services
 {
     /// <summary>
-    /// Turns "a friend invited me" into a matchmaker room code, however the invite arrives.
-    ///
-    /// <para>Two paths, because Steam has two. If the game was <b>closed</b>, Steam launches it with
-    /// <c>+connect_lobby &lt;id&gt;</c> and the id is read off the command line. If the game was
-    /// <b>already running</b>, nothing touches the command line and a
-    /// <c>GameLobbyJoinRequested_t</c> callback fires instead. Both end at the same place: a Steam
-    /// lobby id to resolve.</para>
-    ///
-    /// <para>Resolving means joining that Steam lobby, reading the room code the host published
-    /// into it, and leaving again. The Steam lobby is a courier — the host stays in it, we do not,
-    /// and staying would leave this service and the presence bridge arguing over who owns it.</para>
+    /// Turns a Steam invite into a room code. Arrives as <c>+connect_lobby &lt;id&gt;</c> when the
+    /// game was closed, or a <c>GameLobbyJoinRequested_t</c> callback when it was running.
     /// </summary>
     internal class SteamInviteService(
         ISteamService steamService,
@@ -29,30 +20,17 @@ namespace MegabonkTogether.Services
         private bool registeredCallback;
         private bool joining;
 
-        /// <summary>
-        /// Held in a field for as long as it is registered. The dispatcher keeps a reference on the
-        /// IL2CPP side, and letting the managed wrapper go while that is true is how a callback
-        /// becomes a crash later.
-        /// </summary>
+        /// <summary>Kept alive while registered: the IL2CPP dispatcher holds a reference.</summary>
         private SteamCallback joinRequestedCallback;
 
-        /// <summary>The lobby waiting to be resolved, or 0.</summary>
         private ulong pendingLobbyId;
 
-        /// <summary>
-        /// The room code an invite resolved to, or empty. Read by the netplay menu so a player does
-        /// not retype something they were handed.
-        /// </summary>
         public string PendingJoinCode { get; private set; } = "";
 
-        /// <summary>
-        /// True while a Steam lobby is being joined and read. The ticker uses this to hold the
-        /// presence bridge off: the bridge leaves any Steam lobby it did not create, and would drop
-        /// us out of the one being read.
-        /// </summary>
+        /// <summary>Holds the presence bridge off, which would leave the lobby being read.</summary>
         public bool IsResolving => joining;
 
-        /// <summary>Takes the pending code and forgets it, so an invite is offered once.</summary>
+        /// <summary>So an invite is offered once.</summary>
         public string ConsumeJoinCode()
         {
             var code = PendingJoinCode;
@@ -99,10 +77,6 @@ namespace MegabonkTogether.Services
             steamLobbyService.JoinLobby(lobbyId);
         }
 
-        /// <summary>
-        /// Registers for <c>GameLobbyJoinRequested_t</c>, which is how an invite accepted while the
-        /// game is already running arrives. Once, and only once Steam is up.
-        /// </summary>
         private void RegisterJoinRequestedCallback()
         {
             if (registeredCallback || steamService.Readiness != SteamReadiness.Ready)
@@ -110,8 +84,7 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            // Latched before the attempt, not after. If this throws, retrying it every quarter
-            // second would turn one failure into a stream of them.
+            // Latched before the attempt so a throw is not retried every poll.
             registeredCallback = true;
 
             try
@@ -136,11 +109,8 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>
-        /// A friend's invite accepted with the game already open.
-        ///
-        /// <para>The id is recorded and resolved on the next <see cref="Poll"/> rather than acted on
-        /// here. This runs inside the game's callback pump, and starting a Steam call from within
-        /// it would re-enter the lobby service from a place it does not expect.</para>
+        /// Only records the id: this runs inside the callback pump, so the Steam call waits for
+        /// the next <see cref="Poll"/>.
         /// </summary>
         private void OnJoinRequested(IntPtr payload)
         {
@@ -165,22 +135,14 @@ namespace MegabonkTogether.Services
 
             if (steamLobbyService.State != SteamLobbyState.InLobby)
             {
-                // Covers a lobby that has closed, a full one, and a host on an incompatible
-                // protocol version — JoinLobby applies that gate itself and leaves again, so its
-                // message is the useful one.
+                // Closed, full, or version-gated; JoinLobby's status says which.
                 Plugin.Log.LogWarning(
                     $"[steam-invite] Could not join the invited lobby: {steamLobbyService.DescribeStatus()}");
                 return;
             }
 
-            // With the Steam transport carrying the session, being in this lobby IS the join, and
-            // leaving would end the session we just joined - the session service watches lobby
-            // membership and shuts the transport down when it goes. That is exactly what happened
-            // on the first internet test: joined, connected, left, shut down, all in one tick.
-            //
-            // In the bridge world the opposite is true: the Steam lobby is only a signpost holding a
-            // matchmaker code, and staying in it would leave a second advertisement of the session
-            // lying around.
+            // Steam transport: the lobby is the session, so stay (leaving ends it). Matchmaker:
+            // the lobby only carries the code, so read it and leave.
             if (Configuration.ModConfig.UseSteamTransport.Value)
             {
                 PendingJoinCode = steamLobbyService.LobbyCode;
@@ -190,9 +152,7 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            // Read before leaving: once we are out of the lobby its data is no longer ours to read,
-            // and the transport marker is what distinguishes the two reasons a room code can be
-            // missing.
+            // Read before leaving; it explains a missing room code.
             var hostTransport = steamLobbyService.GetLobbyData(SteamLobbyKeys.Transport);
 
             PendingJoinCode = steamLobbyService.GetLobbyData(SteamLobbyKeys.MatchmakerCode);
@@ -200,10 +160,7 @@ namespace MegabonkTogether.Services
 
             if (string.IsNullOrEmpty(PendingJoinCode))
             {
-                // Two different failures used to share one message, and it named the wrong one. A
-                // host on the Steam transport publishes no matchmaker code because there is no
-                // matchmaker — nothing is wrong with their build, the two installs simply disagree
-                // about which transport they are on, and that is a setting the player can change.
+                // A Steam-transport host publishes no code: a settings mismatch, not an old build.
                 if (hostTransport == SteamLobbyKeys.TransportSteam)
                 {
                     Plugin.Log.LogWarning(

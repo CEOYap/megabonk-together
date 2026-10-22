@@ -1,8 +1,8 @@
 ﻿using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     [HarmonyPatch(typeof(CinematicBars))]
     internal class CinematicBarsPatches
@@ -10,9 +10,7 @@ namespace MegabonkTogether.Patches
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
 
-        /// <summary>
-        /// Reset Displayer
-        /// </summary>
+        /// <summary>Reset Displayer</summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(CinematicBars.Hide))]
         public static void Hide_Postfix()

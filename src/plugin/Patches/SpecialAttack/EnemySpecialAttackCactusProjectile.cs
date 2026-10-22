@@ -1,8 +1,8 @@
 ﻿using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches.SpecialAttack
+namespace OmniBonk.Patches.SpecialAttack
 {
     [HarmonyPatch(typeof(EnemySpecialAttackCactusProjectile))]
     internal static class EnemySpecialAttackCactusProjectilePatches
@@ -10,10 +10,7 @@ namespace MegabonkTogether.Patches.SpecialAttack
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
 
-        /// <summary>
-        /// Intercept projectile to target the correct player instead of the orignal function targeting always the local player.
-        /// </summary>
-        /// <param name="__instance"></param>
+        /// <summary>Aim at the enemy's actual target; the original always targets the local player.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(EnemySpecialAttackCactusProjectile.Init))]
         public static void Init_Prefix(EnemySpecialAttackCactusProjectile __instance, out bool __state)
@@ -32,9 +29,6 @@ namespace MegabonkTogether.Patches.SpecialAttack
             }
         }
 
-        /// <summary>
-        /// Remove queued request after attack is over.
-        /// </summary>
         [HarmonyFinalizer]
         [HarmonyPatch(nameof(EnemySpecialAttackCactusProjectile.Init))]
         public static void Init_Finalizer(bool __state)

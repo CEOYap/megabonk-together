@@ -1,9 +1,9 @@
 ﻿using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using MonoMod.Utils;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     [HarmonyPatch(typeof(BossPylon))]
     internal static class BossPylonPatches
@@ -11,10 +11,7 @@ namespace MegabonkTogether.Patches
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
 
-        /// <summary>
-        /// Synchronize starting to charge pylon.
-        /// The server check and notify other clients if they need to start (Nothing happens if already charging)
-        /// </summary>
+        /// <summary>Synchronize pylon charge start; the host relays it (no-op if already charging).</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(BossPylon.OnTriggerEnter))]
         public static bool OnTriggerEnter_Prefix(BossPylon __instance)
@@ -43,10 +40,7 @@ namespace MegabonkTogether.Patches
             return true;
         }
 
-        /// <summary>
-        /// Synchronize stopping to pylon.
-        /// The server check and notify other clients if they need to stop (Nothing happens if a player is still charging)
-        /// </summary>
+        /// <summary>Synchronize pylon charge stop (no-op while another player still charges).</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(BossPylon.OnTriggerExit))]
         public static bool OnTriggerExit_Prefix(BossPylon __instance)

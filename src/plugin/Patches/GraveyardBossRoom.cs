@@ -1,9 +1,9 @@
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using MonoMod.Utils;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     [HarmonyPatch(typeof(GraveyardBossRoom))]
     internal static class GraveyardBossRoomPatches
@@ -12,10 +12,8 @@ namespace MegabonkTogether.Patches
         private static readonly ISpawnedObjectManagerService spawnedObjectManagerService = Plugin.Services.GetService<ISpawnedObjectManagerService>();
 
         /// <summary>
-        /// Set another custom world size specifically because the boss spawn low enough to be outside normal world bounds
-        /// Also register all lamps and the boss leave interactable for synchronization
+        /// Enlarges world bounds (the boss spawns below them) and registers lamps and the exit for sync.
         /// </summary>
-        /// <param name="__instance"></param>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(GraveyardBossRoom.Activate))]
         public static void Activate_Prefix(GraveyardBossRoom __instance)
@@ -70,18 +68,9 @@ namespace MegabonkTogether.Patches
         }
 
         /// <summary>
-        /// Client: the Ghost King's spawn, without the spawn. <c>CheckSpawnBoss</c> (VA 0x180505F90,
-        /// decompiled; Ghidra's labels are a slot off, read against dump.cs offsets) waits for
-        /// <c>isFightingBoss</c> and <c>spawnBossAtTime</c>, sets <c>hasSpawnedBoss</c>, calls
-        /// <c>EnemyManager.SpawnBoss</c> and then uses the boss it returns (armor, lamp colliders),
-        /// plays <c>musicTrackBoss</c> and updates the objective. On a client <c>SpawnBoss</c> returns
-        /// null by design (only the host's boss is real), so the method threw on the null boss once a
-        /// fight and the client never got the boss music (2026-10-21, a bot in the Ghost King's room).
-        ///
-        /// <para>Prefix-false on purpose, on clients: the same check and flag, then the music. The boss,
-        /// its armor and the objective arrive with the host's <c>SpawnedEnemy</c>
-        /// (<c>ProcessSpawnedEnemy</c>'s Ghost King branch). The lamp colliders only matter to the
-        /// host's physics. <b>UNVERIFIED, not run in-game.</b></para>
+        /// Client: <c>CheckSpawnBoss</c> (VA 0x180505F90, decompiled) dereferences the boss <c>SpawnBoss</c>
+        /// returns, which is null on clients. Prefix-false on clients: same check and flag, then the music;
+        /// the boss arrives via the host's <c>SpawnedEnemy</c>. <b>UNVERIFIED, not run in-game.</b>
         /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch("CheckSpawnBoss")]

@@ -1,10 +1,7 @@
 using UnityEngine;
 
-namespace MegabonkTogether.Scripts.Modal
+namespace OmniBonk.Scripts.Modal
 {
-    /// <summary>
-    /// Simple loading modal
-    /// </summary>
     internal class LoadingModal : ModalBase
     {
         protected override void OnUICreated()

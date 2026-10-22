@@ -1,45 +1,20 @@
 using System;
 using System.Runtime.InteropServices;
 
-namespace MegabonkTogether.Services
+namespace OmniBonk.Services
 {
     /// <summary>
-    /// The one Steamworks call this mod makes without going through the game's interop assembly.
-    ///
-    /// <para><b>Why P/Invoke here and nowhere else.</b> <c>GetConnectionRealTimeStatus</c> is the
-    /// only source of ping, and its interop signature takes
-    /// <c>SteamNetConnectionRealTimeStatus_t</c> by reference — a struct whose IL2CPP form carries
-    /// an <c>Il2CppStructArray</c> where native has 64 inline bytes. Passing it is the exact shape
-    /// that has crashed this project twice, so the transport shipped with
-    /// <c>GetLatency</c> returning -1 and the lobby panel's rtt blank. See
-    /// <c>docs/steamworks/05-interop-struct-shapes.md</c>.</para>
-    ///
-    /// <para><b>This does not create a second callback registry</b>, which is the thing that makes
-    /// it safe. <c>ISteamNetworkingSockets</c> has no callbacks of its own — connection status
-    /// arrives on the shared pipe the game already pumps — so calling one of its methods directly
-    /// adds no dispatcher and consumes nobody's results. That is the composition
-    /// <see href="../../docs/steamworks/00-migration-plan.md">Gotcha 1 option (c)</see> describes.</para>
-    ///
-    /// <para><b>The struct below is ours, declared blittable, and never crosses Il2CppInterop.</b>
-    /// That is the whole reason this is safe where the interop path is not: the layout is written
-    /// out here to match the SDK exactly, including the trailing reserved array as
-    /// <c>fixed uint[16]</c> rather than a reference.</para>
+    /// Direct P/Invoke for <c>GetConnectionRealTimeStatus</c>: its interop struct carries an
+    /// <c>Il2CppStructArray</c> where native is inline and crashes (docs/steamworks/05-interop-struct-shapes.md).
+    /// Safe because <c>ISteamNetworkingSockets</c> has no callbacks, so no second dispatcher is created,
+    /// and the struct below is blittable and never crosses Il2CppInterop.
     /// </summary>
     internal static class SteamNetNative
     {
-        /// <summary>
-        /// Resolved by base name, which finds the module the game has already loaded rather than
-        /// loading a second one — Windows returns the existing handle for a matching base name, and
-        /// Steam is up long before anything here is called.
-        /// </summary>
+        /// <summary>Base name resolves to the module the game already loaded.</summary>
         private const string SteamApi = "steam_api64.dll";
 
-        /// <summary>
-        /// The accessor version must match the interface the game's own <c>steam_api64.dll</c>
-        /// exposes. That was read out of the binary as <c>SteamNetworkingSockets012</c>; a wrong
-        /// version here returns null rather than misbehaving, which <see cref="TryGetPing"/> treats
-        /// as "no ping available".
-        /// </summary>
+        /// <summary>Must match the game's <c>SteamNetworkingSockets012</c>; a wrong version returns null.</summary>
         [DllImport(SteamApi, EntryPoint = "SteamAPI_SteamNetworkingSockets_SteamAPI_v012", CallingConvention = CallingConvention.Cdecl)]
         private static extern IntPtr GetSocketsInterface();
 
@@ -51,10 +26,7 @@ namespace MegabonkTogether.Services
             int nLanes,
             IntPtr pLanes);
 
-        /// <summary>
-        /// Our own declaration of <c>SteamNetConnectionRealTimeStatus_t</c>, laid out to match the
-        /// SDK. Blittable by construction — the reserved tail is inline, not a reference.
-        /// </summary>
+        /// <summary>Matches the SDK layout; reserved tail is inline so it stays blittable.</summary>
         [StructLayout(LayoutKind.Sequential)]
         private unsafe struct SteamNetConnectionRealTimeStatusNative
         {
@@ -75,17 +47,8 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>
-        /// The part of <c>SteamNetConnectionRealTimeStatus_t</c> worth reporting, copied out of the
-        /// native struct so nothing beyond this file handles a type with a fixed buffer in it.
-        ///
-        /// <para><b>Why more than ping.</b> The migration's remaining exit criterion is a run under
-        /// simulated packet loss, and three of its hazards are invisible from the outside:
-        /// <c>ReliableUnordered</c> degrading to reliable-ordered brings back head-of-line blocking,
-        /// which shows up here as <see cref="PendingReliableBytes"/> and
-        /// <see cref="QueueTimeMs"/> climbing while the unreliable streams stay flat.
-        /// <see cref="QualityLocal"/> is the measured delivery ratio, and it is also the only way to
-        /// confirm the <i>test rig</i> is real: a loss run where quality stays at 100% did not test
-        /// anything, and without this it is indistinguishable from a run that passed.</para>
+        /// Link diagnostics for loss testing. Quality confirms the loss rig is active; climbing
+        /// pending reliable bytes and queue time show head-of-line blocking.
         /// </summary>
         public readonly struct SteamLinkStatus(
             int pingMs,
@@ -98,42 +61,27 @@ namespace MegabonkTogether.Services
         {
             public int PingMs { get; } = pingMs;
 
-            /// <summary>Fraction of packets delivered, as measured by this end. 1.0 is a clean link.</summary>
+            /// <summary>Delivered fraction measured here; 1.0 is clean.</summary>
             public float QualityLocal { get; } = qualityLocal;
 
-            /// <summary>The same, as reported back by the peer. Loss is usually not symmetric.</summary>
             public float QualityRemote { get; } = qualityRemote;
 
-            /// <summary>Bytes queued on the reliable channel and not yet put on the wire.</summary>
             public int PendingReliableBytes { get; } = pendingReliableBytes;
 
             public int PendingUnreliableBytes { get; } = pendingUnreliableBytes;
 
-            /// <summary>Reliable bytes sent and not yet acknowledged — retransmission backlog.</summary>
             public int SentUnackedReliableBytes { get; } = sentUnackedReliableBytes;
 
             public float QueueTimeMs { get; } = queueTimeMicroseconds / 1000f;
         }
 
-        /// <summary>
-        /// Latched off after a failure. A missing export or a null interface will not start working
-        /// later, and this is called from a per-frame diagnostic path.
-        /// </summary>
+        /// <summary>Latched off after the first failure (per-frame path).</summary>
         private static bool unavailable;
 
-        /// <summary>
-        /// Round-trip time in milliseconds for a connection, or -1 when it cannot be read.
-        /// </summary>
         public static int TryGetPing(uint connection) =>
             TryGetLinkStatus(connection, out var status) ? status.PingMs : -1;
 
-        /// <summary>
-        /// Reads a connection's real-time status. False when it cannot be read, which is normal for
-        /// a connection that has just closed.
-        ///
-        /// <para>Never throws: this is a diagnostic, and a diagnostic that can take the frame down
-        /// is worse than no diagnostic. The first failure disables it permanently.</para>
-        /// </summary>
+        /// <summary>Never throws. False is normal for a just-closed connection.</summary>
         public static bool TryGetLinkStatus(uint connection, out SteamLinkStatus status)
         {
             status = default;
@@ -154,12 +102,9 @@ namespace MegabonkTogether.Services
 
                 var native = default(SteamNetConnectionRealTimeStatusNative);
 
-                // nLanes 0 and a null lane pointer: we do not use connection lanes, and asking for
-                // lane status is what would need a second struct.
                 var result = GetConnectionRealTimeStatus(sockets, connection, ref native, 0, IntPtr.Zero);
 
-                // k_EResultOK. Anything else — most often a connection that has just closed — is
-                // not worth a log on a path that runs per peer per sample.
+                // k_EResultOK.
                 if (result != 1)
                 {
                     return false;

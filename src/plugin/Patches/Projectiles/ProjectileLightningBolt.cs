@@ -2,10 +2,10 @@
 using HarmonyLib;
 using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.InteropTypes;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches.Projectiles
+namespace OmniBonk.Patches.Projectiles
 {
     [HarmonyPatch(typeof(ProjectileLightningBolt))]
     internal static class ProjectileLightningBoltPatches
@@ -13,9 +13,7 @@ namespace MegabonkTogether.Patches.Projectiles
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
 
-        /// <summary>
-        /// Use the correct player (local / remote) transform
-        /// </summary>
+        /// <summary>Swaps in the owning player's transform.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileLightningBolt.TryInit))]
         public static bool TryInit_Prefix(ProjectileLightningBolt __instance, out bool __state)
@@ -46,9 +44,7 @@ namespace MegabonkTogether.Patches.Projectiles
             return true;
         }
 
-        /// <summary>
-        /// Restore original transform after prefix
-        /// </summary>
+        /// <summary>Restores the transform swapped by the prefix.</summary>
         [HarmonyFinalizer]
         [HarmonyPatch(nameof(ProjectileLightningBolt.TryInit))]
         public static void TryInit_Finalizer(bool __state)

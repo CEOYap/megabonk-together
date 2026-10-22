@@ -1,22 +1,15 @@
 using Assets.Scripts.Managers;
 using HarmonyLib;
-using MegabonkTogether.Helpers;
-using MegabonkTogether.Services;
+using OmniBonk.Helpers;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     /// <summary>
-    /// Endless Run (docs/netplay/18, Phase 2). Detection only; <see cref="EndlessRunService"/>
-    /// decides.
-    ///
-    /// <para><b>Gate.</b> Session initialized and Endless active, not "session started": a portal is
-    /// detected in <c>DetectInteractables.TryInteract</c>'s prefix, which moves the session to
-    /// <c>LoadingNextLevel</c> before the game's <c>Interact</c> calls the stage load. Endless is
-    /// only ever active inside a netplay run, so singleplayer never reaches past the gate.</para>
-    ///
-    /// <para><b>No ownership check, on purpose.</b> Every peer runs its own stage load; the service
-    /// steers each to the host's room and sends nothing from here.</para>
+    /// Endless Run (docs/netplay/18). Detection only; <see cref="EndlessRunService"/> decides.
+    /// <para>Gated on "initialized", not "started": the session is already <c>LoadingNextLevel</c> here.
+    /// No ownership check: every peer runs its own stage load and nothing is sent.</para>
     /// </summary>
     [HarmonyPatch(typeof(MapController))]
     internal static class EndlessStageLoadPatches
@@ -24,10 +17,7 @@ namespace MegabonkTogether.Patches
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
         private static readonly IEndlessRunService endlessRunService = Plugin.Services.GetService<IEndlessRunService>();
 
-        /// <summary>
-        /// <c>StartNewMap</c> (0x1804222F0, decompiled) loads the run's first stage through
-        /// <c>LoadNextStage</c> itself. That load is the run's start, not a stage change.
-        /// </summary>
+        /// <summary><c>StartNewMap</c> (0x1804222F0, decompiled) calls <c>LoadNextStage</c> for the first stage.</summary>
         private static bool startingRun;
 
         private static bool InEndless
@@ -54,10 +44,8 @@ namespace MegabonkTogether.Patches
     }
 
     /// <summary>
-    /// Endless: every regular room gets its portal after its stage boss. The game opens one only
-    /// while <c>!IsLastStage() &amp;&amp; index &lt; runConfig.mapTierIndex</c> (OB-46,
-    /// <c>CanSpawnPortal</c> 0x1804C5540). Clients ask the same method (OB-46), so host and clients
-    /// agree.
+    /// Endless: every regular room gets a portal after its boss (OB-46, <c>CanSpawnPortal</c> 0x1804C5540).
+    /// All peers ask this method, so they agree.
     /// </summary>
     [HarmonyPatch(typeof(InteractableBossSpawner))]
     internal static class EndlessPortalPatches
@@ -76,11 +64,8 @@ namespace MegabonkTogether.Patches
     }
 
     /// <summary>
-    /// Endless: the portal a final boss leaves goes to the next room. <c>Interact</c>
-    /// (0x1804CCA20, decompiled) sets <c>done</c> and starts <c>DoFinishGame</c>, which ends the
-    /// run. Prefix-false on purpose while Endless is active: this loads the next stage instead, and
-    /// the stage-load patch steers it to the host's room. The session state is set to a normal
-    /// stage change, not Endgame, in <c>SynchronizationService</c>.
+    /// Endless: the final-boss portal (<c>Interact</c>, 0x1804CCA20, decompiled, would end the run)
+    /// loads the next stage instead; hence prefix-false.
     /// </summary>
     [HarmonyPatch(typeof(InteractablePortalFinal))]
     internal static class EndlessFinalPortalPatches
@@ -109,9 +94,7 @@ namespace MegabonkTogether.Patches
         }
     }
     /// <summary>
-    /// Endless, Phase 3: Graveyard rooms. The arrival is moved into the chosen room at the spawn
-    /// portal and started once the run is playing (<see cref="EndlessGraveyard"/>). Every peer runs
-    /// this for its own arrival, so no ownership check; nothing is sent from here.
+    /// Endless Graveyard arrivals (<see cref="EndlessGraveyard"/>). No ownership check: each peer handles its own arrival.
     /// </summary>
     [HarmonyPatch]
     internal static class EndlessGraveyardArrivalPatches
@@ -145,9 +128,7 @@ namespace MegabonkTogether.Patches
         }
 
         /// <summary>
-        /// Prefix-false on purpose in the Ghost King room before its fight: the room is entered
-        /// without the second crypt's exit that normally readies it, and its Update must not run
-        /// ahead of <c>Activate</c>.
+        /// Prefix-false before the Ghost King fight: Update must not run ahead of <c>Activate</c>.
         /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(typeof(GraveyardBossRoom), "Update")]
@@ -163,11 +144,8 @@ namespace MegabonkTogether.Patches
     }
 
     /// <summary>
-    /// Endless, Phase 3: a Graveyard room's exit is a stage change to the next room, in place of the
-    /// teleport to the next area of the same scene. Prefix-false on purpose in those rooms. The
-    /// exits are already synced (<c>InteractableUsed</c>, then each peer replays <c>Interact</c>),
-    /// so this runs on every peer. Each moves this peer to a normal stage change first, as a portal
-    /// would, so the level's state is torn down before the next stage loads.
+    /// Endless: Graveyard room exits become a stage change (prefix-false). Exits are already synced,
+    /// so this runs on every peer without an ownership check.
     /// </summary>
     [HarmonyPatch]
     internal static class EndlessGraveyardExitPatches
@@ -243,21 +221,10 @@ namespace MegabonkTogether.Patches
         }
     }
     /// <summary>
-    /// Endless: a later room is the same run, not a new one.
-    ///
-    /// <para><b>The defect</b> (decompiled, build 21750826). <c>GameManager.Start</c>
-    /// (0x180504200) raises <c>A_StageStarted</c> on every stage and <c>A_RunStarted</c> when
-    /// <c>MapController.IsFirstStage()</c>, which is just <c>index == 0</c> (0x1804219B0). Endless
-    /// sets index 0 for every stage-1 room (Forest 1, Desert 1, every Graveyard room), so each of
-    /// those started a new run for the game's listeners: <c>RunStats.OnNewRun</c> (0x180411AE0,
-    /// kills, damage and the end screen's figures) and <c>MoneyUtility.OnNewRun</c> (0x18046A580),
-    /// which zeroes <c>chestsPurchased</c>, the chest price. 2026-10-21: after nine rooms the end
-    /// screen showed 0:48 alive and 35 kills, and chest prices fell back.</para>
-    ///
-    /// <para><b>The fix.</b> While <c>GameManager.Start</c> runs after a stage change,
-    /// <c>IsFirstStage</c> answers false, so the stage starts as any later stage would. Only that
-    /// call: everything else that asks still sees the real index. Every peer runs this for its own
-    /// stage start; nothing is sent. <b>UNVERIFIED, not run in-game.</b></para>
+    /// Endless: a later room is the same run. Decompiled: <c>GameManager.Start</c> (0x180504200) raises
+    /// <c>A_RunStarted</c> when <c>IsFirstStage()</c> (index == 0, 0x1804219B0), resetting run stats and chest prices.
+    /// So <c>IsFirstStage</c> answers false only inside <c>Start</c> after a stage change. Runs on every peer.
+    /// <b>UNVERIFIED, not run in-game.</b>
     /// </summary>
     [HarmonyPatch]
     internal static class EndlessRunContinuityPatches

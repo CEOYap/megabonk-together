@@ -266,7 +266,7 @@ a terminal (PowerShell on Windows) in the repository folder.
 3. Build the solution:
 
    ```powershell
-   dotnet build MegabonkTogether.sln
+   dotnet build OmniBonk.sln
    ```
 
    This builds the mod (`src/plugin/bin/Debug/net6.0/OmniBonk.dll`, with `OmniBonk.Common.dll`)

@@ -2,7 +2,7 @@ using HarmonyLib;
 using Microsoft.Extensions.DependencyInjection;
 using UnityEngine;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     [HarmonyPatch(typeof(PlayerCamera))]
     internal class PlayerCameraPatches

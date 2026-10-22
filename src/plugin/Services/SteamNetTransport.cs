@@ -1,10 +1,10 @@
-﻿using MegabonkTogether.Configuration;
+﻿using OmniBonk.Configuration;
 using Assets.Scripts.Inventory__Items__Pickups.Items;
 using Assets.Scripts.Managers;
 using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
-using MegabonkTogether.Common.Messages;
-using MegabonkTogether.Common.Messages.GameNetworkMessages;
+using OmniBonk.Common.Messages;
+using OmniBonk.Common.Messages.GameNetworkMessages;
 using MemoryPack;
 using Microsoft.Extensions.DependencyInjection;
 using Steamworks;
@@ -12,99 +12,42 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
-namespace MegabonkTogether.Services
+namespace OmniBonk.Services
 {
     /// <summary>
-    /// <c>ISteamNetworkingSockets</c> behind <see cref="INetTransport"/>. Phase 4.
-    ///
-    /// <para><b>Structurally parallel to the LiteNetLib transport on purpose.</b> A peer handle is
-    /// the raw <c>HSteamNetConnection</c> and stands where <c>NetPeer.Id</c> stands; the game's
-    /// connection id is learned from the introduction handshake and mapped, exactly as
-    /// <c>gamePeersIntroduced</c> does. That symmetry is what lets the session layer be moved over
-    /// in a separate step instead of rewritten alongside this.</para>
-    ///
-    /// <para><b>Which Steamworks calls this may make is not a matter of taste.</b> Every by-ref
-    /// struct on this path was audited against the game's interop assembly first — see
-    /// <c>docs/steamworks/05-interop-struct-shapes.md</c>. <c>GetConnectionRealTimeStatus</c> and
-    /// <c>GetConnectionInfo</c> are unreachable because their structs carry
-    /// <c>Il2CppStructArray</c> fields where native has inline bytes, which is the shape that has
-    /// crashed this project twice. The visible cost is <see cref="GetLatency"/>, which returns -1
-    /// here.</para>
-    ///
-    /// <para><b>The connection lifecycle joins the game's callback pump rather than racing it.</b>
-    /// <see cref="SteamCallback"/> is registered with the game's own dispatcher, so
-    /// <c>SteamNetConnectionStatusChangedCallback_t</c> is delivered to us on the main thread. The
-    /// config-value function pointer the migration plan proposed is not needed, and polling
-    /// <c>GetAPICallResult</c> — which loses to that pump silently — is not used anywhere here.</para>
+    /// <c>ISteamNetworkingSockets</c> behind <see cref="INetTransport"/>, deliberately parallel to the LiteNetLib transport.
+    /// <para>IL2CPP: <c>GetConnectionRealTimeStatus</c>/<c>GetConnectionInfo</c> interop structs have
+    /// <c>Il2CppStructArray</c> where native is inline and crash; see docs/steamworks/05-interop-struct-shapes.md.
+    /// Status callbacks come through the game's dispatcher on the main thread; never poll <c>GetAPICallResult</c>.</para>
     /// </summary>
     internal class SteamNetTransport(
         ISteamService steamService,
         ISteamLobbyService steamLobbyService,
         IPlayerManagerService playerManagerService) : ISteamNetTransport
     {
-        /// <summary>
-        /// Everything received that is not about the connection. Resolved lazily rather than
-        /// injected — see <see cref="HandleRawMessage"/>.
-        /// </summary>
+        /// <summary>Resolved lazily; injecting it would be a DI cycle.</summary>
         private INetMessageRouter netMessageRouter;
 
-        /// <summary>
-        /// An application-level port, not a UDP one. It only has to match between host and client;
-        /// 0 is what a shipping implementation for this game uses and there is no reason to differ.
-        /// </summary>
+        /// <summary>Application-level port; only has to match between host and client.</summary>
         private const int VirtualPort = 0;
 
-        /// <summary>
-        /// How many message pointers one <c>ReceiveMessagesOnPollGroup</c> call can return. Sized
-        /// generously because the array is allocated once and reused — a short one costs extra
-        /// interop calls, not memory.
-        /// </summary>
         private const int ReceiveBatchSize = 256;
 
-        /// <summary>
-        /// Cap on drain iterations per frame. A peer that floods cannot stall the frame
-        /// indefinitely; the backlog waits. The loop only repeats when the batch came back full,
-        /// which is the signal there is more queued.
-        /// </summary>
+        /// <summary>Caps drain loops per frame so a flooding peer cannot stall the frame.</summary>
         private const int MaxDrainIterationsPerFrame = 4;
 
-        /// <summary>
-        /// Scratch for outgoing payloads, pinned once. Sized above the reliable path's practical
-        /// ceiling; a payload larger than this falls back to a one-off pin rather than truncating.
-        /// </summary>
+        /// <summary>Pinned once; larger payloads fall back to a one-off pin.</summary>
         private const int SendScratchBytes = 64 * 1024;
 
         private const int SendFailureLogIntervalMs = 1000;
 
         /// <summary>
-        /// The largest payload Steam will carry on a single unreliable datagram. Above this it
-        /// fragments <b>unreliably</b>, so losing any one fragment discards the whole message —
-        /// which is worse than the unreliable channel's normal failure mode, because a stream that
-        /// expects the next tick to supersede a loss instead loses every tick that is oversized.
-        /// The LiteNetLib path has the same cliff at its own MTU and handles it the same way.
-        ///
-        /// <para><b>Nothing can currently reach this, and that is by construction rather than by
-        /// luck.</b> Every unreliable send in the mod is bounded well below it: the per-entity
-        /// streams are split to <c>StateBroadcastService.MAX_PACKET_SIZE_BYTES</c> (1000) by
-        /// <c>SendStreamUpdate</c> before they ever arrive here, and the only two unreliable sends
-        /// that bypass that splitter are small and fixed in shape — <c>EnemyDamaged</c> is all
-        /// scalars, and <c>PlayerUpdate</c> tops out near 800 B with every tome and weapon in the
-        /// game held at once. So this is a backstop against a future oversized unreliable message,
-        /// not a threshold in live use, and a loss run cannot exercise it: promotion keys off
-        /// payload size, which loss does not change.</para>
-        ///
-        /// <para><b>It is 200 B looser than the LiteNetLib transport's equivalent</b>, which
-        /// promotes at 1000 to match the splitter's budget. Both are above anything that occurs, so
-        /// the gap has no effect today; it is recorded because the two numbers reading differently
-        /// invites the conclusion that one of them is wrong.</para>
+        /// Largest single unreliable datagram; above it Steam fragments unreliably and one lost
+        /// fragment drops the message, so larger sends are promoted to reliable. A backstop only:
+        /// all current unreliable sends are well below it. Intentionally 200 B looser than LiteNetLib's.
         /// </summary>
         private const int MaxUnreliableBytes = Tunables.MAX_UNRELIABLE_BYTES;
 
-        /// <summary>
-        /// Deliberately long. A promotion is a once-per-session curiosity if it happens at all, so
-        /// this exists to stop a pathological new message type from filling the log, not to sample
-        /// a stream.
-        /// </summary>
         private const int PromotionLogIntervalMs = 10000;
 
         private bool? isHost;
@@ -117,31 +60,18 @@ namespace MegabonkTogether.Services
         /// <summary>The client's single connection to the host. Invalid on a host.</summary>
         private HSteamNetConnection hostConnection = HSteamNetConnection.Invalid;
 
-        /// <summary>
-        /// Held for as long as it is registered: the dispatcher keeps a reference on the IL2CPP
-        /// side, and letting the managed wrapper go while that is true is how a callback becomes a
-        /// crash later.
-        /// </summary>
+        /// <summary>Must stay referenced while registered, or the IL2CPP-side callback crashes later.</summary>
         private SteamCallback statusCallback;
 
-        /// <summary>Peer handle → SteamID. Every connected peer, introduced or not.</summary>
+        /// <summary>Peer handle to SteamID, introduced or not.</summary>
         private readonly Dictionary<uint, ulong> peerSteamIds = [];
 
-        /// <summary>Game connection id → peer handle. Populated by the introduction handshake.</summary>
         private readonly Dictionary<uint, uint> peerHandlesByConnectionId = [];
 
-        /// <summary>
-        /// Peer handle → what that peer told us about itself. The Steam equivalent of
-        /// <c>gamePeersIntroduced</c>, and deliberately the same shape: a peer is *connected* as
-        /// soon as Steam says so, and *introduced* only once it has sent its own details.
-        /// </summary>
+        /// <summary>Peers that have introduced themselves (connected is not enough).</summary>
         private readonly Dictionary<uint, PeerIntroduction> peerIntroductions = [];
 
-        /// <summary>
-        /// Our own connection id, derived from our SteamID rather than assigned. Set when a session
-        /// starts. See <see cref="Common.SteamConnectionId"/> for why deriving it is not the
-        /// independent-decision mistake it superficially resembles.
-        /// </summary>
+        /// <summary>Derived from our SteamID; see <see cref="Common.SteamConnectionId"/>.</summary>
         private uint selfConnectionId;
 
         private Il2CppStructArray<IntPtr> receiveBuffer;
@@ -157,11 +87,7 @@ namespace MegabonkTogether.Services
         private long nextPromotionLogTick;
         private int suppressedPromotions;
 
-        /// <summary>
-        /// Latches the transport off after a Steam call throws. Repeating a call that just failed
-        /// across the IL2CPP boundary is how a recoverable error becomes a crash — the same
-        /// discipline <see cref="SteamService"/> uses.
-        /// </summary>
+        /// <summary>Latched after a Steam call throws; retrying across the IL2CPP boundary risks a crash.</summary>
         private bool disabled;
 
         public SteamNetTransportState State => state;
@@ -189,8 +115,7 @@ namespace MegabonkTogether.Services
 
             try
             {
-                // A zero-length array rather than null: the interop wrapper reads the array's data
-                // pointer, and IL2CPP has no null check in front of that.
+                // Zero-length, not null: IL2CPP reads the data pointer without a null check.
                 listenSocket = SteamNetworkingSockets.CreateListenSocketP2P(VirtualPort, 0, noOptions);
                 if (listenSocket == HSteamListenSocket.Invalid)
                 {
@@ -210,9 +135,6 @@ namespace MegabonkTogether.Services
 
             state = SteamNetTransportState.Running;
 
-            // Seeds the roster with ourselves. On the rendezvous path HandleMatch does this for
-            // every peer at once out of MatchInfo; here there is no such message, so each side adds
-            // itself and learns the others from their introductions.
             SeedLocalPlayer(isLocalHost: true);
 
             Plugin.Log.LogInfo($"[steam-net] Listening on virtual port {VirtualPort}.");
@@ -228,8 +150,6 @@ namespace MegabonkTogether.Services
 
             if (hostSteamId == steamService.LocalSteamId)
             {
-                // Steam P2P does not loop back. Saying so is worth a line, because the two-instance
-                // test harness is the obvious way somebody arrives here.
                 return Fail("Cannot connect to yourself - Steam peer-to-peer has no loopback.");
             }
 
@@ -267,12 +187,8 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>
-        /// The gate every start path shares: Steam usable, buffers allocated, the status callback
-        /// registered, and the identity layout proved.
-        ///
-        /// <para><b>The callback is registered before the first socket call, not after.</b> It
-        /// reports transitions, and a connection that reaches <c>Connecting</c> before we are
-        /// listening for it is one the host never accepts.</para>
+        /// Shared start gate. Registers the status callback before any socket call, or an early
+        /// <c>Connecting</c> is never accepted.
         /// </summary>
         private bool PrepareToConnect()
         {
@@ -288,8 +204,7 @@ namespace MegabonkTogether.Services
 
             if (steamService.Readiness != SteamReadiness.Ready)
             {
-                // Gating on both relay access and authentication, per Gotcha 6a. Connecting with
-                // one of them still coming up fails in a way that looks like a NAT problem.
+                // Gotcha 6a: connecting before relay+auth are up fails like a NAT problem.
                 return Fail($"Steam is not ready yet: {steamService.DescribeStatus()}");
             }
 
@@ -341,9 +256,7 @@ namespace MegabonkTogether.Services
             {
                 statusCallback = new SteamCallback
                 {
-                    // Load-bearing, unlike on a CallResult: the dispatcher derives the callback id
-                    // from the [CallbackIdentity] attribute on whatever this returns, so a wrong
-                    // type is filed under the wrong id and simply never fires.
+                    // The dispatcher keys on this type's [CallbackIdentity]; a wrong type never fires.
                     CallbackType = Il2CppType.Of<SteamNetConnectionStatusChangedCallback_t>(),
                     Handler = OnConnectionStatusChanged,
                 };
@@ -362,12 +275,7 @@ namespace MegabonkTogether.Services
 
         // ---------------------------------------------------------------- connection lifecycle
 
-        /// <summary>
-        /// Delivered by the game's own callback pump, so this is the main thread.
-        ///
-        /// <para><c>payload</c> belongs to the dispatcher and is freed when this returns — see
-        /// <see cref="SteamNetLayout.TryReadStatusChange"/>, which copies out everything needed.</para>
-        /// </summary>
+        /// <summary>Main thread (game's callback pump). <c>payload</c> is freed on return; copy out first.</summary>
         private void OnConnectionStatusChanged(IntPtr payload)
         {
             if (!SteamNetLayout.TryReadStatusChange(payload, out var change))
@@ -375,9 +283,6 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            // Logged for every transition, because a connection that stalls says nothing otherwise
-            // and there are only a handful of these per session. The first internet test of this
-            // path died in a state this switch handled wrongly, and the log gave no hint which.
             Plugin.Log.LogInfo(
                 $"[steam-net] Connection {change.Connection} to {change.RemoteSteamId} is now "
                 + $"{change.State}.");
@@ -385,14 +290,7 @@ namespace MegabonkTogether.Services
             switch (change.State)
             {
                 case ESteamNetworkingConnectionState.k_ESteamNetworkingConnectionState_Connecting:
-                    // Only a host accepts. A client sees this same state for its <b>own outgoing</b>
-                    // connection a moment after ConnectP2P — it is progress, not a request, and
-                    // there is nothing to accept.
-                    //
-                    // Treating it as one is what broke the third internet test: the client reached
-                    // Connecting, fell into the host's accept path, failed the "am I hosting" guard
-                    // and closed the connection it had just opened. The host never saw an attempt at
-                    // all, because SDR had not finished the rendezvous before the client hung up.
+                    // Host only: a client sees this for its own outgoing connection and must not close it.
                     if (isHost == true)
                     {
                         OnIncomingConnection(change);
@@ -401,8 +299,6 @@ namespace MegabonkTogether.Services
                     break;
 
                 case ESteamNetworkingConnectionState.k_ESteamNetworkingConnectionState_FindingRoute:
-                    // SDR working out how to reach the peer. Normal progress on both sides, and
-                    // nothing to do but wait.
                     break;
 
                 case ESteamNetworkingConnectionState.k_ESteamNetworkingConnectionState_Connected:
@@ -416,10 +312,6 @@ namespace MegabonkTogether.Services
             }
         }
 
-        /// <summary>
-        /// A peer is asking to connect. Only a host sees this — a client's outgoing connection goes
-        /// straight from <c>Connecting</c> to <c>Connected</c> without asking us anything.
-        /// </summary>
         private void OnIncomingConnection(SteamConnectionStatusChange change)
         {
             if (state != SteamNetTransportState.Running)
@@ -445,8 +337,6 @@ namespace MegabonkTogether.Services
 
                 if (!SteamNetworkingSockets.SetConnectionPollGroup(new HSteamNetConnection(change.Connection), pollGroup))
                 {
-                    // Not fatal to the connection, but it would then never be drained, which looks
-                    // exactly like a peer that connects and says nothing.
                     Plugin.Log.LogError(
                         $"[steam-net] Could not put {change.RemoteSteamId}'s connection in the poll "
                         + "group, so nothing it sends would ever be read. Closing it.");
@@ -476,9 +366,7 @@ namespace MegabonkTogether.Services
             Plugin.Log.LogInfo($"[steam-net] Connected to {change.RemoteSteamId}.");
             PeerConnected?.Invoke(change.Connection, change.RemoteSteamId);
 
-            // The client speaks first, as it does on the rendezvous path. Reliable and ordered
-            // because it is a one-shot that everything else is gated behind: until the host has
-            // this, it cannot address us by connection id at all.
+            // Client speaks first. Reliable: one-shot that everything else is gated behind.
             if (isHost == false)
             {
                 SendToHost(new Introduced
@@ -511,23 +399,17 @@ namespace MegabonkTogether.Services
             Plugin.Log.LogInfo($"[steam-net] Connection to {change.RemoteSteamId} ended: {description}.");
             PeerDisconnected?.Invoke(change.Connection, description);
 
-            // A peer that never introduced itself has no connection id, so nothing downstream knows
-            // it existed and there is nothing to announce or to end the session over.
             if (introduction == null)
             {
                 return;
             }
 
-            // Losing the host ends the session, and something has to say so — otherwise a client
-            // whose host quit sits in a run that no longer exists, receiving nothing, with no
-            // indication anything is wrong. The rendezvous transport does this in
-            // HandleDisconnectedPeer; it is not optional and it has no equivalent anywhere else in
-            // the Steam path.
+            // Losing the host ends the session; nothing else on the Steam path reports it.
             if (introduction.IsHost)
             {
                 Plugin.StartNotification(
-                    ("MegabonkTogether", "HostDisconnected"),
-                    ("MegabonkTogether", "HostDisconnected_Description"),
+                    ("OmniBonk", "HostDisconnected"),
+                    ("OmniBonk", "HostDisconnected_Description"),
                     [introduction.Name],
                     AudioManager.Instance.uiAbort,
                     item: EItem.BobDead);
@@ -536,9 +418,7 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            // The host is the authority on who is in the session, so it tells the others. A client
-            // does not: it has no standing to report a third party, and everyone else is being told
-            // by the host anyway.
+            // Only the host announces departures.
             if (isHost == true)
             {
                 var departure = new PlayerDisconnected { ConnectionId = introduction.ConnectionId };
@@ -546,16 +426,14 @@ namespace MegabonkTogether.Services
                 SendToAllClients(departure, NetDelivery.ReliableOrdered);
             }
 
-            // Everyone has gone and there is a run in progress. Mirrors the rendezvous transport's
-            // AllPlayerDisconnected path: a session of one is over regardless of which side is left.
             if (peerIntroductions.Count == 0
                 && (Plugin.Instance.Mode.Mode == Common.Models.NetworkModeType.Random
                     || Plugin.Instance.Mode.Mode == Common.Models.NetworkModeType.Friendlies
                         && GameManager.Instance?.player != null))
             {
                 Plugin.StartNotification(
-                    ("MegabonkTogether", "AllPlayerDisconnected"),
-                    ("MegabonkTogether", "AllPlayerDisconnected_Description"),
+                    ("OmniBonk", "AllPlayerDisconnected"),
+                    ("OmniBonk", "AllPlayerDisconnected_Description"),
                     [introduction.Name],
                     AudioManager.Instance.uiAbort,
                     item: EItem.BobDead);
@@ -573,8 +451,6 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            // The host drains every peer in one call through the poll group; a client has exactly
-            // one connection and no poll group to drain.
             if (isHost == true)
             {
                 DrainPollGroup();
@@ -608,8 +484,6 @@ namespace MegabonkTogether.Services
 
                 DispatchReceived(received);
 
-                // A batch that came back short is the whole queue; anything else and there may be
-                // more waiting.
                 if (received < ReceiveBatchSize)
                 {
                     return;
@@ -659,9 +533,7 @@ namespace MegabonkTogether.Services
 
                 try
                 {
-                    // FromIntPtr copies the native struct out. Its layout matches — every field is
-                    // inline, including the nested identity — which is why this one may be read as
-                    // a struct while SteamNetConnectionInfo_t may not.
+                    // Safe to read as a struct: all fields inline (unlike SteamNetConnectionInfo_t).
                     var message = SteamNetworkingMessage_t.FromIntPtr(pointer);
                     HandleRawMessage(message);
                 }
@@ -671,7 +543,7 @@ namespace MegabonkTogether.Services
                 }
                 finally
                 {
-                    // Mandatory. Each received message is a native allocation and leaks otherwise.
+                    // Mandatory, or the native message leaks.
                     SteamNetworkingMessage_t.Release(pointer);
                     receiveBuffer[i] = IntPtr.Zero;
                 }
@@ -686,11 +558,7 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            // Copied rather than deserialized in place: MemoryPack wants a span over managed
-            // memory, and the native buffer is freed by Release the moment this returns. Pooling
-            // this is the obvious next optimisation and is deliberately not done yet — see
-            // docs/netplay/04-performance-and-gc.md before changing it, because the receive path is
-            // hot enough that getting it wrong costs more than the allocation.
+            // Copied: the native buffer is released on return. See docs/netplay/04-performance-and-gc.md before pooling.
             var payload = new byte[size];
             Marshal.Copy(message.m_pData, payload, 0, size);
 
@@ -701,8 +569,7 @@ namespace MegabonkTogether.Services
             }
             catch (MemoryPackSerializationException)
             {
-                // Same posture as the LiteNetLib path: a corrupt or cross-version packet is dropped
-                // quietly rather than logged per message.
+                // Corrupt or cross-version packet: drop quietly.
                 return;
             }
 
@@ -718,8 +585,6 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            // Resolved once, on first use. Constructor injection would be a cycle: the router needs
-            // INetTransport, and this is one.
             netMessageRouter ??= Plugin.Services.GetService<INetMessageRouter>();
 
             if (!netMessageRouter.Route(deserialized, isHost == true))
@@ -729,19 +594,8 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>
-        /// The Steam counterpart of <c>UdpClientService.TryHandlePeerScopedMessage</c>: the messages
-        /// whose meaning depends on which peer they arrived on. Returns true when handled.
-        ///
-        /// <para><b>Three cases rather than the LiteNetLib side's eight</b>, and the missing five are
-        /// all relay. There is no relay peer here — SDR is the relay, and it is invisible above the
-        /// socket — so every branch that existed to tell a relayed peer from a direct one is simply
-        /// absent rather than ported and left dead.</para>
-        ///
-        /// <para><b>The host does not handle <c>PlayerDisconnected</c>.</b> On the rendezvous path
-        /// that message is how a host learns about a relayed peer leaving, because no socket event
-        /// fires for one. Here every departure arrives as a connection-status callback, so a
-        /// <c>PlayerDisconnected</c> reaching a host would be a client asserting something about a
-        /// third party — which it has no authority to do.</para>
+        /// Messages whose meaning depends on the arriving peer. No relay cases (SDR is invisible).
+        /// The host ignores <c>PlayerDisconnected</c>: departures arrive as status callbacks, and a client has no authority over third parties.
         /// </summary>
         private bool TryHandlePeerScopedMessage(IGameNetworkMessage message, uint peerHandle)
         {
@@ -764,16 +618,10 @@ namespace MegabonkTogether.Services
             }
         }
 
-        /// <summary>
-        /// A peer said who it is. This is where a connection handle acquires a game connection id,
-        /// and until it does, nothing addressed by connection id can reach that peer.
-        /// </summary>
+        /// <summary>Maps the peer handle to its game connection id.</summary>
         private void OnIntroduced(Introduced introduced, uint peerHandle)
         {
-            // The id the peer claims must be the one its SteamID derives to. Both ends compute it
-            // from the same immutable input, so a mismatch is not a disagreement to reconcile — it
-            // is a peer on a different derivation or an outright forgery, and either way indexing
-            // it under an id of its choosing would let it impersonate somebody.
+            // The claimed id must match its SteamID derivation, or it could impersonate someone.
             var steamId = GetPeerSteamId(peerHandle);
             var expected = Common.SteamConnectionId.FromSteamId(steamId);
 
@@ -794,10 +642,7 @@ namespace MegabonkTogether.Services
 
             AssignConnectionId(peerHandle, introduced.ConnectionId);
 
-            // Added, not just renamed. On the rendezvous path every peer is already in the roster
-            // by the time it introduces itself, because MatchInfo listed them all up front. Here the
-            // introduction is the first this side has heard of them, so a GetPlayer-and-rename would
-            // silently do nothing and the peer would never exist.
+            // Added, not just renamed: unlike rendezvous, there is no MatchInfo pre-populating the roster.
             var player = playerManagerService.GetPlayer(introduced.ConnectionId);
             if (player == null)
             {
@@ -822,13 +667,11 @@ namespace MegabonkTogether.Services
             if (Plugin.Instance.Mode.Mode == Common.Models.NetworkModeType.Friendlies)
             {
                 Plugin.StartNotification(
-                    ("MegabonkTogether", "FriendliesClientJoinSuccess"),
-                    ("MegabonkTogether", "FriendliesClientJoinSuccessDesc"),
+                    ("OmniBonk", "FriendliesClientJoinSuccess"),
+                    ("OmniBonk", "FriendliesClientJoinSuccessDesc"),
                     [introduced.Name]);
             }
 
-            // The host answers with its own details, exactly as the rendezvous path does. Addressed
-            // by connection id, which the AssignConnectionId above has just made resolvable.
             SendToClient(introduced.ConnectionId, new Introduced
             {
                 ConnectionId = selfConnectionId,
@@ -837,24 +680,13 @@ namespace MegabonkTogether.Services
             });
         }
 
-        /// <summary>
-        /// A client was told by the host that another client left.
-        ///
-        /// <para><b>This is only ever about a third party</b>, which is why it does nothing but
-        /// republish. On the rendezvous path the same message could also mean "the host is gone",
-        /// because a relayed peer's departure produced no socket event and had to be announced. Here
-        /// losing the host is a connection-status callback on our own connection — see
-        /// <see cref="OnConnectionEnded"/> — so there is no case to disambiguate.</para>
-        /// </summary>
+        /// <summary>Always a third party; host loss arrives via <see cref="OnConnectionEnded"/>.</summary>
         private void OnPeerReportedDisconnected(PlayerDisconnected playerDisconnected)
         {
             EventManager.OnPlayerDisconnected(playerDisconnected);
         }
 
-        /// <summary>
-        /// Host only. Records that a peer has chosen, forwards the choice, and starts the run once
-        /// everyone has.
-        /// </summary>
+        /// <summary>Host only. Records and forwards a choice; starts the run once everyone has chosen.</summary>
         private void OnSelectedCharacter(SelectedCharacter selectedCharacter, uint peerHandle)
         {
             if (peerIntroductions.TryGetValue(peerHandle, out var introduction))
@@ -862,8 +694,7 @@ namespace MegabonkTogether.Services
                 introduction.HasSelected = true;
             }
 
-            // Applied to the replicated record rather than republished through EventManager: the
-            // RunStatistics sent later reads this field, and an event-only update would miss it.
+            // Written to the record: RunStatistics reads it later.
             var player = playerManagerService.GetPlayer(selectedCharacter.ConnectionId);
             if (player == null)
             {
@@ -876,9 +707,6 @@ namespace MegabonkTogether.Services
             player.Skin = selectedCharacter.Skin;
             playerManagerService.UpdatePlayer(player);
 
-            // One line per peer per session. Its absence is the diagnosis if a player still shows
-            // as the wrong character: the roster never learned what they picked, and the avatar was
-            // built from a default nobody chose.
             Plugin.Log.LogInfo(
                 $"[steam-net] {selectedCharacter.ConnectionId} selected character "
                 + $"{selectedCharacter.Character}, skin '{selectedCharacter.Skin}'.");
@@ -892,10 +720,6 @@ namespace MegabonkTogether.Services
             }
         }
 
-        /// <summary>
-        /// Puts the local player in the roster under the connection id derived from our own SteamID,
-        /// so that everything indexing players by connection id has us before any peer arrives.
-        /// </summary>
         private void SeedLocalPlayer(bool isLocalHost)
         {
             if (playerManagerService.GetPlayer(selfConnectionId) != null)
@@ -907,15 +731,7 @@ namespace MegabonkTogether.Services
                 selfConnectionId, isLocalHost, isSelf: true, Configuration.ModConfig.PlayerName.Value);
         }
 
-        /// <summary>
-        /// Whether everyone in the Steam lobby has connected and introduced themselves.
-        ///
-        /// <para><b>Counted against the lobby, not against the roster.</b> The roster is built
-        /// <i>from</i> introductions, so comparing the two would compare a set with itself and
-        /// always agree. The Steam lobby is the one membership set both ends already share — which
-        /// is the whole reason the migration waited for it — so it is what "everyone" means
-        /// here.</para>
-        /// </summary>
+        /// <summary>Counted against the Steam lobby, not the roster (which is built from introductions).</summary>
         public bool HasAllPeersConnected()
         {
             if (state != SteamNetTransportState.Running)
@@ -926,24 +742,15 @@ namespace MegabonkTogether.Services
             var members = steamLobbyService.GetMembers().Count;
             if (members <= 1)
             {
-                // Alone in the lobby. True for a host who has not been joined yet — there is nobody
-                // outstanding — and the caller's own readiness rules decide whether that is enough
-                // to start.
                 return true;
             }
 
-            // Everyone but us.
             return peerIntroductions.Count >= members - 1;
         }
 
-        /// <summary>
-        /// True between ConnectP2P and the connection reaching Connected. There is no NAT
-        /// introduction phase here — SDR does that invisibly — so this is simply "the socket is not
-        /// carrying traffic yet", which is the same question the caller is asking.
-        /// </summary>
+        /// <summary>True between ConnectP2P and Connected.</summary>
         public bool IsHandlingConnection() => state == SteamNetTransportState.Starting;
 
-        /// <summary>Host only. Whether every introduced peer has chosen a character.</summary>
         public bool AreAllPeersReady()
         {
             if (isHost != true)
@@ -1016,8 +823,6 @@ namespace MegabonkTogether.Services
 
             var payload = MemoryPackSerializer.Serialize<IGameNetworkMessage>(data);
 
-            // A miss means the excluded player is not a connected peer — already gone, or never
-            // introduced — in which case there is nothing here to exclude.
             uint? excluded = peerHandlesByConnectionId.TryGetValue(excludedConnectionId, out var handle)
                 ? handle
                 : null;
@@ -1063,10 +868,7 @@ namespace MegabonkTogether.Services
 
             var payload = MemoryPackSerializer.Serialize<IGameNetworkMessage>(data);
 
-            // ReliableSequenced has no Steam equivalent and exactly one caller — the implicit
-            // default on the client's Introduced handshake, which is a one-shot that should never
-            // have been on a channel that may drop intermediate packets. Rather than pick a lossy
-            // translation, the default here is the guarantee that call site actually needs.
+            // Default is ReliableOrdered: Steam has no ReliableSequenced, and the handshake is a one-shot.
             var resolved = delivery ?? NetDelivery.ReliableOrdered;
 
             if (SendRaw(hostConnection.m_HSteamNetConnection, payload, resolved, data.GetType().Name))
@@ -1075,7 +877,6 @@ namespace MegabonkTogether.Services
             }
         }
 
-        /// <summary>Returns how many peers the payload actually went to, for the bandwidth counters.</summary>
         private int SendToEveryPeer(byte[] payload, NetDelivery delivery, string label, uint? excludedHandle)
         {
             var sent = 0;
@@ -1096,11 +897,7 @@ namespace MegabonkTogether.Services
             return sent;
         }
 
-        /// <summary>
-        /// One send. Copies into the pinned scratch buffer rather than pinning per message: these
-        /// paths reach 233 sends/s, and a <c>GCHandle</c> pair each would be the dominant cost on
-        /// them.
-        /// </summary>
+        /// <summary>Copies into the pre-pinned scratch buffer; per-send GCHandles would dominate at ~233 sends/s.</summary>
         private bool SendRaw(uint peerHandle, byte[] payload, NetDelivery delivery, string label)
         {
             if (disabled || payload == null || payload.Length == 0)
@@ -1108,23 +905,13 @@ namespace MegabonkTogether.Services
                 return false;
             }
 
-            // Promoted, not truncated and not dropped. An unreliable payload past the single-datagram
-            // limit fragments unreliably, so one lost fragment discards all of it — an outcome the
-            // caller did not ask for and cannot see. Reliable fragments properly up to 512 KB. The
-            // LiteNetLib transport promotes at its own MTU for the same reason.
+            // Oversized unreliable payloads are promoted to reliable; see MaxUnreliableBytes.
             var effective = delivery;
 
             if (delivery == NetDelivery.Unreliable && payload.Length > MaxUnreliableBytes)
             {
                 effective = NetDelivery.ReliableOrdered;
 
-                // Silently changing the delivery guarantee a caller asked for is the kind of thing
-                // that has to be visible, and this one had no voice at all: the handover into
-                // Phase 5 lists "MaxUnreliableBytes has never fired" as an open risk, which was
-                // never a measurement — there was nothing that could have told anyone either way.
-                // Now the claim is falsifiable. See MaxUnreliableBytes for why it should stay
-                // silent in practice; if this line appears, a new unreliable message has outgrown
-                // the splitter and wants chunking rather than a promotion.
                 LogPromotionThrottled(label, payload.Length);
             }
 
@@ -1143,9 +930,7 @@ namespace MegabonkTogether.Services
                 }
                 else
                 {
-                    // Over the scratch buffer, which is already far past the unreliable limit, so
-                    // this is reliable by construction. Costs a one-off pin, which at this size is
-                    // the least of it.
+                    // Past the scratch buffer, so reliable by construction.
                     var pin = GCHandle.Alloc(payload, GCHandleType.Pinned);
                     try
                     {
@@ -1177,11 +962,7 @@ namespace MegabonkTogether.Services
             return false;
         }
 
-        /// <summary>
-        /// Reports an unreliable payload that was promoted past <see cref="MaxUnreliableBytes"/>.
-        /// Throttled on its own clock rather than sharing the send-failure one, so that neither can
-        /// hide the other.
-        /// </summary>
+        /// <summary>Own throttle clock so it cannot hide send failures, or vice versa.</summary>
         private void LogPromotionThrottled(string label, int bytes)
         {
             var now = Environment.TickCount64;
@@ -1203,12 +984,7 @@ namespace MegabonkTogether.Services
                 + (suppressed > 0 ? $" (+{suppressed} more in the last {PromotionLogIntervalMs / 1000}s)" : string.Empty));
         }
 
-        /// <summary>
-        /// <see cref="INetTransport"/>'s sends return void, so a Steam implementation has to report
-        /// its own failures — and throttle them, because a broken connection fails every send on a
-        /// path doing hundreds per second, and an unthrottled log would cost more frame time than
-        /// the sends did.
-        /// </summary>
+        /// <summary>Throttled: a broken connection fails hundreds of sends per second.</summary>
         private void LogSendFailureThrottled(EResult result, string label, uint peerHandle, int bytes)
         {
             var now = Environment.TickCount64;
@@ -1229,20 +1005,8 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>
-        /// The mod's delivery vocabulary in Steam's terms. The single place the reliability map
-        /// meets <c>ISteamNetworkingSockets</c>; the full policy is
-        /// <c>docs/netplay/02-delivery-method-reference.md</c>.
-        ///
-        /// <para>Two of the four do not survive intact, and both are deliberate rather than
-        /// discovered: <see cref="NetDelivery.ReliableUnordered"/> gains ordering it did not ask
-        /// for, because Steam's reliable channel is always ordered — correct, and slower under
-        /// loss. <see cref="NetDelivery.ReliableSequenced"/> is mapped to reliable too, which
-        /// delivers packets its sender thought were droppable; that is the safe direction of the
-        /// two, and its one caller no longer takes it.</para>
-        ///
-        /// <para><b>NoNagle on the unreliable path only.</b> Continuous state is superseded by the
-        /// next tick, so holding it to coalesce adds latency for nothing. Event traffic keeps Nagle
-        /// on, which is the free batching the migration was promised.</para>
+        /// Steam's reliable channel is always ordered, so every reliable kind maps to it.
+        /// NoNagle on unreliable only: superseded state should not wait to coalesce.
         /// </summary>
         private static int ToSteamFlags(NetDelivery delivery) => delivery switch
         {
@@ -1262,12 +1026,7 @@ namespace MegabonkTogether.Services
             peerHandlesByConnectionId.Remove(connectionId);
         }
 
-        /// <summary>
-        /// Drops whichever connection id pointed at this peer handle. The id is found first and
-        /// removed after: mutating a dictionary mid-enumeration happens to survive when the loop
-        /// exits immediately, and relying on that is the kind of thing that stops being true when
-        /// somebody adds a line below it.
-        /// </summary>
+        /// <summary>Finds then removes, to avoid mutating the dictionary mid-enumeration.</summary>
         private void ForgetPeerHandle(uint peerHandle)
         {
             uint? found = null;
@@ -1293,15 +1052,7 @@ namespace MegabonkTogether.Services
         public IReadOnlyList<uint> GetPeerHandles() => new List<uint>(peerSteamIds.Keys);
 
         /// <summary>
-        /// Round-trip time to a peer, or -1 when it is not known.
-        ///
-        /// <para>Read through <see cref="SteamNetNative"/> rather than the interop assembly.
-        /// <c>GetConnectionRealTimeStatus</c>'s IL2CPP signature takes a struct by reference whose
-        /// layout carries an <c>Il2CppStructArray</c> where native has 64 inline bytes — the shape
-        /// that has crashed this project twice — so the only safe way to ask is with our own
-        /// blittable declaration. That is sound here specifically because
-        /// <c>ISteamNetworkingSockets</c> has no callbacks of its own, so a direct call adds no
-        /// second dispatcher; see <c>docs/steamworks/05-interop-struct-shapes.md</c>.</para>
+        /// RTT or -1. Via <see cref="SteamNetNative"/>: the interop signature's struct layout crashes.
         /// </summary>
         public int GetLatency(uint connectionId)
         {
@@ -1313,16 +1064,7 @@ namespace MegabonkTogether.Services
             return SteamNetNative.TryGetPing(peerHandle);
         }
 
-        /// <summary>
-        /// Ping plus the three numbers that make a lossy link legible: the measured delivery ratio
-        /// each way, the reliable backlog, and how long the send queue is holding.
-        ///
-        /// <para>Reliable backlog is the head-of-line signature. Steam has no unordered-reliable
-        /// channel, so every <see cref="NetDelivery.ReliableUnordered"/> send here is ordered
-        /// whether it asked to be or not; under loss a stalled message holds up every reliable
-        /// message queued behind it, and that shows as pending/unacked bytes climbing while the
-        /// unreliable streams carry on. Same P/Invoke as the ping read, so it costs nothing extra.</para>
-        /// </summary>
+        /// <summary>Link diagnostics; climbing pending/unacked reliable bytes indicate head-of-line blocking.</summary>
         public string DescribeLink(uint connectionId)
         {
             if (!peerHandlesByConnectionId.TryGetValue(connectionId, out var peerHandle))
@@ -1340,13 +1082,7 @@ namespace MegabonkTogether.Services
                 + $"unacked {status.SentUnackedReliableBytes} B  queue {status.QueueTimeMs:F1} ms";
         }
 
-        /// <summary>
-        /// Steam reports a quality it does not know yet as -1, which the first formatting of this
-        /// printed literally as "-100.0%" — on the opening sample of every session, because the
-        /// remote end's estimate has not been reported back at that point. A negative percentage is
-        /// a number a reader has to stop and decode, and the whole value of this line during a loss
-        /// run is being able to read the delivery ratio at a glance.
-        /// </summary>
+        /// <summary>Steam reports an unknown quality as -1.</summary>
         private static string Quality(float ratio) =>
             ratio < 0f ? "unknown" : $"{ratio * 100f:F1}%";
 
@@ -1364,11 +1100,7 @@ namespace MegabonkTogether.Services
             peerHandlesByConnectionId.Remove(connectionId);
         }
 
-        /// <summary>
-        /// <para>The pinned scratch buffer is deliberately <b>not</b> freed here. A session can be
-        /// started again in the same process, the buffer is one 64 KB allocation, and freeing a
-        /// pinned handle that a send is still inside is a far worse failure than holding it.</para>
-        /// </summary>
+        /// <summary>The pinned scratch buffer is deliberately kept: freeing it under an in-flight send is worse.</summary>
         public void Shutdown()
         {
             if (state == SteamNetTransportState.Idle && statusCallback == null)
@@ -1376,9 +1108,7 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            // A connection that never reached Connected is not in peerSteamIds — ConnectP2P handed
-            // back a handle and the status callback never followed. Closing it first, because the
-            // loop below cannot see it and it would otherwise outlive the session.
+            // A never-Connected host connection is not in peerSteamIds; close it here or it leaks.
             if (hostConnection != HSteamNetConnection.Invalid
                 && !peerSteamIds.ContainsKey(hostConnection.m_HSteamNetConnection))
             {
@@ -1386,10 +1116,7 @@ namespace MegabonkTogether.Services
                     "session ended", linger: false);
             }
 
-            // Linger off here, unlike an individual disconnect: the session is over, nothing queued
-            // is worth waiting for, and holding sockets open past teardown is how the next session
-            // inherits a handle. A client's host connection is one of these entries, so closing it
-            // separately afterwards would be closing it twice.
+            // Linger off: nothing queued matters, and lingering sockets leak into the next session.
             foreach (var handle in peerSteamIds.Keys)
             {
                 CloseRaw(handle, SteamNetEndReason.SessionClosed, "session ended", linger: false);
@@ -1449,10 +1176,7 @@ namespace MegabonkTogether.Services
             statusCallback = null;
         }
 
-        /// <summary>
-        /// <paramref name="linger"/> lets anything already queued leave before the connection goes.
-        /// On for an individual close, off for session teardown — see <see cref="Shutdown"/>.
-        /// </summary>
+        /// <summary><paramref name="linger"/> flushes queued sends first; off for session teardown.</summary>
         private void CloseRaw(uint peerHandle, int endReason, string debugText, bool linger = true)
         {
             try
@@ -1485,19 +1209,12 @@ namespace MegabonkTogether.Services
         }
 
 
-        /// <summary>
-        /// OB-10. The identifier a rejected host-only send is worth recording under. Falls back to
-        /// the runtime type when the caller only had an explicit name, and tolerates null on both.
-        /// </summary>
+        /// <summary>OB-10: name to record a rejected host-only send under.</summary>
         private static string HostGuardMessageName(object data, string messageTypeName = null)
         {
             return !string.IsNullOrEmpty(messageTypeName) ? messageTypeName : data?.GetType().Name;
         }
-        /// <summary>
-        /// OB-10. <paramref name="messageTypeName"/> is what makes a rejection actionable — the
-        /// caller name alone is always one of four send methods and says nothing about which
-        /// gameplay path is missing its ownership check.
-        /// </summary>
+        /// <summary>OB-10: <paramref name="messageTypeName"/> identifies which path lacks an ownership check.</summary>
         private bool EnsureIsHost(
             string messageTypeName = null,
             [System.Runtime.CompilerServices.CallerMemberName] string sendMethod = null)
@@ -1522,13 +1239,7 @@ namespace MegabonkTogether.Services
             return EnsureRunning();
         }
 
-        /// <summary>
-        /// <para><b>Says so when it refuses.</b> This used to return the check's result and nothing
-        /// else, so every send made while the transport was not Running vanished without a word —
-        /// no failure, no warning, no counter. That is the worst shape a send path can have, and it
-        /// cost a playtest: both ends were transmitting into silence and neither log could say
-        /// whether the messages left.</para>
-        /// </summary>
+        /// <summary>Logs (throttled) when refusing, so dropped sends are never silent.</summary>
         private bool EnsureRunning()
         {
             if (state == SteamNetTransportState.Running)

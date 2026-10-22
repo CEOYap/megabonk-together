@@ -1,8 +1,8 @@
 ﻿using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches.Projectiles
+namespace OmniBonk.Patches.Projectiles
 {
     [HarmonyPatch(typeof(ProjectileScythe))]
     internal static class ProjectileScythePatches
@@ -10,9 +10,7 @@ namespace MegabonkTogether.Patches.Projectiles
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
 
-        /// <summary>
-        /// Use the correct player (local / remote) transform
-        /// </summary>
+        /// <summary>Use the owning player's transform (local or remote).</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileScythe.MyUpdate))]
         public static void MyUpdate_Prefix(ProjectileScythe __instance, out bool __state)
@@ -36,9 +34,6 @@ namespace MegabonkTogether.Patches.Projectiles
 
         }
 
-        /// <summary>
-        /// Restore original transform after prefix
-        /// </summary>
         [HarmonyFinalizer]
         [HarmonyPatch(nameof(ProjectileScythe.MyUpdate))]
         public static void MyUpdate_Finalizer(bool __state)
@@ -51,9 +46,7 @@ namespace MegabonkTogether.Patches.Projectiles
             playerManagerService.UnqueueNetplayerPositionRequest();
         }
 
-        /// <summary>
-        /// Use the correct player (local / remote) transform
-        /// </summary>
+        /// <summary>Use the owning player's transform (local or remote).</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileScythe.TryInit))]
         public static void TryInit_Prefix(ProjectileScythe __instance, out bool __state)
@@ -77,9 +70,6 @@ namespace MegabonkTogether.Patches.Projectiles
 
         }
 
-        /// <summary>
-        /// Restore original transform after prefix
-        /// </summary>
         [HarmonyFinalizer]
         [HarmonyPatch(nameof(ProjectileScythe.TryInit))]
         public static void TryInit_Finalizer(bool __state)
@@ -92,9 +82,7 @@ namespace MegabonkTogether.Patches.Projectiles
             playerManagerService.UnqueueNetplayerPositionRequest();
         }
 
-        /// <summary>
-        /// Use the correct player (local / remote) transform
-        /// </summary>
+        /// <summary>Use the owning player's transform (local or remote).</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileScythe.CheckZone))]
         public static void CheckZone_Prefix(ProjectileScythe __instance, out bool __state)
@@ -118,9 +106,6 @@ namespace MegabonkTogether.Patches.Projectiles
 
         }
 
-        /// <summary>
-        /// Restore original transform after prefix
-        /// </summary>
         [HarmonyFinalizer]
         [HarmonyPatch(nameof(ProjectileScythe.CheckZone))]
         public static void CheckZone_Finalizer(bool __state)

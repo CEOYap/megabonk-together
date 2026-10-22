@@ -1,21 +1,18 @@
 ﻿using Assets.Scripts.Inventory__Items__Pickups.Chests;
 using Assets.Scripts.Inventory__Items__Pickups.Interactables;
 using HarmonyLib;
-using MegabonkTogether.Helpers;
-using MegabonkTogether.Services;
+using OmniBonk.Helpers;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using UnityEngine;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     [HarmonyPatch(typeof(DetectInteractables))]
     public static class DetectInteractablesPatches
     {
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
 
-        /// <summary>
-        /// Send interaction to other players
-        /// </summary>
 
         [HarmonyPrefix]
         [HarmonyPatch(nameof(DetectInteractables.TryInteract))]
@@ -57,16 +54,8 @@ namespace MegabonkTogether.Patches
             var challengeShrine = interactable.GetComponentInChildren<InteractableShrineChallenge>();
             if (challengeShrine != null)
             {
-                // OB-12. Returning false below cancels DetectInteractables.TryInteract, and with it
-                // A_Interacted -> InteractablesStatus.OnInteractableUse, which is the ONLY place the
-                // game counts a challenge shrine. So a client never counted its own use, while the
-                // host counted it from the replicated message: the desync detector caught this on
-                // 2026-10-11 as "counter 'Challenges' host 1 / local 0", ending at 3 / 1.
-                //
-                // Counted here exactly as the game would have, before the shrine stops being
-                // interactable. The host never reaches this method (it returns above), and our own
-                // InteractableUsed coming back is dropped by the OB-12 echo guard, so this cannot
-                // double-count.
+                // OB-12: returning false below skips the game's only challenge-shrine counter, so count
+                // it here. Host never reaches this; the echo guard prevents double-counting.
                 InteractableCounterHelper.CountAsUsed(interactable.gameObject);
 
                 challengeShrine.done = true;
@@ -99,11 +88,7 @@ namespace MegabonkTogether.Patches
             var microwave = __instance.currentInteractable.GetComponentInChildren<InteractableMicrowave>();
             if (microwave != null)
             {
-                // hasItem first, deliberately. Collecting an already-cooked item charges nothing —
-                // InteractableMicrowave.Interact()'s price and rarity guards are both on the
-                // !hasItem branch only (CONFIRMED by decompiling it, see MicrowaveHelper). The gold
-                // check used to run above this and blocked a broke player from collecting their own
-                // cooked item, so nothing was sent and the other peer never saw the interaction.
+                // hasItem first: collecting a cooked item is free (CONFIRMED by decompile, see MicrowaveHelper).
                 if (microwave.hasItem)
                 {
                     Plugin.Log.LogDebug($"Microwave already has an item!");

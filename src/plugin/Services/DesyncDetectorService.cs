@@ -1,12 +1,12 @@
 using Assets.Scripts.Managers;
-using MegabonkTogether.Common.Messages;
-using MegabonkTogether.Common.Messages.GameNetworkMessages;
-using MegabonkTogether.Configuration;
+using OmniBonk.Common.Messages;
+using OmniBonk.Common.Messages.GameNetworkMessages;
+using OmniBonk.Configuration;
 using System;
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace MegabonkTogether.Services
+namespace OmniBonk.Services
 {
     public interface IDesyncDetectorService
     {
@@ -20,39 +20,19 @@ namespace MegabonkTogether.Services
     }
 
     /// <summary>
-    /// The desync detector. The host periodically sends its view of the run; each client compares
-    /// it with its own and logs the fields that disagree.
-    ///
-    /// <para><b>Why.</b> Two-player sessions have mostly been diagnosed by comparing screenshots.
-    /// Every field in <see cref="StateDigest"/> is something that has drifted before — the
-    /// interactable counters (OB-12), the barrier round (OB-21), the enemy and pickup registries
-    /// (OB-9, OB-5). This turns the next drift into a log line.</para>
-    ///
-    /// <para><b>Reports, never corrects.</b> Nothing here writes back into the game. Correcting a
-    /// mismatch would remove the evidence this exists to produce.</para>
-    ///
-    /// <para><b>Persistence filter.</b> State is in flight at any instant — an enemy spawned 50 ms
-    /// ago, a barrier release not yet applied — so a single disagreement is often just latency. A
-    /// field is reported only when it disagrees on two consecutive digests, 5 s apart, which is far
-    /// longer than anything legitimately in flight. Counts additionally get a small tolerance.</para>
-    ///
-    /// <para><b>Silence is evidence.</b> A clean comparison logs one summary line per minute, so a
-    /// log with no drift lines and a steady summary means "compared and agreed", not "never ran".</para>
+    /// Desync detector: the host sends a digest of its state; clients log fields that disagree on
+    /// two consecutive digests (one-off differences are latency). Reports only, never corrects.
     /// </summary>
     internal class DesyncDetectorService : IDesyncDetectorService
     {
         private const float DIGEST_INTERVAL_SECONDS = 5f;
         private const float IN_SYNC_SUMMARY_INTERVAL_SECONDS = 60f;
 
-        // Counts move continuously while enemies spawn and die, so an exact comparison would
-        // report every digest. Absolute floor for small numbers, proportional for large ones.
+        // Counts move continuously; absolute floor for small numbers, proportional for large.
         private const int COUNT_TOLERANCE_ABSOLUTE = 3;
         private const float COUNT_TOLERANCE_RATIO = 0.10f;
 
-        // INetTransport, NOT IUdpClientService. IUdpClientService is always the LiteNetLib session;
-        // only INetTransport is switched to the Steam transport by UseSteamTransport (Plugin.cs).
-        // Sending through IUdpClientService under Steam writes into a socket with no peers, and
-        // nothing ever leaves the machine -- which is how this sent nothing for whole sessions.
+        // INetTransport, NOT IUdpClientService: only INetTransport follows UseSteamTransport.
         private readonly INetTransport transport;
         private readonly ISynchronizationService synchronizationService;
         private readonly IEnemyManagerService enemyManagerService;
@@ -87,7 +67,7 @@ namespace MegabonkTogether.Services
 
         public void Tick(float deltaTime)
         {
-            // Cheapest checks first: this runs every frame from NetworkHandler.
+            // Runs every frame: cheapest checks first.
             if (!ModConfig.LogDesync.Value)
             {
                 return;
@@ -107,10 +87,7 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            // The try is around the call, not inside BuildDigest. BuildDigest enumerates an
-            // Il2CppSystem dictionary, and a member that does not resolve against this build raises
-            // MissingMethodException when the containing method is JITted -- a try inside it could
-            // not catch that. A broken diagnostic must never take the network tick down with it.
+            // Try outside BuildDigest: an unresolved interop member throws MissingMethodException at JIT time.
             StateDigest digest;
             try
             {
@@ -124,9 +101,7 @@ namespace MegabonkTogether.Services
 
             transport.SendToAllClients(digest, NetDelivery.ReliableOrdered);
 
-            // The host side used to be silent on success, so on 2026-10-08 a detector that never
-            // sent anything (it was wired to the wrong transport) and one that sent fine looked
-            // identical in the host log. One line a minute closes that: no line means no digests.
+            // One line a minute, so a missing line means no digests were sent.
             var now = Time.unscaledTime;
             if (now - lastSentReport >= IN_SYNC_SUMMARY_INTERVAL_SECONDS)
             {
@@ -181,8 +156,7 @@ namespace MegabonkTogether.Services
             CheckCount("pickups", host.TrackedPickups, localPickups);
             CheckExact("level", host.PlayerLevel, localLevel);
 
-            // A client learns the session id from its first release, so 0 means "not yet", not a
-            // mismatch. The round is only comparable once both sides are in the same session.
+            // Session id 0 means "not learned yet", not a mismatch.
             if (encounterService.SessionId != 0 && host.BarrierSessionId != 0)
             {
                 CheckExact("barrier-session", (long)host.BarrierSessionId, encounterService.SessionId);
@@ -238,14 +212,12 @@ namespace MegabonkTogether.Services
                 }
             }
 
-            // Swap rather than copy: the set that was current becomes the comparison baseline.
             (previousMismatches, currentMismatches) = (currentMismatches, previousMismatches);
         }
 
         private float lastStaleReport = -999f;
 
-        // OB-51: ids whose EnemyDied this peer received. Bounded: cleared when it grows past a few
-        // thousand, which only loses the oldest evidence.
+        // OB-51: ids whose EnemyDied arrived here. Bounded by clearing.
         private static readonly System.Collections.Generic.HashSet<uint> diedReceived = new();
 
         internal static void ClearEnemyDiedReceived() => diedReceived.Clear();
@@ -260,13 +232,7 @@ namespace MegabonkTogether.Services
             diedReceived.Add(id);
         }
 
-        /// <summary>
-        /// OB-51. The client holds more enemies than the host: name the registry entries the host has
-        /// been silent about longest, which is where a missed death or despawn shows up. 2026-10-20:
-        /// host 18 / local 23 from digest #102 to the end of a run, with counts only and nothing to
-        /// say which enemies. At most once a minute; reads every registered enemy, so it stays off
-        /// the per-digest path.
-        /// </summary>
+        /// <summary>OB-51. Names the longest-silent local enemies when we hold more than the host. At most once a minute.</summary>
         private void ReportStalestEnemies(int extra)
         {
             var now = Time.unscaledTime;
@@ -329,7 +295,6 @@ namespace MegabonkTogether.Services
         {
             currentMismatches.Add(field);
 
-            // Reported only if it also disagreed last time: one-off disagreements are latency.
             if (previousMismatches.Contains(field))
             {
                 reportLines.Add(line);
@@ -348,24 +313,10 @@ namespace MegabonkTogether.Services
             return playerXp == null ? -1 : playerXp.level;
         }
 
-        /// <summary>
-        /// OB-29. Rows that count what each player did themselves, so the host and a client are
-        /// expected to differ.
-        ///
-        /// <para><b>Shady Guy.</b> The game counts a shady guy when that player's own shop window
-        /// closes (<c>OnShadyGuyUsed</c>, see <c>InteractableCounterHelper</c>), and a player who
-        /// bought nothing still has the shady guy available. On 2026-10-18 the host could not afford
-        /// anything and read <c>1 / 2</c> while the client, who bought, read <c>2 / 2</c>, which the
-        /// project owner confirmed is the intended per-player behaviour. Comparing it only produced a
-        /// warning every digest.</para>
-        /// </summary>
+        /// <summary>OB-29. Counters that are per player by design (Shady Guy counts per own shop close).</summary>
         private static bool IsPerPlayerCounter(string key) => key == "Shady Guy";
 
-        /// <summary>
-        /// Copies numUsed for every row of the game's interactable counter into a managed
-        /// dictionary. Copied rather than held, because a native collection must not be kept
-        /// across frames.
-        /// </summary>
+        /// <summary>Copies interactable numUsed rows; a native collection must not be held across frames.</summary>
         private static void ReadInteractables(Dictionary<string, int> into)
         {
             var byName = InteractablesStatus.interactablesByName;

@@ -1,21 +1,15 @@
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using System.Collections.Generic;
 using System.Linq;
 using RunStats = Assets.Scripts.Saves___Serialization.Progression.Stats.RunStats;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     /// <summary>
-    /// OB-45. Writes the end screen's damage panel to the log, one line per row, so a test run can
-    /// be checked from the three logs without anyone reading the screens.
-    ///
-    /// <para><b>Where.</b> <c>GameOverDamageSourcesUi.Start</c> builds the panel from
-    /// <c>RunStats.damageSources</c> (the per-source table <c>RunStats.OnEnemyDamaged</c> fills,
-    /// OB-14). Each row's LVL is <c>DamageSource.GetLevel</c>, the same call the panel makes, so a
-    /// LVL 0 row here is exactly a LVL 0 row on screen. Kills are <c>RunStats.GetStat(kills)</c>.
-    /// Once per end screen, in a netplay session only.</para>
+    /// OB-45: logs the end screen's damage panel (same source and level calls as the panel), once per
+    /// end screen in netplay, so test runs can be checked from logs.
     /// </summary>
     [HarmonyPatch(typeof(GameOverDamageSourcesUi))]
     internal static class RunEndReportPatches

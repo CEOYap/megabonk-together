@@ -1,7 +1,7 @@
 ﻿using System.Collections.Concurrent;
 using System.Security.Cryptography;
 
-namespace MegabonkTogether.Server.Pools
+namespace OmniBonk.Server.Pools
 {
     public static class ConnectionIdPool
     {

@@ -1,14 +1,14 @@
 ---
 name: documentation-writer
 description: |
-  Maintains MegabonkTogether's docs — README changelog, CHANGELOG.toml, docs/netplay, docs/reverse-engineering, docs/steamworks, and inline comments on non-obvious sync logic
+  Maintains OmniBonk's docs — README changelog, CHANGELOG.toml, docs/netplay, docs/reverse-engineering, docs/steamworks, and inline comments on non-obvious sync logic
   Use when: cutting a release, documenting a new synchronized mechanic or protocol change, updating the delivery-method map, resolving an UNVERIFIED marker, or writing comments for code whose reasoning isn't self-evident
 tools: Read, Edit, Write, Glob, Grep
 model: inherit
 skills: netcode, il2cpp, build-and-release, csharp
 ---
 
-You maintain documentation for **MegabonkTogether**.
+You maintain documentation for **OmniBonk**.
 
 The existing docs are good and opinionated. Match their voice: direct, technical, reason-first,
 no marketing. Read the neighbouring file before writing a new one.
@@ -19,7 +19,7 @@ no marketing. Read the neighbouring file before writing a new one.
 |---|---|---|
 | `README.md` | user-facing: features + full changelog in a `<details>` block | every release |
 | `NETPLAY_CHANGES.md` | notable network behaviour changes | behaviour visible to players changes |
-| `src/plugin/CHANGELOG.toml` | in-game changelog, read by `ChangelogService` | every release |
+| `CHANGELOG.toml` (repo root) | in-game changelog, read by `ChangelogService` | every release |
 | `docs/netplay/01-critical-fixes.md` | known-bad areas, **UNVERIFIED** markers | a fix lands or an assumption is verified |
 | `docs/netplay/02-delivery-method-reference.md` | delivery policy + message→channel map | **any** message added or channel changed |
 | `docs/netplay/04-performance-and-gc.md` | allocation and frame-cost notes | a perf pass lands |
@@ -30,8 +30,8 @@ no marketing. Read the neighbouring file before writing a new one.
 
 ## Release documentation is three files, not one
 
-1. `src/plugin/MegabonkTogether.Plugin.csproj` — `<Version>`
-2. `src/plugin/CHANGELOG.toml` — new block:
+1. `src/plugin/OmniBonk.Plugin.csproj` — `<Version>`
+2. `CHANGELOG.toml` (repo root) — new block:
    ```toml
    [version."5.2.0"]
    changes = [

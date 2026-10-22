@@ -1,17 +1,15 @@
 ﻿using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches.Player
+namespace OmniBonk.Patches.Player
 {
     [HarmonyPatch(typeof(PlayerRenderer))]
     internal static class PlayerRendererPatches
     {
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
 
-        /// <summary>
-        /// Synchronize hat changes
-        /// </summary>
+        /// <summary>Synchronize hat changes</summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(PlayerRenderer.SetHat))]
         public static void SetHat_Postfix(PlayerRenderer __instance, HatData hatData)

@@ -1,6 +1,6 @@
 using MemoryPack;
 
-namespace MegabonkTogether.Common.Messages.WsMessages
+namespace OmniBonk.Common.Messages.WsMessages
 {
     [MemoryPackable]
     public partial class HostDisconnected : IWsMessage

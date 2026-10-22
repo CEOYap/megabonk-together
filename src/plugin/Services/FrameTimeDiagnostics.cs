@@ -1,31 +1,13 @@
 using Assets.Scripts.Utility;
-using MegabonkTogether.Configuration;
+using OmniBonk.Configuration;
 using System;
 using UnityEngine;
 
-namespace MegabonkTogether.Services
+namespace OmniBonk.Services
 {
     /// <summary>
-    /// Frame-time sampler for performance testing: one <c>[perf]</c> line every
-    /// <see cref="REPORT_INTERVAL_SECONDS"/> while a session runs.
-    ///
-    /// <para><b>Why not average FPS alone.</b> The FPS complaints this project has had
-    /// are stutter, and an average hides it: 59 frames at 10 ms and one at 400 ms is "~70 FPS".
-    /// So the line carries the 1% and 0.1% lows, the worst frame, and counts of frames over 33 ms
-    /// (below 30 FPS) and over 100 ms (a visible hitch).</para>
-    ///
-    /// <para><b>Why the context.</b> A number is only useful against another one. The line carries
-    /// what drives the mod's per-frame cost (tracked enemies, players, host or client) and how much
-    /// of the window the game was paused, so two runs can be compared and a drop can be matched to a
-    /// swarm. Read it together with <c>[alloc]</c> (GC) and <c>[bw]</c> (network), which use the
-    /// same 10-second window: a hitch count that rises with gen-2 collections points at the GC.</para>
-    ///
-    /// <para><b>Cost.</b> Per frame: one float into a preallocated ring, two comparisons. At report
-    /// time one in-place sort of a preallocated copy and one log line. No per-frame allocation.</para>
-    ///
-    /// <para><b>Limits.</b> Measures whole frames, game and mod together; it cannot say which side a
-    /// slow frame came from. Compare a session with the same build, map and player count, and use
-    /// singleplayer as the baseline by eye, since this only runs during a netplay session.</para>
+    /// One <c>[perf]</c> line per window during a session: lows, worst frame and hitch counts,
+    /// since averages hide stutter. No per-frame allocation. Measures game and mod together.
     /// </summary>
     internal static class FrameTimeDiagnostics
     {
@@ -47,9 +29,8 @@ namespace MegabonkTogether.Services
         private static bool primed;
 
         /// <summary>
-        /// Called once per frame from the network tick. Returns true when a report is due; the
-        /// caller then gathers the context and calls <see cref="Report"/>, so the context (which
-        /// counts players through LINQ) is built once per window, not once per frame.
+        /// Per frame. Returns true when <see cref="Report"/> is due, so its LINQ-built context is
+        /// gathered once per window.
         /// </summary>
         internal static bool Sample(bool enabled)
         {
@@ -80,7 +61,6 @@ namespace MegabonkTogether.Services
             return now - lastReportTime >= REPORT_INTERVAL_SECONDS && count > 0;
         }
 
-        /// <summary>Logs the window <see cref="Sample"/> said was due, then starts the next one.</summary>
         internal static void Report(int trackedEnemies, int players, bool isHost)
         {
             var now = Time.unscaledTime;
@@ -143,7 +123,6 @@ namespace MegabonkTogether.Services
             lastGen2 = GC.CollectionCount(2);
         }
 
-        /// <summary>Re-primes so a new session's first window is not measured against the old one.</summary>
         internal static void Reset()
         {
             primed = false;

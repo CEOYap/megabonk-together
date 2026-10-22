@@ -1,10 +1,10 @@
 ﻿using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using MonoMod.Utils;
 using static EnemySpecialAttackHitscanMultiple;
 
-namespace MegabonkTogether.Patches.SpecialAttack
+namespace OmniBonk.Patches.SpecialAttack
 {
     [HarmonyPatch(typeof(_DoAttack_d__7))]
     internal static class EnemySpecialAttackHitscanMultiplePatches
@@ -33,9 +33,7 @@ namespace MegabonkTogether.Patches.SpecialAttack
             }
         }
 
-        /// <summary>
-        /// Remove queued request after attack is over.
-        /// </summary>
+        /// <summary>Remove queued request after attack is over.</summary>
         [HarmonyFinalizer]
         [HarmonyPatch(nameof(_DoAttack_d__7.MoveNext))]
         public static void MoveNext_Finalizer(bool __state)

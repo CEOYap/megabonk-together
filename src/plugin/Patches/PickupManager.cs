@@ -1,11 +1,11 @@
 ﻿using Assets.Scripts.Inventory__Items__Pickups.Pickups;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using MonoMod.Utils;
 using UnityEngine;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     [HarmonyPatch(typeof(PickupManager))]
     internal static class PickupManagerPatches
@@ -14,9 +14,7 @@ namespace MegabonkTogether.Patches
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
         private static readonly IPickupManagerService pickupManagerService = Plugin.Services.GetService<IPickupManagerService>();
 
-        /// <summary>
-        /// Spawn pickups only on the server unless explicitly allowed
-        /// </summary>
+        /// <summary>Host only, unless explicitly allowed.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(PickupManager.SpawnPickup))]
         public static bool SpawnPickup_Prefix(ref bool useRandomOffsetPosition)
@@ -37,9 +35,6 @@ namespace MegabonkTogether.Patches
             return Plugin.CAN_SPAWN_PICKUPS;
         }
 
-        /// <summary>
-        /// Synchronize spawned pickups to clients
-        /// </summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(PickupManager.SpawnPickup))]
         public static void SpawnPickup_Postfix(Pickup __result, EPickup ePickup, ref Vector3 pos, int value)
@@ -56,16 +51,9 @@ namespace MegabonkTogether.Patches
 
             var isServer = synchronizationService.IsServerMode() ?? false;
 
-            // OB-5 diagnostic. Read BEFORE the Clear below, which is what destroys the evidence.
-            //
-            // PickupManager.SpawnPickup (VA 0x1804DED60, decompiled) calls CheckOverlap and, when a
-            // pickup of the same kind is already there, does Pickup.AddValue on the EXISTING one and
-            // returns it -- no new pickup exists. A __result that already carries a pickupId is
-            // therefore a merge, and this postfix then wipes that id and OnPickupSpawned registers the
-            // same object a second time under a new one. Two ids, one host object: once it is
-            // consumed under one id the other dangles, and a client pulling it gets nothing -- the
-            // shape of OB-5's residual drops. Whether merges happen often enough to matter is what
-            // this counts; nothing is changed yet.
+            // OB-5 diagnostic, read before the Clear below. Decompiled SpawnPickup (VA 0x1804DED60)
+            // merges into an existing overlapping pickup and returns it, so a prior pickupId means
+            // one object is about to get a second id. Counted only; nothing changed yet.
             if (isServer)
             {
                 var priorId = DynamicData.For(__result).Get<uint?>("pickupId");
@@ -87,10 +75,7 @@ namespace MegabonkTogether.Patches
         private static int mergesTotal = 0;
         private static float lastMergeReport = -999f;
 
-        /// <summary>
-        /// Counts host-side pickup merges and reports at Info, at most every 10 s of unscaled time.
-        /// Silent when nothing merges, so a clean log is evidence rather than absence.
-        /// </summary>
+        /// <summary>Reports at most every 10 s; silent when nothing merges.</summary>
         private static void RecordMerge(uint priorId, EPickup ePickup)
         {
             mergesSinceReport++;
@@ -110,10 +95,7 @@ namespace MegabonkTogether.Patches
             lastMergeReport = now;
         }
 
-        /// <summary>
-        /// Use random player instead of only local player (Trigerred by magnet shrines and other ?). Server side only.
-        /// </summary>
-        /// <returns></returns>
+        /// <summary>Host only: XP goes to a random alive player, not just the local one (magnet shrines).</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(PickupManager.PickupAllXp))]
         public static bool PickupAllXp_Postfix()

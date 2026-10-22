@@ -1,26 +1,14 @@
 using Assets.Scripts.Inventory__Items__Pickups.Items;
 using UnityEngine;
 
-namespace MegabonkTogether.Helpers
+namespace OmniBonk.Helpers
 {
     /// <summary>
-    /// Endless Run, Phase 3: puts an arrival in the Graveyard scene into the room the route chose.
-    /// Stateless; <see cref="Services.EndlessRunService"/> says when and which room.
-    ///
-    /// <para><b>The vanilla Graveyard</b> (decompiled, build 21750826) is one stage, played in order:
-    /// the first crypt, then <c>InteractableCryptLeave.Teleport</c> (0x1804C8A20) stops the dungeon
-    /// and teleports to the surface; the key door's <c>InteractableCrypt.Teleport</c> (0x1804C90E0)
-    /// generates the second crypt with <c>RsgController.Generate(mapSeed + 1, BossDungeon)</c>,
-    /// points that crypt's exit at the boss room and starts the dungeon; that exit then activates
-    /// <c>GraveyardBossRoom</c>; and <c>InteractableGhostBossLeave.Teleport</c> (0x1804CB5B0) clears
-    /// the map. Each room here repeats the part of that sequence that leads into it, at the
-    /// spawn portal, so the player arrives there.</para>
-    ///
-    /// <para><b>Every peer runs this,</b> in the same order: the crypt comes from the session seed
-    /// (<c>RsgController.SetCustomSeed</c>), so every peer generates the same second crypt, and the
-    /// host registers its objects as it does for the key door. The boss room's lamps and exit get
-    /// their ids in lockstep in <c>GraveyardBossRoomPatches.Activate_Prefix</c>, which every peer
-    /// reaches once. <b>UNVERIFIED, not run in-game.</b></para>
+    /// Endless: places a Graveyard arrival into the chosen room by replaying the vanilla sequence that
+    /// leads there (decompiled: <c>InteractableCryptLeave.Teleport</c> 0x1804C8A20,
+    /// <c>InteractableCrypt.Teleport</c> 0x1804C90E0, <c>InteractableGhostBossLeave.Teleport</c> 0x1804CB5B0).
+    /// <para>Every peer runs this in the same order from the session seed, so generation matches.
+    /// <b>UNVERIFIED, not run in-game.</b></para>
     /// </summary>
     internal static class EndlessGraveyard
     {

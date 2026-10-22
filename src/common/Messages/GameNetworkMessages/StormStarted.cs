@@ -1,6 +1,6 @@
 using MemoryPack;
 
-namespace MegabonkTogether.Common.Messages
+namespace OmniBonk.Common.Messages
 {
     [MemoryPackable]
     public partial class StormStarted : IGameNetworkMessage

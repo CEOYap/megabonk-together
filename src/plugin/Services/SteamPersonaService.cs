@@ -4,20 +4,13 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
-namespace MegabonkTogether.Services
+namespace OmniBonk.Services
 {
     /// <summary>
-    /// Steam display names, cached, because asking for one is not a getter.
-    ///
-    /// <para><c>GetFriendPersonaName</c> returns nothing useful for somebody the client has no
-    /// information about yet — which includes most people you are in a lobby with and are not
-    /// friends with. The name has to be <i>requested</i>, and it arrives later as a
-    /// <c>PersonaStateChange_t</c>. So this is a cache with a callback filling it, not a lookup.</para>
-    ///
-    /// <para>Same shape a shipping implementation for this game uses; see
-    /// <c>docs/steamworks/03-observed-steam-usage.md</c>.</para>
+    /// Steam display names cache. A stranger's name must be requested and arrives later via
+    /// <c>PersonaStateChange_t</c>. See <c>docs/steamworks/03-observed-steam-usage.md</c>.
     /// </summary>
-    internal class SteamPersonaService(ISteamService steamService)
+    internal class SteamPersonaService(ISteamService steamService, IPlayerManagerService playerManagerService)
     {
         /// <summary><c>PersonaStateChange_t.m_ulSteamID</c>, at offset 0.</summary>
         private const int PersonaSteamIdOffset = 0;
@@ -28,13 +21,7 @@ namespace MegabonkTogether.Services
         private bool registered;
         private bool appliedLocalName;
 
-        /// <summary>
-        /// The display name for a SteamID, or empty if it is not known yet.
-        ///
-        /// <para>Empty is normal rather than an error the first time a stranger is seen: the request
-        /// has been sent and the name will be there on a later call. Callers should fall back to
-        /// something neutral rather than showing a blank row.</para>
-        /// </summary>
+        /// <summary>The display name, or empty while still requested; callers should show a neutral fallback.</summary>
         public string GetName(ulong steamId)
         {
             if (steamId == 0UL)
@@ -66,9 +53,7 @@ namespace MegabonkTogether.Services
                     return name;
                 }
 
-                // Not known yet. Ask, and the callback fills the cache. RequestUserInformation
-                // returns false when the information is already available, which here means the
-                // name really is empty rather than pending.
+                // RequestUserInformation returns false when already available: the name really is empty.
                 if (steamId != steamService.LocalSteamId)
                 {
                     SteamFriends.RequestUserInformation(new CSteamID(steamId), bRequireNameOnly: true);
@@ -83,16 +68,8 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>
-        /// Adopts the player's Steam name as the name this mod shows and sends, once per launch.
-        ///
-        /// <para>Set on <c>ModConfig.PlayerName</c> rather than plumbed separately, because that
-        /// one value already feeds everything that needs it: the local row the lobby panel
-        /// synthesizes, the <c>Player</c> record sent to peers, and the name box in the netplay
-        /// menu. Anything narrower would leave one of the three still showing whatever was typed
-        /// months ago.</para>
-        ///
-        /// <para>Once, and only before the player has had a chance to change it — if they edit the
-        /// name afterwards, that is theirs to keep and this does not run again.</para>
+        /// Once per launch, sets <c>ModConfig.PlayerName</c> (which feeds every display of it) to the
+        /// Steam name. A later manual edit is kept.
         /// </summary>
         public void ApplyLocalPersonaName()
         {
@@ -113,6 +90,14 @@ namespace MegabonkTogether.Services
             var previous = Configuration.ModConfig.PlayerName.Value;
             Configuration.ModConfig.PlayerName.Value = persona;
             Configuration.ModConfig.Save();
+
+            // Steam can finish starting after the lobby has already added us under the old name.
+            var local = playerManagerService.GetLocalPlayer();
+            if (local != null)
+            {
+                local.Name = persona;
+                playerManagerService.UpdatePlayer(local);
+            }
 
             Plugin.Log.LogInfo($"[steam] Using the Steam name '{persona}' (was '{previous}').");
         }
@@ -146,11 +131,7 @@ namespace MegabonkTogether.Services
             }
         }
 
-        /// <summary>
-        /// Someone's details arrived or changed. Dropped from the cache rather than re-read here:
-        /// the next <see cref="GetName"/> fetches it, and that keeps the Steam call on the path
-        /// that actually wants the answer.
-        /// </summary>
+        /// <summary>Invalidates the cached name; the next <see cref="GetName"/> re-reads it.</summary>
         private void OnPersonaStateChange(IntPtr payload)
         {
             var steamId = (ulong)Marshal.ReadInt64(payload, PersonaSteamIdOffset);

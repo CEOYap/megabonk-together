@@ -1,17 +1,15 @@
 ﻿using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches.Interactables
+namespace OmniBonk.Patches.Interactables
 {
     [HarmonyPatch(typeof(InteractableSkeletonKingStatue))]
     internal static class InteractableSkeletonKingStatuePatches
     {
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetRequiredService<ISynchronizationService>();
 
-        /// <summary>
-        /// Manually deactivate the statue on client
-        /// </summary>
+        /// <summary>Client deactivates the statue manually.</summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(InteractableSkeletonKingStatue.Interact))]
         public static void Interact_Postfix(InteractableSkeletonKingStatue __instance)

@@ -1,8 +1,8 @@
-﻿using MegabonkTogether.Common.Models;
+﻿using OmniBonk.Common.Models;
 using System.Runtime.CompilerServices;
 using UnityEngine;
 
-namespace MegabonkTogether.Helpers
+namespace OmniBonk.Helpers
 {
     public static class Quantizer
     {

@@ -1,43 +1,19 @@
 using BepInEx.Logging;
-using MegabonkTogether.Common.Messages;
-using MegabonkTogether.Common.Messages.GameNetworkMessages;
-using MegabonkTogether.Extensions;
-using MegabonkTogether.Helpers;
+using OmniBonk.Common.Messages;
+using OmniBonk.Common.Messages.GameNetworkMessages;
+using OmniBonk.Extensions;
+using OmniBonk.Helpers;
 
-namespace MegabonkTogether.Services
+namespace OmniBonk.Services
 {
     /// <summary>
-    /// Turns a received message into gameplay: applies it to the replicated model where the host
-    /// owns that, republishes it through <see cref="EventManager"/>, and — on the host — forwards it
-    /// to the other clients.
-    ///
-    /// <para><b>Why this is not in the transport any more.</b> The receive switch lived in
-    /// <c>UdpClientService</c> and was keyed on a LiteNetLib <c>NetPeer.Id</c>, so a second
-    /// transport had nowhere to deliver anything: it could receive bytes and deserialize them, and
-    /// then had no way to make them mean something. Phase 1 moved the *send* side behind
-    /// <see cref="INetTransport"/> and left the receive side where it was; this is the other half.
-    /// See <c>docs/steamworks/00-migration-plan.md</c>, Phase 4.</para>
-    ///
-    /// <para><b>What deliberately did not move, and why that is not a loose end.</b> Eight cases
-    /// need transport state that has no transport-neutral meaning — the peer introduction maps,
-    /// the relay peer, and tearing a connection down. Those stay in the transport, which tries them
-    /// first and calls this for everything else. The split is not "logic here, plumbing there": it
-    /// is <b>messages whose handling depends on which peer they arrived on</b> versus messages
-    /// whose handling depends only on their contents. The second group is every message but eight,
-    /// and only the first group can differ between transports.</para>
-    ///
-    /// <para><b>Host and client arms are separate on purpose.</b> Roughly a dozen message types
-    /// appear in both with different bodies — a client applies a spawn, a host applies it <i>and</i>
-    /// forwards it to everyone except the peer that reported it. Collapsing them would mean a
-    /// runtime branch inside each case, which is how a forward gets added to the client arm by
-    /// accident and every peer starts rebroadcasting.</para>
+    /// Transport-neutral receive path: applies messages, republishes via <see cref="EventManager"/>,
+    /// and on the host forwards them. Peer-scoped messages stay in the transport.
+    /// <para>Host and client arms are separate on purpose, so a forward cannot leak into the client arm.</para>
     /// </summary>
     public interface INetMessageRouter
     {
-        /// <summary>
-        /// Applies a message. Returns false if this router does not know the type, which is the
-        /// caller's cue to log it — the transport has already had its chance at the message.
-        /// </summary>
+        /// <summary>Returns false for an unknown type.</summary>
         bool Route(IGameNetworkMessage message, bool isHost);
     }
 
@@ -47,13 +23,7 @@ namespace MegabonkTogether.Services
         IEncounterService encounterService,
         ManualLogSource logger) : INetMessageRouter
     {
-        /// <summary>
-        /// Resolved on first use rather than injected. The transport implements
-        /// <see cref="INetTransport"/> and constructs this router, so taking it as a constructor
-        /// parameter is a cycle the container cannot break — the same shape that already deadlocked
-        /// startup once and is why <c>LobbyViewService</c> subscribes explicitly after the host is
-        /// built. Resolved once and cached; never per message.
-        /// </summary>
+        /// <summary>Resolved lazily: injecting it would be a DI cycle (this deadlocked startup once).</summary>
         private INetTransport transport;
 
         private INetTransport Transport =>
@@ -298,12 +268,7 @@ namespace MegabonkTogether.Services
                     break;
                 case EnemyDied enemyDied:
                     EventManager.OnEnemyDied(enemyDied);
-                    // OB-51: to every client, the sender included. DiedByOwnerId is the killer (the
-                    // attacker whose replayed hit finished the enemy there), not the sender, so
-                    // excluding it skipped the one other client still holding the enemy whenever a
-                    // client reported a third player's kill: that client kept it, alive and silent,
-                    // for the rest of the stage. The message has no sender field, and the echo is
-                    // harmless: the sender has already removed the enemy, so it is an unknown id there.
+                    // OB-51: to every client. DiedByOwnerId is the killer, not the sender; the echo is harmless.
                     Transport.SendToAllClients(enemyDied, NetDelivery.ReliableOrdered);
                     break;
                 case PickupApplied pickupApplied:
@@ -342,14 +307,7 @@ namespace MegabonkTogether.Services
                     Transport.SendToAllClientsExcept(enemyExploder.SenderId, enemyExploder);
                     break;
                 case EnemyDamaged enemyDamaged:
-                    // Applied, not forwarded here. The host's replay goes through
-                    // Enemy.Damage_Postfix -> SynchronizationService.OnEnemyDamaged, which already
-                    // forwards the hit to every client, the origin included, since it never
-                    // applied its own hit. A second forward here gave every third peer the hit twice:
-                    // two damage numbers, and a client whose replay drives HP to 0 kills its
-                    // copy and reports EnemyDied, so a doubled hit could end an enemy early for
-                    // everyone. It also forwarded hits the host never applied (paused, or the
-                    // enemy already dead on the host).
+                    // Not forwarded here: Damage_Postfix already forwards; a second forward doubled hits.
                     EventManager.OnEnemyDamaged(enemyDamaged);
                     break;
                 case StartingChargingPylon startingChargingPylon:
@@ -442,11 +400,7 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            // Lobby-ready defect B. A report that does not name the round this host has open is one
-            // that raced ahead of the host's own level transition. Recording it is what used to hang
-            // the lobby: ResetForNextLevel then cleared it, and a client that sent exactly once
-            // never reported again. Rejecting it is only safe because the client retries — the two
-            // halves are one fix.
+            // Lobby-ready defect B: reject reports for another round; safe only because the client retries.
             if (!readinessService.TryMarkReady(stampedReadyId, clientReadyStamped.SessionId, clientReadyStamped.RoundId))
             {
                 logger.LogInfo(
@@ -454,26 +408,19 @@ namespace MegabonkTogether.Services
                     $"{clientReadyStamped.SessionId} round {clientReadyStamped.RoundId}; host has " +
                     $"session {readinessService.SessionId} round {readinessService.RoundId} open.");
 
-                // Re-announce rather than stay silent. A mismatch usually means this peer is
-                // reporting against a round it has not been told about yet, and the one thing that
-                // resolves it is the stamp — which is cheaper to re-send than to let the peer burn
-                // its retry budget.
+                // Re-send the stamp; the peer likely has not heard of this round yet.
                 EventManager.OnReadinessRoundReAsk();
                 return;
             }
 
-            // Mirrored onto the replicated record so the existing UI, the 5 Hz full player
-            // broadcast, and the client's own acknowledgement check all keep working unchanged. This
-            // is now a derived value: the barrier holds the truth, and a clobber of this field costs
-            // a re-report, not the round.
+            // Derived mirror for UI and broadcast; the barrier holds the truth.
             stampedPlayer.IsReady = true;
             playerManagerService.UpdatePlayer(stampedPlayer);
         }
 
         private void OnClientInGameReady(ClientInGameReady clientInGameReady)
         {
-            // Older build on the other end: no round stamp, so the report cannot be attributed and
-            // is accepted exactly as it was before, defect B included.
+            // Older build: unstamped, accepted as before.
             var clientReadyId = clientInGameReady.ConnectionId;
             var player = playerManagerService.GetPlayer(clientReadyId);
             if (player == null)
@@ -522,10 +469,7 @@ namespace MegabonkTogether.Services
 
         private void OnEncounterClosedStamped(EncounterClosedStamped encounterClosedStamped)
         {
-            // SE-5, report half. A report that does not name the round this host has open is a
-            // leftover from a round already released — counting it toward the current round is what
-            // releases someone else's window before they have chosen. Dropped rather than applied;
-            // the reporting peer's own failsafe is what recovers it if it really is stuck.
+            // SE-5: a stale-round report would release someone else's window early.
             if (!encounterService.IsCurrentStamp(encounterClosedStamped.SessionId, encounterClosedStamped.RoundId))
             {
                 logger.LogInfo(
@@ -537,9 +481,6 @@ namespace MegabonkTogether.Services
 
             encounterService.AddClosedEncounterForPlayer(encounterClosedStamped.OwnerId);
 
-            // The accepted counterpart of the "Dropping a stale barrier report" line above. Without
-            // it a healthy round is invisible and only failures speak, which is what made the first
-            // run of this build unverifiable.
             logger.LogInfo(
                 $"[barrier] Report from {encounterClosedStamped.OwnerId} accepted for round " +
                 $"{encounterClosedStamped.RoundId}; barrier closable: {encounterService.IsClosable()}.");
@@ -552,8 +493,7 @@ namespace MegabonkTogether.Services
 
         private void OnEncounterClosed(EncounterClosed encounterClosed)
         {
-            // Older build on the other end: no round identity, so this report cannot be attributed
-            // and is accepted as-is, exactly as it was before SE-5.
+            // Older build: unstamped, accepted as before SE-5.
             Plugin.Log.LogWarning(
                 $"Received an unstamped EncounterClosed from {encounterClosed.OwnerId}. That peer is " +
                 "on an older build; this report cannot be round-attributed (SE-5).");
@@ -569,21 +509,8 @@ namespace MegabonkTogether.Services
         // ------------------------------------------------------------------ client handlers
 
         /// <summary>
-        /// Applies the continuous half of the player stream. Counterpart of
-        /// <c>SendPlayersStateUpdate</c>.
-        ///
-        /// <para><b>This deliberately mutates only the continuous fields</b> rather than replacing
-        /// the stored record the way <see cref="OnLobbyUpdate"/> does. That is the point of the
-        /// split and it is also a fix: <c>UpdatePlayer</c> overwrites the whole <c>Player</c>, so at
-        /// 60 Hz the old single stream was continuously stamping <c>IsReady</c>, <c>Name</c>,
-        /// <c>Skin</c> and <c>Inventory</c> back over whatever local code had just set — defect C of
-        /// the four lobby-ready barrier defects. Those fields now only ever change when a full
-        /// record arrives, so a readiness flag set locally survives until the host actually
-        /// contradicts it.</para>
-        ///
-        /// <para>Mutating in place is safe because <c>GetPlayer</c> hands back the stored instance,
-        /// and it avoids the remove/insert churn <c>UpdatePlayer</c> does on a 60 Hz path. <b>Do not
-        /// "tidy" this into an UpdatePlayer call</b> — that is precisely the defect above.</para>
+        /// Continuous player fields only, mutated in place. <b>Do not</b> turn this into
+        /// <c>UpdatePlayer</c>: it would overwrite IsReady/Name/Inventory at 60 Hz (lobby-ready defect C).
         /// </summary>
         private void OnPlayersStateUpdate(PlayersStateUpdate update)
         {
@@ -592,8 +519,6 @@ namespace MegabonkTogether.Services
                 var player = playerManagerService.GetPlayer(state.ConnectionId);
                 if (player == null)
                 {
-                    // GetPlayer already reports this, throttled. A state update for a player we do
-                    // not know yet is normal for a tick or two around join and disconnect.
                     continue;
                 }
 
@@ -610,9 +535,7 @@ namespace MegabonkTogether.Services
                     AnimatorState = state.AnimatorState,
                     ConnectionId = state.ConnectionId,
                     Hp = state.Hp,
-                    // Maxima and identity ride the full record; carry the values we already hold so
-                    // a health bar reading MaxHp off this update does not see a zero between full
-                    // records.
+                    // Held values, so MaxHp never reads zero between full records.
                     MaxHp = player.MaxHp,
                     Shield = state.Shield,
                     MaxShield = player.MaxShield,
@@ -649,9 +572,7 @@ namespace MegabonkTogether.Services
                 });
             }
 
-            // Outside the loop, and not optional: these two carry the entire enemy and boss-orb
-            // stream on a client. They are easy to lose when this method is moved, and losing them
-            // does not fail — every enemy simply stops moving on every client but the host.
+            // Required: the client's entire enemy and boss-orb stream; losing it fails silently.
             EventManager.OnEnemiesUpdate(lobbyUpdate.Enemies);
             EventManager.OnFinalBossOrbsUpdate(lobbyUpdate.BossOrbs);
         }

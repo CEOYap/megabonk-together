@@ -1,10 +1,10 @@
-using MegabonkTogether.Helpers;
+using OmniBonk.Helpers;
 using System.Collections;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
-namespace MegabonkTogether.Scripts.NetPlayer
+namespace OmniBonk.Scripts.NetPlayer
 {
     public class DisplayBar : MonoBehaviour
     {

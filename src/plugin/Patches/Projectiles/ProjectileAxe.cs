@@ -1,11 +1,11 @@
 ﻿using Assets.Scripts.Inventory__Items__Pickups.Weapons;
 using HarmonyLib;
-using MegabonkTogether.Scripts.NetPlayer;
-using MegabonkTogether.Services;
+using OmniBonk.Scripts.NetPlayer;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using UnityEngine;
 
-namespace MegabonkTogether.Patches.Projectiles
+namespace OmniBonk.Patches.Projectiles
 {
     [HarmonyPatch(typeof(ProjectileAxe))]
     internal static class ProjectileAxePatches
@@ -13,9 +13,7 @@ namespace MegabonkTogether.Patches.Projectiles
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
 
-        /// <summary>
-        /// Use the correct player (local / remote) transform
-        /// </summary>
+        /// <summary>Use the owning player's transform.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileAxe.TryInit))]
         public static bool TryInit_Prefix(ProjectileAxe __instance, int projectileIndex, out bool __state)
@@ -46,9 +44,7 @@ namespace MegabonkTogether.Patches.Projectiles
             return true;
         }
 
-        /// <summary>
-        /// Restore original transform after prefix
-        /// </summary>
+        /// <summary>Restore the original transform.</summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(ProjectileAxe.TryInit))]
         public static void TryInit_Postfix(ProjectileAxe __instance, int projectileIndex)
@@ -73,14 +69,7 @@ namespace MegabonkTogether.Patches.Projectiles
             CorrectProjectileAxeRotation(__instance, netPlayer, projectileIndex);
         }
 
-        /// <summary>
-        /// Pops the position request the prefix pushed. Split out of the postfix rather than folded
-        /// into it: the postfix does real work (the rotation correction) that must keep its own
-        /// guards, while the pop must happen whether or not those guards still hold and whether or
-        /// not the original threw. The postfix re-derived <c>GetNetPlayerByWeapon</c>, which a
-        /// weapon steal or return can invalidate between prefix and postfix — the exact
-        /// condition-changed-mid-call leak P1-11 describes.
-        /// </summary>
+        /// <summary>P1-11: pops in a finalizer keyed on prefix state, so it runs even if the original throws.</summary>
         [HarmonyFinalizer]
         [HarmonyPatch(nameof(ProjectileAxe.TryInit))]
         public static void TryInit_Finalizer(bool __state)
@@ -93,9 +82,7 @@ namespace MegabonkTogether.Patches.Projectiles
             playerManagerService.UnqueueNetplayerPositionRequest();
         }
 
-        /// <summary>
-        /// Reconstructed attempt at the original game's ProjectileAxe rotation
-        /// </summary>
+        /// <summary>Reconstructed attempt at the original game's ProjectileAxe rotation</summary>
         private static void CorrectProjectileAxeRotation(ProjectileAxe axe, NetPlayer netPlayer, int projectileIndex)
         {
             int attackQuantity = WeaponUtility.GetAttackQuantity(axe.weaponBase);
@@ -105,10 +92,7 @@ namespace MegabonkTogether.Patches.Projectiles
 
             Vector3 worldDirection = netPlayer.Model.transform.rotation * localDirection;
 
-            // A zero worldDirection means the owner's model rotation collapsed the local direction.
-            // LookRotation logs and hands back identity, which would face the axe due north — worse
-            // than leaving it as it is. Unlike the NetPlayer guard this does change behaviour, and
-            // deliberately: keeping the previous rotation is the better of the two wrong answers.
+            // Zero direction: LookRotation would return identity; keep the previous rotation.
             if (worldDirection != Vector3.zero)
             {
                 Quaternion correctedRotation = Quaternion.LookRotation(worldDirection);
@@ -121,9 +105,7 @@ namespace MegabonkTogether.Patches.Projectiles
             axe.desiredPosition = startPos + axe.transform.forward * distance;
         }
 
-        /// <summary>
-        /// Reconstructed attempt at the original game's angle offset calculation for ProjectileAxe
-        /// </summary>
+        /// <summary>Reconstructed attempt at the original game's angle offset calculation for ProjectileAxe</summary>
         private static float CalculateAngleOffset(int projectileIndex, int attackQuantity)
         {
             if (attackQuantity < 2) return 0f;

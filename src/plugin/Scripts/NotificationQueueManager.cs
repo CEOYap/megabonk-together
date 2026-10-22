@@ -1,6 +1,6 @@
 using Assets.Scripts.Inventory__Items__Pickups.Items;
-using MegabonkTogether.Helpers;
-using MegabonkTogether.Services;
+using OmniBonk.Helpers;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using System.Collections;
 using System.Collections.Concurrent;
@@ -8,7 +8,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Localization;
 
-namespace MegabonkTogether.Scripts
+namespace OmniBonk.Scripts
 {
     public class NotificationQueueManager : MonoBehaviour
     {

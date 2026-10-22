@@ -5,7 +5,7 @@ using System.Linq;
 using System.Reflection;
 using UnityEngine;
 
-namespace MegabonkTogether.Helpers
+namespace OmniBonk.Helpers
 {
     public static class Il2CppFindHelper
     {
@@ -100,11 +100,8 @@ namespace MegabonkTogether.Helpers
 
 
         /// <summary>
-        /// <c>Physics.OverlapSphere(Vector3, float, int)</c>, resolved at runtime like
-        /// <see cref="RuntimeSphereCastAll"/>. PhysicsModule compiles from unity-libs, where the method
-        /// returns <c>Collider[]</c>; the game's returns an IL2CPP array, so a direct call threw
-        /// <c>MissingMethodException</c> on every call (the test bot, 2026-10-19: 8,735 times, and it
-        /// never moved).
+        /// <c>Physics.OverlapSphere</c>, resolved at runtime like <see cref="RuntimeSphereCastAll"/>: compiled
+        /// against <c>Collider[]</c> but the game returns an IL2CPP array, so a direct call throws <c>MissingMethodException</c>.
         /// </summary>
         public static Collider[] RuntimeOverlapSphere(Vector3 position, float radius, int layerMask)
         {

@@ -1,9 +1,9 @@
 ﻿using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using MonoMod.Utils;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     [HarmonyPatch(typeof(BossLamp))]
     internal static class BossLampPatches
@@ -12,10 +12,7 @@ namespace MegabonkTogether.Patches
         private static readonly IGameBalanceService gameBalanceService = Plugin.Services.GetService<IGameBalanceService>();
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
 
-        /// <summary>
-        /// Update charge time based on game balance settings (number of players)
-        /// </summary>
-        /// <param name="__instance"></param>
+        /// <summary>Scales charge time by player count.</summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(BossLamp.Awake))]
         public static void Awake_Postfix(BossLamp __instance)
@@ -28,9 +25,6 @@ namespace MegabonkTogether.Patches
             __instance.chargeTime = gameBalanceService.GetBossLampRequiredCharge();
         }
 
-        /// <summary>
-        /// Synchronize starting to charge lamp
-        /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(BossLamp.OnTriggerEnter))]
         public static bool OnTriggerEnter_Prefix(BossLamp __instance)
@@ -59,9 +53,6 @@ namespace MegabonkTogether.Patches
             return true;
         }
 
-        /// <summary>
-        /// Synchronize stopping charging lamp
-        /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(BossLamp.OnTriggerExit))]
         public static bool OnTriggerExit_Prefix(BossLamp __instance)

@@ -1,10 +1,10 @@
 ﻿using Assets.Scripts.MapGeneration.ProceduralTiles;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
 
-namespace MegabonkTogether.Patches.MapGeneration
+namespace OmniBonk.Patches.MapGeneration
 {
     [HarmonyPatch(typeof(Maze))]
     internal static class MazePatches
@@ -12,9 +12,7 @@ namespace MegabonkTogether.Patches.MapGeneration
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetRequiredService<ISynchronizationService>();
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetRequiredService<IPlayerManagerService>();
 
-        /// <summary>
-        /// Use the same seed for all players in a netplay session
-        /// </summary>
+        /// <summary>Same seed for every peer.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(Maze.Generate))]
         public static void Generate_Prefix(ref int seed)

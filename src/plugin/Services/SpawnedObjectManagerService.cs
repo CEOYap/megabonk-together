@@ -1,15 +1,15 @@
 ﻿using Actors.Enemies;
 using Assets.Scripts.Inventory__Items__Pickups.Items;
-using MegabonkTogether.Common.Models;
-using MegabonkTogether.Helpers;
-using MegabonkTogether.Scripts.Snapshot;
+using OmniBonk.Common.Models;
+using OmniBonk.Helpers;
+using OmniBonk.Scripts.Snapshot;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using UnityEngine;
 
-namespace MegabonkTogether.Services
+namespace OmniBonk.Services
 {
     public interface ISpawnedObjectManagerService
     {
@@ -39,8 +39,7 @@ namespace MegabonkTogether.Services
         private readonly ConcurrentDictionary<uint, TumbleWeedModel> previousTumbleWeedsDelta = [];
         private ConcurrentQueue<EItemRarity> shadyGuyRarityRequest = [];
         private TumbleWeedInterpolator tumbleWeedInterpolator;
-        // FIX P0-3: see EnemyManagerService — int so allocation can go through Interlocked,
-        // 0 stays reserved as the failure sentinel.
+        // FIX P0-3: int for Interlocked; 0 is the failure sentinel.
         private int currentObjectId = 0;
 
         private const float TUMBLEWEED_POSITION_THRESHOLD = 0.1f;
@@ -141,8 +140,7 @@ namespace MegabonkTogether.Services
             //spawnedObjects.Values.ToList().ForEach(Object.Destroy);
             spawnedObjects.Clear();
 
-            // OB-35. The interpolator survives the scene load (DontDestroyOnLoad); the tumbleweeds it
-            // tracks do not. Ids also restart from 0 above, so a stale entry could alias a new one.
+            // OB-35: the interpolator outlives the scene; ids restart, so stale entries would alias.
             if (tumbleWeedInterpolator != null)
             {
                 tumbleWeedInterpolator.Clear();

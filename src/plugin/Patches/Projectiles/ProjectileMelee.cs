@@ -1,8 +1,8 @@
 ﻿using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches.Projectiles
+namespace OmniBonk.Patches.Projectiles
 {
     [HarmonyPatch(typeof(ProjectileMelee))]
     internal static class ProjectileMeleePatches
@@ -10,9 +10,7 @@ namespace MegabonkTogether.Patches.Projectiles
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
 
-        /// <summary>
-        /// Use the correct player (local / remote) transform
-        /// </summary>
+        /// <summary>Use the correct player (local / remote) transform</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileMelee.MyUpdate))]
         public static void MyUpdate_Prefix(ProjectileMelee __instance, out bool __state)
@@ -36,9 +34,7 @@ namespace MegabonkTogether.Patches.Projectiles
 
         }
 
-        /// <summary>
-        /// Restore original transform after prefix
-        /// </summary>
+        /// <summary>Restore original transform after prefix</summary>
         [HarmonyFinalizer]
         [HarmonyPatch(nameof(ProjectileMelee.MyUpdate))]
         public static void MyUpdate_Finalizer(bool __state)

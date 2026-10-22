@@ -1,11 +1,11 @@
 using Assets.Scripts.Inventory__Items__Pickups.Weapons.Attacks;
 using HarmonyLib;
 using Il2CppInterop.Runtime.InteropTypes;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using System.Collections.Generic;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     [HarmonyPatch(typeof(WeaponAttack))]
     internal static class WeaponAttackPatches
@@ -13,9 +13,7 @@ namespace MegabonkTogether.Patches
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
 
-        /// <summary>
-        /// Synchronize projectile spawn
-        /// </summary>  
+        /// <summary>Synchronize projectile spawn</summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(WeaponAttack.SuccessfullySpawnedProjectile))]
         public static void SuccessfullySpawnedProjectile_Postfix(WeaponAttack __instance, Il2CppObjectBase projectile)
@@ -35,9 +33,7 @@ namespace MegabonkTogether.Patches
             synchronizationService.OnSpawnedProjectile(projectile, netplayer?.ConnectionId);
         }
 
-        /// <summary>
-        /// Use remote player position when they are the one spawning the projectile
-        /// </summary>
+        /// <summary>Use the remote player's position when they spawn the projectile.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(WeaponAttack.SpawnProjectile))]
         public static void SpawnProjectile_Prefix(WeaponAttack __instance, out bool __state)
@@ -61,9 +57,6 @@ namespace MegabonkTogether.Patches
 
         }
 
-        /// <summary>
-        /// Remove the previous request after spawning the projectile
-        /// </summary>
         [HarmonyFinalizer]
         [HarmonyPatch(nameof(WeaponAttack.SpawnProjectile))]
         public static void SpawnProjectile_Finalizer(bool __state)
@@ -77,21 +70,11 @@ namespace MegabonkTogether.Patches
         }
     }
     /// <summary>
-    /// Lobby setting: No Projectile Cap.
-    ///
-    /// <para><b>The cap</b> (decompiled, build 21750826). <c>WeaponAttack.FixedUpdateAttack</c>
-    /// (VA 0x180450150) fires a volley of <c>WeaponUtility.GetAttackQuantity</c> projectiles. With a
-    /// burst interval it spaces them out. With none it fires them all in one frame, but stops at
-    /// <c>maxNumProjectilesWithoutInterval</c> (0x60) and then calls <c>StopAttackNoCoroutine</c>,
-    /// so the rest are dropped, not delayed. The constructor (0x1804515D0) sets it to 80; Ghidra
-    /// labels that store one slot off, as <c>attackQuantity</c>. <b>LIKELY</b> by offset.</para>
-    ///
-    /// <para><b>Every attack on this machine</b>, the local player's and, on the host, the ones it
-    /// simulates for teammates: the host must fire the same volley the owner does. That is why this
-    /// is a lobby setting and never a per-player config. Applied in <c>SetAttack</c>
-    /// (0x1804505F0), which runs when an attack is set up; the loop reads the field every frame.
-    /// The original is kept, so a session without the setting, or singleplayer after it, gets the
-    /// game's value back. <b>UNVERIFIED, not run in-game.</b></para>
+    /// Lobby setting: No Projectile Cap. Decompiled <c>FixedUpdateAttack</c> (VA 0x180450150) drops
+    /// projectiles past <c>maxNumProjectilesWithoutInterval</c> (offset 0x60, set to 80 in the ctor
+    /// 0x1804515D0; Ghidra labels it one slot off). <b>LIKELY</b> by offset.
+    /// <para>Lobby-wide because the host simulates teammates' volleys. Applied in <c>SetAttack</c>
+    /// (0x1804505F0); the original is restored afterwards. <b>UNVERIFIED, not run in-game.</b></para>
     /// </summary>
     [HarmonyPatch(typeof(WeaponAttack))]
     internal static class NoProjectileCapPatches

@@ -1,70 +1,41 @@
 using Assets.Scripts.Game.Other;
 using Assets.Scripts.Managers;
 using BepInEx.Logging;
-using MegabonkTogether.Common.Messages.GameNetworkMessages;
-using MegabonkTogether.Helpers;
+using OmniBonk.Common.Messages.GameNetworkMessages;
+using OmniBonk.Helpers;
 using System.Collections.Generic;
 
-namespace MegabonkTogether.Services
+namespace OmniBonk.Services
 {
     /// <summary>
-    /// Endless Run, Phase 2 (docs/netplay/18): after a run's first stage, every stage change goes
-    /// to a room on a shuffled route of Forest, Desert and Graveyard rooms, with a boss room (Ent,
-    /// Pharaoh or the Ghost King) after every three regular rooms. It never ends by itself; only death ends the run.
-    ///
-    /// <para><b>How a stage change is steered</b> (decompiled, build 21750826).
-    /// <c>MapController.LoadNextStage</c> (0x180421DF0) keeps the live inventory, increments
-    /// <c>index</c>, takes <c>currentMap.stages[index]</c> and loads the map scene.
-    /// <c>LoadFinalStage</c> (0x180421C00) does the same with <c>isFinalBossStage</c> set, loading
-    /// that map's final boss. So pointing <c>currentMap</c> at the room's map and <c>index</c> one
-    /// below its stage, then letting the game's own load run, moves the run there with the
-    /// inventory intact. Every exit funnels into one of those two calls.</para>
-    ///
-    /// <para><b>Multiplayer.</b> Every peer runs its own stage load (each presses the same portal),
-    /// so every peer must steer it to the same room. Only the host rolls the route, with
-    /// <see cref="System.Random"/>, not Unity's generator, which is seeded per run and shared by map
-    /// generation. It sends each room one stage change ahead (<c>EndlessNextRoom</c>). A client
-    /// that reaches a stage change with no room for it logs an error and turns Endless off for the
-    /// run, rather than loading something the host did not.</para>
-    ///
+    /// Endless Run (docs/netplay/18): a shuffled route of rooms with a boss room after every three.
+    /// <para>Steered by pointing <c>currentMap</c>/<c>index</c> before the game's own
+    /// <c>LoadNextStage</c> (VA 0x180421DF0) or <c>LoadFinalStage</c> (0x180421C00), decompiled.</para>
+    /// <para>Only the host rolls the route (System.Random, not Unity's per-run seeded RNG) and sends
+    /// each room one change ahead. A client without the room turns Endless off rather than diverge.</para>
     /// <para><b>UNVERIFIED, not run in-game.</b></para>
     /// </summary>
     public interface IEndlessRunService
     {
         bool Active { get; }
 
-        /// <summary>The room this peer is in, or is loading.</summary>
         EndlessRoom CurrentRoom { get; }
 
         /// <summary>Stage changes so far this run; 0 in the starting room.</summary>
         int Transitions { get; }
 
-        /// <summary>
-        /// Boss rooms left behind this run: the boss loops cleared. The same on every peer, since
-        /// every peer follows the host's route. Drives Phase 4's scaling.
-        /// </summary>
+        /// <summary>Boss loops cleared; identical on every peer. Drives scaling.</summary>
         int CompletedLoops { get; }
 
-        /// <summary>A run has started on this peer, with this config.</summary>
         void BeginRun(bool isHost, RunConfig config);
 
-        /// <summary>
-        /// The next stage change's room is known here: always on the host, and on a client once the
-        /// host's room has arrived. An exit only becomes an Endless stage change when this holds;
-        /// otherwise it stays the game's own, so a missing room cannot strand a client.
-        /// </summary>
+        /// <summary>Only then is an exit an Endless stage change, so a missing room cannot strand a client.</summary>
         bool NextRoomKnown { get; }
 
-        /// <summary>
-        /// The game is about to load a stage. Returns whether the original may run: false when this
-        /// redirected to the other load method itself.
-        /// </summary>
+        /// <summary>Returns whether the original load may run: false when this redirected to the other load method.</summary>
         bool OnStageLoadRequested(bool finalStageRequested);
 
-        /// <summary>
-        /// Graveyard (Phase 3): true once per arrival in a Graveyard room, at its spawn portal,
-        /// with the room to prepare.
-        /// </summary>
+        /// <summary>True once per Graveyard room arrival.</summary>
         bool TakeGraveyardArrival(out EndlessRoom room);
 
         /// <summary>True once per prepared Graveyard arrival, when the room should start.</summary>
@@ -124,10 +95,7 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            // From the config, not MapController: the host reaches here from StartNewMap's postfix,
-            // which also runs on the call its own prefix skipped while waiting for the lobby, before
-            // any map is set (2026-10-21: "no map stage 0" on the host, so the host ran without
-            // Endless while both clients waited for rooms that never came).
+            // From the config: on the host MapController may not be set yet here.
             var map = config?.mapData ?? MapController.currentMap;
             var index = config?.mapData != null && config.stageData != null
                 ? config.mapData.stages.IndexOf(config.stageData)
@@ -221,8 +189,7 @@ namespace MegabonkTogether.Services
                 return true;
             }
 
-            // The game asked for the other kind of load (a portal on a stage before a boss room, or
-            // a final-boss spawner before a regular one): run the one this room needs instead.
+            // The game asked for the other kind of load; run the one this room needs.
             redirecting = true;
             try
             {

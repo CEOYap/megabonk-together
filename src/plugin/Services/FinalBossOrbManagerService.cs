@@ -1,12 +1,12 @@
-﻿using MegabonkTogether.Common.Models;
-using MegabonkTogether.Helpers;
+﻿using OmniBonk.Common.Models;
+using OmniBonk.Helpers;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 
-namespace MegabonkTogether.Services
+namespace OmniBonk.Services
 {
     public interface IFinalBossOrbManagerService
     {
@@ -51,10 +51,7 @@ namespace MegabonkTogether.Services
             _queuedTargetIds.Clear();
         }
 
-        /// <summary>
-        /// Peak and reserve the next target for orb creation, can be called multiple times before GetNextTargetAndOrbId
-        /// </summary>
-        /// <returns></returns>
+        /// <summary>Peeks the next orb target; repeatable before GetNextTargetAndOrbId.</summary>
         public Tuple<uint, uint> PeakNextTarget()
         {
             if (!_queuedTargetIds.TryPeek(out var targetId))
@@ -65,10 +62,7 @@ namespace MegabonkTogether.Services
             return Tuple.Create(targetId, orbId);
         }
 
-        /// <summary>
-        /// Get and remove the next target for orb creation, should be called multiple times after PeakNextTarget
-        /// </summary>
-        /// <returns></returns>
+        /// <summary>Takes the next orb target peeked by PeakNextTarget.</summary>
         public Tuple<uint, uint> GetNextTargetAndOrbId()
         {
             if (_pendingOrbCreation.TryDequeue(out var pending))

@@ -2,10 +2,10 @@
 using Assets.Scripts.Actors.Enemies;
 using Assets.Scripts.Saves___Serialization.Progression.Stats;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     [HarmonyPatch(typeof(TrackStats))]
     internal static class TrackStatsPatches

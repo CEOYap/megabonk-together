@@ -1,14 +1,14 @@
-﻿using MegabonkTogether.Common.Extensions;
-using MegabonkTogether.Common.Messages;
-using MegabonkTogether.Common.Messages.WsMessages;
-using MegabonkTogether.Common.Models;
-using MegabonkTogether.Server.Models;
-using MegabonkTogether.Server.Pools;
+﻿using OmniBonk.Common.Extensions;
+using OmniBonk.Common.Messages;
+using OmniBonk.Common.Messages.WsMessages;
+using OmniBonk.Common.Models;
+using OmniBonk.Server.Models;
+using OmniBonk.Server.Pools;
 using MemoryPack;
 using System.Collections.Concurrent;
 using System.Net.WebSockets;
 
-namespace MegabonkTogether.Server.Services
+namespace OmniBonk.Server.Services
 {
     public class WebSocketHandler
     {
@@ -401,7 +401,6 @@ namespace MegabonkTogether.Server.Services
 
         private async Task HandleFriendliesClient(ClientInfo client, string roomCode, CancellationToken token)
         {
-            // Find host in lobby
             if (!friendliesLobbies.TryGetValue(roomCode, out var lobby))
             {
                 logger.LogWarning($"Client {client.Id} tried to join non-existent room: {roomCode}");
@@ -416,7 +415,6 @@ namespace MegabonkTogether.Server.Services
                 return;
             }
 
-            // Reject if game has already started
             if (lobby.GameStarted)
             {
                 logger.LogWarning($"Client {client.Id} tried to join room {roomCode} but game has already started");
@@ -431,7 +429,6 @@ namespace MegabonkTogether.Server.Services
                 return;
             }
 
-            //Reject if lobby is full
             if (lobby.Clients.Count >= MaxPlayers - 1)
             {
                 logger.LogWarning($"Client {client.Id} tried to join room {roomCode} but lobby is full");

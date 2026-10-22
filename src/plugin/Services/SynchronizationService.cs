@@ -1,4 +1,4 @@
-using MegabonkTogether.Configuration;
+using OmniBonk.Configuration;
 using Actors.Enemies;
 using Assets.Scripts._Data.Hats;
 using Assets.Scripts._Data.Tomes;
@@ -24,14 +24,14 @@ using Assets.Scripts.Utility;
 using BepInEx.Logging;
 using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.InteropTypes;
-using MegabonkTogether.Common.Messages;
-using MegabonkTogether.Common.Messages.GameNetworkMessages;
-using MegabonkTogether.Common.Models;
-using MegabonkTogether.Extensions;
-using MegabonkTogether.Helpers;
-using MegabonkTogether.Patches;
-using MegabonkTogether.Scripts.Interactables;
-using MegabonkTogether.Scripts.Snapshot;
+using OmniBonk.Common.Messages;
+using OmniBonk.Common.Messages.GameNetworkMessages;
+using OmniBonk.Common.Models;
+using OmniBonk.Extensions;
+using OmniBonk.Helpers;
+using OmniBonk.Patches;
+using OmniBonk.Scripts.Interactables;
+using OmniBonk.Scripts.Snapshot;
 using MonoMod.Utils;
 using System;
 using System.Collections;
@@ -41,7 +41,7 @@ using System.Linq;
 using System.Threading;
 using UnityEngine;
 
-namespace MegabonkTogether.Services
+namespace OmniBonk.Services
 {
     public enum GameEvent
     {
@@ -148,10 +148,7 @@ namespace MegabonkTogether.Services
     }
     internal class SynchronizationService : ISynchronizationService
     {
-        // The seam, not the LiteNetLib implementation. Injecting the concrete service meant every
-        // send here reached LiteNetLib regardless of which transport the session was actually
-        // running on, so a Steam session's character confirm was answered with "Not connected to
-        // host" by a transport that was never started.
+        // The transport seam, not the LiteNetLib class: a Steam session must not send via LiteNetLib.
         private readonly INetTransport udpClientService;
         private readonly IStateBroadcastService stateBroadcastService;
         private readonly IPlayerManagerService playerManagerService;
@@ -172,23 +169,11 @@ namespace MegabonkTogether.Services
         private readonly ConcurrentBag<SpawnedObject> toSpawns = [];
         private readonly ConcurrentBag<SpawnedObjectInCrypt> toUpdate = [];
 
-        /// <summary>
-        /// Crypt objects the host registered that this peer has not matched yet, by netplay id, and
-        /// how many half-second passes each has had. The retry exists for a crypt that generates
-        /// here a little after the host's; past the cap the object is not coming. 2026-10-21: an
-        /// Endless arrival clears the first crypt on every peer, so ~24 objects the host had already
-        /// registered were retried, and logged, every half second for the whole room: 19,000 lines.
-        /// </summary>
+        /// <summary>Retry passes per unmatched host crypt object; past the cap it is not coming.</summary>
         private readonly Dictionary<uint, int> cryptUpdateAttempts = [];
         private const int MAX_CRYPT_UPDATE_ATTEMPTS = 20;
 
-        /// <summary>
-        /// Host-spawned objects not yet spawned here, by netplay id, and the passes each has had.
-        /// Counted only while Started, which a client reaches after its own map generation, so a
-        /// prefab that is merely late is not dropped. 2026-10-21: a ChargeShrineFinishFx sent around
-        /// a stage change arrived after this peer had cleared its prefabs, and was retried (and
-        /// logged twice) every half second for the whole next room: 656 lines.
-        /// </summary>
+        /// <summary>Retry passes per unspawned host object. Counted only while Started, so a merely late prefab is not dropped.</summary>
         private readonly Dictionary<uint, int> spawnAttempts = [];
         private const int MAX_SPAWN_ATTEMPTS = 20;
         private readonly ConcurrentQueue<SpawnedEnemy> pendingEnemySpawns = new();
@@ -206,11 +191,7 @@ namespace MegabonkTogether.Services
         /// <summary>Invalidates a retry routine left over from a previous round. See <see cref="ClientReadyRoutine"/>.</summary>
         private int readyGeneration;
 
-        /// <summary>
-        /// The round the host has actually acknowledged this client for, or 0. Distinct from the
-        /// replicated <c>IsReady</c> flag, which is a 5 Hz snapshot of the host's view and can still
-        /// describe the previous round at the moment a new one opens.
-        /// </summary>
+        /// <summary>Round the host acknowledged us for, or 0. Unlike replicated <c>IsReady</c>, cannot be stale from the previous round.</summary>
         private uint acknowledgedRoundId;
 
         /// <summary>Lobby-ready defect A. See <see cref="ClientReadyRoutine"/>.</summary>
@@ -362,38 +343,14 @@ namespace MegabonkTogether.Services
                 return false;
             }
 
-            // The host reads the barrier, not the replicated flag. GetAllPlayers().All(p => p.IsReady)
-            // asks a field that ResetForNextLevel clears and the full player record overwrites —
-            // defects B and C — so it could answer "not ready" about a peer whose report the host is
-            // actually holding, or the reverse. The barrier's set is the only copy nothing
-            // replicates over.
+            // Defects B/C: the host reads the barrier, not the replicated IsReady flag, which gets overwritten.
             if (IsServerMode() ?? false)
             {
                 return readinessService.AreAllParticipantsReady() && udpClientService.HasAllPeersConnected();
             }
 
-            // A client cannot be ready for a round it has not been told about, and HasStamp is the
-            // only thing that says whether it has. CloseRound clears it at PortalOpened and the
-            // host's round-start restores it — so this is false for exactly the window between
-            // levels in which the replicated IsReady flags still carry the *previous* round's
-            // answer.
-            //
-            // Without it the client read those stale flags, decided the lobby was ready the instant
-            // it reached the portal on the new level, started the game, and moved to State.Started —
-            // which then made its own report routine bail, because that routine only runs while the
-            // state is Ready. The host waited on a report nobody was going to send. This is defect C
-            // reaching the one branch the comment above did not cover: the host stopped trusting
-            // these flags, and the client never did.
-            // Requiring the host to have acknowledged *this* round, not merely that the flags look
-            // ready. HasStamp alone was not enough: it becomes true the instant the round is
-            // adopted, and the replicated IsReady flags are a 5 Hz snapshot that can still be
-            // carrying the previous round's answer at that moment. The client then started
-            // immediately, moved to State.Started, and its own report routine bailed - which is the
-            // stall that survived the last fix.
-            //
-            // The acknowledgement is the one fact that cannot predate the round: it is set only
-            // after this client reported for the round currently open and saw the host agree. The
-            // flag check stays, because it is what says every *other* peer is ready too.
+            // Defect C: replicated IsReady flags can still carry the previous round, so a client also
+            // needs the host's ack for this round. The flag check says every other peer is ready.
             return readinessService.HasStamp
                 && acknowledgedRoundId == readinessService.RoundId
                 && playerManagerService.GetAllPlayers().All(p => p.IsReady)
@@ -423,44 +380,26 @@ namespace MegabonkTogether.Services
             shrineChargingPlayers.Clear();
             pylonChargingPlayers.Clear();
 
-            // OB-9: a correction whose spawn never arrived — the enemy was removed before it was
-            // registered, say — would otherwise sit here for the process lifetime. It cannot be
-            // misapplied, because AddSpawnedEnemy hands out ids by Interlocked.Increment and never
-            // reuses one, so this is a leak rather than a correctness problem. Cleared anyway.
+            // OB-9: leak only; enemy ids are never reused.
             pendingRescaledHp.Clear();
 
-            // Hits summed for an enemy tick that never came. Ids are never reused, so a stale
-            // bucket could not damage the wrong enemy; dropped so it is not sent into the next
-            // session at all.
             enemyDamageAggregator.Clear();
 
-            // Same reason as the barrier state below: a session that ended after a boss died would
-            // otherwise leave this latched, and the next session's first portal would never open.
+            // Left latched, the next session's first portal would never open.
             hasHandledBossDefeatedThisStage = false;
 
-            // The barrier used to survive teardown: closedEncounterPerPlayer and forceClose were
-            // cleared only by a successful release, so a session that ended mid-encounter poisoned
-            // the next one — the next round would either release instantly without anyone
-            // reporting, or never release at all. Matches "requires a game restart to recover".
-            // Defect A's retry is per lobby. Left running across a teardown it would keep reporting
-            // readiness for a connection id the next session may reuse. The generation bump is what
-            // actually stops it: Stop() and the field clear are two statements and the routine
-            // yields, so the guard inside it is the reliable half.
+            // Barrier state must not survive teardown. The generation bump is what reliably stops
+            // the yielding retry routine; Stop() alone can race it.
             readyGeneration++;
             CoroutineRunner.Instance.Stop(readyRetryRoutine);
             readyRetryRoutine = null;
             readinessService.ResetSession();
 
-            // Lobby readiness is per lobby. Left behind, the next lobby would open with members
-            // it has never met already marked ready.
             lobbyViewService.ResetReadyState();
 
             encounterService.ClearClosedEncounters();
 
-            // SE-5: round state is per run, not per round, so ClearClosedEncounters deliberately
-            // leaves it alone and teardown is the only place it is dropped. Without this the next
-            // run would start at round 0 again and accept a message left in flight across the
-            // boundary as though it named the new run's first round.
+            // SE-5: round state is per run; teardown is the only place it is dropped.
             encounterService.ResetSession();
 
             cancellationTokenSource.Cancel();
@@ -506,18 +445,12 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            // Spawned here if missing rather than reported and dropped. An update arriving for a
-            // player with no avatar used to mean the avatar was never coming: the only thing that
-            // created one ran once, behind the lobby-ready barrier, so a peer that missed that
-            // moment stayed invisible for the whole run while this logged the same line every tick.
-            // Receiving position updates for someone is proof they exist and are in the session,
-            // which is the only precondition creating their avatar has.
+            // Spawn a missing avatar here; otherwise a peer that missed the lobby-ready spawn stays invisible.
             var netplayer = playerManagerService.EnsureNetPlayerSpawned(playerUpdate.ConnectionId);
 
             if (netplayer == null)
             {
-                // Genuinely unknown - left, or never joined. GetPlayer's own throttled report covers
-                // it; repeating it here at 60 Hz is what buried the last log.
+                // Unknown peer. GetPlayer already logs (throttled); don't log at 60 Hz here.
                 return;
             }
 
@@ -567,27 +500,8 @@ namespace MegabonkTogether.Services
                 return false;
             }
 
-            // Awake runs synchronously inside Instantiate, and Instantiate clones the source's
-            // active state — so with an active prefab every component's Awake fired while the
-            // clone still sat at the prefab's authored position, before the three lines below
-            // moved it. Anything caching a transform in Awake therefore cached prefab
-            // coordinates, identically for every clone.
-            //
-            // That is what the charge shrine's rune stone did: on a client the game wrote every
-            // shrine's stone to the same constant world position (281.15, 16.60, -67.16) —
-            // unchanged across shrines, maps and runs — while on the host, whose shrines are
-            // built in place by the tile generator, it wrote each shrine's own correct position.
-            // The stack on those writes carried no mod frames, so the game was the writer and the
-            // wrong input was ours. The shrine prefab's authored position is
-            // (281.15, 12.36, -67.16), and the stone's local offset is (0, 4.23, 0) — the constant
-            // to the decimal, which is what confirmed this rather than merely fitting it.
-            //
-            // The shrine was the visible symptom; the defect is in this spawn path, so any prefab
-            // with a component that caches a transform in Awake was affected the same way.
-            //
-            // Creating the clone inactive and activating it after the transform is set means every
-            // Awake sees the final position. The prefab's active state is restored in a finally:
-            // it is shared mutable state around a call that can throw, which is P0-6's lesson.
+            // Instantiate inactive so Awake (which can cache transforms, e.g. the charge shrine's rune
+            // stone) runs only after the position is set. Prefab state restored in finally (P0-6).
             var prefabWasActive = prefab.activeSelf;
             GameObject spawned;
 
@@ -611,13 +525,8 @@ namespace MegabonkTogether.Services
             spawned.transform.rotation = toSpawn.Rotation.ToUnityQuaternion();
             spawned.transform.localScale = toSpawn.Scale.ToUnityVector3();
 
-            // Activated here, before the component lookups below: GetComponentInChildren without
-            // the includeInactive flag does not see components on an inactive hierarchy, so the
-            // shady-guy and microwave rarity assignments would silently stop working otherwise.
-            // Awake still runs after the transform is final, which is the whole point.
-            //
-            // The desert-grave chain is exempt because HandleSpawn deliberately leaves those
-            // inactive to be revealed later by the grave sequence.
+            // Before the GetComponentInChildren lookups below, which skip inactive hierarchies.
+            // Desert graves stay inactive for the grave sequence to reveal.
             if (prefabWasActive && !IsDeferredRevealSpawn(toSpawn.PrefabName))
             {
                 spawned.SetActive(true);
@@ -645,10 +554,8 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>
-        /// Matches a host-registered crypt object to this peer's copy. True when done with it,
-        /// matched or not; false to retry. The crypt can be gone by the time the message lands
-        /// (Endless clears it when arriving in a Graveyard room past it), and a throw here used to
-        /// end <see cref="NewObjectToSpawnRoutine"/> for the rest of the level (2026-10-21).
+        /// Matches a host crypt object to ours. True when done (matched or not), false to retry.
+        /// Must not throw: the crypt can already be gone, and a throw kills <see cref="NewObjectToSpawnRoutine"/>.
         /// </summary>
         private bool UpdateObject(SpawnedObjectInCrypt toUpdate)
         {
@@ -700,12 +607,7 @@ namespace MegabonkTogether.Services
             return false;
         }
 
-        /// <summary>
-        /// The desert-grave chain: <see cref="HandleSpawn"/> deliberately deactivates these so the
-        /// grave sequence can reveal them later, so <see cref="SpawnObject"/> must not activate
-        /// them. Shared with that method rather than duplicating the name test, so the two cannot
-        /// drift apart.
-        /// </summary>
+        /// <summary>Desert-grave chain objects, left inactive for the grave sequence to reveal.</summary>
         private static bool IsDeferredRevealSpawn(string prefabName)
         {
             return prefabName != null
@@ -801,8 +703,7 @@ namespace MegabonkTogether.Services
             // OB-45 test loadout. After Started, so the item-add postfix replicates each item.
             Helpers.TestLoadout.GrantOnce();
 
-            // Test bot: once a run is under way the lobby is closed, so a bot copy must not join it
-            // from the room-code file (it did on 2026-10-19 and landed mid-final-boss with no lobby).
+            // The lobby is closed once a run starts; stop test bots joining from the room-code file.
             if (IsServerMode() ?? false)
             {
                 BotRoomCodeFile.Delete();
@@ -831,20 +732,8 @@ namespace MegabonkTogether.Services
                 var spawnedPlayer = playerManagerService.EnsureNetPlayerSpawned(netPlayer.ConnectionId);
                 var playerColor = Plugin.Instance.NetPlayersDisplayer.GetPlayerColor(netPlayer.ConnectionId);
 
-                // Both null checks are load-bearing, and this line is why StartGame threw.
-                //
-                // An avatar can now exist before its model does: a position update arriving during
-                // a level load creates the NetPlayer, and Initialize cannot always build the model
-                // that early. Dereferencing Model here took the whole of StartGame down — and
-                // because StartGame is called from WaitForLobbyReady, the coroutine died before it
-                // hid "Waiting for other players", unpaused time, or cleared its own handle. One
-                // NullReferenceException, three symptoms, none of which named it.
-                //
-                // Losing a minimap arrow is a cosmetic failure. Losing StartGame is the run.
-                // Split, because one message for two causes cost a playtest. "No avatar at all"
-                // and "an avatar with no model" are different failures with different fixes, and
-                // the single warning that covered both sent the last investigation at the wrong
-                // one.
+                // Both null checks are load-bearing: an avatar can exist before its model, and a throw
+                // here kills StartGame (and the WaitForLobbyReady coroutine). Two causes, two messages.
                 if (spawnedPlayer == null)
                 {
                     logger.LogWarning(
@@ -946,32 +835,15 @@ namespace MegabonkTogether.Services
 
                     if (isServer)
                     {
-                        // Host only. Readiness is host-authoritative — that is the whole premise of
-                        // ReadinessService — and the client must NOT write its own flag here.
-                        //
-                        // It used to, and that silently broke the retry: ClientReadyRoutine decides
-                        // "the host has acknowledged me" by reading this same record, so a client
-                        // that set the flag itself moments earlier could not tell the host's answer
-                        // from its own write. The routine then exited on its first wait iteration
-                        // having sent nothing at all, and the lobby hung forever with no failsafe on
-                        // this path.
-                        //
-                        // It only surfaced when the host's round-start arrived *after* the routine
-                        // started — a race the internet sessions happened to always win and two
-                        // instances on one PC lost. The client's flag now becomes true only when the
-                        // host's replicated record says so, which is also what makes
-                        // IsLobbyReady()'s All(p => p.IsReady) mean something on a client.
+                        // Host only. A client must never write its own IsReady: ClientReadyRoutine reads
+                        // it as the host's acknowledgement.
                         player.IsReady = true;
                         playerManagerService.UpdatePlayer(player);
 
-                        // The host opens the round and names it. Participants are captured here,
-                        // once, rather than counted live on every check — a live count moves under
-                        // the barrier, which is the same defect shape as SE-6 next door.
+                        // Participants captured once; a live count moves under the barrier (cf. SE-6).
                         var participants = playerManagerService.GetAllPlayers().Select(p => p.ConnectionId).ToList();
                         var stamp = readinessService.OpenRound(participants);
 
-                        // The host is a participant and reports by calling in directly; there is no
-                        // message for it to send to itself.
                         readinessService.TryMarkReady(player.ConnectionId, stamp.SessionId, stamp.RoundId);
 
                         BroadcastReadinessRound();
@@ -1012,10 +884,7 @@ namespace MegabonkTogether.Services
                 case GameEvent.PortalOpened:
                     currentState = State.LoadingNextLevel;
 
-                    // Close the round before ResetForNextLevel clears the mirrored flags, so the
-                    // barrier cannot report the *previous* level's round as satisfied while the
-                    // transition is in flight. The next round is opened, and stamped, when this peer
-                    // reaches Ready on the new level.
+                    // Before ResetForNextLevel, so the previous round cannot read as satisfied mid-transition.
                     readinessService.CloseRound();
 
                     playerManagerService.ResetForNextLevel();
@@ -1023,10 +892,7 @@ namespace MegabonkTogether.Services
                     Plugin.Instance.ClearPrefabs();
                     Plugin.Instance.RestoreDeath(false);
 
-                    // OB-20: after RestoreDeath, not before. RestoreDeath resets the camera to the
-                    // local player as part of tearing the spectator view down; reviving first would
-                    // re-enable the renderer and then hand the camera back over a player who is
-                    // already alive, which is the same end state by a noisier route.
+                    // OB-20: after RestoreDeath, which resets the spectator camera.
                     ReviveLocalPlayerIfDeadForNextLevel();
 
                     CoroutineRunner.Instance.Stop(LevelUpScreenPatches.CurrentRoutine);
@@ -1055,11 +921,8 @@ namespace MegabonkTogether.Services
             Patches.Enemies.DebuffAttribution.Clear();
             DesyncDetectorService.ClearEnemyDiedReceived(); // OB-51: enemy ids restart per stage
 
-            // A stage change ends any round in flight — the encounter windows are torn down with
-            // the stage, so a report that arrives after this point belongs to nothing.
             encounterService.ClearClosedEncounters();
 
-            // Each stage has its own boss and portal, so the once-per-stage guard reopens here.
             hasHandledBossDefeatedThisStage = false;
 
             spawnedObjectManagerService.ResetForNextLevel();
@@ -1074,13 +937,10 @@ namespace MegabonkTogether.Services
             pendingEnemySpawns.Clear();
             enemiesDiedBeforeSpawn.Clear();
 
-            // A crypt object belongs to its level's crypt. Left queued, it could match an object at
-            // the same position in a later Graveyard visit.
+            // Queued objects belong to the level they were sent in.
             while (toUpdate.TryTake(out _)) { }
             cryptUpdateAttempts.Clear();
 
-            // The same for a spawned object: it belongs to the level it was sent in, and this peer's
-            // prefabs for that level are being cleared now.
             while (toSpawns.TryTake(out _)) { }
             spawnAttempts.Clear();
             requestedShrineCompletions.Clear();
@@ -1097,10 +957,7 @@ namespace MegabonkTogether.Services
                 case GameEvent.Ready:
                     CoroutineRunner.Instance.Stop(readyRetryRoutine);
 
-                    // Logged because its absence is a diagnosis. Every other line in the readiness
-                    // report path is inside this routine, so if the round stalls and this line is
-                    // not in the log, the routine never started and the state machine is where to
-                    // look — not the wire.
+                    // Diagnostic: if a round stalls and this line is missing, the routine never started.
                     logger.LogInfo($"[readiness] Starting the report routine (generation {readyGeneration + 1}).");
                     readyRetryRoutine = CoroutineRunner.Instance.Run(ClientReadyRoutine(++readyGeneration));
                     break;
@@ -1112,20 +969,7 @@ namespace MegabonkTogether.Services
             }
         }
         /// <summary>
-        /// Host. Announces the open readiness round so clients learn the stamp they must report
-        /// against.
-        ///
-        /// <para>Sent once when the round opens, and again whenever a report arrives naming the
-        /// wrong round — which almost always means that peer has not been told about this one yet.
-        /// Re-announcing is cheaper than letting the peer burn its retry budget against a stamp it
-        /// cannot have.</para>
-        ///
-        /// <para>The re-announce is a broadcast, as it is in the reference implementation. Targeting
-        /// only the peers that owe a report would need a connection-id-to-<c>NetPeer</c> lookup
-        /// plumbed through the send path, and that is precisely the mapping Phase 1 of the
-        /// Steamworks migration rewrites — not worth building twice. What it does do that the
-        /// reference does not is <b>name the outstanding peers in the log</b>, so a lobby that will
-        /// not start says who it is waiting for instead of just that it is waiting.</para>
+        /// Host. Broadcasts the open readiness round's stamp; resent when a report names the wrong round.
         /// </summary>
         private void BroadcastReadinessRound()
         {
@@ -1152,15 +996,7 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>
-        /// Client. Adopts the host's stamp for a new readiness round.
-        ///
-        /// <para>Arriving here <i>before</i> this peer has reached its own Ready state is normal and
-        /// is the point: the stamp is held, and <see cref="ClientReadyRoutine"/> picks it up when it
-        /// starts. That ordering is lobby-ready defect D's consequence for readiness —
-        /// <c>NetworkHandler.Update</c> returns before <c>Poll()</c> while
-        /// <c>IsLoadingNextLevel</c>, so the round start is read off the socket late, in a burst,
-        /// often after the local transition has finished. A stamp that is stored rather than acted
-        /// on immediately does not care when it arrives.</para>
+        /// Client. Stores the host's round stamp; <see cref="ClientReadyRoutine"/> picks it up, so arrival order does not matter (defect D).
         /// </summary>
         private void OnReceivedReadinessRoundStarted(ReadinessRoundStarted started)
         {
@@ -1171,45 +1007,9 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>
-        /// Lobby-ready defect A. <c>ClientInGameReady</c> was sent exactly once, with no retry: if
-        /// the host did not end up holding that single report, the client sat on "waiting for other
-        /// player(s)" forever and the run could not start.
-        ///
-        /// <para><b>The channel being reliable is not the same as the report being held.</b>
-        /// <c>ReliableOrdered</c> guarantees LiteNetLib delivers the bytes; it says nothing about
-        /// whether the host still believes it afterwards. Two ways it does not, both of them races
-        /// this peer cannot observe: the host clears readiness in <c>ResetForNextLevel</c> after
-        /// recording an early report (defect B), and the host's replicated record overwrites the
-        /// flag (defect C). Retry repairs both, which is why the fix is retry rather than a stronger
-        /// channel.</para>
-        ///
-        /// <para><b>What changed with the round stamp.</b> Retry alone would have re-sent the same
-        /// unaddressed report, and an early one is indistinguishable from a current one — so the
-        /// host could still settle on a report for the transition it was about to discard. Reporting
-        /// against a host-assigned <c>(SessionId, RoundId)</c> means an early report is rejected
-        /// rather than banked, and the retry is what then delivers the correct one. Neither half
-        /// works without the other; that pairing is the substance of the reference implementation
-        /// and it is why these were done as one change.</para>
-        ///
-        /// <para><b>The acknowledgement is the host's own roster.</b> No ack message: the host
-        /// already replicates <c>IsReady</c> and force-sends a full record the instant it changes
-        /// (<c>UdpClientService.HasReadinessChanged</c>), so "the host is holding my report" is
-        /// observable in state this peer already has. The reference needs an
-        /// <c>AllPlayersReadyForSpawn</c> message plus a targeted re-send of it to answer a retrying
-        /// client; we get the same convergence from machinery that already exists.</para>
-        ///
-        /// <para><b>Idempotent by construction.</b> The host's handler is a set insert keyed on
-        /// connection id, so N copies and one copy are the same.</para>
-        ///
-        /// <para><b>Generation-guarded.</b> A transition that starts a new round while an older
-        /// routine is mid-wait would otherwise have two coroutines reporting against two stamps.
-        /// <c>CoroutineRunner.Stop</c> alone is not enough — the stop and the restart are two
-        /// statements, and this routine yields between them.</para>
-        ///
-        /// <para><b>Bounded, and it says who.</b> Gives up after <see cref="ReadyRetryAttempts"/>
-        /// attempts and logs it. The reference logs a bare boolean on its equivalent timeout;
-        /// naming the peer is the difference between a line you can act on and one you cannot.</para>
-        ///
+        /// Lobby-ready defect A: re-reports readiness against the host's round stamp until the host's
+        /// replicated <c>IsReady</c> acknowledges it. Reliable delivery is not enough; the host can drop
+        /// the report (defects B, C). Generation-guarded and bounded by <see cref="ReadyRetryAttempts"/>.
         /// <para><b>UNVERIFIED.</b> Not run in-game.</para>
         /// </summary>
         private IEnumerator ClientReadyRoutine(int generation)
@@ -1223,22 +1023,15 @@ namespace MegabonkTogether.Services
 
             var connectionId = localPlayer.ConnectionId;
 
-            // Zero means "nothing reported yet for this routine". Round ids are never zero while a
-            // round is open, so this cannot accidentally match one.
+            // 0 = nothing reported yet; open round ids are never 0.
             uint reportedRoundId = 0;
 
-            // A new routine means a new round to be acknowledged for; the previous round's
-            // acknowledgement must not carry over into this one.
             acknowledgedRoundId = 0;
 
             for (var attempt = 1; attempt <= ReadyRetryAttempts; attempt++)
             {
                 if (generation != readyGeneration || currentState != State.Ready)
                 {
-                    // Both exits are legitimate and both used to be silent, which is why a stalled
-                    // round could not be told apart from a report that was sent and lost. A
-                    // superseded generation means a newer round replaced this one; a state that is
-                    // no longer Ready means the session moved on beneath it.
                     logger.LogInfo(
                         $"[readiness] Stopping the report routine before attempt {attempt}: " +
                         (generation != readyGeneration
@@ -1247,9 +1040,7 @@ namespace MegabonkTogether.Services
                     yield break;
                 }
 
-                // Nothing to report against yet. The host's round start may still be queued behind
-                // a level load — see OnReceivedReadinessRoundStarted — so this waits rather than
-                // sending an unaddressable report the host would only reject.
+                // No stamp yet: wait rather than send a report the host would reject.
                 if (readinessService.HasStamp)
                 {
                     IGameNetworkMessage message = new ClientReadyStamped
@@ -1281,12 +1072,8 @@ namespace MegabonkTogether.Services
                     logger.LogInfo($"[readiness] Still waiting for the host to name a round (attempt {attempt}/{ReadyRetryAttempts}).");
                 }
 
-                // Hand-accumulated against unscaledDeltaTime rather than WaitForSecondsRealtime.
-                // WaitForSeconds would not advance at timeScale 0, which the lobby-ready screen can
-                // be, silently turning the retry into a no-op — and WaitForSecondsRealtime is used
-                // nowhere else in this plugin, so whether BepInEx's IL2CPP coroutine driver handles
-                // it is unverified. `yield return null` is the form this codebase already relies on
-                // in twelve places.
+                // unscaledDeltaTime: WaitForSeconds stalls at timeScale 0, and WaitForSecondsRealtime
+                // under the IL2CPP coroutine driver is unverified.
                 var waited = 0f;
                 while (waited < ReadyRetrySeconds)
                 {
@@ -1303,21 +1090,8 @@ namespace MegabonkTogether.Services
                         yield break;
                     }
 
-                    // Read fresh each time: the record is replaced wholesale by the host's full
-                    // player broadcast, so a reference captured earlier can be stale. Checked inside
-                    // the wait, not only after it — acknowledgement usually arrives well within the
-                    // interval, and stopping promptly keeps a redundant re-report off the wire.
-                    // The acknowledgement must be for the round this routine is reporting, not
-                    // merely "IsReady is true and some stamp exists". Those two facts can come from
-                    // different rounds, and on a level transition they routinely do: IsReady is a
-                    // replicated field the host's full player record overwrites, so it can still
-                    // carry the previous round's answer while the stamp is already the new round's.
-                    //
-                    // That combination made this exit believe the host had acknowledged a report
-                    // the routine had not even sent yet - silently, since this was the one exit
-                    // with no log - and the client then never reported for the new round at all.
-                    // Requiring a report for the current round first makes a stale flag unable to
-                    // satisfy it. Defect C again, in the last place that trusted the flag alone.
+                    // Read fresh: the record is replaced wholesale. Defect C: IsReady may be the previous
+                    // round's, so we must also have reported for the current round.
                     var acknowledged = playerManagerService.GetPlayer(connectionId);
                     if (acknowledged != null
                         && acknowledged.IsReady
@@ -1485,27 +1259,15 @@ namespace MegabonkTogether.Services
 
         #region OB-9 — HP rescaled after the spawn message went out
 
-        /// <summary>
-        /// OB-9. A correction that arrived before the spawn it corrects, keyed by netplay enemy id.
-        ///
-        /// <para><b>This race is real, not defensive padding.</b> Both messages go out
-        /// <c>ReliableUnordered</c>, which guarantees delivery but explicitly not order, and the
-        /// scaler runs within the same frame as the spawn — so the two are always in flight
-        /// together. Dropping an early correction would leave exactly the bug this fixes, and it
-        /// would do so intermittently, which is worse than doing so consistently.</para>
-        /// </summary>
+        /// <summary>OB-9. Corrections that outran their spawn (both are ReliableUnordered), by enemy id.</summary>
         private readonly Dictionary<uint, float> pendingRescaledHp = [];
 
-        /// <summary>
-        /// OB-9. Host side. See <c>EnemyPatch.SetSwarmMultiplierHp_Postfix</c> for why this hooks the
-        /// scaler rather than each of its five callers.
-        /// </summary>
+        /// <summary>OB-9. Host side; see <c>EnemyPatch.SetSwarmMultiplierHp_Postfix</c>.</summary>
         public void OnEnemyHpRescaled(Enemy enemy)
         {
             var registered = enemyManagerService.GetEnemyByReference(enemy);
             if (registered.Value == null)
             {
-                // Not ours to replicate — no spawn message was sent for it either.
                 return;
             }
 
@@ -1520,9 +1282,7 @@ namespace MegabonkTogether.Services
                 BossDiagnostics.LogEvent("host sent max-HP rescale", registered.Key, enemy, enemy.hp);
             }
 
-            // Reliable because this is a one-shot transition: applied zero times is a permanently
-            // wrong health bar, and no later message supersedes it — the 40 Hz delta carries current
-            // HP only, which is precisely why the maximum never self-corrected.
+            // Reliable: one-shot; the 40 Hz delta carries current HP only, never the max.
             udpClientService.SendToAllClients(message, NetDelivery.ReliableUnordered);
         }
 
@@ -1544,11 +1304,7 @@ namespace MegabonkTogether.Services
             }
         }
 
-        /// <summary>
-        /// OB-9. Writes the same four fields the spawn path writes. <c>maxHp</c> is the one that was
-        /// wrong; the others are set with it because a rescale happens on a freshly spawned enemy,
-        /// where current and maximum are equal.
-        /// </summary>
+        /// <summary>OB-9. Same four fields as the spawn path; a fresh enemy has current == max.</summary>
         private static void ApplyRescaledHp(Enemy enemy, float hp)
         {
             enemy.hp = hp;
@@ -1556,17 +1312,14 @@ namespace MegabonkTogether.Services
             enemy.maxHp = hp;
             enemy._hp_k__BackingField = hp;
 
-            // Same reason as EnemyInterpolator: the boss bar only redraws on an event, so a new
-            // maximum written here would otherwise never reach it.
+            // The boss bar only redraws on this event.
             if ((enemy.enemyFlag & Assets.Scripts.Actors.Enemies.EEnemyFlag.AnyBoss) != 0)
             {
                 Enemy.A_HealthChange?.Invoke(enemy);
             }
         }
 
-        /// <summary>
-        /// OB-9. Called once an enemy is registered, to apply a correction that outran its spawn.
-        /// </summary>
+        /// <summary>OB-9. Applies a correction that outran its spawn.</summary>
         private void ApplyPendingRescaledHp(uint netplayId, Enemy enemy)
         {
             if (!pendingRescaledHp.TryGetValue(netplayId, out var hp))
@@ -1582,14 +1335,8 @@ namespace MegabonkTogether.Services
 
         private void OnReceivedSpawnedEnemy(SpawnedEnemy spawnedEnemy)
         {
-            // Ready as well as Started: Ready is this peer's ready barrier, with the new stage loaded.
-            // The host starts as soon as its barrier releases and immediately spawns the held final
-            // boss (OB-8), but each client starts only when the host's start message reaches it, so
-            // that spawn can arrive while a client is still Ready. It used to be dropped here: on
-            // 2026-10-19 one of two bots never got the final boss ("enemies 1/0" in its digest, the
-            // boss's special attacks "not found"), so its fight and pylons never started. Queued
-            // spawns wait for Started anyway (PendingEnemySpawnRoutine), and LoadingNextLevel, where a
-            // late spawn from the old stage would leak into the new one, still drops.
+            // Accept in Ready too: the host's held final boss (OB-8) can arrive before our start.
+            // Queued spawns wait for Started; LoadingNextLevel still drops old-stage spawns.
             if (currentState != State.Started && currentState != State.Ready)
             {
                 return;
@@ -1658,9 +1405,6 @@ namespace MegabonkTogether.Services
                 Il2CppFindHelper.RuntimeSetSharedMaterials(enemy.renderer, [original, clone]);
             }
 
-            // FIX 4/6: the reviver block used to sit here, BEFORE the registration at the end of
-            // this method. It has moved below that registration — see the comment there.
-
             enemy.hp = spawnedEnemy.Hp;
             enemy.controlHp = spawnedEnemy.Hp;
             enemy.maxHp = spawnedEnemy.Hp;
@@ -1718,11 +1462,8 @@ namespace MegabonkTogether.Services
 
             if (MapController.currentMap.eMap == Assets.Scripts._Data.MapsAndStages.EMap.Graveyard) //TODO to test
             {
-                // A vanilla coffin's ghosts. Not our revive ghost, which is a GhostGrave4 too and
-                // spawns with no coffin open: currentCoffin was null, this threw, and the throw
-                // skipped the registration below, so the ghost never moved or took hits on that
-                // client (2026-10-21, a revive in the Ghost King's room: six "Failed to process
-                // spawned enemy" on one bot).
+                // Vanilla coffin ghosts only. Our revive ghost is also GhostGrave4 with no coffin
+                // open; a throw here would skip its registration below.
                 if (!spawnedEnemy.ReviverId.HasValue
                 && currentCoffin?.minibossEnemies != null
                 && (enemy.enemyData.enemyName == EEnemy.GhostGrave1
@@ -1745,25 +1486,13 @@ namespace MegabonkTogether.Services
             interpolator.Initialize(enemy);
             enemyManagerService.SetSpawnedEnemy(spawnedEnemy.Id, enemy);
 
-            // OB-9: a rescale correction can outrun the spawn it corrects — both go out
-            // ReliableUnordered, which guarantees delivery but not order. Applied here, immediately
-            // after registration, so the enemy never keeps the unscaled maximum.
+            // OB-9: apply a rescale that outran this spawn.
             ApplyPendingRescaledHp(spawnedEnemy.Id, enemy);
 
             DynamicData.For(enemy).Set("targetId", spawnedEnemy.TargetId);
 
-            // FIX 3/6 + 4/6: reviver naming, moved to AFTER registration and isolated.
-            //
-            // This block used to run before the three lines above, with two unguarded
-            // dereferences: GetSpawnedObject() can return null before .GetComponent<>(), and it
-            // used `reviver?.` on one line then bare `reviver.` on the next. When a reviver's
-            // owner had disconnected, GetFullName() threw, the whole handler aborted here, and
-            // the enemy was therefore never given an EnemyInterpolator and never entered the
-            // registry — so it stood still while remaining solid and damaging on contact.
-            // A 3-player session lost 581 consecutive enemy spawns this way.
-            //
-            // The naming is cosmetic; registration is not. Ordering and the catch make it
-            // impossible for the former to cost the latter again.
+            // FIX 3/6 + 4/6: cosmetic reviver naming stays after registration and inside a catch,
+            // so a throw here cannot leave an unregistered, frozen enemy.
             if (spawnedEnemy.ReviverId.HasValue)
             {
                 try
@@ -1792,8 +1521,7 @@ namespace MegabonkTogether.Services
         {
             var instance = IL2CPP.PointerToValueGeneric<ProjectileBase>(proj.Pointer, false, false);
 
-            // FIX P2-5: the owner is resolved first and handed to the manager, which had no way of
-            // knowing it before — the same id already goes out on the message below.
+            // FIX P2-5: the manager needs the owner.
             var ownerId = owner ?? playerManagerService.GetLocalPlayer().ConnectionId;
             var netplayId = projectileManagerService.AddSpawnedProjectile(instance, ownerId);
 
@@ -1926,10 +1654,7 @@ namespace MegabonkTogether.Services
                 case EWeapon.Sniper:
                     var sniperProj = IL2CPP.PointerToValueGeneric<ProjectileSniper>(proj.Pointer, false, false);
 
-                    // The muzzle can be missing when the shot is spawned (no weaponAttack yet, or an
-                    // attack without one): 2026-10-19 host, 5 NullReferenceExceptions here, and each
-                    // one meant that shot was never sent to the clients. Fall back to the projectile's
-                    // own transform rather than lose the shot.
+                    // The muzzle can be missing at spawn; fall back rather than lose the shot.
                     var sniperMuzzle = sniperProj.weaponAttack != null && sniperProj.weaponAttack.muzzle != null
                         ? sniperProj.weaponAttack.muzzle.transform
                         : instance.transform;
@@ -1974,12 +1699,7 @@ namespace MegabonkTogether.Services
                 }
                 else
                 {
-                    // GetNetPlayerByNetplayId returns null once the owner has left, and this line
-                    // used to dereference it straight into .Inventory. Projectiles from a departing
-                    // peer keep arriving for a moment after their NetPlayer is destroyed — Run A
-                    // produced about ten of these per disconnect, every one an NRE caught by the
-                    // catch below and logged with a full stack. Dropping the projectile is the
-                    // correct outcome anyway: there is no owner left to attribute or model it to.
+                    // Null once the owner has left; their late projectiles are dropped.
                     var netPlayer = playerManagerService.GetNetPlayerByNetplayId(projectile.OwnerId);
                     if (netPlayer == null)
                     {
@@ -2234,8 +1954,7 @@ namespace MegabonkTogether.Services
                     }
 
 
-                    // FIX P2-5 (remainder): the owner travels with the registration now, so these
-                    // can be dropped when that peer leaves. Same id the DynamicData stamp above uses.
+                    // FIX P2-5: owner registered so these are dropped when that peer leaves.
                     projectileManagerService.RegisterProjectileForInterpolation(projectile.Id, proj, projectile.OwnerId);
 
                 }
@@ -2329,21 +2048,14 @@ namespace MegabonkTogether.Services
                 return; //Might already be dead
             }
 
-            // OB-14. The hit's real attacker, not the peer forwarding it. The host applies its
-            // teammates' hits (replayed, or from their weapons it simulates) and then forwards
-            // every hit to the clients; this used to stamp the HOST as attacker on all of them.
-            // Harmless until the damage panel began skipping other players' hits -- then the
-            // client skipped its own damage too, and its 2026-10-18 end screen held eight rows
-            // of a few thousand each. The tracker holds the attacker for exactly this hit.
+            // OB-14: the hit's real attacker (from the tracker), not the forwarding host.
             var attackerId = trackerService.GetCurrentPlayerId() ?? playerManagerService.GetLocalPlayer().ConnectionId;
             var damageSource = DamageSourceHelper.Normalize(damageContainer.damageSource);
 
             var isHost = IsServerMode() ?? false;
             if (isHost)
             {
-                // OB-34 follow-up. Summed per enemy tick rather than sent per hit; flushed by
-                // FlushEnemyDamage from the enemy tick and, for one enemy, by OnEnemyDied just
-                // before its death. Why the sum replays the same: EnemyDamageAggregator.
+                // OB-34: summed per enemy tick; flushed by FlushEnemyDamage and OnEnemyDied.
                 enemyDamageAggregator.Add(
                     enemySpawned.Key,
                     attackerId,
@@ -2390,9 +2102,7 @@ namespace MegabonkTogether.Services
                 return; //Might already be dead
             }
 
-            // Normalized because a null source makes RunStats.OnEnemyDamaged throw inside
-            // enemy.Damage below, which aborts this handler and silently drops the damage on this
-            // peer. See DamageSourceHelper.
+            // A null source makes RunStats.OnEnemyDamaged throw inside enemy.Damage.
             var damageSource = DamageSourceHelper.Normalize(damaged.DamageSource);
 
             var damageContainer = new DamageContainer(damaged.DamageProcCoefficient, damageSource)
@@ -2407,15 +2117,8 @@ namespace MegabonkTogether.Services
                 damageSource = damageSource
             };
 
-            // Three globals are opened around one game call that can throw, and all three were
-            // restored only on the success path. The worst is CAN_DAMAGE_ENEMIES: Enemy.Damage_Prefix
-            // blocks all client-side enemy damage unless it is set, so one throw in enemy.Damage
-            // leaves it latched true and the client resolves enemy damage locally for the rest of
-            // the run — a permanent, silent divergence from a single exception.
-            //
-            // Same shape as P1-10 (28 CAN_SEND_MESSAGES latches, now Plugin.SuppressOutbound) and
-            // P0-6 (one throw latched two statics through 581 enemy spawns). The other two leak
-            // into P1-11's stranded position requests and P1-5's kill-attribution counters.
+            // All three globals are restored in finally (P1-10, P0-6 shape). A latched
+            // CAN_DAMAGE_ENEMIES would let this client resolve enemy damage locally for the run.
             Plugin.Instance.CAN_DAMAGE_ENEMIES = true;
             playerManagerService.AddGetNetplayerPositionRequest(damaged.AttackerId);
             trackerService.SetCurrentPlayerId(damaged.AttackerId);
@@ -2424,12 +2127,8 @@ namespace MegabonkTogether.Services
             {
                 enemy.Damage(damageContainer);
 
-                // OB-42. On the host this is a client's forwarded item hit (Cursed Doll, Bob, Holy
-                // Book...). In the game such a hit goes through DamageFromPlayerOther, which runs
-                // the attacker's on-hit items after Damage (proc coefficient 1 for the doll, 0.5
-                // for the book). The client no longer procs them itself (OB-37), so the host does,
-                // here, exactly once: the local PostDamage is redirected to the sender's items by
-                // HitItemOwnership, because the tracker holds the sender.
+                // OB-42: host procs the sender's on-hit items once (clients no longer do, OB-37);
+                // HitItemOwnership redirects PostDamage to the tracked sender.
                 if ((IsServerMode() ?? false) && damageContainer.procCoefficient > 0f)
                 {
                     damageContainer.enemy = enemy;
@@ -2469,9 +2168,7 @@ namespace MegabonkTogether.Services
             var isHost = IsServerMode() ?? false;
             if (isHost)
             {
-                // This enemy's hits still waiting for the tick go out first. A client drops a hit
-                // for an enemy it has already removed, so they would otherwise miss its damage
-                // panel -- for a swarm enemy killed within one tick, all of its damage.
+                // Flush pending hits first; clients drop hits for an already removed enemy.
                 enemyDamageAggregator.FlushEnemy(enemySpawned.Key, sendEnemyDamagedToClients);
                 udpClientService.SendToAllClients(message, NetDelivery.ReliableOrdered);
             }
@@ -2489,8 +2186,7 @@ namespace MegabonkTogether.Services
 
         private void OnReceivedEnemyDied(EnemyDied died)
         {
-            // OB-51 diagnostic: lets the desync report say whether a lingering enemy's death ever
-            // arrived (the host sent it; this peer failed to apply it) or not (the host never sent it).
+            // OB-51 diagnostic: did a lingering enemy's death ever arrive?
             DesyncDetectorService.NoteEnemyDiedReceived(died.EnemyId);
 
             var enemy = enemyManagerService.GetEnemyById(died.EnemyId);
@@ -2511,13 +2207,7 @@ namespace MegabonkTogether.Services
 
             using (Plugin.SuppressOutbound())
             {
-                // try/finally, not a straight line. EnemyDied runs the game's whole death sequence
-                // -- loot, procs, pooling -- and any of it can throw. The unset used to sit after
-                // the call, so a throw left the tracker latched on the dead enemy's killer and
-                // every later kill on this peer was credited to them until something else set it.
-                // That is exactly OB-14's UNBALANCED-UNSET counter, which is watching for this and
-                // has read 0 so far; this makes it structurally impossible rather than merely
-                // unobserved.
+                // try/finally: the death sequence can throw, which would latch the tracker (OB-14).
                 trackerService.SetCurrentPlayerId(died.DiedByOwnerId);
 
                 try
@@ -2533,10 +2223,7 @@ namespace MegabonkTogether.Services
             var isHost = IsServerMode() ?? false;
             if (!isHost)
             {
-                // OB-37. A client used to proc all of its on-hit items here, once per kill of its
-                // own: the only way they ran at all, since the host ran its own items on every
-                // teammate hit. The host now runs the teammate's on-hit items on each of their
-                // hits (HitItemOwnership), so this would proc them a second time, client-side.
+                // OB-37: no client-side on-hit procs here; the host runs them (HitItemOwnership).
 
                 //Manually invoke boss defeated event client side. OB-44: only once no stage boss is left.
                 if (enemy.IsStageBoss() && !enemy.IsFinalBoss() && !IsAnotherStageBossAlive(died.EnemyId))
@@ -2552,36 +2239,8 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>
-        /// Manually invoke boss defeated event client side
-        /// </summary>
-        /// <summary>
-        /// Manually invoke boss defeated event client side. Idempotent per stage.
-        ///
-        /// <para>A client that kills the stage boss itself reaches this twice: once from its own
-        /// <c>OnEnemyDied</c> before it forwards to the host, and again when the host's
-        /// <c>EnemyDied</c> broadcast comes back. Both call sites are deliberate — the local one
-        /// keeps the portal responsive without a round trip — so the guard belongs here rather
-        /// than at either of them.</para>
-        ///
-        /// <para>The duplicate was already known, but as a symptom rather than a cause: the
-        /// <c>arrowDict.Clear()</c> below carries the comment "Prevent sometimes double add for
-        /// portal arrow". That cleared the duplicated minimap arrow and left the rest of the
-        /// handler running twice, including <c>A_BossDefeated.Invoke</c>, which is a game event.
-        /// The <c>Clear()</c> stays — it is harmless and something else may rely on it — but it is
-        /// no longer what stops the double-add.</para>
-        ///
-        /// <para>Reset in <see cref="PrepareForNextLevel"/> and <see cref="Reset"/>, since each
-        /// stage has its own boss and portal and per-run state must not cross a session (SE-2).</para>
-        /// </summary>
-        /// <summary>
-        /// OB-44. The game opens a stage's portal only when EVERY boss its spawner spawned is gone
-        /// (decompiled: <c>InteractableBossSpawner.Interact</c>, VA 0x1804C5670, keeps the list
-        /// <c>SummonerController.SpawnStageBoss</c> returns, which holds <c>GameManager[+0x60] + 1</c>
-        /// bosses; <c>OnEnemyReleasedFromPool</c>, 0x1804C5B80, removes each and opens the portal
-        /// only once the list is empty and <c>CanSpawnPortal</c> holds). A client opened it on the
-        /// first stage-boss death. 2026-10-19: stage 2 spawned two Pharaoh2s; after the first died
-        /// both bots saw a portal and one walked through it with the second still alive on every
-        /// peer ("enemies 1/1"), while the host, correctly, had none.
+        /// OB-44. The game opens the portal only when every boss its spawner spawned is gone
+        /// (decompiled: <c>InteractableBossSpawner.OnEnemyReleasedFromPool</c>, VA 0x1804C5B80).
         /// </summary>
         private bool IsAnotherStageBossAlive(uint dyingEnemyId)
         {
@@ -2603,6 +2262,10 @@ namespace MegabonkTogether.Services
             return false;
         }
 
+        /// <summary>
+        /// Client-side boss-defeated event. Idempotent per stage: a client that kills the boss
+        /// reaches this from its own OnEnemyDied and again from the host's broadcast. Reset per stage and session (SE-2).
+        /// </summary>
         private void OnBossDefeated()
         {
             if (hasHandledBossDefeatedThisStage)
@@ -2614,14 +2277,8 @@ namespace MegabonkTogether.Services
             var cam = GameManager.Instance.player.minimapCamera.GetComponent<MinimapCamera>();
             cam.arrowDict.Clear(); //Prevent sometimes double add for portal arrow
 
-            // OB-46. The game's own rule, not "always". InteractableBossSpawner.OnEnemyReleasedFromPool
-            // (VA 0x1804C5B80) opens the portal only if CanSpawnPortal (0x1804C5540):
-            // !MapController.IsLastStage() && MapController.index < runConfig.mapTierIndex. On the
-            // tier's last stage it opens none and raises A_BossDefeated(false), which ObjectiveUi turns
-            // into "Survive" and DeathScreen into a tier victory (IsTierFinalStage). Clients opened a
-            // portal regardless: on a mapTierIndex 1 run the host, correctly, had no stage-2 portal
-            // while both bots did, and a bot walking through it took everyone to a stage the tier does
-            // not have (2026-10-19 and 2026-10-20).
+            // OB-46: the game's rule (decompiled CanSpawnPortal, VA 0x1804C5540). The tier's last
+            // stage opens no portal and raises A_BossDefeated(false).
             var bossSpawner = spawnedObjectManagerService.GetSpecific<InteractableBossSpawner>();
             var canSpawnPortal = bossSpawner == null || bossSpawner.CanSpawnPortal();
             logger.LogInfo(canSpawnPortal
@@ -2698,9 +2355,7 @@ namespace MegabonkTogether.Services
 
         private void OnReceivedSpawnedPickup(SpawnedPickup pickup)
         {
-            // FIX: the flag opens a host-only game path so this peer can apply someone else's
-            // state without re-broadcasting it. Restored in a finally because a throw in the game
-            // call would otherwise latch it for the rest of the run. Same defect as P1-10 and P0-6.
+            // FIX (P1-10, P0-6): restored in finally so a throw cannot latch the flag.
             Plugin.CAN_SPAWN_PICKUPS = true;
             Pickup spawnedPickup;
             try
@@ -2738,9 +2393,7 @@ namespace MegabonkTogether.Services
 
         private void OnReceivedSpawnedOrbPickup(SpawnedPickupOrb pickup)
         {
-            // FIX: the flag opens a host-only game path so this peer can apply someone else's
-            // state without re-broadcasting it. Restored in a finally because a throw in the game
-            // call would otherwise latch it for the rest of the run. Same defect as P1-10 and P0-6.
+            // FIX (P1-10, P0-6): restored in finally so a throw cannot latch the flag.
             Plugin.CAN_SPAWN_PICKUPS = true;
             try
             {
@@ -2999,9 +2652,7 @@ namespace MegabonkTogether.Services
         private void OnReceivedSpawnedChest(SpawnedChest chest)
         {
             chestManagerService.PushNextChestId(chest.ChestId);
-            // FIX: the flag opens a host-only game path so this peer can apply someone else's
-            // state without re-broadcasting it. Restored in a finally because a throw in the game
-            // call would otherwise latch it for the rest of the run. Same defect as P1-10 and P0-6.
+            // FIX (P1-10, P0-6): restored in finally so a throw cannot latch the flag.
             Plugin.CAN_SPAWN_CHESTS = true;
             try
             {
@@ -3115,11 +2766,7 @@ namespace MegabonkTogether.Services
                     upgradeModifiers.Add(modifier);
                 }
 
-                // try/finally: AddWeapon and RefreshConstantAttack are game code running with
-                // CAN_SEND_MESSAGES latched off and two game statics nulled out. A throw used to
-                // leave all three that way for the rest of the process — the mod would go silent
-                // on the wire and the game would stop firing weapon/stat callbacks. Same shape as
-                // P0-6, where one throw latched two statics and broke 581 enemy spawns.
+                // try/finally (P0-6 shape): a throw must not leave messages off and game statics nulled.
                 Plugin.CAN_SEND_MESSAGES = false;
                 Plugin.Instance.SavePlayerInventoryActions();
                 try
@@ -3196,11 +2843,7 @@ namespace MegabonkTogether.Services
                 }
                 using (Plugin.SuppressOutbound())
                 {
-                    // Same shape as P1-9: a game static nulled out around game code that can throw.
-                    // AddTome throwing used to leave A_TomeUpgrade null for the rest of the
-                    // process, killing tome-upgrade handling in every later run, singleplayer
-                    // included. Unlike the inventory pair this one saves into a local, so a
-                    // finally is the whole fix.
+                    // P1-9 shape: restore the nulled game static in finally, or tome upgrades die for the process.
                     var callbacks = TomeInventory.A_TomeUpgrade;
                     TomeInventory.A_TomeUpgrade = null;
                     try
@@ -3410,19 +3053,9 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>
-        /// Adds somebody else's interaction to this peer's own used/total counter — see
-        /// <see cref="Helpers.InteractableCounterHelper"/> and OB-12.
-        ///
-        /// <para><b>The try is here rather than inside the helper, and that is not a style
-        /// choice.</b> The helper calls a method that is private in the game and public only on the
-        /// Il2CppInterop proxy, so a future build renaming it produces a
-        /// <c>MissingMethodException</c> — and that is raised when the method containing the call
-        /// is <i>JIT-compiled</i>, not when the call executes. A <c>try</c> inside the helper would
-        /// never run. One level up does. <c>Plugin.Load</c> carries the same note; getting it wrong
-        /// there took the whole plugin down once.</para>
-        ///
-        /// <para>A counter that fails to increment is worth no more than a warning: the tally is a
-        /// readout and nothing downstream reads it.</para>
+        /// OB-12. Counts a peer's interaction on our counter.
+        /// <para>The try must stay one level above the helper: its interop call can throw
+        /// <c>MissingMethodException</c> at JIT time of the containing method.</para>
         /// </summary>
         private void CountInteractableAsUsed(GameObject interactableObj)
         {
@@ -3437,10 +3070,7 @@ namespace MegabonkTogether.Services
             }
         }
 
-        /// <summary>
-        /// OB-12. Same try placement and same rationale as <see cref="CountInteractableAsUsed"/> —
-        /// the interop call has to be guarded from one level up.
-        /// </summary>
+        /// <summary>OB-12. Try placement as in <see cref="CountInteractableAsUsed"/>.</summary>
         private Helpers.InteractableCounterHelper.Snapshot SnapshotInteractableCounter(GameObject interactableObj)
         {
             try
@@ -3472,29 +3102,8 @@ namespace MegabonkTogether.Services
 
         private void OnReceivedInteractableUsed(InteractableUsed used)
         {
-            // SE-11, applied to interactables. The same guard OnReceivedChangeGold already carries,
-            // and for the same stated reason: the host excludes the sender through
-            // SendToAllClientsExcept, whose relay branch falls back to an EMPTY filter list on a
-            // lookup miss, so on a relayed session a peer can receive its own message back.
-            //
-            // Measured on 2026-10-07 rather than assumed. One challenge shrine was used, and BOTH
-            // peers ran this dispatch for it -- at the identical position in the shared round
-            // sequence, between the release of round 19 and round 20, on both logs, each snapshot
-            // reading 0 before it counted. One of those two peers is the one that used it.
-            //
-            // For a challenge shrine that is a visible divergence rather than a wasted call:
-            // InteractableShrineChallenge.Interact() returns true (VA 0x1804CE250), so the using
-            // peer's own DetectInteractables.A_Interacted already counted it. The echo then adds a
-            // second count through InteractableCounterHelper, and that peer's row reads one higher
-            // than everybody else's for the rest of the run -- which is the challenge-shrine half of
-            // OB-12, open since the counter work began.
-            //
-            // The echo is worse than a miscount for the branches that replay the interaction: the
-            // Interact branch would run the real interaction a second time on the peer that just
-            // performed it, which for a challenge shrine means a second wave of challenge enemies.
-            //
-            // There is exactly one sender and it always stamps OwnerId with the local connection
-            // id, so there is no default-zero path for this comparison to catch by accident.
+            // SE-11 / OB-12: drop our own message echoed back (the relay's exclude filter can be
+            // empty). An echo would double-count or replay the interaction (e.g. a second challenge wave).
             var localPlayerForEcho = playerManagerService.GetLocalPlayer();
             if (localPlayerForEcho != null && used.OwnerId == localPlayerForEcho.ConnectionId)
             {
@@ -3580,11 +3189,7 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            // OB-12. Read this peer's tally before dispatching, so the Interact branch below can be
-            // counted without knowing which of its many sub-paths ran. With shared experience on —
-            // which is how this is played — *every* InteractableUsed arrives as Interact, so the
-            // Destroy and Used branches are unreachable and the counting added to them in an earlier
-            // session never executed. That is why the counters still diverged after it.
+            // OB-12: snapshot the tally so the Interact branch can be counted whichever sub-path ran.
             var counterBefore = SnapshotInteractableCounter(interactableObj);
 
             using (Plugin.SuppressOutbound())
@@ -3618,18 +3223,8 @@ namespace MegabonkTogether.Services
                                 break;
                             }
 
-                            // Opt out of the encounter exactly where InteractableMicrowave.Interact()
-                            // would refuse to open it, so this peer still releases the barrier.
-                            //
-                            // The gold half of MicrowaveHelper.CanStartCooking is the fix for the
-                            // observed soft lock: Interact() silently returns false when the player
-                            // cannot pay, no encounter window opened, RewardFinished() was never
-                            // reached, and both players stalled until the 20s failsafe. CanInteract()
-                            // does not check gold — CONFIRMED by decompiling
-                            // InteractableMicrowave$$CanInteract, see MicrowaveHelper.
-                            //
-                            // This is the same opt-out the chest branch below already does with
-                            // InteractableChest.CanAfford(); the microwave has no CanAfford().
+                            // Opt out where Interact() would refuse, so this peer still releases the
+                            // barrier. CanInteract() does not check gold (CONFIRMED, see MicrowaveHelper).
                             if (!microwave.hasItem && (GameManager.Instance.player.IsDead()
                                                        || !microwave.CanInteract()
                                                        || !MicrowaveHelper.CanStartCooking(microwave)))
@@ -3898,12 +3493,7 @@ namespace MegabonkTogether.Services
                 }
             }
 
-            // OB-12. Outside the switch on purpose: the Interact branch has a dozen exits and
-            // several of them replay the real interaction, which counts on its own. Comparing the
-            // tally against `counterBefore` counts exactly once whichever path ran, and keeps
-            // working when a sub-branch is added. Only Interact needs this — Destroy and Used
-            // already count explicitly, and doing it twice for them is what the comparison
-            // prevents anyway.
+            // OB-12: outside the switch so Interact counts exactly once whichever exit ran.
             if (used.Action == InteractableAction.Interact)
             {
                 CountInteractableIfDispatchDidNot(interactableObj, counterBefore);
@@ -3911,35 +3501,15 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>
-        /// FIX P2-3: shared by shrine / pylon / lamp, which had three byte-identical copies of this
-        /// apart from the message type, the dictionary and a noun in the log line. Resolves
-        /// an old "pylon and lamp should be refactored to use the same logic" TODO.
-        ///
-        /// <para>Carries the P0-1 and P2-2 fixes in one place: the occupancy check happens BEFORE
-        /// the write (the old order overwrote the current charger with the rejected one, so the
-        /// later stop removed nothing and the object stayed locked forever), it uses
-        /// <c>TryGetValue</c> rather than an O(n) LINQ scan, and the <c>GetAllPlayers()</c> call
-        /// that used to sit here was never read.</para>
-        ///
-        /// <para>Kept <c>private</c> deliberately — this takes internal charging state, and putting
-        /// it on <c>ISynchronizationService</c> would leak that through the API surface.</para>
+        /// FIX P2-3: shared charge-start for shrine / pylon / lamp. P0-1: the occupancy check must
+        /// come before the write, or a rejected charger overwrites the current one.
         /// </summary>
-        /// <param name="message">Built by the caller, because each message type names its id
-        /// property differently.</param>
-        /// <param name="label">Noun for the log lines: "shrine", "pylon", "lamp".</param>
         /// <returns>True when the caller should let the vanilla charge start run locally.</returns>
         /// <param name="replayOnEveryPeer">
-        /// Broadcast the start even when this object is already being charged, so every peer runs
-        /// its own <c>OnTriggerEnter</c>. Presentation state (the charging flag, the mesh renderer,
-        /// the audio) is per-peer and the game only ever sets it from that trigger — a peer that
-        /// never receives the message keeps whatever visual state it had.
-        ///
-        /// <para><b>Only safe where the game's trigger is idempotent.</b> Decompiled
-        /// <c>ChargeShrine$$OnTriggerEnter</c> opens with
-        /// <c>if (rewardGiven || charging) return;</c>, so a redundant replay there is a no-op.
-        /// The pylon and lamp paths pass <c>false</c> because their triggers have not been
-        /// decompiled — <b>UNVERIFIED</b>, and re-triggering a non-idempotent one would be worse
-        /// than the visual bug this fixes.</para>
+        /// Broadcast even when already charging, so every peer runs its own per-peer <c>OnTriggerEnter</c> visuals.
+        /// <para>Only safe where the trigger is idempotent: decompiled <c>ChargeShrine$$OnTriggerEnter</c>
+        /// opens with <c>if (rewardGiven || charging) return;</c>. Pylon and lamp triggers are
+        /// <b>UNVERIFIED</b>, so they pass <c>false</c>.</para>
         /// </param>
         private bool HandleChargingStart(
             uint netplayId,
@@ -3965,8 +3535,7 @@ namespace MegabonkTogether.Services
                     $"Another player is already charging this {label} {netplayId}. Preventing re "
                     + $"trigger. Chargers: [{string.Join(", ", chargers)}], joining: {localId}.");
 
-                // The set used to be discarded here, so a second charger was never recorded and
-                // their later stop hit the "No one is charging this X; ignoring stop" branch.
+                // Record the second charger, or their stop is later ignored.
                 if (!chargers.Contains(localId))
                 {
                     chargers.Add(localId);
@@ -3988,16 +3557,9 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>
-        /// FIX P2-3: the stop counterpart of <see cref="HandleChargingStart"/>. See that method for
-        /// why this is private and why the caller builds the message.
-        ///
-        /// <para>Carries the P0-2 and P2-2 fixes: the key is guarded (the old unguarded indexer
-        /// threw <c>KeyNotFoundException</c> when a stop arrived with no recorded start — a packet
-        /// reorder, a late join, or a player disconnecting mid-charge), and the dead
-        /// <c>GetAllPlayers()</c> call is gone.</para>
+        /// FIX P2-3: stop counterpart of <see cref="HandleChargingStart"/>. P0-2: a stop can arrive with no recorded start.
         /// </summary>
-        /// <returns>True when the caller should let the vanilla charge stop run locally, i.e. this
-        /// was the last charger.</returns>
+        /// <returns>True when this was the last charger and the vanilla stop should run.</returns>
         private bool HandleChargingStop(
             uint netplayId,
             ConcurrentDictionary<uint, ICollection<uint>> chargingPlayers,
@@ -4025,10 +3587,7 @@ namespace MegabonkTogether.Services
 
             if (chargers.Count > 0)
             {
-                // The set is printed because an unbalanced one is the whole failure mode here: a
-                // charger that is recorded and never removed leaves this branch suppressing every
-                // stop, and the object charges forever. Without the ids there is no way to tell
-                // that from two players legitimately charging together.
+                // Ids logged: a never-removed charger makes the object charge forever.
                 logger.LogInfo(
                     $"Another player is still charging this {label} {netplayId}. Preventing stop "
                     + $"trigger. Remaining chargers: [{string.Join(", ", chargers)}].");
@@ -4060,13 +3619,7 @@ namespace MegabonkTogether.Services
                 if (shrineChargingPlayers.TryGetValue(shrine.ShrineNetplayId, out var chargers)
                     && chargers != null && chargers.Count > 0)
                 {
-                    // Used to return outright. The host is right not to re-run its own trigger,
-                    // but the early return also skipped the SendToAllClients below — so a peer
-                    // that joined a shrine someone else had already started never received the
-                    // message, never ran OnTriggerEnter, and never set its own charging flag or
-                    // re-enabled its mesh renderer. The reporting peer was also never recorded,
-                    // which is what produced the unbalanced "No one is charging this shrine;
-                    // ignoring stop" lines in the host log.
+                    // Record the joiner and still broadcast, so every peer runs its trigger visuals.
                     if (!chargers.Contains(shrine.PlayerChargingId))
                     {
                         chargers.Add(shrine.PlayerChargingId);
@@ -4250,9 +3803,7 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            // FIX: the flag opens a host-only game path so this peer can apply someone else's
-            // state without re-broadcasting it. Restored in a finally because a throw in the game
-            // call would otherwise latch it for the rest of the run. Same defect as P1-10 and P0-6.
+            // FIX (P1-10, P0-6): restored in finally so a throw cannot latch the flag.
             Plugin.CAN_ENEMY_EXPLODE = true;
             try
             {
@@ -4281,10 +3832,7 @@ namespace MegabonkTogether.Services
             }
 
 
-            // FIX P1-4 / P1-6: was two GetAllPlayersAlive() calls on consecutive lines — two
-            // Player[] allocations plus four iterators — and the same unguarded shape P1-6 fixed
-            // in ReTargetEnemies: Random.Range(0, 0) returns 0 and ElementAt(0) throws on an empty
-            // set. GetRandomPlayerAliveConnectionId does the pick once and returns null instead.
+            // FIX P1-4 / P1-6: one allocation, and null instead of a throw when nobody is alive.
             var randomTargetId = playerManagerService.GetRandomPlayerAliveConnectionId();
             if (!randomTargetId.HasValue)
             {
@@ -4336,9 +3884,7 @@ namespace MegabonkTogether.Services
 
             DynamicData.For(enemy).Set("targetId", attack.TargetId); //Target might have changed
 
-            // FIX: the flag opens a host-only game path so this peer can apply someone else's
-            // state without re-broadcasting it. Restored in a finally because a throw in the game
-            // call would otherwise latch it for the rest of the run. Same defect as P1-10 and P0-6.
+            // FIX (P1-10, P0-6): restored in finally so a throw cannot latch the flag.
             Plugin.CAN_ENEMY_USE_SPECIAL_ATTACK = true;
             try
             {
@@ -4854,9 +4400,7 @@ namespace MegabonkTogether.Services
                 var allPlayersAliveIdWithout = playerManagerService.GetAllPlayersAlive().Where(p => p.ConnectionId != playerId).Select(p => p.ConnectionId).ToList();
                 var updated = enemyManagerService.ReTargetEnemies(playerId, allPlayersAliveIdWithout);
 
-                // FIX 5/6: apply locally too — see OnReceivedPlayerDisconnected for why. All three
-                // ReTargetEnemies call sites shared this gap; the host's enemy.target was never
-                // updated, only the networked targetId.
+                // FIX 5/6: apply locally too; see OnReceivedPlayerDisconnected.
                 var updatedList = updated as IList<(uint, uint)> ?? updated.ToList();
                 enemyManagerService.ApplyRetargetedEnemies(updatedList, playerManagerService.GetConnectionIdsAndRigidBodies());
 
@@ -4934,10 +4478,7 @@ namespace MegabonkTogether.Services
         {
             var desertGraves = EffectManager.Instance.desertGraves;
 
-            // OB-53. The coffin goes where the player died, and the revive respawns them there. A
-            // player who died under the map (a bot teleported into a wall, 2026-10-20) left a coffin
-            // nobody could reach. The host places it on the surface above instead, and every client
-            // gets that position from SpawnedReviver.
+            // OB-53: host lifts a coffin from under the map to the surface; clients get the position.
             if (IsServerMode() ?? false)
             {
                 position = SnapCoffinToSurface(position, ownerConnectionId);
@@ -4945,8 +4486,7 @@ namespace MegabonkTogether.Services
 
             logger.LogInfo($"[revive] OB-53: coffin for {ownerConnectionId} at {position}.");
 
-            // Declared outside the scope: the rest of this method uses it. The suppression only
-            // needs to cover the Instantiate, which is what trips the spawn patches.
+            // Suppression covers only the Instantiate, which trips the spawn patches.
             GameObject desertGraveInstance;
             using (Plugin.SuppressOutbound())
             {
@@ -4986,11 +4526,7 @@ namespace MegabonkTogether.Services
 
         }
 
-        /// <summary>
-        /// OB-53. When the death point is under a surface, the first surface above it. A downward ray
-        /// from well above that only lands meaningfully higher than the death point means the player
-        /// died below the ground; a death on the surface hits at its own height and stays put.
-        /// </summary>
+        /// <summary>OB-53. Moves a death point that is under a surface up to that surface.</summary>
         private Vector3 SnapCoffinToSurface(Vector3 position, uint ownerConnectionId)
         {
             // 1. Standing on something: a normal death, even under a tree canopy. Leave it.
@@ -4999,9 +4535,7 @@ namespace MegabonkTogether.Services
                 return position;
             }
 
-            // 2. Just below a surface (sunk into the ground, a shallow dip): the surface above, but
-            //    only a little above. A ray from high up lands on the TOP of whatever is there, and
-            //    under or inside a desert hill that is a peak nobody can climb to.
+            // 2. Just below a surface: lift a little only; a high ray could land on an unclimbable peak.
             const float rayHeight = 120f;
             const float maxLift = 6f;
             var origin = position + Vector3.up * rayHeight;
@@ -5170,31 +4704,14 @@ namespace MegabonkTogether.Services
 
         private void OnReceivedPlayerDisconnected(PlayerDisconnected disconnected)
         {
-            // FIX: this used to look the player up and return early when the record was gone.
-            //
-            // Two independent paths remove a player — this message, and the rendezvous server's
-            // ClientDisconnected over the websocket (WebsocketClientService.HandleClientDisconnected
-            // → PlayerManagerService.RemovePlayer) — and they race on every peer, host included.
-            // Whichever arrived second used to skip *everything* below: the projectile and UI
-            // cleanup on a client, and on a host the retarget, which is what stops enemies holding
-            // the departed player's destroyed Rigidbody (P2-1). Losing that race silently
-            // reinstated the exact bug the retarget exists to prevent.
-            //
-            // Only the notification needs the player record; every other step needs the connection
-            // id alone. So the record is now optional, and the notification — cosmetic — runs last
-            // in its own try, per the P0-6 / P1-6 / P1-7 lesson that a throw in the least important
-            // statement must not take the most important one with it. AudioManager.Instance and
-            // the localisation lookup are both reachable throw sites.
+            // The websocket ClientDisconnected path races this one and may have removed the record
+            // already; cleanup needs only the id (P2-1). The cosmetic notification runs last, in its own try.
             var disconnectedPeer = playerManagerService.GetPlayer(disconnected.ConnectionId);
 
             playerManagerService.Disconnect(disconnected.ConnectionId);
             projectileManagerService.RemoveProjectilesByOwnerId(disconnected.ConnectionId);
 
-            // A departed peer must stop being a participant, or the readiness round waits on a
-            // report that can never arrive — the same shape as SE-6 on the encounter barrier, where
-            // a live participant count includes peers that cannot report. The reference
-            // handles this with a transport-level member-removed event; we already have a single
-            // disconnect funnel, so it hangs off that instead.
+            // Or the readiness round waits forever on them (cf. SE-6).
             readinessService.RemoveParticipant(disconnected.ConnectionId);
 
             var isHost = IsServerMode() ?? false;
@@ -5209,15 +4726,13 @@ namespace MegabonkTogether.Services
             {
                 if (disconnectedPeer == null)
                 {
-                    // Not an error on its own — it means the websocket path got here first. It is
-                    // logged because it also means this peer showed no disconnect notification.
                     logger.LogWarning($"Disconnected player {disconnected.ConnectionId} was already removed from PlayerManagerService (websocket ClientDisconnected won the race); cleanup ran, notification skipped.");
                 }
                 else
                 {
                     Plugin.StartNotification(
-                        ("MegabonkTogether", "PlayerDisconnected"),
-                        ("MegabonkTogether", "PlayerDisconnected_Description"),
+                        ("OmniBonk", "PlayerDisconnected"),
+                        ("OmniBonk", "PlayerDisconnected_Description"),
                         [disconnectedPeer.Name],
                         AudioManager.Instance.uiAbort,
                         item: EItem.BobDead
@@ -5230,39 +4745,20 @@ namespace MegabonkTogether.Services
             }
         }
 
-        /// <summary>
-        /// Host-side half of a disconnect: close a blocked encounter if it can be closed, then move
-        /// every enemy off the departed player and tell the clients. Split out of
-        /// <see cref="OnReceivedPlayerDisconnected"/> so the retarget no longer sits behind an early
-        /// return that a lost race can trip.
-        /// </summary>
+        /// <summary>Host: release a closable encounter, then retarget enemies off the departed player.</summary>
         private void RetargetAfterDisconnect(uint disconnectedConnectionId)
         {
             if (IsSharedExperienceEnabled() && encounterService.IsClosable()) //Making sure to unblock people if somemone leave and we can close
             {
-                // The third of the three release sites, and the reason ReleaseBarrier exists: a
-                // departure can satisfy the barrier, and this release has to name the same round as
-                // the other two or the peers will drop it as stale.
+                // Must go through ReleaseBarrier so it names the current round, or peers drop it as stale.
                 ReleaseBarrier();
             }
 
             var allPlayersAliveIdWithout = playerManagerService.GetAllPlayersAlive().Where(p => p.ConnectionId != disconnectedConnectionId).Select(p => p.ConnectionId).ToList();
             var updated = enemyManagerService.ReTargetEnemies(disconnectedConnectionId, allPlayersAliveIdWithout);
 
-            // FIX 5/6: apply the retarget locally too, not just broadcast it.
-            //
-            // ReTargetEnemies only rewrites the network "targetId" in DynamicData. The physics
-            // target — enemy.target, a Rigidbody — is set exclusively by ApplyRetargetedEnemies,
-            // which until now ran only on RECEIVERS of this message. The host does not receive
-            // its own broadcast, so its enemies kept pointing at the departed player's destroyed
-            // Rigidbody. Megabonk's own movement code then read target.transform every frame,
-            // which is what drove the dangling-transform fallback to ~144 hits/second after any
-            // disconnect (P2-1) — the sampled caller was consistently "no MegabonkTogether
-            // frames (called from game code)", i.e. we had handed the game a dead reference.
-            //
-            // Side effect worth naming: those host enemies were silently falling back to the
-            // local player's transform, so they chased the host while every client believed they
-            // targeted someone else.
+            // FIX 5/6 (P2-1): apply locally too. The host does not receive its own broadcast, and only
+            // ApplyRetargetedEnemies sets enemy.target; otherwise it keeps a destroyed Rigidbody.
             var updatedList = updated as IList<(uint, uint)> ?? updated.ToList();
             enemyManagerService.ApplyRetargetedEnemies(updatedList, playerManagerService.GetConnectionIdsAndRigidBodies());
 
@@ -5350,9 +4846,7 @@ namespace MegabonkTogether.Services
 
         private void OnReceivedTornadoesSpawned(TornadoesSpawned spawned)
         {
-            // FIX: the flag opens a host-only game path so this peer can apply someone else's
-            // state without re-broadcasting it. Restored in a finally because a throw in the game
-            // call would otherwise latch it for the rest of the run. Same defect as P1-10 and P0-6.
+            // FIX (P1-10, P0-6): restored in finally so a throw cannot latch the flag.
             Plugin.Instance.CAN_SPAWN_TORNADOES = true;
             try
             {
@@ -5376,9 +4870,7 @@ namespace MegabonkTogether.Services
 
         private void OnReceivedStormStarted(StormStarted started)
         {
-            // FIX: the flag opens a host-only game path so this peer can apply someone else's
-            // state without re-broadcasting it. Restored in a finally because a throw in the game
-            // call would otherwise latch it for the rest of the run. Same defect as P1-10 and P0-6.
+            // FIX (P1-10, P0-6): restored in finally so a throw cannot latch the flag.
             Plugin.Instance.CAN_START_STOP_STORMS = true;
             try
             {
@@ -5408,9 +4900,7 @@ namespace MegabonkTogether.Services
 
         private void OnReceivedStormStopped(StormStopped stopped)
         {
-            // FIX: the flag opens a host-only game path so this peer can apply someone else's
-            // state without re-broadcasting it. Restored in a finally because a throw in the game
-            // call would otherwise latch it for the rest of the run. Same defect as P1-10 and P0-6.
+            // FIX (P1-10, P0-6): restored in finally so a throw cannot latch the flag.
             Plugin.Instance.CAN_START_STOP_STORMS = true;
             try
             {
@@ -5815,15 +5305,8 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>
-        /// OB-20: the one place that brings the local player back from the dead. Was duplicated
-        /// verbatim in <see cref="OnRespawn"/> and <see cref="OnReceivedPlayerRespawned"/>; the
-        /// level transition needs it too, and three copies of a five-step routine is how a step
-        /// goes missing.
-        /// <para><paramref name="position"/> is null when the caller has no business placing the
-        /// player — at a level transition the game does that itself, and forcing the previous
-        /// level's coordinate would be worse than leaving it alone.</para>
-        /// <para>Restores to full HP because that is what the reviver coffin has always done. If
-        /// dying is meant to cost something across a transition, this is the line to change.</para>
+        /// OB-20: the one place that revives the local player, to full HP. <paramref name="position"/>
+        /// is null at a level transition, where the game places the player itself.
         /// </summary>
         private void ReviveLocalPlayer(Vector3? position)
         {
@@ -5833,10 +5316,7 @@ namespace MegabonkTogether.Services
             {
                 player.transform.position = position.Value;
 
-                // OB-49. The transform alone does not move a player: its Rigidbody keeps the old
-                // position and the next physics step puts it back (the test bot has to set rb.position
-                // for its teleports to stick). 2026-10-20: after a revive the host stood outside the
-                // world, and their next coffin was 14 units under the Forest ground.
+                // OB-49: the Rigidbody must move too, or the next physics step puts the player back.
                 var rb = player.playerMovement?.rb;
                 if (rb != null)
                 {
@@ -5862,13 +5342,7 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>
-        /// OB-20: a peer who died stays dead through the portal unless somebody revives them, and
-        /// nothing did — the transition restored the game's death handler and reset the camera
-        /// and left hp at 0. Every peer reaches PortalOpened behind the readiness barrier, so each
-        /// one running this for itself needs no message and no new union tag; the restored HP
-        /// reaches the others through the existing PlayerUpdate.
-        /// <para>Guarded on actually being dead: full-healing a living player at every portal is a
-        /// far larger change than the one this fixes.</para>
+        /// OB-20: a dead peer revives itself at the portal; no message needed, HP reaches others via PlayerUpdate. Only if dead.
         /// </summary>
         private void ReviveLocalPlayerIfDeadForNextLevel()
         {
@@ -5931,25 +5405,9 @@ namespace MegabonkTogether.Services
         private int pendingSharedXp;
 
         /// <summary>
-        /// Shared XP: adds the other player's GAIN to ours.
-        ///
-        /// <para>This used to overwrite our total with the sender's (playerXp.xp = xp.Xp). That loses
-        /// whatever this peer gained while the message was in flight: both players pick up an orb
-        /// at once, each sends its own total, and each overwrites the other's -- so each loses its
-        /// own pickup and the two totals end up different. During a swarm that happens constantly.
-        /// PlayerXp.AddXp (VA 0x1803C5440, decompiled) derives the level from the TOTAL and only
-        /// ever raises it, so a lost gain near a threshold leaves one player a level behind until
-        /// they farm the difference back: 2026-10-11, "level host 30 / local 31" for ~50 s, and
-        /// level-up reward windows opening seconds apart even while the levels matched.</para>
-        ///
-        /// <para>Additions commute, so two peers applying each other's gains in any order land on
-        /// the same total. Amount is the sender's post-multiplier gain (its XP-gain stat is already
-        /// applied, exactly as it was when the total was sent). Xp and LeftOverXp are no longer
-        /// applied: the fractional remainder belongs to the player whose multiplier produced it.</para>
-        ///
-        /// <para>Changes what an existing field means, which CLAUDE.md treats like a wire change: a
-        /// peer on an older build would read a gain as a total. Both peers must run this build,
-        /// which tags 78 and 79 already require.</para>
+        /// Shared XP: adds the sender's post-multiplier GAIN to ours. Gains commute; overwriting
+        /// totals lost in-flight pickups (PlayerXp.AddXp, VA 0x1803C5440, only raises the level).
+        /// <para>Wire-semantics change: <c>Amount</c> is a gain, not a total. Older builds are incompatible.</para>
         /// </summary>
         private void OnReceivedAddXp(AddXp xp)
         {
@@ -5965,8 +5423,7 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            // Gains now also arrive during the ready barrier, when this peer may have no player
-            // yet (scene loading). Hold them and add them with the next gain that can land.
+            // No player yet (scene loading): hold the gain.
             var playerXp = GameManager.Instance?.player?.inventory?.playerXp;
             if (playerXp == null)
             {
@@ -5981,14 +5438,8 @@ namespace MegabonkTogether.Services
             {
                 playerXp.xp += amount;
 
-                // OB-31. Re-converge on the sender's total when ours is lower. Xp is the sender's total
-                // after this gain: a sum of real gains that can only be MISSING some of ours still in
-                // flight, so it never exceeds the true shared total and raising to it cannot
-                // over-count. Without this, any gain that was never shared (a barrier window, any
-                // path that bypasses AddXp) left the peers levels apart for the rest of the run, and
-                // every level-up on the peer that was ahead held both at the shared-experience
-                // barrier, waiting for a pick from a player who had no window to pick in, until the
-                // failsafe released it (SE-6).
+                // OB-31: raise to the sender's total if ours is lower. It can never exceed the true
+                // shared total, so this cannot over-count; it repairs gains that were never shared.
                 if (xp.Xp > playerXp.xp)
                 {
                     Plugin.Log.LogInfo($"[xp] behind the shared total by {xp.Xp - playerXp.xp}; raising {playerXp.xp} -> {xp.Xp} (level {playerXp.level}).");
@@ -6002,17 +5453,13 @@ namespace MegabonkTogether.Services
 
         public void RewardFinished()
         {
-            // The failsafe clock starts the moment this peer reports, not when it renders the
-            // "waiting" text: every caller of this method is about to block on the barrier, and
-            // several of them (the opt-out paths in OnReceivedInteractableUsed) never touch the
-            // encounter window at all.
+            // Failsafe clock starts on report; some callers never open an encounter window.
             encounterService.BeginWaiting();
 
             var isHost = IsServerMode() ?? false;
             if (isHost)
             {
-                // SE-5: the host owns the barrier session, and this is the earliest point at which
-                // any barrier message can exist, so minting here is unconditionally early enough.
+                // SE-5: earliest point any barrier message can exist.
                 encounterService.EnsureSession();
 
                 encounterService.AddClosedEncounterForPlayer(playerManagerService.GetLocalPlayer().ConnectionId);
@@ -6035,13 +5482,7 @@ namespace MegabonkTogether.Services
             }
         }
 
-        /// <summary>
-        /// Host only. Broadcasts the release for the round that is currently open and applies it
-        /// locally. Extracted because there were three copies of this — <see cref="RewardFinished"/>,
-        /// <see cref="ForceCloseEncounter"/> and the <c>EncounterClosed</c> handler in
-        /// <c>UdpClientService</c> — and a stamp that is assembled differently in any of them is a
-        /// stamp that does not identify a round.
-        /// </summary>
+        /// <summary>Host only. The single place a round release is stamped, broadcast and applied locally.</summary>
         private void ReleaseBarrier()
         {
             encounterService.EnsureSession();
@@ -6057,32 +5498,17 @@ namespace MegabonkTogether.Services
 
             udpClientService.SendToAllClients(closeMessage, NetDelivery.ReliableOrdered);
 
-            // Logged on the SUCCESS path, not only on rejection.
-            //
-            // The first session on this build could not confirm the barrier worked at all: the only
-            // barrier line in either log was one failsafe fire, because every healthy path here was
-            // silent and the stamped messages are too low-rate to escape the [bw] report's
-            // "(N more types)" bucket. A round-identity mechanism whose correct operation leaves no
-            // trace cannot be verified in play, only suspected — and "absence of a log line is not
-            // absence of the event" is a lesson this project has already paid for twice.
-            //
-            // One line per barrier round, which is a handful per stage. Nowhere near a hot path.
+            // Logged on success too, so a healthy barrier is verifiable in play. Not a hot path.
             logger.LogInfo($"[barrier] Released round {roundId} (session {sessionId}) to all clients.");
 
-            // Applied through the same gate the clients use, so the host advances its own round
-            // counter by exactly the rule it just broadcast rather than by a second code path.
+            // Same gate the clients use.
             if (encounterService.TryApplyRelease(sessionId, roundId))
             {
                 OnCloseEncounter();
             }
         }
 
-        /// <summary>
-        /// SE-5 / OB-4. A release now names the round it releases, and a repeat for a round already
-        /// applied is dropped here rather than closing whatever encounter window happens to be open
-        /// — which is precisely the reported failure: the failsafe fired, a second release was
-        /// generated for a finished round, and it shut a fresh chest window instantly.
-        /// </summary>
+        /// <summary>SE-5 / OB-4. Drops a release for an already applied round, so it cannot close a fresh window.</summary>
         private void OnReceivedCloseEncounterStamped(CloseEncounterStamped close)
         {
             if (!encounterService.TryApplyRelease(close.SessionId, close.RoundId))
@@ -6093,19 +5519,13 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            // Paired with the rejection line above so the two are greppable together: a healthy
-            // session shows one applied line per round and no stale ones, and that distinction is
-            // the whole point of the stamp.
             logger.LogInfo($"[barrier] Applied release for round {close.RoundId} (session {close.SessionId}).");
 
             encounterService.Close();
             OnCloseEncounter();
         }
 
-        /// <summary>
-        /// Retained for peers on a build without union tag 70. Unstamped, so it cannot be attributed
-        /// to a round and carries every SE-5 hazard; nothing in this build sends it.
-        /// </summary>
+        /// <summary>Legacy, for builds without union tag 70. Unstamped (SE-5 hazard); this build never sends it.</summary>
         private void OnReceivedCloseEncounter(CloseEncounter close)
         {
             logger.LogWarning(
@@ -6118,39 +5538,21 @@ namespace MegabonkTogether.Services
 
         private void OnCloseEncounter()
         {
-            // Guarded: this runs from a network callback, so the UI can be mid-teardown (returning
-            // to the menu, changing stage). An NRE here used to abandon the release entirely,
-            // leaving every peer paused behind a barrier that had already been satisfied.
+            // Guarded: from a network callback the UI can be mid-teardown.
             var encounterWindows = UiManager.Instance == null ? null : UiManager.Instance.encounterWindows;
 
-            // OB-21, third version. Reaching here means a release for the round has been applied,
-            // so that round's reports, force flag and failsafe clock are all spent. They are cleared
-            // FIRST, before anything below can create state for the NEXT round.
-            //
-            // The second version cleared them AFTER the branch, and the 2026-10-08 run shows why
-            // that was wrong. The host's failsafe reaches here through ReleaseBarrier without the
-            // force flag set (the client's failsafe sets it; the host's never did). The re-entrant
-            // RewardFinished_Prefix therefore found the barrier not closable and, instead of
-            // closing the window, filed the host's report for the NEXT round and started its clock.
-            // The clear after the branch then wiped both. The host was left paused, window hidden,
-            // with no report and no clock: the client's report for round 48 was accepted twice with
-            // "closable: False", and the host's failsafe never fired again. A permanent stall.
+            // OB-21: clear the spent round FIRST; the branch below can create next-round state that
+            // a later clear would wipe (a permanent stall).
             encounterService.ClearClosedEncounters();
 
             if (encounterWindows != null && encounterWindows.encounterInProgress)
             {
-                // Forced for every caller, not just the ones that remembered to call Close() first,
-                // so the re-entrant RewardFinished_Prefix takes its IsClosable() branch and CLOSES
-                // this window rather than reporting a second time. This is what the client path has
-                // always done; the host failsafe path was the one that did not.
+                // Forced so the re-entrant RewardFinished_Prefix closes the window instead of reporting again.
                 encounterService.Close();
 
                 encounterWindows.RewardFinished();
 
-                // Never let the force flag outlive this release. If RewardFinished_Prefix took its
-                // queued-reward branch it returned before clearing anything, and a force flag left
-                // set makes the NEXT round's window close without reporting -- which is exactly the
-                // phase slip that was OB-21's original trigger.
+                // OB-21: the force flag must not outlive this release.
                 encounterService.Unclose();
             }
             else
@@ -6161,13 +5563,7 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>
-        /// Failsafe release for a barrier that will never complete on its own — the answer to
-        /// a player request to "add a 60 second failsafe that closes the menus for both players".
-        ///
-        /// <para>A client also re-sends its own <c>EncounterClosed</c>: the likeliest reason it is
-        /// still waiting is that the host never counted its report (a round-attribution mistake,
-        /// not packet loss — the channel is reliable), and re-reporting is what lets the host's
-        /// barrier complete for everyone else rather than only unsticking this peer.</para>
+        /// Failsafe release for a stuck barrier. A client also re-reports, since the likeliest cause is the host never counting its report.
         /// </summary>
         public void ForceCloseEncounter(string reason)
         {
@@ -6182,9 +5578,7 @@ namespace MegabonkTogether.Services
             {
                 if (isHost)
                 {
-                    // Stamped like any other release, so the peers that already applied this round
-                    // drop it instead of closing a window they have since opened — OB-4, which was
-                    // this failsafe firing and taking a live chest window with it.
+                    // Stamped (OB-4), so peers past this round drop it.
                     ReleaseBarrier();
                     return;
                 }
@@ -6231,10 +5625,7 @@ namespace MegabonkTogether.Services
             }
         }
 
-        /// <summary>
-        /// Set while a client applies the host's completion, so the ChargeShrine.Complete prefix lets
-        /// exactly that call through. Main thread only: both the prefix and this run there.
-        /// </summary>
+        /// <summary>Lets the ChargeShrine.Complete prefix pass the host's completion through. Main thread only.</summary>
         public static bool IsApplyingHostShrineCompletion { get; private set; }
 
         public void OnChargeShrineCompleted(ChargeShrine shrine)
@@ -6292,17 +5683,12 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            // Mirror the host's bar before completing, so ChargeShrine.Update takes its
-            // "already full" early return instead of carrying on charging behind the completion.
+            // Full bar, so ChargeShrine.Update stops charging.
             shrine.chargeProgress = 1f;
 
             if (IsServerMode() ?? false)
             {
-                // A client's bar filled first. The host accepts the earliest fill from anyone, so a
-                // player who fills a shrine and walks away is never left holding a full, unrewarded
-                // bar. Completing here runs the Complete postfix, which broadcasts the decision to
-                // every client, the requester included. Not inside SuppressOutbound: that broadcast
-                // is the point.
+                // A client filled first. Not suppressed: the Complete postfix broadcasts to everyone.
                 shrine.Complete();
                 logger.LogInfo($"OB-6: completed shrine {message.ShrineNetplayId} because a client's bar filled first.");
                 return;
@@ -6326,23 +5712,15 @@ namespace MegabonkTogether.Services
 
         private void OnReceivedChangeGold(GoldChanged changed)
         {
-            // SE-11: ignore our own gain coming back.
-            //
-            // Gold is shared as a DELTA (gains shared, losses local), and a delta
-            // applied twice is a permanent divergence, not the no-op it would be under an absolute
-            // value. The host excludes the sender when relaying, but that exclusion runs through
-            // SendToAllClientsExcept, whose relay branch falls back to an EMPTY filter list on a
-            // lookup miss — UNVERIFIED, and open work in its own right (`RelayEnvelope.ToFilters`).
-            // A cheap owner check makes the delta model safe regardless of how that resolves.
+            // SE-11: ignore our own delta echoed back; the relay's exclude filter may be empty
+            // (UNVERIFIED, RelayEnvelope.ToFilters). A doubled delta diverges permanently.
             var localPlayer = playerManagerService.GetLocalPlayer();
             if (localPlayer != null && changed.OwnerId == localPlayer.ConnectionId)
             {
                 return;
             }
 
-            // Runs from a network callback, and gold changes with every coin — an unguarded deref
-            // here during teardown or a stage change is a repeating NullReferenceException, which
-            // is what was reported alongside the freeze.
+            // Guarded: network callback during teardown or stage change.
             var inventory = GameManager.Instance == null || GameManager.Instance.player == null
                 ? null
                 : GameManager.Instance.player.inventory;

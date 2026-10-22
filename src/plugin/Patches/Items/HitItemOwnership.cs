@@ -5,45 +5,19 @@ using Assets.Scripts.Inventory__Items__Pickups.Stats;
 using Assets.Scripts.Inventory__Items__Pickups.Weapons;
 using Assets.Scripts.Inventory__Items__Pickups.Weapons.Projectiles;
 using HarmonyLib;
-using MegabonkTogether.Patches.Enemies;
-using MegabonkTogether.Services;
+using OmniBonk.Patches.Enemies;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using UnityEngine;
 
-namespace MegabonkTogether.Patches.Items
+namespace OmniBonk.Patches.Items
 {
     /// <summary>
-    /// OB-37. A hit's item effects come from the player who landed it, and only the host runs them.
-    ///
-    /// <para><b>What the game does</b> (decompiled, build 21750826). Both item hooks on a hit read
-    /// the <i>local</i> player's items, whoever owns the weapon:</para>
-    /// <list type="bullet">
-    /// <item><c>Enemy.DamageFromPlayerWeapon</c> (VA 0x1804AC700) and <c>DamageFromPlayerOther</c>
-    /// (0x1804AC650) call <c>Damage</c>, then <c>MyPlayer.Instance.inventory.itemInventory.PostDamage</c>.
-    /// <c>PostDamage</c> (0x180442BF0) runs every on-hit item in <i>that</i> inventory, repeated per
-    /// Overpowered Lamp (EItem 26).</item>
-    /// <item>Both <c>WeaponUtility.GetDamageContainer</c> overloads (0x180434A50, 0x180434FF0) run the
-    /// local player's <c>ItemInventory.PreAttack</c> (0x180442E90).</item>
-    /// </list>
-    ///
-    /// <para><b>What that did in netplay.</b> The host runs every player's weapons, so every teammate
-    /// hit got the host's pre-attack modifiers and the host's on-hit procs, credited to the teammate
-    /// (2026-10-19: the host's Big Bonk, Spicy Meatball, Ice Cube and Power Gloves replayed on Player2
-    /// as Player2's). A teammate's own on-hit items ran only where their machine happened to call
-    /// <c>PostDamage</c> itself: inside a replayed hit, through a damage listener such as Tony
-    /// McZoom's Zap passive (<c>PassiveAbilityZooma.OnEnemyDamage</c>, 0x1804800F0), which applied
-    /// client-only damage and forwarded the item hits.</para>
-    ///
-    /// <para><b>Now.</b> On the host, a hit the tracker attributes to a teammate runs that teammate's
-    /// <c>PostDamage</c> and <c>PreAttack</c> instead of the host's. A client skips <c>PostDamage</c>
-    /// entirely: it applies no hits of its own, the host applies them all, so the host is the one
-    /// place each hit's procs run. Without that the procs that already reached the host through a
-    /// client's forward would now run twice.</para>
-    ///
-    /// <para><b>Stats.</b> The items' numbers come from the teammate too: OB-38's GetStat postfix
-    /// covers the stats they read, and baseDamage is swapped around the redirected call. A hit the
-    /// host cannot attribute to anyone still runs the host's items, as before.</para>
-    ///
+    /// OB-37: a hit's item effects use the hitter's inventory, and only the host runs them.
+    /// <para>Decompiled: <c>DamageFromPlayerWeapon</c>/<c>Other</c> (VA 0x1804AC700, 0x1804AC650) call
+    /// the local player's <c>PostDamage</c> (0x180442BF0); <c>GetDamageContainer</c> (0x180434A50,
+    /// 0x180434FF0) runs the local <c>PreAttack</c> (0x180442E90). So the host's items ran on
+    /// teammates' hits. Clients skip <c>PostDamage</c> so procs run once, on the host.</para>
     /// <para><b>UNVERIFIED.</b> Not run in-game.</para>
     /// </summary>
     internal static class HitItemOwnership
@@ -62,8 +36,7 @@ namespace MegabonkTogether.Patches.Items
                 return null;
             }
 
-            // The weapon scope when one is open (GetDamageContainer, where PreAttack runs before
-            // any tracker scope exists), else the tracker. See TeammateCombatStats.
+            // Weapon scope if open (PreAttack runs before any tracker scope), else the tracker.
             var teammateId = TeammateCombatStats.CurrentTeammate();
             if (!teammateId.HasValue)
             {
@@ -118,14 +91,10 @@ namespace MegabonkTogether.Patches.Items
                 return true;
             }
 
-            // OB-38. Several on-hit items (Thunder, Cursed and Blood Mitts) scale by
-            // MyPlayer.baseDamage, a raw field no GetStat postfix can reach.
+            // OB-38: some items read MyPlayer.baseDamage, which no GetStat postfix reaches.
             var savedBaseDamage = TeammateCombatStats.EnterBaseDamage(owner);
 
-            // OB-43. Slutty Cannon, Power Gloves, Big Bonk, Lightning Orb and Blood Mitts start
-            // their effect from MyPlayer's transform. The position-request queue is what redirects
-            // that (and GameManager.GetPlayerInventory) to a teammate, as for their item ticks. It
-            // is a FIFO peeked at its front, so only push when nobody else is at the front.
+            // OB-43: some items start from MyPlayer's transform; the position-request FIFO redirects it.
             var pushedPosition = PositionRequest.Enter(owner);
             try
             {

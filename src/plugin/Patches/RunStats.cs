@@ -2,34 +2,16 @@ using Assets.Scripts.Actors;
 using Assets.Scripts.Actors.Enemies;
 using Assets.Scripts.Inventory__Items__Pickups.Items;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     /// <summary>
-    /// OB-14. Keeps a teammate's damage out of this player's end-of-run damage panel.
-    ///
-    /// <para><b>The defect.</b> RunStats.OnEnemyDamaged (VA 0x180411930, decompiled) is a static
-    /// handler on the global Enemy.A_Damage event. It looks the hit's damageSource up in a
-    /// per-source table and adds the damage -- that table is the panel. It runs for every hit
-    /// applied on this machine, and in netplay that includes the teammate's: hits replayed from
-    /// EnemyDamaged, and on the host the projectiles and auras it simulates for remote players. So
-    /// each player's panel listed the other's weapons and items at nearly their full totals, at
-    /// LVL 0 because the viewer does not own them. Confirmed from both end screens of the
-    /// 2026-10-11 run: Wireless Dagger at LVL 0 / 644.5K on the host against LVL 10 / 602.4K on the
-    /// client that owns it; Lightning Staff at LVL 0 / 1.1M on the client against LVL 8 / 1.2M on
-    /// the host that owns it.</para>
-    ///
-    /// <para><b>How the owner is known.</b> Every path that applies a teammate's hit already tells
-    /// the tracker whose hit it is, for kill credit: OnReceivedEnemyDamaged sets the attacker,
-    /// ProjectileBase.HitEnemy sets the weapon's owner on the host, and CombatAura now does the same.
-    /// This only reads it. A hit with no attribution is treated as ours, which is what it was
-    /// before, so a gap in attribution can only under-correct, never hide our own damage.</para>
-    ///
-    /// <para><b>Backstop.</b> The tracker is only scoped while the session is Started, so a second
-    /// test that needs no tracker drops a weapon or item source we lack and a teammate holds, in
-    /// every in-session state. See IsTeammatesSource.</para>
+    /// OB-14. Keeps a teammate's damage out of this player's damage panel. RunStats.OnEnemyDamaged
+    /// (VA 0x180411930, decompiled) records every hit applied on this machine, teammates' included.
+    /// <para>Owner comes from the tracker; unattributed hits count as ours. Backstop:
+    /// <see cref="IsTeammatesSource"/>.</para>
     /// </summary>
     [HarmonyPatch(typeof(Assets.Scripts.Saves___Serialization.Progression.Stats.RunStats))]
     internal static class RunStatsPatches
@@ -42,15 +24,13 @@ namespace MegabonkTogether.Patches
         [HarmonyPatch("OnEnemyDamaged")]
         public static bool OnEnemyDamaged_Prefix(Enemy enemy, DamageContainer dc)
         {
-            // Initialized, not Started: see IsTeammatesSource. Outside netplay there are no spawned
-            // teammates, so the ownership filter cannot drop anything there anyway.
+            // Initialized, not Started: see IsTeammatesSource. No ownership guard needed: the panel is local.
             if (!synchronizationService.HasNetplaySessionInitialized())
             {
                 return true;
             }
 
-            // The original throws on a null source (Dictionary.TryGetValue with a null key, seen at
-            // a run's end on 2026-10-21), so there is nothing to record and nothing lost.
+            // The original throws on a null source; skipping loses nothing.
             if (string.IsNullOrEmpty(dc?.damageSource))
             {
                 return false;
@@ -58,17 +38,13 @@ namespace MegabonkTogether.Patches
 
             uint? attacker = null;
 
-            // A replayed hit (OnReceivedEnemyDamaged) carries its attacker in the tracker in every
-            // state, so it is attributed even after the run has stopped being Started. At a run's
-            // end the teammates' inventories are already cleared, which left a teammate's Cactus
-            // hit with nobody to match and it landed as a LVL 0 row (2026-10-21, Player3).
+            // A replayed hit carries its attacker in every state, including after the run stops.
             var replaying = Plugin.Instance.CAN_DAMAGE_ENEMIES;
             if (synchronizationService.HasNetplaySessionStarted() || replaying)
             {
                 attacker = trackerService.GetCurrentPlayerId();
 
-                // Record only our own damage. Prefix-false is deliberate: the original does nothing
-                // but add to the panel's per-source table.
+                // Prefix-false is safe: the original only adds to the panel's table.
                 if (attacker.HasValue && !playerManagerService.IsLocalConnectionId(attacker.Value))
                 {
                     return false;
@@ -86,36 +62,10 @@ namespace MegabonkTogether.Patches
         }
 
         /// <summary>
-        /// OB-14, the LVL 0 rows themselves. True when <paramref name="source"/> names a weapon or
-        /// item the local player does not hold and a teammate does: a row the panel could only ever
-        /// show at LVL 0, for damage that cannot be ours.
-        ///
-        /// <para><b>Why this is exactly "LVL 0".</b> The panel's level is DamageSource.GetLevel
-        /// (VA 0x1804011E0, decompiled): Enum.TryParse the source as EWeapon, ignoring case, and
-        /// return the local WeaponInventory.GetWeaponLevel; failing that, as EItem and return
-        /// ItemInventory.GetAmount; anything else shows 1. Both getters (VA 0x180432B20 and
-        /// 0x1804427E0, decompiled) return 0 exactly when the key is not in the dictionary. This is
-        /// the same test in the same order, so it drops nothing the panel would show at a real
-        /// level.</para>
-        ///
-        /// <para><b>Outside Started.</b> The tracker filter above only holds while the session is
-        /// Started, because every patch that scopes the tracker is gated on that. The panel kept
-        /// recording through the other in-session states (Ready, LoadingNextLevel, Endgame), and the
-        /// old prefix let every hit through there, a teammate's included, without reaching the
-        /// diagnostic below. That is why the 2026-10-19 run's LVL 0 rows (host: Soul Harvester 945,
-        /// Black Hole 412, Aura 109; a client: Flamewalker 5,772, Soul Harvester 680) produced no
-        /// "OB-14: recording" line on any peer. This test needs no tracker, so it holds in every
-        /// state, and while Started it also catches a teammate hit the tracker left unattributed
-        /// (UNRESOLVED-WEAPON).</para>
-        ///
-        /// <para><b>Why a teammate must hold it.</b> Not holding the source is not enough on its
-        /// own: a game effect could carry the name of a weapon or item we lack, and dropping it
-        /// would hide real damage. Requiring a teammate who holds it means the row was theirs. A
-        /// source we both hold is left to the tracker; outside Started such a hit can still inflate
-        /// our row, but at our real level, not as a LVL 0 row.</para>
-        ///
-        /// <para>Cost: reached only by hits about to be recorded. A source we hold costs one native
-        /// ContainsKey; the teammate scan runs only for a source we do not hold.</para>
+        /// OB-14. True when <paramref name="source"/> is a weapon/item we lack and a teammate holds: a
+        /// row the panel would show at LVL 0. Mirrors DamageSource.GetLevel (VA 0x1804011E0,
+        /// decompiled). Needs no tracker, so it works outside Started. A teammate must hold it so a
+        /// game effect sharing the name is not dropped.
         /// </summary>
         private static bool IsTeammatesSource(string source)
         {
@@ -135,20 +85,14 @@ namespace MegabonkTogether.Patches
                 return false;
             }
 
-            // OB-47: a missing local inventory (during a level load, or with the player object gone)
-            // used to end the test here and let a teammate's row through as ours: the host's
-            // 2026-10-20 panel kept a LVL 0 Mirror (997) with no "kept" or "recording" line. Without
-            // a local inventory we cannot hold the source, so only the teammate check decides.
+            // OB-47: no local inventory means we cannot hold it; let the teammate check decide.
             var local = GameManager.Instance?.player?.inventory;
             if (local != null && Holds(local, parsed))
             {
                 return false;
             }
 
-            // The inventory store, not the spawned avatars: ResetForNextLevel clears the avatars at
-            // the portal, and a teammate's projectiles still in flight then landed with nobody to
-            // match. 2026-10-19: the host's panel kept a LVL 0 Wireless Dagger (24) from exactly
-            // that, logged right after "Cleared all player cards".
+            // Inventory store, not avatars: avatars are cleared at the portal while projectiles still fly.
             foreach (var inventory in playerManagerService.GetRemoteInventories())
             {
                 if (inventory == null || !Holds(inventory, parsed))
@@ -211,19 +155,8 @@ namespace MegabonkTogether.Patches
         private static readonly System.Collections.Generic.HashSet<string> checkedSources = [];
 
         /// <summary>
-        /// OB-14 diagnostic. The first time a source is about to be recorded as ours, checks that we
-        /// own a weapon or item of that name, and says which path recorded it if we do not.
-        ///
-        /// <para><b>Why.</b> On 2026-10-18 the client's panel listed the host's Aura (2,331) and
-        /// Chunkers (946) at LVL 0. Every path read offline attributes those hits to the host --
-        /// the host stamps <c>AttackerId</c> from the tracker, and the client replays with it -- so
-        /// whatever records them is a path not yet found. "Unattributed" means a hit applied here
-        /// with no tracker scope at all; "attributed to us" means something stamped our id on it.
-        /// <c>replaying</c> is true inside <c>OnReceivedEnemyDamaged</c>.</para>
-        ///
-        /// <para>Once per source per session, so it costs a set lookup per hit. Status effects
-        /// (Burn, Poison, ...) are not weapons or items and will be reported once each; that is
-        /// expected, not a leak.</para>
+        /// OB-14 diagnostic: logs once per source when we record damage from a source we do not own.
+        /// Status effects are reported too; that is expected.
         /// </summary>
         private static void ReportForeignSource(string source, uint? attacker)
         {
@@ -232,8 +165,7 @@ namespace MegabonkTogether.Patches
                 return;
             }
 
-            // Checked before the once-per-source mark, so a hit that arrives while the local
-            // inventory is missing does not use up the one log line for that source (OB-47).
+            // Before the once-per-source mark (OB-47).
             var inventory = GameManager.Instance?.player?.inventory;
             if (inventory == null)
             {

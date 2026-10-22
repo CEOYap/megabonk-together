@@ -1,9 +1,9 @@
 ﻿using Assets.Scripts.Actors.Enemies;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     [HarmonyPatch(typeof(TargetOfInterestPrefab))]
     internal static class TargetOfInterestPrefabPatches
@@ -11,9 +11,7 @@ namespace MegabonkTogether.Patches
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
         private static readonly IEnemyManagerService enemyManagerService = Plugin.Services.GetService<IEnemyManagerService>();
 
-        /// <summary>
-        /// Use custom enemy name for reviver enemies
-        /// </summary>
+        /// <summary>Custom name for reviver enemies.</summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(TargetOfInterestPrefab.SetEnemy))]
         public static void Update_Prefix(TargetOfInterestPrefab __instance, Enemy enemy)

@@ -1,10 +1,10 @@
 using Assets.Scripts.Actors.Enemies;
 using Assets.Scripts.Inventory.Stats;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches.Enemies
+namespace OmniBonk.Patches.Enemies
 {
     [HarmonyPatch(typeof(EnemyStats))]
     internal static class EnemyStatsPatches
@@ -12,9 +12,7 @@ namespace MegabonkTogether.Patches.Enemies
         private static readonly IGameBalanceService gameBalanceService = Plugin.Services.GetService<IGameBalanceService>();
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
 
-        /// <summary>
-        /// Adjust enemy HP based on netplay configuration
-        /// </summary>
+        /// <summary>Host scales enemy HP per lobby settings.</summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(EnemyStats.GetHp))]
         private static void GetHpPostfix(Enemy enemy, ref float __result)
@@ -35,12 +33,9 @@ namespace MegabonkTogether.Patches.Enemies
         }
 
         /// <summary>
-        /// Endless (Phase 4): enemy damage to players grows per boss loop. <c>GetDamage</c>
-        /// (VA 0x18041B290) feeds <c>DamageUtility.GetPlayerDamage</c> and the enemies' special
-        /// attacks (xrefs, decompiled), and a player takes damage on their own machine, so this runs
-        /// on every peer, unlike the host-only HP above. Every peer has the same loop count, since
-        /// every peer follows the host's route. No ownership check: each peer scales the damage its
-        /// own player takes. <b>UNVERIFIED, not run in-game.</b>
+        /// Endless: enemy damage grows per boss loop. <c>GetDamage</c> (VA 0x18041B290, decompiled) feeds
+        /// player damage, taken locally, so this runs on every peer with no ownership check.
+        /// <b>UNVERIFIED, not run in-game.</b>
         /// </summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(EnemyStats.GetDamage))]

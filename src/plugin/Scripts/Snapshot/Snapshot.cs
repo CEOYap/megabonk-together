@@ -1,8 +1,8 @@
-﻿using MegabonkTogether.Common.Messages;
+﻿using OmniBonk.Common.Messages;
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace MegabonkTogether.Scripts.Snapshot
+namespace OmniBonk.Scripts.Snapshot
 {
     public interface ISnapshot
     {

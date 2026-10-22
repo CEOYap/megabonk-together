@@ -2,28 +2,12 @@
 using System;
 using System.Threading;
 
-namespace MegabonkTogether.Services
+namespace OmniBonk.Services
 {
     /// <summary>
-    /// P1-5 follow-up. <see cref="TrackerService.currentPlayerId"/> is a single process-wide field
-    /// that decides who gets kill / money-flying / item-proc credit, and
-    /// <see cref="TrackerService.UnsetCurrentPlayerId"/> clears it unconditionally. The suspicion
-    /// is that nested or interleaved damage/death handling clobbers it, so a kill lands on the
-    /// wrong player — which would fit the "intermittent, worse under load" reports that P1-5
-    /// originally blamed on <c>DamageContainer</c> (that turned out to be write-only dead code).
-    ///
-    /// This is instrumentation, not a fix. It is designed to falsify the hypothesis as readily as
-    /// confirm it: if every counter stays at zero across a real session, the suspicion is wrong
-    /// and the P1-5 note should be struck.
-    ///
-    /// Counts rather than logs per event, following <c>TransformFallbackDiagnostics</c> — the rate
-    /// is the diagnosis. A handful per session means a rare interleave; hundreds means the pairing
-    /// is structurally broken.
-    ///
-    /// Deliberately uses <see cref="DateTime.UtcNow"/> rather than <c>Time.unscaledTime</c>:
-    /// <c>UdpClientService.Poll()</c> runs on a background task during connection setup as well as
-    /// from <c>NetworkHandler.Update()</c>, and a Unity API off the main thread throws. A
-    /// diagnostic must not be able to crash the thing it is measuring.
+    /// P1-5: instrumentation for whether nested damage/death handling clobbers the single
+    /// <see cref="TrackerService.currentPlayerId"/> credit field. Counts, not per-event logs.
+    /// Uses <see cref="DateTime.UtcNow"/>: may be called off the main thread.
     /// </summary>
     internal static class TrackerAttributionDiagnostics
     {
@@ -39,66 +23,29 @@ namespace MegabonkTogether.Services
         private static int redundantSet;
 
         /// <summary>
-        /// Unset() with nothing set. CONFIRMED in a 3-player session: 0 on the host, up to 1042 per
-        /// 5s on clients. `ProjectileBase.HitEnemy_Postfix` unsets unconditionally while its prefix
-        /// only sets when host AND the weapon maps to a remote netplayer — and Harmony runs the
-        /// postfix even when the prefix returns false, which it does for clients. Harmless in
-        /// itself: nothing was pending to lose.
+        /// Unset() with nothing set. Harmless; common on clients because Harmony runs the postfix
+        /// even when the prefix returns false.
         /// </summary>
         private static int unsetWhileClear;
 
         /// <summary>
-        /// <b>The one that actually misattributes.</b> An Unset() that clears a live attribution
-        /// it did not set — i.e. depth would go negative. That takes someone else's credit away
-        /// mid-flight, and because EnemyDied_Prefix reads a null owner as "mine", the credit is
-        /// then awarded to whoever is running the code rather than merely lost.
-        ///
-        /// <para>The first version of this class did not count this at all. It only counted
-        /// <see cref="unsetWhileClear"/> — the harmless direction — so the 3-player run could rule
-        /// out a race and an overwrite but could not rule this out. Depth tracking fixes that.</para>
+        /// The one that misattributes: an Unset() clearing an attribution it did not set (depth &lt; 0).
+        /// EnemyDied_Prefix then reads null as "mine".
         /// </summary>
         private static int unbalancedUnset;
 
-        /// <summary>
-        /// Nesting depth: incremented on Set, decremented on Unset. A decrement that would take it
-        /// below zero is an <see cref="unbalancedUnset"/>.
-        /// </summary>
         private static int setDepth;
 
         private static int crossThreadCalls;
 
-        /// <summary>
-        /// OB-14. Hits whose weapon could not be resolved to any spawned peer.
-        ///
-        /// <para><b>Why this is not covered by the counters above.</b> They count set/unset
-        /// <i>pairing</i> anomalies. A lookup that returns null <b>sets nothing at all</b>, so it is
-        /// not an anomaly by that definition and is invisible to every one of them — the 2026-08-17
-        /// host log reported zero anomalies while the damage panel was demonstrably crediting the
-        /// host with a teammate's weapons. The diagnostic was measuring the wrong half.</para>
-        ///
-        /// <para><b>Split deliberately.</b> A hit on a weapon nobody owns and a hit correctly
-        /// attributed are both "no id set", and only the first is a defect. Counting them together
-        /// would reproduce the same blindness one level up.</para>
-        /// </summary>
+        /// <summary>OB-14: hits whose weapon resolved to no peer. Invisible to the pairing counters above.</summary>
         private static int unresolvedWeaponHits;
 
-        /// <summary>OB-14. Hits where the weapon resolved to a peer, for the ratio.</summary>
+        /// <summary>OB-14: for the ratio.</summary>
         private static int resolvedWeaponHits;
 
         /// <summary>
-        /// OB-14. Called from <c>ProjectileBasePatches.HitEnemy_Prefix</c> on the host, once per
-        /// hit, saying whether <c>GetNetPlayerByWeapon</c> found an owner.
-        ///
-        /// <para><b>The ratio is the answer, not the count.</b> "The lookup never matches" and "it
-        /// matches for most weapons and fails for a class of them" want different fixes: the first
-        /// points at the lookup itself, the second at a parent/child mismatch of the kind
-        /// <c>RocketPatches</c> already documents, where the fix is to key on the <c>ownerId</c>
-        /// written into <c>DynamicData</c> at spawn.</para>
-        ///
-        /// <para><b>A null lookup is not automatically wrong.</b> The local player's own weapon
-        /// resolves to no <i>net</i> player, and leaving the tracker alone is correct there. What
-        /// the ratio shows is whether the unresolved share is plausibly "the host's own shots" or
-        /// far larger than that.</para>
+        /// OB-14: host, once per hit. Read the ratio: the host's own weapons legitimately resolve to no net player.
         /// </summary>
         internal static void RecordWeaponOwnerLookup(bool resolved)
         {
@@ -112,22 +59,15 @@ namespace MegabonkTogether.Services
             }
         }
 
-        /// <summary>
-        /// OB-41. Of the unresolved hits, the ones from the host's own weapons. Those are expected,
-        /// and mixing them into the count is why "read the share, not the count" was needed.
-        /// </summary>
+        /// <summary>OB-41: unresolved hits from the host's own weapons (expected).</summary>
         private static int ownWeaponHits;
 
         private static int loggedUnknownSamples;
 
-        /// <summary>
-        /// OB-41. A projectile hit whose weapon nobody holds, neither the host nor any teammate's
-        /// inventory: it runs with the host's stats and items. The first few per session are
-        /// described, so the next run names the projectile kinds that cause it.
-        /// </summary>
+        /// <summary>OB-41.</summary>
         internal static void RecordOwnWeaponHit() => Interlocked.Increment(ref ownWeaponHits);
 
-        /// <summary>True for the first few unknown hits per session; read names only when it is.</summary>
+        /// <summary>True for the first few unknown hits per session.</summary>
         internal static bool TakeUnknownSample() => Interlocked.Increment(ref loggedUnknownSamples) <= 5;
 
         internal static void LogUnknownWeaponHit(string projectileType, bool weaponNull, string weaponName)
@@ -171,8 +111,6 @@ namespace MegabonkTogether.Services
                 Interlocked.Increment(ref unsetWhileClear);
             }
 
-            // An unset that takes depth negative is one that never had a matching set. If an
-            // attribution was live at the time, that unset just destroyed it.
             if (Interlocked.Decrement(ref setDepth) < 0)
             {
                 Interlocked.Exchange(ref setDepth, 0);
@@ -186,10 +124,6 @@ namespace MegabonkTogether.Services
             MaybeReport();
         }
 
-        /// <summary>
-        /// Records whether these calls ever arrive on more than one thread. If they do, the field is
-        /// racing regardless of nesting and that is a different bug with the same symptom.
-        /// </summary>
         private static void NoteThread()
         {
             var id = Thread.CurrentThread.ManagedThreadId;
@@ -211,7 +145,6 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            // Only the thread that wins this swap reports, so concurrent hits cannot double-log.
             if (Interlocked.CompareExchange(ref lastReportTicks, nowTicks, last) != last)
             {
                 return;
@@ -248,7 +181,6 @@ namespace MegabonkTogether.Services
                 "See P1-5 in docs/netplay/01-critical-fixes.md and OB-14 in 08-observed-bugs.md.");
         }
 
-        /// <summary>Clears counters and the throttle so each session starts from zero.</summary>
         internal static void Reset()
         {
             Interlocked.Exchange(ref lastReportTicks, 0);
@@ -309,14 +241,6 @@ namespace MegabonkTogether.Services
 
         public void RegisterTrack()
         {
-            // NOTE: the first version of this class counted RegisterTrack-with-no-owner here as an
-            // anomaly. It is not one. On the host, killing an enemy with your own weapon leaves
-            // currentPlayerId null by design — HitEnemy_Prefix only sets an owner when the weapon
-            // maps to a *remote* netplayer — so a null owner is the normal "I killed it" path, and
-            // EnemyDied_Prefix reading null as "mine" is correct there. The 3-player run showed
-            // 2-11 per 5s on the host and 0 on clients, which is just the host's own kill rate.
-            // Counter removed rather than relabelled: it measured nothing actionable.
-
             uint moneyFlying = 1;
             uint kill = 1;
             uint itemProcs = 0;

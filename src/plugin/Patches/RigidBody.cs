@@ -1,19 +1,16 @@
 ﻿using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using UnityEngine;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     [HarmonyPatch(typeof(Rigidbody))]
     internal class RigidBodyPatches
     {
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
-        /// <summary>
-        /// Rigidbody.get_position is used in SpawnPositions.GetEnemySpawnPosition
-        /// This is used for spawning enemys closer to a netplayer
-        /// </summary>
+        /// <summary>Redirects get_position (used by enemy spawn positioning) so enemies can spawn near a remote player.</summary>
         [HarmonyPostfix]
         [HarmonyPatch("get_position")]
         public static void Get_position_PostFix(ref Vector3 __result, Transform __instance)

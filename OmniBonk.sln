@@ -3,13 +3,13 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 18
 VisualStudioVersion = 18.1.11304.174
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MegabonkTogether.Plugin", "src\plugin\MegabonkTogether.Plugin.csproj", "{8833E850-5231-428F-8719-1309B3E354FF}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OmniBonk.Plugin", "src\plugin\OmniBonk.Plugin.csproj", "{8833E850-5231-428F-8719-1309B3E354FF}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{02EA681E-C7D8-13C7-8484-4AC65E1B71E8}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MegabonkTogether.Server", "src\server\MegabonkTogether.Server.csproj", "{D62E48C7-173F-4BFD-B345-C16EA9CF1358}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OmniBonk.Server", "src\server\OmniBonk.Server.csproj", "{D62E48C7-173F-4BFD-B345-C16EA9CF1358}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MegabonkTogether.Common", "src\common\MegabonkTogether.Common.csproj", "{EA8063BE-3F1F-457F-86AF-D2F3EA98C426}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OmniBonk.Common", "src\common\OmniBonk.Common.csproj", "{EA8063BE-3F1F-457F-86AF-D2F3EA98C426}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

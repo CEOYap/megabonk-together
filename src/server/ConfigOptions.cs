@@ -1,4 +1,4 @@
-﻿namespace MegabonkTogether.Server
+﻿namespace OmniBonk.Server
 {
     public class ConfigOptions
     {

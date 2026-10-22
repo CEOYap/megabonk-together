@@ -1,19 +1,16 @@
 ﻿using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using UnityEngine;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     [HarmonyPatch(typeof(PickupOrb))]
     internal static class PickupOrbPatches
     {
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
 
-        /// <summary>
-        /// When pickup collide wiht ground, only the server is allowed to process it
-        /// </summary>
-        /// <returns></returns>
+        /// <summary>Only the host processes a pickup orb hitting the ground.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(PickupOrb.OnCollisionEnter))]
         public static bool OnCollisionEnter_Prefix()
@@ -33,11 +30,7 @@ namespace MegabonkTogether.Patches
         }
 
 
-        /// <summary>
-        /// Nothing to by the server here since it will spawn a new pickup ,which is already handled.
-        /// We can safely destroy the pickup orb on client
-        /// </summary>
-        /// <param name="__instance"></param>
+        /// <summary>Client destroys the orb; the host's resulting pickup spawn is replicated separately.</summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(PickupOrb.OnCollisionEnter))]
         public static void OnCollisionEnter_Postfix(PickupOrb __instance)

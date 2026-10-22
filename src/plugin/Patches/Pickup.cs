@@ -1,11 +1,11 @@
 ﻿using Assets.Scripts.Inventory__Items__Pickups.Pickups;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using MonoMod.Utils;
 using UnityEngine;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     [HarmonyPatch(typeof(Pickup))]
     internal static class PickupPatches
@@ -14,10 +14,7 @@ namespace MegabonkTogether.Patches
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
         private static readonly IPickupManagerService pickupManagerService = Plugin.Services.GetService<IPickupManagerService>();
 
-        /// <summary>
-        /// Apply pickup if owned by local player unless pickup is time or magnet or if it's xp and shared experience is enabled
-        /// Ignore on remote on non shared experience
-        /// </summary>
+        /// <summary>Applies only pickups the local player owns (time/magnet and shared XP excepted).</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(Pickup.ApplyPickup))]
         public static bool ApplyPickup_Prefix(Pickup __instance, ref bool? __state)
@@ -52,10 +49,7 @@ namespace MegabonkTogether.Patches
         }
 
 
-        /// <summary>
-        /// Send pickup applied event so other clients can acknowledge pickup consumption unless if it was ignored or from remote
-        /// </summary>
-        /// <param name="__instance"></param>
+        /// <summary>Broadcasts a locally applied pickup.</summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(Pickup.ApplyPickup))]
         public static void ApplyPickup_Postfix(Pickup __instance, bool? __state)
@@ -87,11 +81,7 @@ namespace MegabonkTogether.Patches
             synchronizationService.OnPickupApplied(__instance);
         }
 
-        /// <summary>
-        /// Start following the player if the pickup is owned 
-        /// If not ask the server to start following
-        /// Skip if we have a request (Example when interacting with a pot)
-        /// </summary>
+        /// <summary>Follows if owned, else asks the host; skipped while a request is pending (e.g. a pot).</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(Pickup.StartFollowingPlayer))]
         public static bool StartFollowingPlayer_Prefix(Pickup __instance, ref Transform target)

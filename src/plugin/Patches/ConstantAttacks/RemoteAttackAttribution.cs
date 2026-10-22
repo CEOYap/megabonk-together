@@ -1,27 +1,15 @@
 using Assets.Scripts.Game.Combat.ConstantAttacks;
 using Assets.Scripts.Inventory__Items__Pickups.Weapons;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches.ConstantAttacks
+namespace OmniBonk.Patches.ConstantAttacks
 {
     /// <summary>
-    /// OB-14. Tells the tracker whose attack is hitting, for the attacks the host runs on behalf of
-    /// a teammate's avatar, so the end-screen damage panel (RunStatsPatches) and kill credit
-    /// (Enemy.EnemyDied_Prefix) go to the right player.
-    ///
-    /// <para><b>Why per attack, not per hit.</b> Every weapon hit is built by
-    /// WeaponUtility.GetDamageContainer(WeaponBase, ...) -- 33 callers, these four among them -- but
-    /// the game caches ONE DamageContainer in static fields and recycles it per hit, so anything
-    /// attached to the hit object is overwritten by the next hit. That is why the earlier
-    /// GetDamageContainer postfix was removed (P1-5). Scoping the owner to the attack's own call,
-    /// set in a prefix and cleared in a finalizer, is the same shape ProjectileBase.HitEnemy and
-    /// CombatAura.FixedUpdate already use, and nests correctly.</para>
-    ///
-    /// <para><b>Host only.</b> A client blocks its own Enemy.Damage outside replays, so its copies
-    /// of a teammate's attacks never record anything. A local attack resolves to no NetPlayer and is
-    /// left alone, so it stays attributed to us.</para>
+    /// OB-14: scopes the tracker to the teammate whose attack the host is running, for damage panel
+    /// and kill credit. Per attack (prefix/finalizer), not per hit: the game recycles one static
+    /// DamageContainer (P1-5). Host only; local attacks are left alone.
     /// </summary>
     internal static class RemoteAttackAttribution
     {

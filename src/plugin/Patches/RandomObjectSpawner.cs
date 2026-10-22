@@ -1,20 +1,18 @@
 using Assets.Scripts.Game.MapGeneration;
 using HarmonyLib;
-using MegabonkTogether.Helpers;
-using MegabonkTogether.Services;
+using OmniBonk.Helpers;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using MonoMod.Utils;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     [HarmonyPatch(typeof(RandomObjectPlacer))]
     internal class RandomObjectPlacerPatches
     {
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
 
-        /// <summary>
-        /// Skip object spawning on clients
-        /// </summary>
+        /// <summary>Skip object spawning on clients.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(RandomObjectPlacer.RandomObjectSpawner))]
         public static bool RandomObjectSpawner_Prefix(RandomObjectPlacer __instance)
@@ -34,9 +32,7 @@ namespace MegabonkTogether.Patches
 
         }
 
-        /// <summary>
-        /// Send spawned objects to clients
-        /// </summary>
+        /// <summary>Send spawned objects to clients.</summary>
 
         [HarmonyPostfix]
         [HarmonyPatch(nameof(RandomObjectPlacer.RandomObjectSpawner))]
@@ -79,11 +75,7 @@ namespace MegabonkTogether.Patches
         }
 
         /// <summary>
-        /// A spawned copy of <paramref name="prefab"/>: its own name, or Unity's "Name(Clone)" and
-        /// "Name (n)". A bare prefix also matched other objects whose names merely start the same:
-        /// <c>ChargeShrineFinishFx</c>, a charge shrine's finishing effect, was sent as a spawned
-        /// <c>ChargeShrine</c>, and no client has a prefab by that name (2026-10-21: four per Ghost
-        /// King room, each retried until given up).
+        /// Exact name, "Name(Clone)" or "Name (n)". Not a bare prefix: that matched e.g. <c>ChargeShrineFinishFx</c>.
         /// </summary>
         private static bool IsCopyOf(string name, string prefab)
             => name == prefab

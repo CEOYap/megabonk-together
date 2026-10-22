@@ -5,28 +5,17 @@ using Assets.Scripts.Inventory.Stats;
 using Assets.Scripts.Inventory__Items__Pickups.Stats;
 using Assets.Scripts.Menu.Shop;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     /// <summary>
-    /// OB-26. The shared world — enemy HP, speed, knockback resistance, spawn count and spawn rate —
-    /// follows the team's mean Difficulty instead of the host's alone.
-    ///
-    /// <para><b>Why a scope, not a global substitution.</b> <c>EnemyStats.GetDamage</c> also reads
-    /// Difficulty, on the victim's own machine, and must keep that player's own value: a cursed
-    /// player still pays personally. So the team value is handed only to the nine readers below,
-    /// each found by decompiling all 128 callers of <c>PlayerStats.GetStat</c>
-    /// (<c>docs/netplay/16-session-handover.md</c>).</para>
-    ///
-    /// <para><b>Why the substitution sits on <c>PlayerStatsNew.GetStat</c>.</b> Decompiled at VA
-    /// <c>0x18042B6A0</c>, <c>PlayerStats.GetStat</c> is a direct forward to the local player's
-    /// <c>PlayerStatsNew.GetStat</c>, which the mod already detours. Patching the static one would
-    /// put a second native-to-managed trampoline on the game's hottest stat path.</para>
-    ///
-    /// <para>A depth counter rather than a flag: a scoped reader may call another, and the inner
-    /// finalizer must not close the outer scope. Finalizers, not postfixes, so a throw cannot leave the scope open.</para>
+    /// OB-26. Enemy HP, speed, knockback resistance and spawns follow the team's mean Difficulty.
+    /// <para>Scoped to nine decompiled readers only: <c>EnemyStats.GetDamage</c> must keep the victim's
+    /// own value. Substituted in <c>PlayerStatsNew.GetStat</c>, which <c>PlayerStats.GetStat</c>
+    /// forwards to (VA 0x18042B6A0), to avoid a second trampoline on the hottest stat path.</para>
+    /// <para>Depth counter, since scopes nest; finalizers, so a throw cannot leave a scope open.</para>
     /// </summary>
     internal static class TeamDifficulty
     {
@@ -117,13 +106,8 @@ namespace MegabonkTogether.Patches
     [HarmonyPatch(typeof(CombatScaling))]
     internal static class CombatScalingTeamDifficultyPatches
     {
-        // GetHpMultiplierAddition is deliberately NOT hooked. It takes three `out float`
-        // parameters, and with a prefix and finalizer on it the native-to-managed trampoline threw
-        // a NullReferenceException on every call before reaching our code (2,659 on the host,
-        // 2026-10-18). The game then got 0 back, so every enemy the host spawned lost its time,
-        // swarm and stage HP scaling: the final boss had 52K HP on the host against 5.0M on the
-        // client. Its only decompiled caller, EnemyStats.GetHp, is already a scope below, so the
-        // team Difficulty still reaches it there.
+        // GetHpMultiplierAddition must NOT be hooked: with three `out float` params the trampoline
+        // throws on every call and the game gets 0 (enemies lose HP scaling). Its caller, EnemyStats.GetHp, is scoped below.
 
         [HarmonyPrefix]
         [HarmonyPatch(nameof(CombatScaling.GetStageHpMultiplier))]

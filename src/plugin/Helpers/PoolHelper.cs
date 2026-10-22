@@ -5,7 +5,7 @@ using System.Linq;
 using System.Reflection;
 using UnityEngine;
 
-namespace MegabonkTogether.Helpers
+namespace OmniBonk.Helpers
 {
     /// <summary>
     /// A projectile done has to return to a pool that should have been created by the game.

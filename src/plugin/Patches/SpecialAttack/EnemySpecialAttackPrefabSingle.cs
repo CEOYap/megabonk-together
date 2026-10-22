@@ -1,10 +1,10 @@
 ﻿using Assets.Scripts.Game.Combat.EnemySpecialAttacks.Implementations;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using MonoMod.Utils;
 
-namespace MegabonkTogether.Patches.SpecialAttack
+namespace OmniBonk.Patches.SpecialAttack
 {
     [HarmonyPatch(typeof(EnemySpecialAttackPrefabSingle))]
     internal static class EnemySpecialAttackPrefabSinglePatches
@@ -12,9 +12,7 @@ namespace MegabonkTogether.Patches.SpecialAttack
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
 
-        /// <summary>
-        /// Intercept projectile to target the correct player instead of the orignal function targeting always the local player.
-        /// </summary>
+        /// <summary>Targets the enemy's actual target; the original always targets the local player.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(EnemySpecialAttackPrefabSingle.Init))]
         public static void Init_Prefix(EnemySpecialAttackPrefabSingle __instance, out bool __state)
@@ -34,9 +32,6 @@ namespace MegabonkTogether.Patches.SpecialAttack
             }
         }
 
-        /// <summary>
-        /// Remove queued request after attack is over.
-        /// </summary>
         [HarmonyFinalizer]
         [HarmonyPatch(nameof(EnemySpecialAttackPrefabSingle.Init))]
         public static void Init_Finalizer(bool __state)

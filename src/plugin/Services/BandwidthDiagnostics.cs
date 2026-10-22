@@ -1,47 +1,22 @@
-﻿using MegabonkTogether.Configuration;
+﻿using OmniBonk.Configuration;
 using System;
 using System.Collections.Concurrent;
 using System.Linq;
 using System.Threading;
 using UnityEngine;
 
-namespace MegabonkTogether.Services
+namespace OmniBonk.Services
 {
     /// <summary>
-    /// Per-message-type byte counters and a latency/loss readout — the Phase 0 exit criteria in
-    /// <c>docs/steamworks/00-migration-plan.md</c>, which asks for a baseline recorded at 2/4/6
-    /// players "so the migration can be measured rather than asserted".
-    ///
-    /// <para><b>Why per message type and not just a total.</b> A total tells you the mod is
-    /// expensive; it does not tell you which stream to attack, and after the migration it cannot
-    /// tell you whether a regression came from the transport or from a message that changed. The
-    /// per-type split is also what makes Steam's connection lanes worth configuring — lanes need to
-    /// know which classes of message are actually competing.</para>
-    ///
-    /// <para><b>Counted at the wire, not at the call.</b> <see cref="Record"/> takes the serialized
-    /// payload size and the number of recipients it was actually sent to, because a 40 Hz host
-    /// broadcast costs its payload once per peer. Counting the call rather than the fan-out would
-    /// under-report the host by a factor of five at six players — which is exactly the population
-    /// this baseline exists to size. The figure is still payload only: it excludes LiteNetLib
-    /// headers, the relay envelope's own framing, and UDP/IP overhead, so treat it as a floor and a
-    /// comparison basis, not an absolute bandwidth number.</para>
-    ///
-    /// <para><b>Cost when off.</b> <see cref="Record"/> returns on a static bool read before it
-    /// touches anything, and the flag is refreshed once per report window rather than read from
-    /// config per send. Off is the default, and off should be indistinguishable from absent — this
-    /// sits on the send path, which <c>bepinex</c>'s "never log in a hot path" rule governs.</para>
-    ///
+    /// Per-message-type byte counters and a latency/loss readout. Counts payload times recipients
+    /// (payload only, no transport overhead). Near-free when off: <see cref="Record"/> checks a static bool first.
     /// <para><b>UNVERIFIED:</b> that the recorder's own cost is negligible at six players with a
-    /// full swarm. It is a dictionary lookup plus two interlocked adds per send, which should be far
-    /// below the serialization it follows, but that has not been measured in game — which is the
-    /// same trap this file exists to avoid, so it is worth watching the first time it is switched
-    /// on.</para>
+    /// full swarm.</para>
     /// </summary>
     internal static class BandwidthDiagnostics
     {
         private const float REPORT_INTERVAL_SECONDS = Tunables.DIAGNOSTIC_REPORT_INTERVAL_SECONDS;
 
-        /// <summary>How many message types to name in a report, worst-first.</summary>
         private const int TOP_N = 8;
 
         private sealed class Counter
@@ -50,24 +25,18 @@ namespace MegabonkTogether.Services
             public long Sends;
         }
 
-        // Sends happen from the Unity main thread (NetworkHandler.Update) and from the LiteNetLib
-        // receive path, so this is written concurrently.
+        // Written from the main thread and the LiteNetLib receive path.
         private static readonly ConcurrentDictionary<string, Counter> counters = new();
 
         private static volatile bool enabled;
 
-        // The host's EnemyDamaged aggregation (EnemyDamageAggregator): hits summed into the
-        // messages actually sent. Kept apart from the per-type counters because a hit is not a send.
+        // Host EnemyDamaged aggregation (hits vs messages sent).
         private static long aggregatedHits;
         private static long aggregatedMessages;
         private static float lastReportTime = -999f;
         private static bool primed;
 
-        /// <summary>
-        /// One send, already serialized. <paramref name="recipients"/> is the number of peers the
-        /// payload actually went to — 0 is legitimate (a host with no peers yet) and is recorded as
-        /// a send of zero bytes so the call still shows up.
-        /// </summary>
+        /// <summary><paramref name="recipients"/> may be 0 (still counted as a send).</summary>
         internal static void Record(string messageType, int payloadBytes, int recipients)
         {
             if (!enabled)
@@ -81,10 +50,6 @@ namespace MegabonkTogether.Services
             Interlocked.Increment(ref counter.Sends);
         }
 
-        /// <summary>
-        /// One aggregated <c>EnemyDamaged</c> sent by the host, carrying <paramref name="hits"/>
-        /// summed hits. Reported as the hits-per-message ratio under the per-type lines.
-        /// </summary>
         internal static void RecordEnemyDamageAggregated(int hits)
         {
             if (!enabled)
@@ -96,21 +61,14 @@ namespace MegabonkTogether.Services
             Interlocked.Increment(ref aggregatedMessages);
         }
 
-        /// <summary>Called once per frame from the network tick, same shape as the allocation sampler.</summary>
-        /// <summary>
-        /// Takes the seam, not the LiteNetLib implementation. It used to take IUdpClientService, so
-        /// on a Steam session it asked a transport that was never started and every peer's rtt read
-        /// -1 - the same defect that had SynchronizationService sending gameplay to the wrong
-        /// transport, in the one place left holding the concrete type.
-        /// </summary>
+        /// <summary>Once per frame. Takes <see cref="INetTransport"/>, never the LiteNetLib type, so Steam sessions work.</summary>
         internal static void Sample(bool configEnabled, INetTransport udpClientService, IPlayerManagerService playerManagerService)
         {
             if (!configEnabled)
             {
                 if (enabled)
                 {
-                    // Turned off mid-session: stop recording and drop what was collected, so a later
-                    // re-enable does not report a window that spans the gap.
+                    // Turned off mid-session: drop the partial window.
                     enabled = false;
                     counters.Clear();
                     ClearAggregation();
@@ -145,9 +103,7 @@ namespace MegabonkTogether.Services
 
         private static void Report(float elapsed, INetTransport udpClientService, IPlayerManagerService playerManagerService)
         {
-            // Snapshot and reset per window. Reads and the zeroing are not atomic together, so a send
-            // landing mid-report can be counted in either window — acceptable for a rate estimate,
-            // and cheaper than locking the send path.
+            // Not atomic as a whole; a mid-report send may land in either window. Acceptable.
             var snapshot = counters
                 .Select(kv => (Type: kv.Key, Bytes: Interlocked.Exchange(ref kv.Value.Bytes, 0), Sends: Interlocked.Exchange(ref kv.Value.Sends, 0)))
                 .Where(x => x.Sends > 0)
@@ -166,8 +122,7 @@ namespace MegabonkTogether.Services
                 $"[bw] {totalBytes / 1024f / elapsed:F1} KB/s payload out over {elapsed:F1}s at {players} player(s). " +
                 "Payload only - excludes LiteNetLib, relay-envelope and UDP/IP overhead.");
 
-            // Alignment specifiers ({x,8:F2}) do not compile against BepInEx's interpolated-string
-            // log handler, so the columns are padded by hand.
+            // Padded by hand: alignment specifiers do not compile with BepInEx's log handler.
             foreach (var entry in snapshot.Take(TOP_N))
             {
                 var name = entry.Type.PadRight(32);
@@ -192,11 +147,7 @@ namespace MegabonkTogether.Services
             ReportLinkQuality(udpClientService, playerManagerService);
         }
 
-        /// <summary>
-        /// Host only, and only once a hit has been summed: hits in, messages out, and the ratio.
-        /// The ratio is the measure of the OB-34 aggregation — 1.0 means it saved nothing, and at
-        /// late-game damage it should read well above that.
-        /// </summary>
+        /// <summary>OB-34: hits per message; 1.0 means aggregation saved nothing.</summary>
         private static void ReportAggregation(float elapsed)
         {
             var hits = Interlocked.Exchange(ref aggregatedHits, 0);
@@ -220,12 +171,6 @@ namespace MegabonkTogether.Services
             Interlocked.Exchange(ref aggregatedMessages, 0);
         }
 
-        /// <summary>
-        /// Latency and loss per peer, in whatever terms the live transport can answer — see
-        /// <see cref="INetTransport.DescribeLink"/>. On Steam that includes the measured delivery
-        /// ratio and the reliable backlog, which is what makes a run under simulated loss readable
-        /// rather than merely survivable.
-        /// </summary>
         private static void ReportLinkQuality(INetTransport udpClientService, IPlayerManagerService playerManagerService)
         {
             foreach (var player in playerManagerService.GetAllPlayers())
@@ -241,14 +186,11 @@ namespace MegabonkTogether.Services
                 }
                 catch (Exception ex)
                 {
-                    // A peer that left between the snapshot and here is not worth failing a report
-                    // over, and this runs inside the network tick.
                     Plugin.Log.LogWarning($"[bw] Could not read link quality for {player.ConnectionId}: {ex.Message}");
                 }
             }
         }
 
-        /// <summary>Re-primes so a new session's first window is not measured against the old one.</summary>
         internal static void Reset()
         {
             primed = false;

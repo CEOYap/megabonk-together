@@ -1,50 +1,25 @@
-using MegabonkTogether.Common;
+using OmniBonk.Common;
 using Steamworks;
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
-namespace MegabonkTogether.Services
+namespace OmniBonk.Services
 {
     /// <summary>
     /// Steam lobbies, polled rather than called back.
-    ///
-    /// <para><b>Why no <c>CallResult&lt;LobbyCreated_t&gt;</c>.</b> IL2CPP is ahead-of-time
-    /// compiled, so a generic exists only for the type arguments the game itself used.
-    /// <c>CallResult&lt;T&gt;</c> is compiled for the three leaderboard types and
-    /// <c>Callback&lt;T&gt;</c> for three overlay/persona/stats types; no lobby type has a concrete
-    /// instantiation. So the asynchronous result is retrieved with
-    /// <c>SteamUtils.IsAPICallCompleted</c> and <c>GetAPICallResult</c>, which are not generic and
-    /// take an <c>IntPtr</c> — meaning the result lands in a buffer <b>we</b> allocate and read at
-    /// offsets taken from <c>dump.cs</c>. No <c>ValueType</c>-derived proxy is involved, which is
-    /// the specific thing that crashed Phase 2.</para>
-    ///
-    /// <para><b>There is a race here, and it is the main risk in this class.</b> The game pumps
-    /// <c>CallbackDispatcher.RunFrame</c> every frame, which drains the process's single
-    /// manual-dispatch pipe — including the <c>SteamAPICallCompleted_t</c> raised for <i>our</i>
-    /// call — and frees each message. Whoever reaches the result first gets it. One run created and
-    /// read back a lobby successfully; the next reported the call complete with its failure flag
-    /// set, which is what a consumed handle looks like.</para>
-    ///
-    /// <para>Mitigated by polling every frame while a call is in flight, from a ticker whose
-    /// GameObject is created in <c>Plugin.Load</c> and therefore updates before the game's own
-    /// <c>SteamManager</c>. <b>That narrows the window rather than closing it</b> — Unity does not
-    /// guarantee ordering between two default-priority scripts. If
-    /// <c>k_ESteamAPICallFailureInvalidHandle</c> keeps appearing, the fix is not a faster poll but
-    /// a private pipe: direct P/Invoke, or a <c>CallResult</c> injected into the game's own
-    /// dispatcher.</para>
+    /// <para>IL2CPP has no <c>CallResult&lt;T&gt;</c> instantiation for lobby types, so results are read
+    /// via <c>GetAPICallResult</c> into our own buffer at <c>dump.cs</c> offsets (no ValueType proxy,
+    /// which crashed before).</para>
+    /// <para>Race: the game's <c>CallbackDispatcher.RunFrame</c> can consume our result first
+    /// (shows as <c>InvalidHandle</c>). Per-frame polling narrows but does not close the window.</para>
     /// </summary>
     internal class SteamLobbyService : ISteamLobbyService
     {
         #region Callback struct layouts
 
-        // From megabonk-re/build-21750826/dump.cs. Steam packs its callback structs to 8 on x64,
-        // and these sizes are the packed sizes, not the sum of the fields.
-        //
+        // From dump.cs; sizes are pack(8) sizes. A wrong size fails silently in GetAPICallResult.
         //   LobbyCreated_t   k_iCallback 513   m_eResult @0x0 (int), m_ulSteamIDLobby @0x8 (ulong)
-        //
-        // Read with Marshal at those offsets. Getting a size wrong is not a compile error and not
-        // an exception — GetAPICallResult simply refuses, or fills the wrong number of bytes.
         private const int LobbyCreatedCallbackId = 513;
         private const int LobbyCreatedSize = 16;
         private const int LobbyCreatedResultOffset = 0;
@@ -60,9 +35,7 @@ namespace MegabonkTogether.Services
         private const int LobbyEnterResponseOffset = 16;
 
         //   LobbyMatchList_t k_iCallback 510   m_nLobbiesMatching @0x0 (uint)
-        //
-        // Four bytes, not eight. Steam's pack(8) caps alignment, it does not pad a struct up to
-        // it, and cubCallback has to be the size Steam actually wrote.
+        // Four bytes, not eight: pack(8) caps alignment, it does not pad.
         private const int LobbyMatchListCallbackId = 510;
         private const int LobbyMatchListSize = 4;
         private const int LobbyMatchListCountOffset = 0;
@@ -72,7 +45,6 @@ namespace MegabonkTogether.Services
 
         #endregion
 
-        /// <summary>Which result the in-flight call will produce.</summary>
         private enum PendingCall
         {
             None,
@@ -83,13 +55,7 @@ namespace MegabonkTogether.Services
             List,
         }
 
-        /// <summary>
-        /// How long to wait for an in-flight call before giving up on it.
-        ///
-        /// <para>Generous on purpose. A Steam call normally resolves in well under a second, so a
-        /// timeout here is not slowness — it is the "the game's pump consumed our result" case,
-        /// and the log line that reports it is the finding.</para>
-        /// </summary>
+        /// <summary>Generous: a timeout here means the game's pump consumed our result, not slowness.</summary>
         private const float PendingCallTimeoutSeconds = 15f;
 
         private readonly ISteamService steamService;
@@ -99,12 +65,7 @@ namespace MegabonkTogether.Services
         private SteamAPICall_t pendingCall;
         private PendingCall pendingCallKind = PendingCall.None;
 
-        /// <summary>
-        /// Registered with the game's dispatcher for the duration of a call, so the result is
-        /// delivered rather than raced for. Held in a field because unregistering needs the same
-        /// instance, and because letting it be collected while the dispatcher holds a reference
-        /// would be a use-after-free on the native side.
-        /// </summary>
+        /// <summary>Held in a field: unregister needs the same instance, and collection would be a native use-after-free.</summary>
         private SteamCallResult pendingCallResult;
         private bool hasPendingCall;
         private float pendingCallElapsedSeconds;
@@ -112,23 +73,14 @@ namespace MegabonkTogether.Services
 
         private string lastError = "";
 
-        /// <summary>The code the in-flight search is looking for, held so the result can say so.</summary>
         private string pendingJoinCode = "";
 
-        /// <summary>Whether the in-flight search should join what it finds.</summary>
         private bool joinAfterSearch;
 
-        /// <summary>
-        /// Restored when a search-only completes. A search does not change lobby membership, so it
-        /// must not leave <see cref="State"/> saying it did.
-        /// </summary>
+        /// <summary>Restored after a search: a search does not change membership.</summary>
         private SteamLobbyState stateBeforeSearch = SteamLobbyState.None;
 
-        /// <summary>
-        /// Codes avoid characters that are misread when spoken or retyped: no O against 0, no I or
-        /// l against 1. Thirty-two symbols over six places is about a billion codes, which is
-        /// ample for a game where a lobby lives for minutes.
-        /// </summary>
+        /// <summary>No O/0 or I/l/1 lookalikes.</summary>
         private const string CodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
         private const int CodeLength = 6;
 
@@ -154,10 +106,7 @@ namespace MegabonkTogether.Services
         {
             this.steamService = steamService;
 
-            // Read once, here, rather than polled: the command line cannot change while the process
-            // runs, and this is pure .NET with no Steam involved, so it is safe long before Steam
-            // is up. Nothing acts on it yet — the lobby flow is still the WebSocket matchmaker's —
-            // but it is logged so an invite-launch is visible in a log we are sent.
+            // Pure .NET, safe before Steam is up. Only logged for now.
             LaunchLobbyId = Helpers.LaunchArguments.GetConnectLobbyId();
             if (LaunchLobbyId != 0UL)
             {
@@ -185,20 +134,13 @@ namespace MegabonkTogether.Services
 
             try
             {
-                // Public, which is a real change from the WebSocket matchmaker and worth being
-                // explicit about. RequestLobbyList only returns public lobbies to a non-friend, so
-                // a code that strangers can use requires one. The code is what keeps a lobby
-                // private in practice — the same model as today, where the six characters are the
-                // only thing standing between a stranger and your session — but the lobby itself
-                // is now enumerable by anyone who asks Steam for this app's list.
+                // Public: RequestLobbyList only returns public lobbies to non-friends. The code is the access control.
                 pendingCall = SteamMatchmaking.CreateLobby(ELobbyType.k_ELobbyTypePublic, maxMembers);
                 pendingCallKind = PendingCall.Create;
                 hasPendingCall = true;
                 RegisterPendingCallResult();
 
-                // Both, not just the elapsed count. lastPollTime survives from any previous call,
-                // and leaving it set would make this call's first poll add every second since that
-                // one — timing the new call out immediately.
+                // Reset both, or a stale lastPollTime times the new call out immediately.
                 pendingCallElapsedSeconds = 0f;
                 lastPollTime = 0f;
 
@@ -258,20 +200,9 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>
-        /// Leaves a lobby this peer is still a member of before it creates or joins another one.
-        ///
-        /// <para><b>The bug.</b> Reported 2026-10-19 on the Steam transport: A hosts, B joins fine;
-        /// A leaves and hosts again, and B cannot join until B restarts the game, either way round.
-        /// When the host leaves a Steam lobby, the other member stays in it and Steam hands them
-        /// ownership; nothing here reacted to that, so B stayed <c>InLobby</c> in a lobby with no
-        /// host. B's session could end without passing through <c>ResetNetworking</c> (the one path
-        /// that leaves the lobby), and <c>INetplaySessionService.Cancel</c> returns before leaving
-        /// once the session is <c>Idle</c>. Every later create or join then failed on "Refusing to
-        /// ... while InLobby" until a restart cleared the state.</para>
-        ///
-        /// <para>Leaving is always right here: the mod has no host migration, so a lobby we are asked
-        /// to replace is one we are done with. A call already in flight is left alone and still
-        /// refused by the caller.</para>
+        /// Leaves a leftover lobby before creating or joining another. A client can be left InLobby
+        /// after the host leaves, which blocked every later join until restart. No host migration,
+        /// so leaving is always right.
         /// </summary>
         private void LeaveStaleLobby(string why)
         {
@@ -286,9 +217,7 @@ namespace MegabonkTogether.Services
 
         public void LeaveLobby()
         {
-            // Dropped whether or not there is a lobby yet: leaving while a create is still in
-            // flight would otherwise leave the call pending, and its result would arrive later and
-            // put us back InLobby with a lobby nobody asked for.
+            // Always, or an in-flight create would later put us back InLobby.
             ClearPending();
 
             if (LobbyId == 0UL)
@@ -319,13 +248,8 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>
-        /// Registers a <see cref="SteamCallResult"/> for the call now in flight, so the game's own
-        /// callback pump hands us the result instead of consuming it.
-        ///
-        /// <para>Failure here is not fatal and is not treated as such: the poll in <see cref="Poll"/>
-        /// remains, and between them whichever arrives first wins. That redundancy is deliberate
-        /// while the injected type is unproven — if registration silently never dispatches, the
-        /// behaviour is exactly what it was before this existed rather than worse.</para>
+        /// So the game's pump hands us the result instead of consuming it. Non-fatal on failure:
+        /// <see cref="Poll"/> remains as the fallback, first arrival wins.
         /// </summary>
         private void RegisterPendingCallResult()
         {
@@ -343,16 +267,10 @@ namespace MegabonkTogether.Services
             }
         }
 
-        /// <summary>
-        /// The dispatcher delivering our result, from inside the game's own <c>Update</c>.
-        ///
-        /// <para><c>result</c> is the dispatcher's buffer and is freed as soon as this returns, so
-        /// it is read here and not kept.</para>
-        /// </summary>
+        /// <summary><c>result</c> is freed when this returns; do not keep it.</summary>
         private void OnResultDelivered(IntPtr result, bool failed)
         {
-            // The poll may have got there first on a lucky frame. Whoever is second finds nothing
-            // pending and does nothing, rather than applying the same result twice.
+            // The poll may have won already.
             if (!hasPendingCall)
             {
                 return;
@@ -362,9 +280,6 @@ namespace MegabonkTogether.Services
             ApplyResult(pendingCallKind, result, failed);
         }
 
-        /// <summary>
-        /// The one place a completed call is turned into state, whichever path delivered it.
-        /// </summary>
         private void ApplyResult(PendingCall kind, IntPtr result, bool failed)
         {
             ClearPending();
@@ -395,7 +310,6 @@ namespace MegabonkTogether.Services
             }
         }
 
-        /// <summary>Result size and callback id for each kind, kept next to the layouts above.</summary>
         private static (int Size, int CallbackId) ResultShapeFor(PendingCall kind) =>
             kind switch
             {
@@ -414,8 +328,6 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            // Measured against unscaled real time rather than accumulated from a delta, so a
-            // timeout means fifteen seconds of wall clock however often Poll is driven.
             var now = UnityEngine.Time.unscaledTime;
             pendingCallElapsedSeconds += lastPollTime == 0f ? 0f : now - lastPollTime;
             lastPollTime = now;
@@ -456,16 +368,7 @@ namespace MegabonkTogether.Services
             ReadPolledResult();
         }
 
-        /// <summary>
-        /// The fallback path: fetch the result ourselves, for the case where the dispatcher never
-        /// delivered it.
-        ///
-        /// <para>Kept alongside the registered <see cref="SteamCallResult"/> rather than replaced by
-        /// it. If registration works this rarely runs; if the injected type silently never
-        /// dispatches, this is still the mechanism and the behaviour is what it was before. The one
-        /// thing it cannot do is beat the game's pump, which is the whole reason the registration
-        /// exists.</para>
-        /// </summary>
+        /// <summary>Fallback when the registered <see cref="SteamCallResult"/> never dispatches.</summary>
         private void ReadPolledResult()
         {
             var kind = pendingCallKind;
@@ -509,15 +412,7 @@ namespace MegabonkTogether.Services
             }
         }
 
-        /// <summary>
-        /// Reads <c>LobbyCreated_t</c> out of a buffer we own.
-        ///
-        /// <para>The point of doing it this way is that nothing here crosses the interop boundary
-        /// as a struct: <c>GetAPICallResult</c> takes an <c>IntPtr</c> and a byte count, Steam
-        /// writes native memory, and the fields come back out with <c>Marshal</c> at offsets from
-        /// the dump. Phase 2 crashed reading a field off a <c>ValueType</c>-derived proxy that Steam
-        /// had filled through an <c>out</c> parameter; this shape cannot fail that way.</para>
-        /// </summary>
+        /// <summary>Raw Marshal reads, never a ValueType proxy (that crashed in Phase 2).</summary>
         private void ApplyLobbyCreated(IntPtr buffer)
         {
             var result = (EResult)Marshal.ReadInt32(buffer, LobbyCreatedResultOffset);
@@ -541,14 +436,8 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>
-        /// Reads <c>LobbyEnter_t</c>, then applies the protocol gate.
-        ///
-        /// <para><b>The version is checked after entering, not before, and that is not a
-        /// compromise.</b> Lobby metadata is only readable once you are a member — before that
-        /// there is nothing to read except through the lobby list, which the browser filters
-        /// separately. Entering and leaving again costs a round trip and no state, and it is the
-        /// only way to gate a lobby reached by id or by an invite that never went through a
-        /// filtered list.</para>
+        /// Checks the protocol after entering: metadata is only readable by members, and lobbies
+        /// reached by id or invite never passed the list filter.
         /// </summary>
         private void ApplyLobbyEnter(IntPtr buffer)
         {
@@ -569,9 +458,7 @@ namespace MegabonkTogether.Services
             var published = GetLobbyData(Protocol.VersionKey);
             if (!Protocol.IsCompatible(published))
             {
-                // Left immediately rather than tolerated. A version mismatch is exactly the
-                // silent-corruption case the constant exists to prevent, and an empty value
-                // means a build from before the gate existed — refused on purpose.
+                // Mismatch silently corrupts sessions; empty means a pre-gate build, also refused.
                 var describe = string.IsNullOrEmpty(published) ? "no version" : $"version '{published}'";
                 LeaveLobby();
                 Fail(
@@ -590,8 +477,7 @@ namespace MegabonkTogether.Services
 
         public void JoinByCode(string code)
         {
-            // The caller (WatchSteamJoin) already treats "in the lobby with this code" as joined, so
-            // any lobby we are still in here is a different, stale one.
+            // Any other lobby we are in here is stale.
             if (!string.Equals(LobbyCode, code, StringComparison.OrdinalIgnoreCase))
             {
                 LeaveStaleLobby($"joining room {code}");
@@ -613,9 +499,7 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            // Searches on the matchmaker's room code rather than the Steam lobby's own. A client
-            // that joined by typing a room code never saw a Steam lobby id, and this is how it
-            // finds the one standing for the session it is already in.
+            // Finds the Steam lobby for a session joined by matchmaker room code.
             StartSearch(SteamLobbyKeys.MatchmakerCode, code, joinWhenFound: true);
         }
 
@@ -646,18 +530,12 @@ namespace MegabonkTogether.Services
 
             try
             {
-                // Both filters, not just the code. Filtering the browser by protocol version is
-                // P1-3 in its final form: a mismatched build never appears in the results, so it is
-                // refused before a connection is attempted rather than after. The entry check in
-                // ReadLobbyEnterResult still stands, because a lobby reached by id or by an invite
-                // never passed through here.
+                // P1-3: filter by protocol so mismatched builds never appear. The entry check still applies.
                 SteamMatchmaking.AddRequestLobbyListStringFilter(
                     Protocol.VersionKey, Protocol.Version.ToString(), ELobbyComparison.k_ELobbyComparisonEqual);
                 SteamMatchmaking.AddRequestLobbyListStringFilter(
                     key, normalised, ELobbyComparison.k_ELobbyComparisonEqual);
 
-                // A code identifies one lobby. Asking for more results would be asking Steam to do
-                // work whose answer we would throw away.
                 SteamMatchmaking.AddRequestLobbyListResultCountFilter(1);
 
                 pendingCall = SteamMatchmaking.RequestLobbyList();
@@ -672,8 +550,7 @@ namespace MegabonkTogether.Services
                 SearchState = SteamLobbySearchState.Searching;
                 FoundLobbyId = 0UL;
 
-                // Remembered rather than assumed None: a search-only can run from inside a lobby,
-                // and it must give membership back exactly as it found it.
+                // A search-only can run from inside a lobby.
                 stateBeforeSearch = State;
                 State = SteamLobbyState.Pending;
                 lastError = "";
@@ -697,10 +574,7 @@ namespace MegabonkTogether.Services
 
             try
             {
-                // Steam's own invite dialog, so the friend list, the invite and the accept flow are
-                // all Valve's. Nothing comes back to us here: accepting produces a
-                // GameLobbyJoinRequested_t on the invitee's machine, which this install cannot
-                // receive, or a +connect_lobby launch argument if their game was closed.
+                // GameLobbyJoinRequested_t cannot be received here; only +connect_lobby comes back.
                 SteamFriends.ActivateGameOverlayInviteDialog(new CSteamID(LobbyId));
             }
             catch (Exception ex)
@@ -709,9 +583,6 @@ namespace MegabonkTogether.Services
             }
         }
 
-        /// <summary>
-        /// Reads <c>LobbyMatchList_t</c> and joins the single lobby it should contain.
-        /// </summary>
         private void ApplyLobbyMatchList(IntPtr buffer)
         {
             var code = pendingJoinCode;
@@ -725,15 +596,11 @@ namespace MegabonkTogether.Services
 
                 if (!joinAfterSearch)
                 {
-                    // Not a failure on the search-only path: "nothing matched" is a result.
                     Plugin.Log.LogInfo($"[steam-lobby] No lobby matched code {code}.");
                     return;
                 }
 
-                // One message for both causes on purpose. A player cannot tell "no such lobby"
-                // from "that lobby is a different mod version", and neither can we — the version
-                // filter is applied by Steam, so a mismatched lobby is simply absent from the
-                // results rather than reported as incompatible.
+                // Steam's version filter makes a mismatched lobby indistinguishable from a missing one.
                 Fail(
                     $"No lobby found with code {code}. Either nobody is hosting it, or the host "
                     + "is running a different version of the mod.");
@@ -765,10 +632,7 @@ namespace MegabonkTogether.Services
             JoinLobby(lobbyId);
         }
 
-        /// <summary>
-        /// Writes everything a joiner needs to find and vet this lobby. Host only — Steam refuses
-        /// lobby-level writes from anyone but the owner, so this silently does nothing elsewhere.
-        /// </summary>
+        /// <summary>Host only; Steam ignores lobby writes from non-owners.</summary>
         private void PublishHostData()
         {
             LobbyCode = GenerateCode();
@@ -780,12 +644,7 @@ namespace MegabonkTogether.Services
             PublishConnectString();
         }
 
-        /// <summary>
-        /// Sets, or clears, the rich-presence string that puts <b>Join Game</b> next to our name on
-        /// a friend's list. Steam looks for the literal key "connect" and hands its value back to
-        /// the friend's game as a launch argument, which is the half of invites this install can
-        /// actually receive.
-        /// </summary>
+        /// <summary>Rich-presence "connect" key: gives friends a Join Game that launches with its value.</summary>
         private void PublishConnectString()
         {
             try
@@ -800,14 +659,7 @@ namespace MegabonkTogether.Services
             }
         }
 
-        /// <summary>
-        /// Asks Steam why the in-flight call's result is unusable, and says what that means here.
-        ///
-        /// <para>The distinction that matters is <c>InvalidHandle</c>. It means the handle no
-        /// longer exists — which is what "the game's callback pump retrieved and freed our result
-        /// before we polled for it" looks like from this side. Anything else is an ordinary
-        /// failure and says nothing about the polling approach.</para>
-        /// </summary>
+        /// <summary><c>InvalidHandle</c> means the game's pump consumed our result first.</summary>
         private string DescribeCallFailure()
         {
             ESteamAPICallFailure reason;
@@ -837,12 +689,7 @@ namespace MegabonkTogether.Services
         private static string NormaliseCode(string code) =>
             string.IsNullOrWhiteSpace(code) ? "" : code.Trim().ToUpperInvariant();
 
-        /// <summary>
-        /// A code drawn from a cryptographic source rather than <c>System.Random</c>. Not because a
-        /// lobby code is a secret worth attacking, but because a predictable one lets anybody walk
-        /// the space and drop into strangers' games, and the whole reason the lobby is public is
-        /// that the code is the only thing keeping them out.
-        /// </summary>
+        /// <summary>Cryptographic RNG: the lobby is public, so a predictable code would let strangers in.</summary>
         private static string GenerateCode()
         {
             var bytes = new byte[CodeLength];
@@ -902,8 +749,6 @@ namespace MegabonkTogether.Services
 
             try
             {
-                // Returns void: Steam cannot refuse a member writing its own row, which is the
-                // property that makes host authority over readiness a platform guarantee later.
                 SteamMatchmaking.SetLobbyMemberData(new CSteamID(LobbyId), key, value);
                 return true;
             }
@@ -934,28 +779,12 @@ namespace MegabonkTogether.Services
 
         public IReadOnlyList<ulong> GetMembers() => members;
 
-        /// <summary>
-        /// Rebuilds the member list. At most six entries and only on a lobby change, so it is
-        /// rebuilt rather than diffed — the same call this project makes everywhere else at this
-        /// scale.
-        /// </summary>
         private const float MEMBER_REFRESH_INTERVAL_SECONDS = 1f;
         private float lastMemberRefresh = -999f;
 
         /// <summary>
-        /// OB-22. Keeps the cached member list current while in a lobby.
-        ///
-        /// <para>RefreshMembers used to run only from ApplyLobbyCreated and ApplyLobbyEnter. A
-        /// member who joined AFTER this peer created or entered the lobby was therefore never in
-        /// the list, so ResolveSteamIds could not map their connection id to a Steam account, their
-        /// row got SteamId 0, and TryGetAvatar returned nothing without logging. That is exactly the
-        /// reported asymmetry: the host creates the lobby alone and never learns about the client,
-        /// while the client enters a lobby the host is already in and sees both.</para>
-        ///
-        /// <para>Polled rather than driven by LobbyChatUpdate_t on purpose. That is a broadcast
-        /// callback, and whether Callback&lt;T&gt; works through the game's interop is an open
-        /// question this service has avoided. GetNumLobbyMembers reads Steam's own local lobby
-        /// cache, which Steam keeps current regardless, so once a second costs nothing.</para>
+        /// OB-22: picks up members who join later (host never saw the client's avatar). Polled, not
+        /// LobbyChatUpdate_t, since Callback&lt;T&gt; via interop is unproven; reads a local cache.
         /// </summary>
         private void RefreshMembersIfDue()
         {
@@ -981,9 +810,7 @@ namespace MegabonkTogether.Services
                 Plugin.Log.LogInfo($"[steam-lobby] Member list now has {members.Count} member(s) (was {before}).");
             }
 
-            // The signature of the host leaving: Steam passes ownership to a remaining member. The
-            // mod has no host migration, so this lobby is dead from here; LeaveStaleLobby releases it
-            // on the next create or join.
+            // Owner change means the host left; LeaveStaleLobby releases it on the next create/join.
             if (ownerBefore != 0UL && OwnerSteamId != ownerBefore)
             {
                 Plugin.Log.LogInfo($"[steam-lobby] Lobby {LobbyId} owner changed {ownerBefore} -> {OwnerSteamId} (now ours: {IsOwner}); the host left.");
@@ -1028,8 +855,7 @@ namespace MegabonkTogether.Services
 
         private void ClearPending()
         {
-            // Unregistered before anything else: the dispatcher holds this instance, and a result
-            // arriving for a call we have finished with would re-enter a cleared state machine.
+            // Unregister first, or a late result re-enters a cleared state machine.
             if (pendingCallResult != null)
             {
                 try

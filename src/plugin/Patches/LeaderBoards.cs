@@ -1,38 +1,18 @@
 ﻿using Assets.Scripts.Steam;
 using HarmonyLib;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     /// <summary>
-    /// Blocks leaderboard score uploads **unconditionally** while this mod is loaded — netplay
-    /// session or not. Uploading a score from a modded game risks a ban, and the risk does not
-    /// depend on whether a multiplayer session happens to be running.
-    ///
-    /// Verified against buildid 21750826 (see docs/reverse-engineering/01-investigation-targets.md):
-    ///
-    /// - A prefix here is SUFFICIENT. Leaderboards.UploadScore is the only external caller of
-    ///   SteamLeaderboardsManagerNew.QueueLeaderboardUpload, which merely enqueues onto a
-    ///   Queue&lt;T&gt; drained later by CheckUploadQueue. Blocking entry means nothing is ever
-    ///   queued.
-    /// - A prefix is also NECESSARY rather than optional. UploadScore itself calls
-    ///   LeaderboardsNew_Sus.CheckMods and probes ~10 directory paths, but that check gates only
-    ///   ONE of its three QueueLeaderboardUpload calls — the other two run unconditionally. So
-    ///   the game's own mod detection does not protect a modded run; only this patch does.
-    ///
-    /// **Why unconditional rather than netplay-only.** That same CheckMods routine detects the
-    /// mod by probing directories on disk, so a solo run with this mod installed is just as
-    /// detectable as a netplay one. Gating on HasNetplaySessionInitialized() would leave every
-    /// singleplayer score exposed. The player's route to a legitimate leaderboard entry is to
-    /// remove or disable the mod.
-    ///
-    /// Achievements and stats are deliberately NOT suppressed — see NETPLAY_CHANGES.md.
+    /// Blocks leaderboard uploads <b>unconditionally</b> (no netplay guard on purpose): a modded
+    /// score risks a ban, and the game detects the mod on disk even in singleplayer.
+    /// <para>Verified on buildid 21750826: <c>UploadScore</c> is the only caller of
+    /// <c>QueueLeaderboardUpload</c>, and the game's own <c>CheckMods</c> gates only one of its
+    /// three upload calls. Achievements and stats are deliberately not suppressed.</para>
     /// </summary>
     [HarmonyPatch(typeof(Leaderboards))]
     internal static class LeaderBoardsPatches
     {
-        /// <summary>
-        /// Prevents the original leaderboard score upload whenever the mod is loaded.
-        /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(Leaderboards.UploadScore))]
         public static bool UploadScore_Prefix()

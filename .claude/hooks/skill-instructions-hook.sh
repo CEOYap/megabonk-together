@@ -7,7 +7,7 @@ REQUIRED: SKILL LOADING PROTOCOL
 Before writing any code, complete these steps in order:
 
 1. SCAN each skill below and decide: LOAD or SKIP (with brief reason)
-   - csharp             (MegabonkTogether conventions: DI services, naming, file layout)
+   - csharp             (OmniBonk conventions: DI services, naming, file layout)
    - il2cpp             (Il2CppInterop: ClassInjector, Il2CppSystem types, delegates, casting)
    - harmony            (patching Megabonk's Assembly-CSharp)
    - bepinex            (BasePlugin lifecycle, ModConfig, logging)

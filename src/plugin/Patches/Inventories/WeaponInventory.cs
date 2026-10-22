@@ -3,11 +3,11 @@ using Assets.Scripts.Managers;
 using Assets.Scripts.Inventory__Items__Pickups.Weapons;
 using HarmonyLib;
 using Il2CppSystem.Collections.Generic;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using System.Linq;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     [HarmonyPatch(typeof(WeaponInventory))]
     public static class WeaponInventoryPatches
@@ -15,15 +15,10 @@ namespace MegabonkTogether.Patches
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
 
-        /// <summary>
-        /// OB-19. Latched so one bad add reports once rather than once per weapon returned — the
-        /// final boss hands several back at a time and a per-add line would bury the answer.
-        /// </summary>
+        /// <summary>OB-19: report once per session.</summary>
         private static bool hasReportedForeignInventory = false;
 
-        /// <summary>
-        /// Synchronizes weapon additions in netplay
-        /// </summary>
+        /// <summary>Synchronizes weapon additions in netplay</summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(WeaponInventory.AddWeapon))]
         public static void AddWeapon_Post(WeaponInventory __instance, WeaponData weaponData, List<StatModifier> upgradeOffer)
@@ -38,31 +33,15 @@ namespace MegabonkTogether.Patches
                 return;
             }
 
-            // OB-19, diagnostic only -- this does NOT change behaviour yet, deliberately.
-            //
-            // The message this postfix sends is stamped OwnerId = local player, whatever inventory
-            // __instance actually is, and remote players hold real WeaponInventory objects on this
-            // machine. So an add on somebody else's inventory would be broadcast as though the local
-            // player had gained that weapon. The hole is proven by reading OnWeaponAdded; what is
-            // not proven is that anything ever reaches here with a foreign inventory.
-            //
-            // The final-boss weapon return is the reported case, so play to it: a single line below
-            // joins the hole to the symptom, and its absence says the cause is elsewhere and an
-            // ownership check would have been a fix for nothing.
+            // OB-19, diagnostic only: the send is stamped with the local owner even for a remote
+            // player's inventory. Logs if that ever happens; behaviour unchanged.
             ReportIfForeignInventory(__instance);
 
             synchronizationService.OnWeaponAdded(__instance, weaponData, upgradeOffer);
 
         }
 
-        /// <summary>
-        /// OB-19. Says whether this add was on an inventory that is not the local player's.
-        ///
-        /// <para><b>Compares references, not types.</b> Both the local and a replicated inventory are
-        /// <c>WeaponInventory</c>, so only identity distinguishes them. Il2CppInterop proxies compare
-        /// by the underlying native pointer, which is what makes this meaningful at all — and the
-        /// reason it does not use <c>is</c> or <c>as</c>, which test the managed wrapper.</para>
-        /// </summary>
+        /// <summary>OB-19. Compares by native pointer identity; <c>is</c>/<c>as</c> test the managed wrapper.</summary>
         private static void ReportIfForeignInventory(WeaponInventory instance)
         {
             if (hasReportedForeignInventory || instance == null)
@@ -73,8 +52,7 @@ namespace MegabonkTogether.Patches
             var localInventory = GameManager.Instance?.player?.inventory?.weaponInventory;
             if (localInventory == null)
             {
-                // Cannot tell, so claim nothing. A missing local inventory is its own oddity but not
-                // evidence either way about this one.
+                // Cannot tell; claim nothing.
                 return;
             }
 
@@ -98,15 +76,13 @@ namespace MegabonkTogether.Patches
                 "session. See OB-19 in docs/netplay/08-observed-bugs.md.");
         }
 
-        /// <summary>OB-19. Re-arms the one-shot report so each session can produce its own.</summary>
+        /// <summary>OB-19.</summary>
         public static void ResetForeignInventoryReport()
         {
             hasReportedForeignInventory = false;
         }
 
-        /// <summary>
-        /// Prevent weapons tick on client (Server side only)
-        /// </summary>
+        /// <summary>Prevent weapons tick on client (Server side only)</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(WeaponInventory.Tick))]
         public static bool Tick_Prefix(WeaponInventory __instance)
@@ -126,9 +102,7 @@ namespace MegabonkTogether.Patches
             return true;
         }
 
-        /// <summary>
-        /// Synchronizes weapon toggles
-        /// </summary>
+        /// <summary>Synchronizes weapon toggles</summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(WeaponInventory.ToggleWeapon))]
         public static void ToggleWeapon_Postfix(WeaponInventory __instance, EWeapon eWeapon, bool enable)

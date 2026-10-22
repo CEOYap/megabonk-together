@@ -66,11 +66,11 @@ jobs:
 
       - name: Restore Server
         if: env.SKIP == 'false'
-        run: dotnet restore src/server/MegabonkTogether.Server.csproj
+        run: dotnet restore src/server/OmniBonk.Server.csproj
 
       - name: Publish Server (Windows x64)
         if: env.SKIP == 'false'
-        run: dotnet publish src/server/MegabonkTogether.Server.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true -o publish/server
+        run: dotnet publish src/server/OmniBonk.Server.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true -o publish/server
 
       - name: Create zip of Server
         if: env.SKIP == 'false'

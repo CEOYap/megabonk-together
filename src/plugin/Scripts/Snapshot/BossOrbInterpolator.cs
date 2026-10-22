@@ -1,7 +1,7 @@
 ﻿using System.Collections.Generic;
 using UnityEngine;
 
-namespace MegabonkTogether.Scripts.Snapshot
+namespace OmniBonk.Scripts.Snapshot
 {
     internal class BossOrbInterpolator : MonoBehaviour
     {
@@ -31,10 +31,7 @@ namespace MegabonkTogether.Scripts.Snapshot
 
         public void AddSnapshot(BossOrbSnapshot snapshot)
         {
-            // Same ordering guard as EnemyInterpolator. These streams are unreliable, so a late
-            // packet can arrive after a newer one, and the pair scan and the front-pruning below
-            // both assume the buffer is sorted by timestamp. Out of order the interpolator walks
-            // backwards and the remote object visibly snaps back.
+            // Unreliable stream: keep the buffer sorted by timestamp, or the object snaps back.
             if (snapshotsBuffer.Count > 0
                 && snapshot.Timestamp <= snapshotsBuffer[snapshotsBuffer.Count - 1].Timestamp)
             {

@@ -1,15 +1,13 @@
 ﻿using Assets.Scripts.Managers;
 using HarmonyLib;
-using MegabonkTogether.Helpers;
-using MegabonkTogether.Services;
+using OmniBonk.Helpers;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using MonoMod.Utils;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
-    /// <summary> 
-    /// Used on Tiled Map 
-    /// </summary>
+    /// <summary>Used on Tiled Map</summary>
     [HarmonyPatch(typeof(GenerateTileObjects))]
     internal class GenerateTileObjectsPatches
     {
@@ -18,7 +16,6 @@ namespace MegabonkTogether.Patches
         /// <summary>
         /// Add boss spawner prefabs and also specific prefab like coffin in graveyard (Spawned by server message)
         /// </summary>
-        /// <returns></returns>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(GenerateTileObjects.Generate))]
         public static bool Generate_Prefix(GenerateTileObjects __instance, StageData stageData)
@@ -58,9 +55,7 @@ namespace MegabonkTogether.Patches
             return true;
         }
 
-        /// <summary>
-        /// Send Boss spawner , specific if any and graveyard portal if any info to clients
-        /// </summary>
+        /// <summary>Send Boss spawner , specific if any and graveyard portal if any info to clients</summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(GenerateTileObjects.Generate))]
         public static void Generate_Postfix(GenerateTileObjects __instance, StageData stageData)

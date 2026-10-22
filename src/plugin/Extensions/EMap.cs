@@ -1,6 +1,6 @@
 ﻿using Assets.Scripts._Data.MapsAndStages;
 
-namespace MegabonkTogether.Extensions
+namespace OmniBonk.Extensions
 {
     internal static class EMapExtensions
     {

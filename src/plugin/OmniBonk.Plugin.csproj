@@ -12,7 +12,7 @@
       https://nuget.bepinex.dev/v3/index.json;
       <!--https://nuget.samboy.dev/v3/index.json-->  <!--this one is down -->
     </RestoreAdditionalProjectSources>
-    <RootNamespace>MegabonkTogether</RootNamespace>
+    <RootNamespace>OmniBonk</RootNamespace>
   </PropertyGroup>
 
   <!-- Define THUNDERSTORE when THUNDERSTORE_BUILD environment variable is set (For GitHub Actions) -->
@@ -30,18 +30,19 @@
 	</PropertyGroup>
 
 	<!--
-		The UI AssetBundle, authored in unity-ui/ and built by MegabonkTogether/Build UI Bundle.
+		The UI AssetBundle, authored in unity-ui/ and built by OmniBonk/Build UI Bundle.
 		Conditional so the plugin still builds before the bundle has been generated: UiAssetService
 		reports the missing resource and the UI falls back rather than failing the build.
 	-->
 	<ItemGroup>
 		<EmbeddedResource Include="Resources/megabonktogether.ui"
-		                  LogicalName="MegabonkTogether.Resources.megabonktogether.ui"
+		                  LogicalName="OmniBonk.Resources.megabonktogether.ui"
 		                  Condition="Exists('$(MSBuildProjectDirectory)/Resources/megabonktogether.ui')" />
 	</ItemGroup>
 
 	<ItemGroup>
-		<None Include="CHANGELOG.toml">
+		<!-- At the repo root so the mod can fetch it from GitHub; copied next to the DLL as the offline fallback. -->
+		<None Include="../../CHANGELOG.toml" Link="CHANGELOG.toml">
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</None>
 	</ItemGroup>
@@ -70,7 +71,7 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-	  <ProjectReference Include="..\common\MegabonkTogether.Common.csproj" />
+	  <ProjectReference Include="..\common\OmniBonk.Common.csproj" />
 	</ItemGroup>
 
 	<ItemGroup>

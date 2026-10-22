@@ -2,7 +2,7 @@ using System.IO;
 using UnityEditor;
 using UnityEngine;
 
-namespace MegabonkTogether.UiAuthoring
+namespace OmniBonk.UiAuthoring
 {
     /// <summary>
     /// Loads the built bundle back and reports what is in it.
@@ -16,7 +16,7 @@ namespace MegabonkTogether.UiAuthoring
     {
         private const string PluginResourcesRelativePath = "../src/plugin/Resources";
 
-        [MenuItem("MegabonkTogether/Verify UI Bundle")]
+        [MenuItem("OmniBonk/Verify UI Bundle")]
         public static void Verify()
         {
             // MT_VERIFY_BUNDLE lets this be pointed at a known-good bundle as a control. Without

@@ -1,19 +1,17 @@
 ﻿using Assets.Scripts.Game.Spawning.New;
 using Assets.Scripts.Game.Spawning.New.Timelines;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     [HarmonyPatch(typeof(SummonerController))]
     internal static class SummonerControllerPatches
     {
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
 
-        /// <summary>
-        /// Get the current timeline event before it is updated...
-        /// </summary>
+        /// <summary>Get the current timeline event before it is updated...</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(SummonerController.TickTimeline))]
         public static void TickTimeline_Prefix(SummonerController __instance, ref int __state)
@@ -32,9 +30,7 @@ namespace MegabonkTogether.Patches
             __state = __instance.currentTimelineEvent;
         }
 
-        /// <summary>
-        /// ... to synchronize swarm events on server
-        /// </summary>
+        /// <summary>... to synchronize swarm events on server</summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(SummonerController.TickTimeline))]
         public static void TickTimeline_Postfix(SummonerController __instance, int __state)

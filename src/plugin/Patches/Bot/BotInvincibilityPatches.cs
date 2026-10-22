@@ -3,35 +3,23 @@
 #if DEBUG
 using Assets.Scripts.Inventory__Items__Pickups;
 using HarmonyLib;
-using MegabonkTogether.Configuration;
-using MegabonkTogether.Services;
+using OmniBonk.Configuration;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches.Bot
+namespace OmniBonk.Patches.Bot
 {
     /// <summary>
-    /// Test bot: the bot's own player cannot take damage (design goal 3, the owner's choice).
-    ///
-    /// <para><b>Two gates, decompiled.</b> <c>DamagePlayer</c> (VA <c>0x180428180</c>) and
-    /// <c>DamagePlayerExternal</c> (VA <c>0x180427FD0</c>), the two public ways in, both check
-    /// <c>CanTakeDamage</c> (VA <c>0x180427960</c>) before calling the private <c>Damage</c>
-    /// (VA <c>0x180428220</c>), which in turn bails when <c>CheckStopDamage</c>
-    /// (VA <c>0x180427C20</c>) returns true. Gating both covers any caller that reaches
-    /// <c>Damage</c> directly.</para>
-    ///
-    /// <para>Only the local player's health, on a copy with <c>BotMode</c> on. Teammates' avatars
-    /// hold their own <c>PlayerHealth</c> and are left alone; HP is owner-authoritative, so the
-    /// host just sees a teammate at full health.</para>
+    /// Test bot: the bot's own player cannot take damage. Decompiled: gates both <c>CanTakeDamage</c>
+    /// (VA 0x180427960) and <c>CheckStopDamage</c> (VA 0x180427C20), covering every path into
+    /// <c>Damage</c>. Local player only; teammates' avatars are untouched.
     /// </summary>
     [HarmonyPatch(typeof(PlayerHealth))]
     internal static class BotInvincibilityPatches
     {
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
 
-        /// <summary>
-        /// Installed only on a BotMode copy: otherwise every player's copy paid a trampoline and a
-        /// PlayerHealth wrapper on every damage check. Turning BotMode on needs a restart.
-        /// </summary>
+        /// <summary>Installed only with BotMode on (trampoline cost). Needs a restart.</summary>
         [HarmonyPrepare]
         public static bool Prepare() => ModConfig.BotMode.Value && ModConfig.BotInvincible.Value;
 

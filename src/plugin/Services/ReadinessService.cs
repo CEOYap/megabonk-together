@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 
-namespace MegabonkTogether.Services
+namespace OmniBonk.Services
 {
     public interface IReadinessService
     {
@@ -41,63 +41,10 @@ namespace MegabonkTogether.Services
     }
 
     /// <summary>
-    /// The lobby / level-transition readiness barrier: who is expected in this round, who has
-    /// reported, and which round "this round" is.
-    ///
-    /// <para><b>Why this exists as a service rather than a flag on <c>Player</c>.</b> Readiness was
-    /// a mutable <c>IsReady</c> bool on the replicated <c>Player</c> record, which is the root of
-    /// two of the four lobby-ready defects: <c>ResetForNextLevel</c> clears it for every player
-    /// including remote ones (defect B), and the host's full player record overwrites it wholesale
-    /// (defect C — narrowed by the 60/5 Hz stream split in <c>a79ea0c</c>, which is recorded as
-    /// having fixed it, but the 5 Hz record still overwrites). Anything that replicates a field
-    /// can clobber it; the authoritative set has to live somewhere nothing replicates over.
-    /// <c>Player.IsReady</c> stays on the wire as a display mirror, re-asserted from here, so a
-    /// clobber self-heals instead of losing the answer.</para>
-    ///
-    /// <para><b>Derived from a shipping third-party implementation's spawn-readiness barrier,
-    /// deliberately not a port of it.</b> That design is the right shape — host-assigned <c>(sessionId, roundId)</c>, an
-    /// explicitly captured participant set, retry on both sides — and the parts of it that answer
-    /// our defects are taken. Six things are done differently, each because the original has a
-    /// sharp edge:</para>
-    ///
-    /// <list type="number">
-    /// <item><b>One stamp, not two.</b> The reference tracks two parallel stamps — identical on
-    /// the host, divergent on the client — which forces two near-identical predicates and
-    /// three pending slots. One authoritative stamp plus one pending slot covers the same cases
-    /// with far less to keep consistent.</item>
-    ///
-    /// <item><b>An empty participant set is an error, not a silent wait.</b> The reference's
-    /// all-ready predicate returns false when the set is empty, so a round opened over
-    /// nobody can never complete — a hang shape. Here it completes and logs, because "nobody to
-    /// wait for" is trivially satisfied and the interesting event is that it happened at all.</item>
-    ///
-    /// <item><b>The re-ask names who is missing.</b> The reference re-broadcasts the round start
-    /// to every client once a second for up to sixty seconds and, on timeout, logs a bare boolean.
-    /// The re-ask here is also a broadcast — targeting it per peer would mean plumbing a
-    /// connection-id-to-<c>NetPeer</c> lookup through the send path, which Phase 1 of the Steamworks
-    /// migration is already going to rewrite — but <see cref="MissingParticipants"/> puts the
-    /// outstanding connection ids in the log line, which is the difference between something you can
-    /// act on and a boolean.</item>
-    ///
-    /// <item><b>No all-players-ready message.</b> The reference needs one, plus a targeted re-send
-    /// of it to answer a retrying client. Ours does not: the host already replicates readiness at 5 Hz
-    /// and force-sends a full record the moment any <c>IsReady</c> changes
-    /// (<c>UdpClientService.HasReadinessChanged</c>), so accepting a report <i>is</i> the
-    /// acknowledgement and the client's retry stops when it observes itself ready. One fewer
-    /// message type and one fewer piece of state that can disagree.</item>
-    ///
-    /// <item><b>A peer that reports late is admitted, not ignored.</b> The reference warns and drops
-    /// a report from outside the captured set. Capturing once means a peer registered a moment after
-    /// the round opened is never waited for and the run starts without it — the old hang traded for
-    /// a silent early start, which is worse because nothing reports it. Admitting can only make the
-    /// barrier wait for more peers, never fewer.</item>
-    ///
-    /// <item><b>Rounds are 1-based.</b> The reference agrees, and it matters: zero has to mean "no round"
-    /// unambiguously. The encounter barrier next door uses zero as both a sentinel and a legal
-    /// value, and that ambiguity is separately recorded as a defect in
-    /// <c>docs/netplay/01-critical-fixes.md</c>. Not repeating it here.</item>
-    /// </list>
-    ///
+    /// Level-transition readiness barrier, host-stamped <c>(sessionId, roundId)</c>.
+    /// <para>Not a flag on <c>Player</c>: replicated fields get clobbered. <c>Player.IsReady</c> is only
+    /// a display mirror re-asserted from here. Accepting a report is the acknowledgement (no
+    /// all-ready message). Rounds are 1-based so zero means "no round".</para>
     /// <para><b>UNVERIFIED.</b> Reasoned from the code paths and from the reference implementation.
     /// Not run in-game.</para>
     /// </summary>
@@ -143,9 +90,7 @@ namespace MegabonkTogether.Services
                 return false;
             }
 
-            // A round from the session we are already in, at or behind the one we hold, is a
-            // duplicate or a reorder. Accepting it would re-open a round this peer has finished and
-            // send it back to reporting for a level transition that is over.
+            // Duplicate or reordered stamp; would re-open a finished round.
             if (sessionId == SessionId && roundId <= RoundId)
             {
                 return false;
@@ -165,17 +110,8 @@ namespace MegabonkTogether.Services
                 return false;
             }
 
-            // A reporting peer that was not in the captured set joined after the round opened.
-            //
-            // The reference warns and drops it. Admitting
-            // it is the safer direction and is the sixth departure from that design: capturing the
-            // set once means a peer registered a moment after the round opened would never be
-            // waited for, and the run would start without it — trading the old hang for a silent
-            // early start, which is worse because nothing reports it. Admitting can only ever make
-            // the barrier wait for more peers, never fewer.
-            //
-            // Safe because the caller has already resolved this connection id against the player
-            // roster; an id that is not a real peer never reaches here.
+            // Admit late joiners: dropping them would silently start without them. Caller has
+            // already validated the id against the roster.
             if (participants.Add(connectionId))
             {
                 Plugin.Log.LogInfo(
@@ -197,9 +133,7 @@ namespace MegabonkTogether.Services
                 return false;
             }
 
-            // Deliberately true, where the reference returns false. A round with no participants is
-            // satisfied by definition; treating it as permanently unsatisfied converts a bookkeeping
-            // mistake into a hang, which is the failure mode this whole barrier exists to remove.
+            // Empty is satisfied; otherwise a bookkeeping mistake becomes a hang.
             if (participants.Count == 0)
             {
                 Plugin.Log.LogWarning($"[readiness] Round {RoundId} has no participants; treating it as satisfied.");
@@ -243,10 +177,7 @@ namespace MegabonkTogether.Services
             reported.Clear();
         }
 
-        /// <summary>
-        /// Host only. Mints a non-zero session id once per run, so a report left in flight across a
-        /// teardown cannot be accepted by the next run — whose round counter also starts at 1.
-        /// </summary>
+        /// <summary>Host only. Per-run id so an in-flight report cannot match the next run's round 1.</summary>
         private void EnsureSession()
         {
             if (SessionId != 0)
@@ -254,8 +185,6 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            // A Guid rather than a tick count: two runs started within the same millisecond would
-            // collide on the latter, and the whole point of the field is to distinguish them.
             var bytes = Guid.NewGuid().ToByteArray();
             var candidate = BitConverter.ToUInt32(bytes, 0);
 

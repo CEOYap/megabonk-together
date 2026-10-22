@@ -3,42 +3,15 @@ using Assets.Scripts.Inventory__Items__Pickups;
 using Assets.Scripts.Inventory__Items__Pickups.Items.ItemImplementations;
 using HarmonyLib;
 
-namespace MegabonkTogether.Patches.Items
+namespace OmniBonk.Patches.Items
 {
     /// <summary>
-    /// OB-43. The rest of the items whose effect belongs to their owner's game, gated the same way
-    /// as Electric Plug, Cursed Doll, Bob and Holy Book (<see cref="RemoteItemCopies"/>).
-    ///
-    /// <para><b>Why.</b> Every machine holds a live copy of every player's items, subscribed to the
-    /// game's static player events, and the host also ticks every teammate's copy
-    /// (<c>NetPlayer.Update</c> -> <c>PlayerInventory.PhysicsTick</c>). An audit of all 86 items'
-    /// decompiled bodies, cross-checked against megabonkinfo.org, finds three kinds that must run
-    /// only on their owner's game:</para>
-    /// <list type="bullet">
-    /// <item><b>Reactions to the player</b>: Cactus, Toxic Barrel, Golden Shield, Speed Boi and
-    /// Cowards Cloak on taking damage; Mirror's damage block and reflect; Phantom Shroud on
-    /// evading; Flappy Feathers on jumping; Scarf on landing; both Credit Cards on a chest window;
-    /// Bloody Cleaver on a lifesteal proc; Gasmask on a stage start. A teammate's copy reacted to
-    /// THIS machine's player: a teammate's Golden Shield paid the host gold when the host was hit, a
-    /// teammate's Mirror could block the host's damage, a teammate's Cactus retaliated for the host
-    /// (and, on a client, was forwarded as the teammate's hit), a teammate's Credit Card changed the
-    /// host's chest price.</item>
-    /// <item><b>Player effects on a timer</b>: Beefy Ring, Campfire, Idle Juice, Rollerblades,
-    /// Golden Sneakers, Gamer Goggles, Sucky Hoof, Cowards Cloak, Phantom Shroud, Spiky Shield,
-    /// Gasmask, Mirror, Kevin, Demonic Blood and Demonic Soul. Their state follows the owner's
-    /// movement, health or stacks, which only the owner's game has; Kevin's tick damages "the
-    /// player".</item>
-    /// <item><b>Damage on a timer</b>: Energy Core (<c>FireOrb</c>) and Bob's Lantern
-    /// (<c>Explode</c>). The owner's game fires them and forwards the hits (their sources are EItem
-    /// names), so the host's copy fired a second set.</item>
-    /// </list>
-    /// <para>Handlers that receive a <c>PlayerHealth</c> also ignore any player but their own.</para>
-    ///
-    /// <para><b>Not gated, on purpose:</b> the ticks of on-hit items (Big Bonk, the Mitts, Joe's
-    /// Dagger, Lightning Orb, Moldy Cheese, Quin's Mask, Slutty Cannon, Snek, Spicy Meatball, Weeb
-    /// Headset, Grandma's Tonic, Bloody Cleaver) reset per-tick proc caps and cooldowns. Since OB-37
-    /// the host runs those items for their owner, so the host's copy must keep ticking.</para>
-    ///
+    /// OB-43. Items whose effect belongs to the owner's game, gated like <see cref="RemoteItemCopies"/>.
+    /// From a decompile audit of all 86 items: reactions to the local player (a teammate's copy
+    /// reacted to THIS machine's player), player effects on a timer, and timed damage (Energy Core,
+    /// Bob's Lantern; the owner already forwards those hits). <c>PlayerHealth</c> handlers ignore other players.
+    /// <para><b>Not gated, on purpose:</b> on-hit items' ticks reset proc caps, and since OB-37 the
+    /// host runs those items for their owner.</para>
     /// <para><b>UNVERIFIED.</b> Not run in-game.</para>
     /// </summary>
     internal static class OwnerOnlyItems

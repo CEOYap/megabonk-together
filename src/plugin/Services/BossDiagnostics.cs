@@ -1,23 +1,13 @@
 using Assets.Scripts.Actors.Enemies;
-using MegabonkTogether.Configuration;
+using OmniBonk.Configuration;
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace MegabonkTogether.Services
+namespace OmniBonk.Services
 {
     /// <summary>
-    /// OB-8. Puts every step of a boss's life on both peers into the log, so the host's and a
-    /// client's line for the same moment can be compared.
-    ///
-    /// <para><b>Why.</b> On 2026-10-19 the Desert final boss read 6.8M on the host and 5.5M on the
-    /// client, never moved on the client, and neither log said anything about it: no spawn line, no
-    /// HP, no rescale, no position. OB-7 and OB-8 were both marked fixed after runs that happened to
-    /// work, with no code change; this exists so the next run says which step diverges instead.</para>
-    ///
-    /// <para>Logs: the host's spawn message (id, HP sent, flag), the client's receipt (HP applied), every
-    /// max-HP rescale sent and applied (OB-9), and every 10 s each live boss's id, HP / max and
-    /// position. Bosses only, so the cost is a dictionary walk every 10 s and a handful of lines a
-    /// stage.</para>
+    /// OB-8: logs boss spawn, receipt, max-HP rescales (OB-9) and a 10 s HP/position sample on both
+    /// peers, so divergence can be located.
     /// </summary>
     internal static class BossDiagnostics
     {

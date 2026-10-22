@@ -1,10 +1,10 @@
 ﻿using Assets.Scripts.Inventory__Items__Pickups.Items;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using MonoMod.Utils;
 
-namespace MegabonkTogether.Patches.Interactables
+namespace OmniBonk.Patches.Interactables
 {
     [HarmonyPatch(typeof(InteractableShadyGuy))]
     internal static class InteractableShadyGuyPatches
@@ -12,9 +12,7 @@ namespace MegabonkTogether.Patches.Interactables
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
         private static readonly ISpawnedObjectManagerService spawnedObjectManagerService = Plugin.Services.GetService<ISpawnedObjectManagerService>();
 
-        /// <summary>
-        /// On client, use the rarirty sent by server
-        /// </summary>
+        /// <summary>Client uses the host's rarity.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(InteractableShadyGuy.Start))]
         public static void Start_Prefix(InteractableShadyGuy __instance)
@@ -38,9 +36,7 @@ namespace MegabonkTogether.Patches.Interactables
         }
 
 
-        /// <summary>
-        /// On server, send the shady guy to clients (we wait for start to have the correct rarity)
-        /// </summary>
+        /// <summary>Host sends it from Start, once rarity is set.</summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(InteractableShadyGuy.Start))]
         public static void Start_Postfix(InteractableShadyGuy __instance)

@@ -10,18 +10,18 @@ using BepInEx.Logging;
 using BepInEx.Unity.IL2CPP;
 using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.Injection;
-using MegabonkTogether.Common;
-using MegabonkTogether.Common.Models;
-using MegabonkTogether.Configuration;
-using MegabonkTogether.Helpers;
-using MegabonkTogether.Scripts;
-using MegabonkTogether.Scripts.Button;
-using MegabonkTogether.Scripts.Enemies;
-using MegabonkTogether.Scripts.Interactables;
-using MegabonkTogether.Scripts.Modal;
-using MegabonkTogether.Scripts.NetPlayer;
-using MegabonkTogether.Scripts.Snapshot;
-using MegabonkTogether.Services;
+using OmniBonk.Common;
+using OmniBonk.Common.Models;
+using OmniBonk.Configuration;
+using OmniBonk.Helpers;
+using OmniBonk.Scripts;
+using OmniBonk.Scripts.Button;
+using OmniBonk.Scripts.Enemies;
+using OmniBonk.Scripts.Interactables;
+using OmniBonk.Scripts.Modal;
+using OmniBonk.Scripts.NetPlayer;
+using OmniBonk.Scripts.Snapshot;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using System;
@@ -33,7 +33,7 @@ using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.UI;
 
-namespace MegabonkTogether
+namespace OmniBonk
 {
     public enum DistanceToPlayer
     {
@@ -43,9 +43,7 @@ namespace MegabonkTogether
     }
 
     [BepInPlugin(MyPluginInfo.PLUGIN_GUID, MyPluginInfo.PLUGIN_NAME, MyPluginInfo.PLUGIN_VERSION)]
-    // The plugin's GUID before the 1.0 rename. Both builds patch the same game methods, so with
-    // both installed every patch would run twice. BepInEx skips this plugin and
-    // logs why rather than loading the pair.
+    // Pre-1.0 GUID: both builds installed would run every patch twice.
     [BepInIncompatibility("MegabonkTogether")]
     public class Plugin : BasePlugin
     {
@@ -84,21 +82,8 @@ namespace MegabonkTogether
         public bool IS_NETPLAYER_ADDING_TOME = false;
 
         /// <summary>
-        /// FIX P1-10: scoped replacement for the bare
-        /// `CAN_SEND_MESSAGES = false; …game call…; CAN_SEND_MESSAGES = true;` pattern that every
-        /// receive handler used.
-        ///
-        /// <para>The flag stops this peer echoing back the state it is applying on someone else's
-        /// behalf. Written by hand, the restore is skipped whenever the game call between the two
-        /// assignments throws — and then <b>this peer never sends anything again for the rest of
-        /// the run</b>: a total, unrecoverable desync from one exception. That is not theoretical;
-        /// P0-6 is the same failure, where one throw latched two statics for 581 enemy spawns.</para>
-        ///
-        /// <para>Restores the <i>previous</i> value rather than hard-coding `true`. Identical at
-        /// every current call site (all are entered with the flag set), and it is the only version
-        /// that stays correct if two suppressed regions ever nest.</para>
-        ///
-        /// <para>A struct, so `using` costs no allocation on paths that run per received message.</para>
+        /// FIX P1-10: exception-safe scope for <c>CAN_SEND_MESSAGES = false</c>; a skipped restore
+        /// silences this peer for the rest of the run. Restores the previous value so scopes nest.
         /// </summary>
         public readonly struct OutboundSuppression : IDisposable
         {
@@ -115,10 +100,7 @@ namespace MegabonkTogether
             }
         }
 
-        /// <summary>
-        /// Suppresses this peer's outbound messages until the returned scope is disposed. Use with
-        /// `using`, never bare — the whole point is that the restore survives an exception.
-        /// </summary>
+        /// <summary>Always use with <c>using</c>.</summary>
         public static OutboundSuppression SuppressOutbound()
         {
             var scope = new OutboundSuppression(CAN_SEND_MESSAGES);
@@ -139,9 +121,7 @@ namespace MegabonkTogether
         private Il2CppSystem.Action<WeaponBase> originalWeaponAddedAction = null;
         private Il2CppSystem.Action<EStat> originalStatUpdateAction = null;
 
-        // Whether the mod currently has the game's handler swapped out. Kept separate from the
-        // saved delegates because a legitimately-null original is indistinguishable from "never
-        // saved" otherwise, and that ambiguity used to strand our handlers on the game's statics.
+        // Separate flags: a saved original can legitimately be null.
         private bool hasPreventedDeath = false;
         private bool hasSavedInventoryActions = false;
 
@@ -158,40 +138,24 @@ namespace MegabonkTogether
 
             ModConfig.Initialize(Config);
 
-            // Early, so anything that goes wrong during our own startup is attributable too.
             Helpers.UnityDiagnostics.EnableStackTraces();
             Log.LogInfo($"Player name set to: {ModConfig.PlayerName.Value}");
 
-            // Diagnostic, delete once the client-side exception storm is attributed. Called here
-            // rather than at session start so singleplayer is covered too — whether these occur
-            // outside netplay is a discriminator we do not currently have.
-            //
-            // Wrapped at the CALL SITE, not inside Hook(). The first version of this took the whole
-            // plugin down: it built an Il2Cpp delegate that does not exist at runtime, and
-            // MissingMethodException is raised when a method is JIT-compiled rather than when the
-            // missing call runs — so the try/catch inside Hook() never executed and the throw
-            // surfaced here, in Load(), where nothing caught it. BepInEx then logged
-            // "Error loading [MegabonkTogether]" and the mod did not load at all.
-            //
-            // A catch cannot protect a body that will not compile; only a catch one level up can.
-            // Instrumentation must never be able to stop the plugin loading.
-            // Fully qualified: inside Plugin, "Services." binds to the Plugin.Services property.
+            // Diagnostic. Caught at the call site: a MissingMethodException is thrown at JIT time,
+            // so a try inside Hook() cannot catch it. Fully qualified because "Services." binds to Plugin.Services.
             try
             {
-                MegabonkTogether.Services.UnityExceptionDiagnostics.Hook();
+                OmniBonk.Services.UnityExceptionDiagnostics.Hook();
             }
             catch (System.Exception ex)
             {
                 Log.LogWarning($"[unity-exc] Diagnostic unavailable, continuing without it: {ex.GetType().Name}: {ex.Message}");
             }
 
-            // Runs before anything else can log, and reports whether Unity-sourced lines will reach
-            // LogOutput.log at all on this install. Placed first because it changes how the rest of
-            // the log should be read: without it, a host log missing every Unity line looks like a
-            // host that had no Unity errors. Same call-site guard as above.
+            // Reports whether Unity log lines reach LogOutput.log. Same call-site guard as above.
             try
             {
-                MegabonkTogether.Services.LogCaptureDiagnostics.Report();
+                OmniBonk.Services.LogCaptureDiagnostics.Report();
             }
             catch (System.Exception ex)
             {
@@ -227,9 +191,7 @@ namespace MegabonkTogether
             ClassInjector.RegisterTypeInIl2Cpp<EnemyInterpolatorManager>();
             ClassInjector.RegisterTypeInIl2Cpp<SteamTicker>();
 
-            // Not a MonoBehaviour: this one derives from Steamworks' abstract CallResult so the
-            // game's own callback dispatcher will accept it. Registered here with everything else
-            // because it still has to exist in the IL2CPP domain before it can be constructed.
+            // Not MonoBehaviours, but Steamworks callback subclasses; still need IL2CPP registration.
             ClassInjector.RegisterTypeInIl2Cpp<Services.SteamCallResult>();
             ClassInjector.RegisterTypeInIl2Cpp<Services.SteamCallback>();
             ClassInjector.RegisterTypeInIl2Cpp<InteractableReviver>();
@@ -247,34 +209,15 @@ namespace MegabonkTogether
 
                 services.AddSingleton<IUdpClientService, UdpClientService>();
 
-                // INetTransport resolves to the SAME instance as IUdpClientService, not a second
-                // one. UdpClientService implements both, but the container matches on the exact
-                // registered key — so without this line anything asking for INetTransport fails to
-                // activate, and registering the implementation twice would give two singletons,
-                // two LiteNetLib managers and two sockets.
-                //
-                // This forwarding is what lets a service depend on the transport contract rather
-                // than on the LiteNetLib session that happens to provide it today; Phase 4 changes
-                // which implementation sits behind it and no consumer notices.
-                // Which transport carries a session, decided once at startup. Resolved through a
-                // factory rather than registered directly so that both implementations exist in the
-                // build and only one is ever wired to gameplay — the migration plan's "both
-                // transports ship in one build during testing".
-                //
-                // Read once because this is a singleton, which is the behaviour we want: a session
-                // cannot change transport halfway through, and a flag flipped mid-run would
-                // otherwise do exactly that.
+                // Forwards to the existing singleton (never a second instance/socket). Transport is
+                // chosen once at startup so it cannot change mid-session.
                 services.AddSingleton<INetTransport>(sp =>
                     Configuration.ModConfig.UseSteamTransport.Value
                         ? sp.GetRequiredService<ISteamNetTransport>()
                         : sp.GetRequiredService<IUdpClientService>());
 
-                // The receive path's other half. Both transports deserialize into this, which is
-                // what makes a second one able to do anything with what it receives.
                 services.AddSingleton<INetMessageRouter, NetMessageRouter>();
 
-                // The send path's other half: the per-tick streams, which read game state and know
-                // nothing about what carries them.
                 services.AddSingleton<IStateBroadcastService, StateBroadcastService>();
                 services.AddSingleton<IPlayerManagerService, PlayerManagerService>();
                 services.AddSingleton<IEnemyManagerService, EnemyManagerService>();
@@ -301,11 +244,6 @@ namespace MegabonkTogether
                 services.AddSingleton<ISteamLobbyService, SteamLobbyService>();
                 services.AddSingleton<ISteamAvatarService, SteamAvatarService>();
 
-                // Registered under its own interface as well as through the INetTransport factory
-                // above, which is what the factory resolves when Network/UseSteamTransport is on —
-                // and it is on by default now. This comment previously said INetTransport "still
-                // resolves to the LiteNetLib one, so nothing in gameplay reaches this", which was
-                // already untrue when the factory landed and would now be exactly backwards.
                 services.AddSingleton<ISteamNetTransport, SteamNetTransport>();
                 services.AddSingleton<ISteamNetSessionService, SteamNetSessionService>();
                 services.AddSingleton<SteamNetSelfTest>();
@@ -318,9 +256,7 @@ namespace MegabonkTogether
 
             Host = builder.Build();
 
-            // Subscribed after the host exists, and explicitly rather than from the service's
-            // constructor: the transport publishes these, and having the consumer resolve during
-            // construction is what created the cycle that deadlocked startup.
+            // Not from the constructor: that created a DI cycle that deadlocked startup.
             Services.GetRequiredService<ILobbyViewService>().SubscribeToLobbyMessages();
 
 
@@ -363,9 +299,7 @@ namespace MegabonkTogether
                 Log.LogError($"Harmony patching failed: {ex}");
             }
 
-            // Only now may the encounter-choice guard touch the IL2CPP runtime. Set outside the
-            // catch on purpose: if patching failed, the guard's patches are not installed either,
-            // and leaving it latched off would be a second, silent failure mode.
+            // Outside the catch on purpose.
             Helpers.EncounterInputGrace.MarkRuntimeReady();
 
             var go = new GameObject("MainThreadDispatcher");
@@ -395,9 +329,7 @@ namespace MegabonkTogether
             GameObject.DontDestroyOnLoad(goNotificationQueueManager);
             NotificationQueueManager = goNotificationQueueManager.AddComponent<NotificationQueueManager>();
 
-            // PERF 1A: ticks every enemy's TargetSwitcher from one Update instead of ~600 injected
-            // MonoBehaviour Updates per frame. Its Update no-ops while the registry is empty, so it
-            // costs one call per frame in singleplayer.
+            // PERF 1A: one Update for all TargetSwitchers instead of ~600.
             var goTargetSwitcherManager = new GameObject("TargetSwitcherManager");
             GameObject.DontDestroyOnLoad(goTargetSwitcherManager);
             goTargetSwitcherManager.AddComponent<TargetSwitcherManager>();
@@ -406,10 +338,7 @@ namespace MegabonkTogether
             GameObject.DontDestroyOnLoad(goEnemyInterpolatorManager);
             goEnemyInterpolatorManager.AddComponent<EnemyInterpolatorManager>();
 
-            // Steam's relay network and authentication are asked for from here rather than from
-            // this method directly: the game's SteamManager initialises after the first scene
-            // loads, which is after BepInEx loads plugins, so there is nothing to call yet. The
-            // ticker retries at 1 Hz until Steam exists, then stops.
+            // SteamManager initialises after plugin load, so a ticker retries at 1 Hz until it exists.
             var goSteamTicker = new GameObject("SteamTicker");
             GameObject.DontDestroyOnLoad(goSteamTicker);
             goSteamTicker.AddComponent<SteamTicker>();
@@ -467,12 +396,7 @@ namespace MegabonkTogether
                 return;
             }
 
-            // FIX: `originalDiedAction != null` used to be the "already prevented" sentinel, which
-            // conflates "not prevented yet" with "prevented, and the game's handler happened to be
-            // null". In that second case RestoreDeath's mirror-image check bailed with "Death not
-            // prevented" and left OnPlayerDied installed on the game's static for the rest of the
-            // process — i.e. leaking into singleplayer, which is the one thing patches here must
-            // never do. The flag is the state; the saved delegate is only data.
+            // The flag is the state; the saved delegate may be null.
             originalDiedAction = PlayerHealth.A_Died;
             hasPreventedDeath = true;
             PlayerHealth.A_Died = new Action(OnPlayerDied);
@@ -496,9 +420,9 @@ namespace MegabonkTogether
 
         public void RestoreDeath(bool invokeDeathEvent)
         {
+            // Normal on every return to the main menu when no run took place: nothing to restore.
             if (!hasPreventedDeath)
             {
-                Log.LogWarning("Death not prevented");
                 return;
             }
 
@@ -507,9 +431,7 @@ namespace MegabonkTogether
                 CameraSwitcher.ResetToLocalPlayer();
             }
 
-            // Hand the game its own handler back first and unconditionally. Everything below can
-            // throw, and of all the ways this method can fail, leaving our OnPlayerDied on a game
-            // static is the only one that follows the player out of the session.
+            // Restore first: everything below can throw, and a leaked handler reaches singleplayer.
             var restored = originalDiedAction;
             PlayerHealth.A_Died = restored;
             originalDiedAction = null;
@@ -526,15 +448,8 @@ namespace MegabonkTogether
                 return;
             }
 
-            // The game's own death sequence throws a NullReferenceException at Animator.set_speed
-            // here, on host and clients, every session — pre-existing, and NOT diagnosed: the
-            // stripped interop assemblies have no method bodies, so what that handler touches is
-            // unknown without the IL2CPP dump. See open item 3 in docs/netplay/06-session-handoff.md.
-            //
-            // What is fixed here is the blast radius. The throw used to escape into
-            // TransitionToState(GameEvent.GameOver) and land in MainThreadDispatcher's catch, far
-            // from the fault and with no indication that the death event was the cause. Contained
-            // and logged with its stack, the caller finishes and the next session's log names it.
+            // The game's death sequence throws an NRE at Animator.set_speed every session (undiagnosed;
+            // docs/netplay/06-session-handoff.md item 3). Contained here so the caller finishes.
             try
             {
                 GameManager.Instance.player.playerRenderer.gameObject.SetActive(true);
@@ -544,26 +459,9 @@ namespace MegabonkTogether
                 Log.LogWarning($"Could not re-enable the player renderer before the death handler: {ex}");
             }
 
-            // Each subscriber on its own, not one Invoke() on the multicast delegate.
-            //
-            // A_Died is a plain static Action the game's own types add themselves to, and a
-            // multicast Invoke stops at the first subscriber that throws -- every handler queued
-            // behind it is simply skipped. We already know one of them throws here: the
-            // NullReferenceException at Animator.set_speed noted above, every session on every
-            // peer. Whatever sits behind it in the list has therefore never run in a netplay
-            // session, and GameManager.OnDied (VA 0x180503950) is the method that sets overtime,
-            // raises GameManager's own static death action and starts the DoDeathAnimation
-            // coroutine -- i.e. the entire game-over sequence. If it is queued behind the thrower,
-            // the run never properly ends.
-            //
-            // Isolating the subscribers does not fix the throw; it stops one broken handler from
-            // taking the rest of the sequence with it, and it names which index failed.
-            //
-            // The try is around the CALL, not inside the callee, and that is deliberate.
-            // GetInvocationList crosses into Il2CppSystem and returns an Il2Cpp array, so if that
-            // member does not resolve against this build the MissingMethodException is raised when
-            // the containing method is JITted -- a try inside InvokeDeathSubscribersIsolated could
-            // not catch it. One level up can, and the fallback is the original single Invoke().
+            // Invoke subscribers individually: a multicast Invoke stops at the thrower and could skip
+            // GameManager.OnDied (VA 0x180503950), the whole game-over sequence.
+            // Try is around the call: a MissingMethodException from GetInvocationList fires at JIT time.
             try
             {
                 InvokeDeathSubscribersIsolated(restored);
@@ -586,14 +484,8 @@ namespace MegabonkTogether
         }
 
         /// <summary>
-        /// Invokes every subscriber of the game's death action separately, so one that throws
-        /// cannot skip the ones behind it. Logs each failure with its position in the list.
-        ///
-        /// <para>Deliberately NOT calling <c>GameManager.OnDied</c> as a fallback when nothing in
-        /// the list appears to have run. It starts the <c>DoDeathAnimation</c> coroutine, and
-        /// calling it when the game already did would run the death animation twice. Establishing
-        /// whether it is a subscriber at all needs the invocation list read in play, which the
-        /// per-index logging below now provides.</para>
+        /// Invokes each death subscriber separately. No <c>GameManager.OnDied</c> fallback: it could
+        /// run the death animation twice.
         /// </summary>
         private static void InvokeDeathSubscribersIsolated(Il2CppSystem.Action subscribers)
         {
@@ -607,8 +499,7 @@ namespace MegabonkTogether
 
             for (var i = 0; i < invocationList.Length; i++)
             {
-                // TryCast, never a C# cast: these are Il2CppInterop proxies and the managed wrapper
-                // is not the object.
+                // TryCast, never a C# cast, on Il2CppInterop proxies.
                 var subscriber = invocationList[i]?.TryCast<Il2CppSystem.Action>();
                 if (subscriber == null)
                 {
@@ -729,13 +620,8 @@ namespace MegabonkTogether
         }
 
         /// <summary>
-        /// Silences the game's weapon/stat callbacks while the mod builds or mutates a remote
-        /// player's inventory, so that work does not look like the local player's.
-        ///
-        /// <para>Always pair with <see cref="RestorePlayerInventoryActions"/> in a `finally`: these
-        /// null out two game-wide statics, and the calls they bracket are game code that can
-        /// throw. Skipping the restore kills weapon-added and stat-update handling for the rest of
-        /// the process, singleplayer included.</para>
+        /// Silences the game's weapon/stat callbacks while editing a remote player's inventory.
+        /// Always pair with <see cref="RestorePlayerInventoryActions"/> in a <c>finally</c>, or singleplayer breaks too.
         /// </summary>
         public void SavePlayerInventoryActions()
         {
@@ -754,11 +640,7 @@ namespace MegabonkTogether
 
         public void RestorePlayerInventoryActions()
         {
-            // FIX: this used to return early — before restoring EITHER static — whenever a saved
-            // action was null, on the assumption that null meant "never saved". Null is also a
-            // perfectly ordinary value for a game event with no subscribers, and in that case the
-            // early return left both callbacks nulled out permanently. One flag now records
-            // whether a save happened, and both statics are restored together.
+            // A saved action can legitimately be null; the flag records whether a save happened.
             if (!hasSavedInventoryActions)
             {
                 Log.LogWarning("Player inventory actions not saved");
@@ -772,15 +654,7 @@ namespace MegabonkTogether
             hasSavedInventoryActions = false;
         }
 
-        /// <summary>
-        /// The Desert's map events, or null when this stage is not the Desert or has none yet.
-        ///
-        /// <para>It used to assume both: a storm message arriving just after a peer had left a
-        /// Desert room (Endless, 2026-10-21) found no <c>MapEventsManager</c> and threw. And it
-        /// reinterpreted whatever map's events it found as Desert ones through a raw pointer, which
-        /// on any other map is a different type read as this one. Now it checks the map and uses a
-        /// checked cast, and only caches a real result.</para>
-        /// </summary>
+        /// <summary>The Desert's map events, or null off the Desert or before they exist (storm messages can arrive late).</summary>
         public MapEventsDesert GetMapEventsDesert()
         {
             if (MapController.currentMap == null || MapController.currentMap.eMap != Assets.Scripts._Data.MapsAndStages.EMap.Desert)
@@ -842,17 +716,7 @@ namespace MegabonkTogether
                 var target = player.transform.position;
                 if (player.IsDead())
                 {
-                    // FIX P2-1 (second dangling path): while spectating, the camera target is a
-                    // remote peer's NetPlayer transform. Nothing tells CameraSwitcher when that
-                    // peer disconnects, so after PlayerManagerService.RemovePlayer destroys their
-                    // GameObject this read hit a destroyed Transform — landing in the
-                    // get_position fallback ~700 times per 5s on each of the two per-frame paths
-                    // that call this method (DistanceThrottler.ShouldUpdate per enemy per
-                    // FixedUpdate, ProjectileBasePatches.Update_Prefix per projectile per frame).
-                    //
-                    // Falling back to the local player's position is what that patch fallback was
-                    // already substituting, so this changes no distance result — it just stops
-                    // dereferencing a destroyed object to get there.
+                    // FIX P2-1: the spectate target may be a destroyed NetPlayer; fall back to the local player.
                     var cameraSwitcher = Instance?.CameraSwitcher;
                     if (cameraSwitcher != null) // Unity's overloaded == also catches a destroyed object
                     {

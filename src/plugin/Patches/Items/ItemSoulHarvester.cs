@@ -1,10 +1,10 @@
 ﻿using Assets.Scripts.Actors.Enemies;
 using Assets.Scripts.Inventory__Items__Pickups.Items.ItemImplementations;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches.Items
+namespace OmniBonk.Patches.Items
 {
     [HarmonyPatch(typeof(ItemSoulHarvester))]
     internal static class ItemSoulHarvesterPatches

@@ -1,7 +1,7 @@
 ﻿using MemoryPack;
 using System.Numerics;
 
-namespace MegabonkTogether.Common.Messages.GameNetworkMessages
+namespace OmniBonk.Common.Messages.GameNetworkMessages
 {
     [MemoryPackable]
     public partial class SpawnedReviver : IGameNetworkMessage

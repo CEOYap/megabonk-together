@@ -1,8 +1,8 @@
-﻿using MegabonkTogether.Extensions;
+﻿using OmniBonk.Extensions;
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace MegabonkTogether.Scripts.Snapshot
+namespace OmniBonk.Scripts.Snapshot
 {
     //TODO: Find a way to make abstract class work with IL2CPP because its not working for some reason ¯\_(ツ)_/¯
     public class PlayerInterpolator : MonoBehaviour
@@ -37,10 +37,7 @@ namespace MegabonkTogether.Scripts.Snapshot
 
         public void AddSnapshot(PlayerSnapshot snapshot)
         {
-            // Same ordering guard as EnemyInterpolator. These streams are unreliable, so a late
-            // packet can arrive after a newer one, and the pair scan and the front-pruning below
-            // both assume the buffer is sorted by timestamp. Out of order the interpolator walks
-            // backwards and the remote object visibly snaps back.
+            // Unreliable stream: drop out-of-order snapshots; the buffer must stay sorted.
             if (snapshotsBuffer.Count > 0
                 && snapshot.Timestamp <= snapshotsBuffer[snapshotsBuffer.Count - 1].Timestamp)
             {

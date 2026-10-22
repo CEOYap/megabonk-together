@@ -1,8 +1,8 @@
 ﻿using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches.Inventories
+namespace OmniBonk.Patches.Inventories
 {
     [HarmonyPatch(typeof(PlayerInventory))]
     internal static class PlayerInventoryPatches

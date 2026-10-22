@@ -29,7 +29,7 @@ fi
 
 # Build the project with PROTON constant defined
 export PROTON_BUILD=true
-dotnet build src/plugin/MegabonkTogether.Plugin.csproj
+dotnet build src/plugin/OmniBonk.Plugin.csproj
 
 echo "Build complete!"
 if [ -f "$GAME_PATH/Megabonk.exe" ]; then

@@ -1,8 +1,8 @@
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     [HarmonyPatch(typeof(FullMap))]
     internal static class FullMapPatches
@@ -30,11 +30,7 @@ namespace MegabonkTogether.Patches
             {
                 if (netPlayer?.Model != null)
                 {
-                    // Push and pop live in the SAME method here, so try/finally applies and the
-                    // finalizer pattern does not. Misfiled as a prefix/postfix pair by the first
-                    // sweep because the push sits inside a method named *_Postfix. A throw in
-                    // either game call below would strand the request (P1-11) and the loop would
-                    // then push again for the next player.
+                    // Push and pop in one method, so try/finally (P1-11).
                     playerManagerService.AddGetNetplayerPositionRequest(netPlayer.ConnectionId);
                     try
                     {

@@ -1,8 +1,8 @@
 ﻿using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches.Interactables
+namespace OmniBonk.Patches.Interactables
 {
     [HarmonyPatch(typeof(InteractableTumbleWeed))]
     internal static class InteractableTumbleWeedPatches
@@ -10,9 +10,7 @@ namespace MegabonkTogether.Patches.Interactables
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetRequiredService<ISynchronizationService>();
 
 
-        /// <summary>
-        /// Synchronize tumbleweed spawn event
-        /// </summary>
+        /// <summary>Synchronize tumbleweed spawn event</summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(InteractableTumbleWeed.OnEnable))]
         public static void OnEnable_Postfix(InteractableTumbleWeed __instance)
@@ -31,9 +29,7 @@ namespace MegabonkTogether.Patches.Interactables
             synchronizationService.OnTumbleWeedSpawned(__instance);
         }
 
-        /// <summary>
-        /// Synchronize tumbleweed despawn event
-        /// </summary>
+        /// <summary>Synchronize tumbleweed despawn event</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(InteractableTumbleWeed.Despawn))]
         public static bool Despawn_Prefix(InteractableTumbleWeed __instance)
@@ -53,9 +49,7 @@ namespace MegabonkTogether.Patches.Interactables
             return true;
         }
 
-        /// <summary>
-        /// Prevent non-hosts from updating tumbleweed
-        /// </summary>
+        /// <summary>Prevent non-hosts from updating tumbleweed</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(InteractableTumbleWeed.FixedUpdate))]
         public static bool FixedUpdate_Prefix(InteractableTumbleWeed __instance)

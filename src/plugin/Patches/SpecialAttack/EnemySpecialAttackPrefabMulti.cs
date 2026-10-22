@@ -1,9 +1,9 @@
 ﻿using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using static EnemySpecialAttackPrefabMulti;
 
-namespace MegabonkTogether.Patches.SpecialAttack
+namespace OmniBonk.Patches.SpecialAttack
 {
     [HarmonyPatch(typeof(_DoAttack_d__7))]
     internal class EnemySpecialAttackPrefabMultiPatches

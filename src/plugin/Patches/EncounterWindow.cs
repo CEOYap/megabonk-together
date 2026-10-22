@@ -3,12 +3,12 @@ using Assets.Scripts.UI.InGame.Rewards;
 using Assets.Scripts.Utility;
 using Coffee.UIExtensions;
 using HarmonyLib;
-using MegabonkTogether.Helpers;
-using MegabonkTogether.Services;
+using OmniBonk.Helpers;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using UnityEngine;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     [HarmonyPatch(typeof(EncounterWindows))]
     internal static class EncounterWindowPatches
@@ -17,10 +17,7 @@ namespace MegabonkTogether.Patches
         private static readonly IEncounterService encounterService = Plugin.Services.GetService<IEncounterService>();
 
         /// <summary>
-        /// When changing level, the game will try to pop reward from previous stage missed
-        /// This can freeze the game as the queue will get modified while iterating
-        /// To prevent that, we just make sure the player can move before popping the reward
-        /// Also if shared experience, notify end of reward to not block the game for other players
+        /// Pop a missed reward only once the player can move; popping mid level change modifies the queue while iterating.
         [HarmonyPrefix]
         [HarmonyPatch(nameof(EncounterWindows.PopReward))]
         public static bool PopReward_Prefix()
@@ -50,12 +47,7 @@ namespace MegabonkTogether.Patches
             return true;
         }
 
-        /// <summary>
-        /// Prevent adding an encounter if one is already in progress
-        /// This should not only prevent missing some reward but hopefully also random crashes happening with encounter
-        /// The encounter will be queued and popped later at LateUpdate
-        /// Also if shared experience, notify end of reward to not block the game for other players
-        /// </summary>
+        /// <summary>Queues an encounter while one is in progress; popped later in LateUpdate.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(EncounterWindows.AddEncounter))]
         public static bool AddEncounter_Prefix(EncounterWindows __instance, EEncounter rewardWindowType)
@@ -108,10 +100,7 @@ namespace MegabonkTogether.Patches
             MyTime.Unpause();
         }
 
-        /// <summary>
-        /// PopReward_Prefix prevent reward pop if player can't move yet.
-        /// If we can move now, we should pop previously prevented reward as soon as possible.
-        /// </summary>
+        /// <summary>Pops a reward deferred by PopReward_Prefix once the player can move.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(EncounterWindows.LateUpdate))]
         public static void LateUpdate_Prefix(EncounterWindows __instance)
@@ -121,10 +110,8 @@ namespace MegabonkTogether.Patches
                 return;
             }
 
-            // The shared-experience failsafe, checked before every other guard below on purpose: a
-            // peer stuck on the barrier is usually *also* unable to input (it is paused) and may
-            // be dead, so any of the early returns below would skip the one check that can rescue
-            // it. LateUpdate keeps running at timeScale 0, which is why it is the hook.
+            // Failsafe first: a stuck peer is paused or dead, so the early returns below would skip it.
+            // LateUpdate runs at timeScale 0.
             if (synchronizationService.IsSharedExperienceEnabled() && encounterService.HasWaitedTooLong())
             {
                 synchronizationService.ForceCloseEncounter(
@@ -151,9 +138,7 @@ namespace MegabonkTogether.Patches
         }
 
 
-        /// <summary>
-        /// Synchronize end of reward. This is needed on shared experience to unblock the game for all players
-        /// </summary>
+        /// <summary>Reports the end of a reward to the shared-experience barrier.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(EncounterWindows.RewardFinished))]
         public static bool RewardFinished_Prefix(EncounterWindows __instance)
@@ -183,13 +168,8 @@ namespace MegabonkTogether.Patches
 
             synchronizationService.RewardFinished();
 
-            // Reporting can complete the round *synchronously* — on the host, RewardFinished()
-            // counts itself, finds the barrier satisfied, and re-enters this method through
-            // OnCloseEncounter -> encounterWindows.RewardFinished(), which takes the branch above
-            // and closes the window. Falling through to the "waiting" UI after that left the last
-            // player to choose staring at a message for a round that was already over, with the
-            // window hidden and the particles disabled behind it. ClearClosedEncounters ends the
-            // wait, so IsWaiting is the signal that the re-entrant release happened.
+            // Reporting can release the round synchronously (re-entering this method); !IsWaiting
+            // means that happened, so do not show the "waiting" UI.
             if (!encounterService.IsWaiting)
             {
                 return false;

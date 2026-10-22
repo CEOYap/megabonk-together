@@ -4,47 +4,13 @@ using System.Linq;
 using System.Reflection;
 using System.Text.RegularExpressions;
 
-namespace MegabonkTogether.Services
+namespace OmniBonk.Services
 {
     /// <summary>
-    /// Reports, at startup, whether this install will write Unity-sourced log lines to
-    /// <c>LogOutput.log</c>, and names the key to change if it will not.
-    ///
-    /// <para><b>The problem this closes.</b> A host logged <b>zero</b> Unity-sourced lines across
-    /// three sessions while its client logged thousands. Because
-    /// <c>[Logging] UnityLogListening = true</c> on both, the difference was attributed to the two
-    /// peers running different BepInEx builds (be.755 and be.785) and left unexplained. Every
-    /// "the host does not have this" claim in <c>docs/netplay/</c> rests on the host log being
-    /// comparable to the client's, so an unexplained hole in it makes those claims unprovable.</para>
-    ///
-    /// <para><b>The cause, and why the obvious key is the wrong one.</b> BepInEx 6 has
-    /// <i>two independent</i> gates, and they have opposite defaults:</para>
-    ///
-    /// <list type="bullet">
-    /// <item><c>[Logging] UnityLogListening</c> — "Enables showing unity log messages in the BepInEx
-    /// logging system." <b>Default true.</b> This is the one that was checked. It admits Unity's
-    /// messages into BepInEx as a log source named <c>Unity</c>.</item>
-    /// <item><c>[Logging.Disk] WriteUnityLog</c> — "Include unity log messages in log file output."
-    /// <b>Default false.</b> This is the one that decides whether those messages reach
-    /// <c>LogOutput.log</c> at all.</item>
-    /// </list>
-    ///
-    /// <para>So a stock install shows Unity lines in the console and none on disk. The host was at
-    /// the defaults; the client had <c>WriteUnityLog</c> turned on at some earlier point — which is
-    /// also why the client is the peer where the NullReferenceException storm was ever visible. The
-    /// BepInEx build difference is a coincidence, not the cause: both keys exist with these
-    /// defaults in be.785, and both installs checked here agree.</para>
-    ///
-    /// <para><b>This reads the config; it does not write it.</b> <c>BepInEx.cfg</c> belongs to the
-    /// loader and to whatever else the user runs, and silently rewriting another component's
-    /// settings is not something a mod should do on the user's behalf. The warning names the file,
-    /// the key and the value so the change is one edit.</para>
-    ///
-    /// <para><b>Why parse the file rather than ask BepInEx.</b> <c>WriteUnityLog</c> is bound
-    /// internally by <c>DiskLogListener</c> and is not reachable through any public API, so there
-    /// is nothing to query. Parsing is version-tolerant in the way that matters: if a future build
-    /// renames or drops the key, the parse simply reports "not found" instead of asserting
-    /// something false.</para>
+    /// Reports at startup whether Unity log lines reach <c>LogOutput.log</c>. That is
+    /// <c>[Logging.Disk] WriteUnityLog</c> (default false), not <c>[Logging] UnityLogListening</c>
+    /// (default true), so peers' logs are not comparable without it.
+    /// <para>Reads BepInEx.cfg, never writes it. Parsed because the key has no public API.</para>
     /// </summary>
     internal static class LogCaptureDiagnostics
     {
@@ -53,10 +19,7 @@ namespace MegabonkTogether.Services
 
         private static bool reported;
 
-        /// <summary>
-        /// Logs one line describing this install's Unity-log capture, plus a warning naming the fix
-        /// when capture is off. Safe to call more than once; only the first call reports.
-        /// </summary>
+        /// <summary>Only the first call reports.</summary>
         internal static void Report()
         {
             if (reported)
@@ -66,23 +29,9 @@ namespace MegabonkTogether.Services
             reported = true;
 
             var configPath = BepInEx.Paths.BepInExConfigPath;
-            // Read off the assembly rather than BepInEx.Paths.DisplayBepInExVersion.
-            //
-            // That property does not exist on be.755, and the first version of this used it: the
-            // client peer — running the older BepInEx, and the peer whose logs matter most — threw
-            // MissingMethodException and reported nothing at all, in the very session this
-            // diagnostic was written to make comparable. It failed safe only because the call site
-            // in Plugin.Load is wrapped; the diagnostic itself was simply absent.
-            //
-            // Note a try/catch here would NOT have helped: MissingMethodException is raised when
-            // this method is JIT-compiled, not when the missing call executes, so a catch inside
-            // Report() never runs. The fix has to be to not reference the API at all. AssemblyName
-            // has been on every BepInEx build this project has ever seen.
-            //
-            // Informational version, not AssemblyName.Version. The latter reads "6.0.0.0" on both
-            // be.755 and be.785, so it cannot distinguish the two builds — which is the only reason
-            // this field is on the line at all. The informational attribute carries the full
-            // "6.0.0-be.785". Both are plain reflection and exist on every build.
+            // Not Paths.DisplayBepInExVersion: missing on be.755, and MissingMethodException fires
+            // at JIT time, so no try/catch can save it. Informational version, because
+            // AssemblyName.Version is "6.0.0.0" on every build.
             var bepinexAssembly = typeof(BepInEx.Paths).Assembly;
             var bepinexVersion =
                 bepinexAssembly
@@ -92,10 +41,6 @@ namespace MegabonkTogether.Services
                 ?? bepinexAssembly.GetName().Version?.ToString()
                 ?? "unknown";
 
-            // The BepInEx build is logged alongside the answer deliberately: two peers' logs are
-            // only comparable if both were captured under the same rules, and the build was the
-            // thing wrongly blamed last time. Recording both makes the next comparison decidable
-            // from the logs alone rather than from someone remembering their setup.
             var state = ReadWriteUnityLog(configPath);
 
             switch (state)
@@ -125,11 +70,7 @@ namespace MegabonkTogether.Services
             }
         }
 
-        /// <summary>
-        /// Returns the value of <c>[Logging.Disk] WriteUnityLog</c>, or null when the file, the
-        /// section or the key cannot be found. Section-aware because BepInEx.cfg has several
-        /// <c>[Logging.*]</c> sections and the key name is not unique across a naive scan.
-        /// </summary>
+        /// <summary>Null when not found. Section-aware: key names repeat across sections.</summary>
         private static bool? ReadWriteUnityLog(string configPath)
         {
             try
@@ -183,8 +124,7 @@ namespace MegabonkTogether.Services
             }
             catch (Exception ex)
             {
-                // A diagnostic must never be able to stop the plugin loading — see the call-site
-                // comment in Plugin.Load about the exception that did exactly that.
+                // Must never stop the plugin loading.
                 Plugin.Log.LogWarning($"[log-capture] Could not read {configPath}: {ex.GetType().Name}: {ex.Message}");
                 return null;
             }

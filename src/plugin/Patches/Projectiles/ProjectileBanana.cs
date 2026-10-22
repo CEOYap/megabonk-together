@@ -1,8 +1,8 @@
 ﻿using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches.Projectiles
+namespace OmniBonk.Patches.Projectiles
 {
     [HarmonyPatch(typeof(ProjectileBanana))]
     internal static class ProjectileBananaPatches
@@ -11,9 +11,7 @@ namespace MegabonkTogether.Patches.Projectiles
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
 
 
-        /// <summary>
-        /// Use netplayer position if projectile belongs to a netplayer.
-        /// </summary>
+        /// <summary>Use netplayer position if projectile belongs to a netplayer.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileBanana.MyFixedUpdate))]
         private static bool MyFixedUpdate_Prefix(ProjectileBanana __instance)
@@ -40,10 +38,7 @@ namespace MegabonkTogether.Patches.Projectiles
             return true;
         }
 
-        /// <summary>
-        /// Unqueue the previous request
-        /// </summary>
-        /// <param name="__instance"></param>
+        /// <summary>Unqueue the previous request</summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(ProjectileBanana.MyFixedUpdate))]
         private static void MyFixedUpdate_Postfix(ProjectileBanana __instance)

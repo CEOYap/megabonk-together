@@ -1,8 +1,8 @@
 ﻿using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches.SpecialAttack
+namespace OmniBonk.Patches.SpecialAttack
 {
     [HarmonyPatch(typeof(EnemySpecialAttackTargetLaser))]
     internal static class EnemySpecialAttackTargetLaserPatches
@@ -31,9 +31,7 @@ namespace MegabonkTogether.Patches.SpecialAttack
             }
         }
 
-        /// <summary>
-        /// Remove queued request after attack is over.
-        /// </summary>
+        /// <summary>Remove queued request after attack is over.</summary>
         [HarmonyFinalizer]
         [HarmonyPatch(nameof(EnemySpecialAttackTargetLaser.FixedUpdate))]
         public static void FixedUpdate_Finalizer(bool __state)

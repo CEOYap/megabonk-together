@@ -1,8 +1,8 @@
 ﻿using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches.Projectiles
+namespace OmniBonk.Patches.Projectiles
 {
     [HarmonyPatch(typeof(ProjectileShotgun))]
     internal static class ProjectileShotgunPatches
@@ -10,9 +10,7 @@ namespace MegabonkTogether.Patches.Projectiles
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
 
-        /// <summary>
-        /// Use the correct player (local / remote) transform
-        /// </summary>
+        /// <summary>Use the owning player's (local or remote) transform.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileShotgun.TryInit))]
         public static void MyUpdate_Prefix(ProjectileShotgun __instance, out bool __state)
@@ -36,9 +34,6 @@ namespace MegabonkTogether.Patches.Projectiles
 
         }
 
-        /// <summary>
-        /// Restore original transform after prefix
-        /// </summary>
         [HarmonyFinalizer]
         [HarmonyPatch(nameof(ProjectileShotgun.TryInit))]
         public static void MyUpdate_Finalizer(bool __state)
@@ -51,9 +46,7 @@ namespace MegabonkTogether.Patches.Projectiles
             playerManagerService.UnqueueNetplayerPositionRequest();
         }
 
-        /// <summary>
-        /// Use the correct player (local / remote) transform
-        /// </summary>
+        /// <summary>Use the owning player's (local or remote) transform.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileShotgun.GetAttackDir))]
         public static void GetAttackDir_Prefix(ProjectileShotgun __instance, out bool __state)
@@ -77,9 +70,6 @@ namespace MegabonkTogether.Patches.Projectiles
 
         }
 
-        /// <summary>
-        /// Restore original transform after prefix
-        /// </summary>
         [HarmonyFinalizer]
         [HarmonyPatch(nameof(ProjectileShotgun.GetAttackDir))]
         public static void GetAttackDir_Finalizer(bool __state)
@@ -92,9 +82,7 @@ namespace MegabonkTogether.Patches.Projectiles
             playerManagerService.UnqueueNetplayerPositionRequest();
         }
 
-        /// <summary>
-        /// Use the correct player (local / remote) transform
-        /// </summary>
+        /// <summary>Use the owning player's (local or remote) transform.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileShotgun.GetShootingPosition))]
         public static void GetShootingPosition_Prefix(ProjectileShotgun __instance, out bool __state)
@@ -118,9 +106,6 @@ namespace MegabonkTogether.Patches.Projectiles
 
         }
 
-        /// <summary>
-        /// Restore original transform after prefix
-        /// </summary>
         [HarmonyFinalizer]
         [HarmonyPatch(nameof(ProjectileShotgun.GetShootingPosition))]
         public static void GetShootingPosition_Finalizer(bool __state)

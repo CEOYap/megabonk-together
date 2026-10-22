@@ -1,6 +1,6 @@
 ﻿using BepInEx.Logging;
-using MegabonkTogether.Configuration;
-using MegabonkTogether.Services;
+using OmniBonk.Configuration;
+using OmniBonk.Services;
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -12,7 +12,7 @@ using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
-namespace MegabonkTogether.Common
+namespace OmniBonk.Common
 {
     public class GitHubRelease
     {
@@ -48,7 +48,7 @@ namespace MegabonkTogether.Common
         public string GetLatestVersion();
         public bool IsCustomBuild();
         public string GetCurrentVersion();
-        public Task EnsureChangelogExists(string version, string pluginDirectory);
+        public Task RefreshChangelogAsync(string pluginDirectory);
     }
 
     public class AutoUpdaterService : IAutoUpdaterService
@@ -138,10 +138,7 @@ namespace MegabonkTogether.Common
 
         public async Task<bool> CheckAndUpdate()
         {
-            // FIX P2-4: guard here rather than trusting every caller. Initialize() only runs
-            // inside Plugin.cs's CheckForUpdates gate and is the sole assignment of
-            // currentVersion/pluginPath, so reaching this method with the setting off ran the
-            // whole check against null state and NRE'd after the network call.
+            // FIX P2-4: with the setting off, Initialize() never ran and state is null.
             if (!ModConfig.CheckForUpdates.Value)
             {
                 return false;
@@ -278,58 +275,48 @@ namespace MegabonkTogether.Common
             }
         }
 
-        public async Task EnsureChangelogExists(string version, string pluginDirectory)
+        private static readonly TimeSpan CHANGELOG_FETCH_TIMEOUT = TimeSpan.FromSeconds(5);
+
+        /// <summary>
+        /// Online first: replaces the local copy with the repo-root CHANGELOG.toml on main, so a new
+        /// version's entries show even if the local file is stale. Any failure keeps the local copy,
+        /// which ships with the build. Only called when the changelog popup is about to show.
+        /// </summary>
+        public async Task RefreshChangelogAsync(string pluginDirectory)
         {
             var changelogPath = Path.Combine(pluginDirectory, ChangelogService.CHANGELOG_FILENAME);
-
-            if (File.Exists(changelogPath))
-            {
-                logger.LogInfo("CHANGELOG.toml already exists, skipping download");
-                return;
-            }
+            var url = $"https://raw.githubusercontent.com/{GITHUB_OWNER}/{GITHUB_REPO}/main/{ChangelogService.CHANGELOG_FILENAME}";
 
             try
             {
-                logger.LogInfo($"CHANGELOG.toml not found locally, fetching from GitHub for version {version}...");
-
-                var url = $"https://raw.githubusercontent.com/{GITHUB_OWNER}/{GITHUB_REPO}/{version}/src/plugin/CHANGELOG.toml";
-
-                using var request = new HttpRequestMessage(HttpMethod.Get, url);
-                using var response = await httpClient.SendAsync(request);
+                using var timeout = new System.Threading.CancellationTokenSource(CHANGELOG_FETCH_TIMEOUT);
+                using var response = await httpClient.GetAsync(url, timeout.Token);
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    logger.LogWarning($"Could not fetch CHANGELOG.toml from {version} tag, trying main branch...");
-
-                    url = $"https://raw.githubusercontent.com/{GITHUB_OWNER}/{GITHUB_REPO}/main/src/plugin/CHANGELOG.toml";
-                    using var fallbackRequest = new HttpRequestMessage(HttpMethod.Get, url);
-                    using var fallbackResponse = await httpClient.SendAsync(fallbackRequest);
-
-                    if (!fallbackResponse.IsSuccessStatusCode)
-                    {
-                        logger.LogWarning("Could not fetch CHANGELOG.toml from main branch either");
-                        return;
-                    }
-
-                    var content = await fallbackResponse.Content.ReadAsStringAsync();
-                    await File.WriteAllTextAsync(changelogPath, content);
-                    logger.LogInfo("CHANGELOG.toml fetched successfully from main branch");
+                    logger.LogWarning($"Could not fetch the changelog from GitHub ({(int)response.StatusCode}); using the local copy.");
                     return;
                 }
 
-                var versionContent = await response.Content.ReadAsStringAsync();
-                await File.WriteAllTextAsync(changelogPath, versionContent);
-                logger.LogInfo("CHANGELOG.toml fetched successfully from version tag");
+                var content = await response.Content.ReadAsStringAsync();
+
+                // A captive portal or error page must not overwrite the working local copy.
+                if (!content.Contains("[version."))
+                {
+                    logger.LogWarning("The changelog from GitHub has no version entries; using the local copy.");
+                    return;
+                }
+
+                await File.WriteAllTextAsync(changelogPath, content);
+                logger.LogInfo("Changelog updated from GitHub.");
             }
             catch (Exception ex)
             {
-                logger.LogWarning($"Failed to fetch CHANGELOG.toml: {ex.Message}");
+                logger.LogWarning($"Could not fetch the changelog from GitHub ({ex.GetType().Name}); using the local copy.");
             }
         }
 
-        /// <summary>
-        /// I think mod site are flagging the bat, so we will generate it on the fly and they can leave me alone
-        /// </summary>
+        /// <summary>Generated at runtime because mod sites flag a shipped .bat.</summary>
         private void GenerateUpdaterBatchFile(string pluginDirectory, string version)
         {
             try

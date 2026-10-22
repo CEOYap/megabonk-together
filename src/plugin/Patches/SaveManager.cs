@@ -1,25 +1,20 @@
 ﻿using HarmonyLib;
-using MegabonkTogether.Common;
-using MegabonkTogether.Configuration;
-using MegabonkTogether.Services;
+using OmniBonk.Common;
+using OmniBonk.Configuration;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using System;
 using System.IO;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
-    /// <summary>
-    /// Prevent saving during netplay sessions
-    /// </summary>
+    /// <summary>Prevent saving during netplay sessions unless allowed in config.</summary>
     [HarmonyPatch(typeof(SaveManager))]
     internal static class SaveManagerPatches
     {
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetRequiredService<ISynchronizationService>();
         private static readonly IAutoUpdaterService autoUpdaterService = Plugin.Services.GetService<IAutoUpdaterService>();
 
-        /// <summary>
-        /// Prevent saving on netplay sessions unless allowed in config.
-        /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(SaveManager.SaveStats))]
         public static bool SaveGame_Prefix()
@@ -35,9 +30,6 @@ namespace MegabonkTogether.Patches
             return true;
         }
 
-        /// <summary>
-        /// Prevent saving on netplay sessions unless allowed in config.
-        /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(SaveManager.SaveProgression))]
         public static bool SaveProgression_Prefix()
@@ -53,9 +45,6 @@ namespace MegabonkTogether.Patches
             return true;
         }
 
-        /// <summary>
-        /// Prevent saving on netplay sessions unless allowed in config.
-        /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(SaveManager.SaveConfig))]
         public static bool SaveConfig_Prefix()
@@ -71,9 +60,6 @@ namespace MegabonkTogether.Patches
             return true;
         }
 
-        /// <summary>
-        /// Prevent saving on netplay sessions unless allowed in config.
-        /// </summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(SaveManager.SaveTemp))]
         public static bool SaveTemp_Prefix()
@@ -89,8 +75,7 @@ namespace MegabonkTogether.Patches
             return true;
         }
 
-        /// <summary>
-        /// Trigger update when quitting if an update is available
+        /// <summary>Launches the updater on quit if an update is available (not netplay logic, so unguarded).</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(SaveManager.OnApplicationQuit))]
         public static void OnApplicationQuit_Prefix()

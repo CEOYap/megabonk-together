@@ -4,7 +4,7 @@ using UnityEditor;
 using UnityEngine;
 using UnityEngine.UI;
 
-namespace MegabonkTogether.UiAuthoring
+namespace OmniBonk.UiAuthoring
 {
     /// <summary>
     /// Builds a bundle from a minimal prefab and loads it back, in one editor run.
@@ -14,7 +14,7 @@ namespace MegabonkTogether.UiAuthoring
     /// </summary>
     public static class BisectBundle
     {
-        [MenuItem("MegabonkTogether/Bisect Bundle")]
+        [MenuItem("OmniBonk/Bisect Bundle")]
         public static void Run()
         {
             Directory.CreateDirectory("Assets/Bisect");

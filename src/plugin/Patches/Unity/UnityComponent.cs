@@ -1,25 +1,13 @@
 ﻿using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using UnityEngine;
 
-namespace MegabonkTogether.Patches.Unity
+namespace OmniBonk.Patches.Unity
 {
     /// <summary>
-    /// Rate-limited counters for the transform fallbacks below.
-    ///
-    /// Those fallbacks catch a reference that is destroyed game-side but still held by the mod —
-    /// suspected to be a NetPlayer, per the TODO on <see cref="UnityComponentPatches"/>. They are
-    /// currently silent, so there is no evidence of how often they fire, or through which
-    /// accessor. This records both.
-    ///
-    /// These sit inside patches on Component.get_transform, Transform.get_position and
-    /// Transform.get_rotation — three of the hottest properties in Unity — so a plain
-    /// LogWarning per hit would be a per-frame string allocation plus BepInEx disk I/O. Reports
-    /// are therefore throttled, and counts are accumulated between reports so the frequency is
-    /// visible rather than just the fact.
-    ///
-    /// Recording only happens on the exceptional branches, never on the common path.
+    /// Throttled counters for the dangling-transform fallbacks below. These patches are on the
+    /// hottest getters in Unity, so nothing is logged per hit; only exceptional branches record.
     /// </summary>
     internal static class TransformFallbackDiagnostics
     {
@@ -40,17 +28,8 @@ namespace MegabonkTogether.Patches.Unity
         internal static void RecordMissingNetPlayer() { missingNetPlayerHits++; MaybeReport(); }
 
         /// <summary>
-        /// Captures **one** managed stack trace per report window to identify who is holding the
-        /// dangling reference. A 3-player session showed ~144 of these per second the moment a peer
-        /// disconnects, so per-hit capture is out of the question; once per 5s is free.
-        ///
-        /// <para>The discriminator this gives is exactly the one that matters: under IL2CPP, native
-        /// game frames do not appear as managed frames, so <b>if any MegabonkTogether frame shows
-        /// up, our own code is dereferencing the destroyed object.</b> An empty result means the
-        /// access came from game code and the stale reference was handed to it — a different fix.</para>
-        ///
-        /// <para>Symbols ship next to the DLL (the csproj xcopies the whole output), so this
-        /// resolves file and line, as the P1-7 stack trace in an earlier log did.</para>
+        /// One stack trace per window. Native game frames are invisible under IL2CPP, so any
+        /// OmniBonk frame means our code holds the dangling reference.
         /// </summary>
         private static void SampleCaller()
         {
@@ -79,16 +58,12 @@ namespace MegabonkTogether.Patches.Unity
                     var method = frame.GetMethod();
                     var declaring = method?.DeclaringType;
                     if (declaring?.FullName == null
-                        || !declaring.FullName.StartsWith("MegabonkTogether", System.StringComparison.Ordinal))
+                        || !declaring.FullName.StartsWith("OmniBonk", System.StringComparison.Ordinal))
                     {
                         continue;
                     }
 
-                    // The patch itself is always on the stack; it is not the caller we want.
-                    // TransformPatches was missing here, and it is the class that patches
-                    // get_position/get_rotation — so a position fallback reported *itself* as the
-                    // caller ("TransformPatches.get_position_Prefix:294" in Run A's third repeat),
-                    // which reads like a finding and is not one.
+                    // Skip the patches themselves; they are always on the stack.
                     if (declaring == typeof(UnityComponentPatches)
                         || declaring == typeof(TransformPatches)
                         || declaring == typeof(TransformFallbackDiagnostics))
@@ -116,12 +91,11 @@ namespace MegabonkTogether.Patches.Unity
                 }
 
                 lastCallerSample = count == 0
-                    ? "no MegabonkTogether frames (called from game code)"
+                    ? "no OmniBonk frames (called from game code)"
                     : ours.ToString();
             }
             catch (System.Exception ex)
             {
-                // A diagnostic must never be able to break what it measures.
                 lastCallerSample = $"capture failed: {ex.GetType().Name}";
             }
         }
@@ -133,27 +107,9 @@ namespace MegabonkTogether.Patches.Unity
         private static bool seenIdentityAgain;
 
         /// <summary>
-        /// Names the destroyed component itself, which the caller sample cannot.
-        ///
-        /// <para><b>Why this was added.</b> Run A's repeat showed the enemy-targeting fix moving 14
-        /// enemies off the departed player while the fallback rate stayed at ~710 per 5s — so enemy
-        /// targeting was a holder but not the dominant one, and the stack sampler could only say
-        /// "no MegabonkTogether frames", i.e. game code. Which game object is being read was the
-        /// missing fact, and guessing at candidates (camera, minimap, follow targets) is exactly the
-        /// speculation this project's rules exist to prevent.</para>
-        ///
-        /// <para>Uses managed <c>GetType()</c> on the wrapper rather than the IL2CPP type. That is
-        /// deliberate twice over: <c>GetIl2CppType()</c> does not compile here at all — the csproj
-        /// takes UnityEngine.CoreModule from `unity-libs`, whose Component does not derive from
-        /// Il2CppObjectBase, the same trap that broke <c>StageData.Pointer</c> in 7be19bc — and it
-        /// would be a native call on a destroyed object, which is precisely the hazard being
-        /// measured. The managed wrapper survives destruction untouched.</para>
-        ///
-        /// <para><b>UNVERIFIED:</b> how specific the answer will be. Il2CppInterop usually hands
-        /// back the most-derived proxy it knows, in which case this names the component outright;
-        /// if Harmony instead passes a wrapper typed as the patched parameter, it degrades to
-        /// "Component" and tells us nothing. Worth one run to find out, since the alternative is
-        /// guessing at candidates.</para>
+        /// Names the destroyed component. Managed <c>GetType()</c>, not the IL2CPP type: that would
+        /// be a native call on a destroyed object (and does not compile against unity-libs).
+        /// <para><b>UNVERIFIED:</b> whether the wrapper is the most-derived type or just "Component".</para>
         /// </summary>
         internal static void SampleDestroyedInstanceType(Component instance)
         {
@@ -169,14 +125,8 @@ namespace MegabonkTogether.Patches.Unity
                     return;
                 }
 
-                // RuntimeHelpers.GetHashCode is identity on the managed wrapper — no native call,
-                // so it is safe on a destroyed object where GetInstanceID() would not be. It is not
-                // Unity's instance id and means nothing across processes; its only job is to say
-                // whether these ~143 hits per second are one object or many.
-                //
-                // Il2CppInterop can hand back more than one wrapper for the same native object, so
-                // several distinct ids do not prove several objects. One repeated id does prove a
-                // single one, which is the answer that would actually narrow the search.
+                // Managed identity, safe on a destroyed object (GetInstanceID is not). A repeat
+                // proves one object; distinct ids do not prove many (wrappers can differ).
                 var identity = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(instance);
 
                 if (identity == lastDestroyedIdentity)
@@ -190,9 +140,7 @@ namespace MegabonkTogether.Patches.Unity
 
                 lastDestroyedIdentity = identity;
 
-                // Identity is tracked on every hit — it has to be, or "one object or many" cannot
-                // be answered — but the string is built once per report window. GetHashCode is a
-                // few instructions; string interpolation at 143/s is not.
+                // Identity every hit; the string once per window.
                 if (sampledTypeThisWindow)
                 {
                     return;
@@ -210,11 +158,6 @@ namespace MegabonkTogether.Patches.Unity
             }
         }
 
-        /// <summary>
-        /// Reports at most once per <see cref="REPORT_INTERVAL_SECONDS"/>, then resets the counts.
-        /// Time.unscaledTime is a native call, but it only runs on a fallback hit — if that is
-        /// frequent enough for the cost to matter, the counts themselves are the finding.
-        /// </summary>
         private static void MaybeReport()
         {
             var now = Time.unscaledTime;
@@ -245,7 +188,6 @@ namespace MegabonkTogether.Patches.Unity
             lastCallerSample = "not sampled";
         }
 
-        /// <summary>Clears counters and the throttle so each session starts from zero.</summary>
         internal static void Reset()
         {
             lastReportTime = -999f;
@@ -299,8 +241,6 @@ namespace MegabonkTogether.Patches.Unity
                 var netPlayer = playerManagerService.GetNetPlayerByNetplayId(netPlayerId);
                 if (netPlayer == null)
                 {
-                    // Was an unthrottled interpolated LogWarning on a patched get_transform —
-                    // a per-frame string allocation. Same throttling as the fallbacks above.
                     TransformFallbackDiagnostics.RecordMissingNetPlayer();
                     return true;
                 }

@@ -4,19 +4,19 @@ using Assets.Scripts.Inventory__Items__Pickups.AbilitiesPassive.Implementations;
 using Assets.Scripts.Inventory__Items__Pickups.Items.ItemImplementations;
 using Assets.Scripts.Inventory__Items__Pickups.Weapons;
 using BepInEx.Logging;
-using MegabonkTogether.Common.Messages;
-using MegabonkTogether.Common.Models;
-using MegabonkTogether.Extensions;
-using MegabonkTogether.Helpers;
+using OmniBonk.Common.Messages;
+using OmniBonk.Common.Models;
+using OmniBonk.Extensions;
+using OmniBonk.Helpers;
 using Microsoft.Extensions.DependencyInjection;
-using MegabonkTogether.Scripts.NetPlayer;
+using OmniBonk.Scripts.NetPlayer;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 
-namespace MegabonkTogether.Services
+namespace OmniBonk.Services
 {
     public interface IPlayerManagerService
     {
@@ -57,26 +57,22 @@ namespace MegabonkTogether.Services
         public void AddPlayerInventory(uint connectionId, PlayerInventory inventory);
         public PlayerInventory GetPlayerInventory(uint connectionId);
 
-        /// <summary>
-        /// Teammates' inventories. Unlike the spawned avatars these survive a level change, so
-        /// they answer "does a teammate hold this" during the transition too.
-        /// </summary>
+        /// <summary>Teammates' inventories; unlike avatars, these survive a level change.</summary>
         public ICollection<PlayerInventory> GetRemoteInventories();
 
         /// <summary>
-        /// The teammate whose inventory holds <paramref name="weapon"/>, or null for the local
-        /// player's own weapon or one nobody holds. Reads the inventory store, so it still answers
-        /// during a level change, when the spawned avatars are gone.
+        /// The teammate holding <paramref name="weapon"/>, or null for the local player's or nobody's.
+        /// Works during a level change.
         /// </summary>
         public uint? GetWeaponOwnerId(WeaponBase weapon);
 
-        /// <summary>A teammate's inventory, or null without the warning GetPlayerInventory logs. For hit paths.</summary>
+        /// <summary>Like GetPlayerInventory but without the warning. For hit paths.</summary>
         public PlayerInventory FindPlayerInventory(uint connectionId);
 
-        /// <summary>The teammate whose item inventory this is, by native pointer; null if none.</summary>
+        /// <summary>Matched by native pointer.</summary>
         public uint? GetItemInventoryOwnerId(System.IntPtr itemInventory);
 
-        /// <summary>The teammate whose passive ability this is, by native pointer; null if none.</summary>
+        /// <summary>Matched by native pointer.</summary>
         public uint? GetPassiveAbilityOwnerId(System.IntPtr passiveAbility);
 
         public bool IsGameOver();
@@ -103,24 +99,19 @@ namespace MegabonkTogether.Services
     {
         private readonly ConcurrentDictionary<uint, Player> players = new();
 
-        /// <summary>
-        /// FIX P1-4: reused by <see cref="GetAllPlayersAliveNonAlloc"/>. Sized for the 6-player cap.
-        /// Main-thread only — see that method's remarks.
-        /// </summary>
+        /// <summary>FIX P1-4: buffer for <see cref="GetAllPlayersAliveNonAlloc"/>. Main thread only.</summary>
         private readonly List<Player> alivePlayersBuffer = new(8);
         private readonly ManualLogSource logger;
         private ConcurrentDictionary<uint, NetPlayer> spawnedPlayers = [];
         private uint localConnectionId = 0;
         private bool isLocalPlayerSet = false;
 
-        /// <summary>Latches the "connection ID not set" warning so it logs once per transition.</summary>
         private bool warnedLocalPlayerUnset = false;
         private bool hasSelectedCharacter = false;
         private int seed = 0;
         private ConcurrentQueue<uint> projectileToSpawnQueue = new();
         private ConcurrentQueue<uint> getNetplayerPositionQueue = new();
-        // FIX P1-11: carries the frame it was pushed on, so a request that was never popped can be
-        // recognised and dropped instead of redirecting the local player's transforms forever.
+        // FIX P1-11: frame-stamped so an unpopped request can be dropped.
         private ConcurrentQueue<(uint ConnectionId, int Frame)> getNetplayerPositionRequestQueue = new();
         private ConcurrentDictionary<uint, PlayerInventory> playerInventories = new();
 
@@ -162,9 +153,7 @@ namespace MegabonkTogether.Services
                 logger.LogWarning("Local player or inventory is null when checking remote TomeInventory.");
                 return false;
             }
-            // Compared by native pointer, as WeaponInventory and RemoteItemCopies do. `!=` compares
-            // the managed wrappers, and nothing guarantees one native object gets one wrapper; a
-            // false "remote" here would suppress the local player's own Chaos/Gambler roll.
+            // By native pointer: one native object may have several managed wrappers.
             return instance.Pointer != player.inventory.tomeInventory.Pointer;
         }
 
@@ -183,11 +172,7 @@ namespace MegabonkTogether.Services
             return [.. players.Where(p => p.Value.Hp > 0).Select(p => p.Value)];
         }
 
-        /// <summary>
-        /// FIX P1-4: allocation-free alive count. <see cref="GetAllPlayersAlive"/> materialises a
-        /// Player[] plus two LINQ iterators on every call, and most callers only wanted
-        /// <c>.Count()</c> of it.
-        /// </summary>
+        /// <summary>FIX P1-4: allocation-free alive count.</summary>
         public int GetAlivePlayerCount()
         {
             var count = 0;
@@ -203,15 +188,8 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>
-        /// FIX P1-4: non-allocating alive list for hot callers.
-        ///
-        /// <para><b>The returned list is a shared buffer that the next call overwrites.</b> Read it
-        /// and finish before calling anything that might call this again; copy it if you need to
-        /// retain it past that point.</para>
-        ///
-        /// <para><b>Main thread only.</b> There is one buffer and no lock. Every current caller is
-        /// a Unity <c>Update</c>. Do not call this from a network receive handler — use
-        /// <see cref="GetAllPlayersAlive"/> there, which allocates but is safe.</para>
+        /// FIX P1-4: returns a shared buffer the next call overwrites. Main thread only (no lock);
+        /// use <see cref="GetAllPlayersAlive"/> from network handlers.
         /// </summary>
         public IReadOnlyList<Player> GetAllPlayersAliveNonAlloc()
         {
@@ -301,18 +279,8 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>
-        /// Drops every player and the local-player identity, for a match attempt that failed before
-        /// a session existed.
-        ///
-        /// <para><b>Why not <see cref="Reset"/>.</b> Reset destroys spawned NetPlayers and cleans
-        /// inventories, which is Unity work. This runs on the WebSocket receive thread — the same
-        /// one <see cref="AddPlayer"/> is already called from — so it must stay purely managed.
-        /// Its footprint is deliberately identical to AddPlayer's: the dictionary plus the two
-        /// local-id fields, nothing else. Nothing has spawned yet at this point, so there is
-        /// nothing for Reset to have destroyed anyway.</para>
-        ///
-        /// <para>Deliberately does not clear the seed or the selected character: those belong to
-        /// the player's menu choices, not to the failed attempt.</para>
+        /// Drops players after a failed match attempt. Not <see cref="Reset"/>: this runs on the
+        /// WebSocket receive thread, so it must do no Unity work. Keeps seed and character choice.
         /// </summary>
         public void ClearLobbyPlayers()
         {
@@ -336,15 +304,8 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            // Before the NetPlayer is destroyed below. Enemies hold this player's Rigidbody in
-            // Enemy.target; once the GameObject is gone the game's own AI reads .transform off a
-            // destroyed object every frame, which is the ~700-per-5s dangling get_transform Run A
-            // measured on the host. Moving them off first means the reference is never dangling
-            // rather than dangling-and-caught-by-the-fallback.
-            //
-            // Ordered before the early return below on purpose: if there is no NetPlayer to
-            // destroy, enemies may still be targeting the player, and skipping the sweep is
-            // exactly how this survived unnoticed.
+            // Before destroying the NetPlayer (and before the early returns): enemies targeting a
+            // destroyed Rigidbody read a dangling transform every frame.
             try
             {
                 var moved = Scripts.Enemies.TargetSwitcherManager.RetargetAllTargeting(connectionId);
@@ -355,23 +316,17 @@ namespace MegabonkTogether.Services
             }
             catch (Exception ex)
             {
-                // Never let retargeting abort the rest of the disconnect cleanup - P1-7's lesson.
+                // P1-7: never abort the rest of the cleanup.
                 logger.LogWarning($"Could not retarget enemies away from {connectionId}: {ex.Message}");
             }
 
-            // The other holder of a departed player's Transform, and per Run A's fourth repeat the
-            // one that actually accounts for the ~143/s fallback rate: the game's Pickup follows the
-            // Transform it was handed, every frame, for as long as it is in flight.
+            // In-flight pickups also follow the departed player's Transform.
             try
             {
-                // Resolved here rather than injected: PickupManagerService already depends on this
-                // service's data indirectly, and a constructor dependency risks a DI cycle for one
-                // call on a path that runs once per disconnect.
+                // Resolved here, not injected, to avoid a DI cycle.
                 var pickupManagerService = Plugin.Services.GetRequiredService<IPickupManagerService>();
 
-                // Resolved before the NetPlayer is destroyed further down, so the sweep can match
-                // pickups by the transform they actually hold. May be null if the NetPlayer is
-                // already gone; the sweep then falls back to matching destroyed targets.
+                // May be null; the sweep then matches destroyed targets instead.
                 var departingTransform = GetNetPlayerByNetplayId(connectionId)?.Model?.transform;
                 var stopped = pickupManagerService.StopFollowingDepartedPlayer(connectionId, departingTransform);
                 if (stopped > 0)
@@ -417,7 +372,6 @@ namespace MegabonkTogether.Services
             }
         }
 
-        /// <summary>Same as <see cref="CleanQueue"/>, for the frame-stamped request queue.</summary>
         private void CleanPositionRequestQueue(uint connectionId)
         {
             var kept = getNetplayerPositionRequestQueue.Where(r => r.ConnectionId != connectionId).ToList();
@@ -435,14 +389,7 @@ namespace MegabonkTogether.Services
                 return player;
             }
 
-            // This warning was unthrottled and fired 668 times in one 3-player session, all for the
-            // same id, immediately after that peer disconnected — i.e. this sits on a per-frame path
-            // and something keeps asking for a player who is gone. Each hit was a string concat plus
-            // BepInEx disk I/O, which the bepinex skill calls out explicitly.
-            //
-            // Throttled per connection id so a genuinely new missing player is still reported at
-            // once, while a stuck caller reports every 5s with a count instead of every frame. The
-            // repetition is the signal, not each line.
+            // Throttled per id: per-frame callers keep asking for departed players.
             ReportMissingPlayer(connectionId);
             return null;
         }
@@ -465,9 +412,6 @@ namespace MegabonkTogether.Services
 
             missingPlayerReports[connectionId] = (now, 0);
 
-            // Carry the suppressed count into the line. The rate is the diagnosis — "+667 more"
-            // says a per-frame caller is stuck on a departed player, which one line per 5s alone
-            // would not convey.
             logger.LogWarning(previous.Suppressed > 0
                 ? $"Player not found for ConnectionId: {connectionId} (+{previous.Suppressed} more in the last ~5s)"
                 : $"Player not found for ConnectionId: {connectionId}");
@@ -498,42 +442,22 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>
-        /// Gives a known peer an avatar if it does not have one, and returns it. Idempotent.
-        ///
-        /// <para><b>Why creation is per-player and on demand rather than one batch.</b> Avatars are
-        /// cleared by <see cref="ResetForNextLevel"/> and were only ever recreated by
-        /// <see cref="SpawnPlayers"/>, which runs once, from the <c>GameEvent.Start</c> path, behind
-        /// the lobby-ready barrier. So anything that delayed that barrier left the peer with no
-        /// avatar <i>for the rest of the run</i>: every position update for them hit "NetPlayer not
-        /// found", was logged, and was dropped — hundreds of times, with the player simply invisible
-        /// and unrecoverable. A peer becoming known is the only precondition creation actually has,
-        /// and it is the precondition this checks.</para>
-        ///
-        /// <para>Main thread only: it creates a <c>GameObject</c>. Both transports' receive paths
-        /// dispatch from <c>Update</c>, so every caller already satisfies that.</para>
+        /// Gives a known peer an avatar if it lacks one. Idempotent and on demand, so a delayed
+        /// start barrier cannot leave a peer invisible for the run. Main thread only.
         /// </summary>
         public NetPlayer EnsureNetPlayerSpawned(uint connectionId)
         {
             if (spawnedPlayers.TryGetValue(connectionId, out var existing))
             {
-                // Unity's == is overloaded: a *destroyed* object compares equal to null while the
-                // managed reference is still perfectly alive. That distinction is the whole bug
-                // this branch exists to handle, and getting it wrong is what made a peer invisible
-                // for an entire run.
+                // Unity ==: a destroyed object compares equal to null.
                 if (existing != null)
                 {
-                    // Present but bodiless. Initialize can fail to build the model when the avatar
-                    // is created during a level load — which on-demand spawning makes routine — and
-                    // a NetPlayer with no model is invisible with nothing to recover it.
                     if (players.TryGetValue(connectionId, out var known))
                     {
                         var wanted = (ECharacter)known.Character;
 
-                        // Two reasons to rebuild, and the second is why players appeared as the
-                        // wrong character. An avatar is built from whatever the roster held at the
-                        // time, and on this path that can be before SelectedCharacter has arrived —
-                        // so it gets the default, and nothing afterwards ever reconsidered it. The
-                        // record is the truth; the model is a cache of it.
+                        // Rebuild if the model failed to build during a level load, or was built
+                        // before the roster knew the character. The roster is the truth.
                         if (existing.Model == null)
                         {
                             logger.LogInfo($"Re-initializing NetPlayer {connectionId}: it has no model.");
@@ -551,7 +475,6 @@ namespace MegabonkTogether.Services
                         }
                         else if (existing.BuiltWithHat != known.Hat)
                         {
-                            // A hat does not need the model rebuilt, only re-parented.
                             ApplyHat(existing, known);
                         }
                     }
@@ -559,11 +482,7 @@ namespace MegabonkTogether.Services
                     return existing;
                 }
 
-                // Destroyed by a scene load, but still keyed here. The entry must go before a
-                // replacement can take its place: TryAdd would fail against it, and the "lost a
-                // race" branch below would then destroy the healthy new avatar and hand back the
-                // corpse — every frame, forever. That is precisely what happened, and why one
-                // player could see the other and not the reverse.
+                // Destroyed by a scene load: remove the entry, or TryAdd below fails forever.
                 logger.LogInfo($"Replacing NetPlayer {connectionId}: the previous one was destroyed.");
                 spawnedPlayers.TryRemove(connectionId, out _);
             }
@@ -571,13 +490,10 @@ namespace MegabonkTogether.Services
             var local = GetLocalPlayer();
             if (local != null && local.ConnectionId == connectionId)
             {
-                // The local player has no avatar by design; asking is a caller's mistake, not an
-                // error, but it must be distinguishable from the miss below.
+                // The local player has no avatar.
                 return null;
             }
 
-            // Deliberately not GetPlayer: that reports a miss, throttled, and a spawn request for a
-            // player who has genuinely left is not worth a warning on a per-frame path.
             if (!players.TryGetValue(connectionId, out var player))
             {
                 ReportMissingPlayer(connectionId);
@@ -589,11 +505,7 @@ namespace MegabonkTogether.Services
 
             if (!spawnedPlayers.TryAdd(connectionId, netPlayer))
             {
-                // Lost a race with another caller this frame. Theirs is the one in the map, so this
-                // one is destroyed rather than leaked as an orphan that receives nothing.
-                //
-                // Only reachable as a genuine race now. It used to be reachable against a destroyed
-                // entry too, which turned this from a tie-breaker into a permanent trap.
+                // Lost a race; keep the winner, destroy ours.
                 UnityEngine.Object.Destroy(go);
                 logger.LogInfo($"Discarded a duplicate NetPlayer for {connectionId}; another call won.");
                 return spawnedPlayers.TryGetValue(connectionId, out var winner) && winner != null ? winner : null;
@@ -607,11 +519,8 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>
-        /// Puts the roster's hat on an avatar, and records what was put there.
-        ///
-        /// <para>Read from the record rather than waited for as an event: <c>HatChanged</c> only
-        /// fires when someone changes hat, so an avatar built afterwards — on join, or on every
-        /// level transition — would never hear about a hat chosen before it existed.</para>
+        /// Applies the roster's hat. Read from the record because <c>HatChanged</c> never fires
+        /// for avatars built later.
         /// </summary>
         private void ApplyHat(NetPlayer netPlayer, Player player)
         {
@@ -640,8 +549,7 @@ namespace MegabonkTogether.Services
             }
             catch (System.Exception ex)
             {
-                // Cosmetic. A hat that will not attach must not take the avatar down with it — the
-                // ordering mistake StartGame already made once with the minimap arrow.
+                // Cosmetic; must not take the avatar down.
                 logger.LogWarning($"Could not put hat {player.Hat} on {player.ConnectionId}: {ex.Message}");
             }
         }
@@ -755,10 +663,7 @@ namespace MegabonkTogether.Services
         {
             if (!isLocalPlayerSet)
             {
-                // Once per transition, not once per call. The lobby panel polls this while it is
-                // open, which turned a genuine warning into 55 identical lines in a 176-line log
-                // and buried everything else. Still says it the first time, which is the part
-                // that carries information.
+                // Once per transition: the lobby panel polls this.
                 if (!warnedLocalPlayerUnset)
                 {
                     warnedLocalPlayerUnset = true;
@@ -783,8 +688,7 @@ namespace MegabonkTogether.Services
 
         public NetPlayer GetNetPlayerByWeapon(WeaponBase weapon)
         {
-            // Null-guarded: a NetPlayer receives its Inventory a step after it is spawned, and this
-            // runs inside hit prefixes, where a throw aborts the game's hit.
+            // Inventory arrives after spawn, and a throw in a hit prefix aborts the hit.
             return spawnedPlayers.Values
                 .FirstOrDefault(np => np.Inventory?.weaponInventory?.weapons?.ContainsValue(weapon) ?? false);
         }
@@ -851,43 +755,21 @@ namespace MegabonkTogether.Services
 
         public void AddGetNetplayerPositionRequest(uint connectionId)
         {
-            // FIX P1-11: stamp the frame. Every push/pop pair in this codebase brackets a single
-            // game call, so an entry that outlives its frame is a leak by definition — see
-            // PeakNetplayerPositionRequest.
+            // FIX P1-11: see PeakNetplayerPositionRequest.
             getNetplayerPositionRequestQueue.Enqueue((connectionId, Time.frameCount));
         }
 
 
         /// <summary>
-        /// The front of this queue tells the transform patches to resolve the local player's
-        /// "Player" / "Hips" / "Renderer" transforms to a netplayer instead. Entries are pushed for
-        /// the duration of one game call and popped afterwards.
-        ///
-        /// <para>FIX P1-11: <b>drops entries left over from earlier frames.</b> ~48 sites push and
-        /// pop, and most of them are a Harmony prefix/postfix pair around a game method, so
-        /// `try/finally` is not available: the pop is skipped outright if the game method throws,
-        /// and — more often — if the postfix's own condition no longer holds. Those conditions are
-        /// re-derived from mutable state rather than recorded by the push:
-        /// `EnemySpecialAttackTargetLaser` re-reads `targetId`, which a retarget can clear between
-        /// prefix and postfix; `WeaponAttack` re-runs `GetNetPlayerByWeapon`, which a steal/return
-        /// can invalidate; several re-check `HasNetplaySessionStarted()`, which teardown can flip.
-        /// Any of those strands an id at the front of the queue, and from then on the LOCAL
-        /// player's transforms silently resolve to a remote netplayer for the rest of the
-        /// session.</para>
-        ///
-        /// <para>Purging by frame fixes every site at once, including ones not written yet, which
-        /// is why it is here rather than at 48 call sites. It is also exact rather than
-        /// approximate: nothing in the codebase intends a request to span frames.</para>
+        /// The front entry redirects the local player's transforms to a netplayer for one game call.
+        /// <para>FIX P1-11: drops entries from earlier frames. Prefix/postfix pairs cannot use
+        /// try/finally, so a skipped pop would otherwise redirect the local player for the rest of
+        /// the session.</para>
         /// </summary>
         public uint? PeakNetplayerPositionRequest()
         {
-            // PERF: this is called from the prefixes on Component.get_transform,
-            // Transform.get_position and Transform.get_rotation — three of the hottest properties
-            // in Unity — so it runs on essentially every transform access in the game while a
-            // session is up, and the queue is empty on the overwhelming majority of those calls.
-            // IsEmpty is a managed field read; Time.frameCount below is a native interop call.
-            // Reading the frame unconditionally (as the first version of the P1-11 fix did) put
-            // that native call on the single hottest path in the mod.
+            // PERF: hottest path in the mod (every transform access). Check IsEmpty before the
+            // native Time.frameCount call.
             if (getNetplayerPositionRequestQueue.IsEmpty)
             {
                 return null;
@@ -913,11 +795,7 @@ namespace MegabonkTogether.Services
             return null;
         }
 
-        /// <summary>
-        /// Counts dropped stale requests and reports at most once per 5s. Silent when healthy;
-        /// when it fires, the count and the age separate "one unlucky throw" from "a site that
-        /// leaks on every call". Same shape as the other diagnostics in this build.
-        /// </summary>
+        /// <summary>Reports at most once per 5s.</summary>
         private void ReportStalePositionRequest(uint connectionId, int ageInFrames)
         {
             stalePositionRequests++;
@@ -938,7 +816,6 @@ namespace MegabonkTogether.Services
             stalePositionRequests = 0;
         }
 
-        /// <summary>Clears the stale-request counters so they do not bleed between sessions.</summary>
         private void ResetStalePositionRequestDiagnostics()
         {
             stalePositionRequests = 0;
@@ -1006,10 +883,7 @@ namespace MegabonkTogether.Services
         {
             players.Clear();
 
-            // FIX P1-7: guard per item. The try used to wrap the whole ForEach, and List<T>.ForEach
-            // abandons the iteration on the first throw — so one already-destroyed NetPlayer meant
-            // every remaining one was never destroyed, and the Clear() below then dropped the only
-            // references to them. They survived into the next session, untracked and undestroyed.
+            // FIX P1-7: guard per item, so one throw cannot leak the rest.
             foreach (var kv in spawnedPlayers.ToList())
             {
                 try
@@ -1028,8 +902,7 @@ namespace MegabonkTogether.Services
                 }
                 catch (Exception ex)
                 {
-                    // The null check above is not sufficient on its own: a native object freed
-                    // underneath the managed wrapper still throws on .gameObject through interop.
+                    // A freed native object can still throw on .gameObject.
                     logger.LogWarning($"Could not destroy spawned player {kv.Key} during reset: {ex.Message}");
                 }
             }
@@ -1039,9 +912,7 @@ namespace MegabonkTogether.Services
             getNetplayerPositionQueue.Clear();
             getNetplayerPositionRequestQueue.Clear();
             ResetStalePositionRequestDiagnostics();
-            // FIX P1-7: same shape as the loop above, and this one had no try at all — a throw
-            // from Cleanup() escaped Reset() entirely, skipping the Clear() and every field reset
-            // below it and leaving the service half-reset for the next session.
+            // FIX P1-7: same per-item guard.
             foreach (var kv in playerInventories.ToList())
             {
                 try
@@ -1078,20 +949,9 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>
-        /// Is this <see cref="ItemGhost"/> owned by a *remote* player rather than the local one?
-        ///
-        /// <para><b>This existed unused until OB-2.</b> It was written, never called, and the bug it
-        /// would have prevented was reported and mis-diagnosed in the meantime — see
-        /// <c>docs/netplay/08-observed-bugs.md#ob-2</c>. Remote players carry real
-        /// <c>ItemGhost</c> instances in their replicated inventory, every instance subscribes
-        /// itself to one static interaction event, and so a remote player's item fires on the local
-        /// player's interaction.</para>
-        ///
-        /// <para><b>Null-hardened because it is now on a gameplay path.</b> <see cref="NetPlayer"/>
-        /// gets its <c>Inventory</c> in a later lifecycle step than its spawn, so there is a window
-        /// where it is null; an exception thrown here would be thrown inside a Harmony prefix. The
-        /// <c>netPlayer == null</c> check is Unity's operator, deliberately — a destroyed avatar is
-        /// still non-null managed-side, so <c>?.</c> would not catch it.</para>
+        /// OB-2: whether a remote player owns this ghost (every instance hears the static
+        /// interaction event). Null-hardened: called from a Harmony prefix, and the
+        /// <c>== null</c> is Unity's, to catch destroyed avatars.
         /// </summary>
         public bool IsRemoteItem(ItemGhost instance)
         {

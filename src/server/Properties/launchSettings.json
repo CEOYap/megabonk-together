@@ -1,6 +1,6 @@
 {
   "profiles": {
-    "MegabonkTogether.Server": {
+    "OmniBonk.Server": {
       "commandName": "Project",
       "environmentVariables": {
         "DOTNET_ENVIRONMENT": "Development",

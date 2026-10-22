@@ -1,6 +1,6 @@
 ﻿using MemoryPack;
 
-namespace MegabonkTogether.Common.Models
+namespace OmniBonk.Common.Models
 {
     [MemoryPackable]
     public partial class EnemyModel

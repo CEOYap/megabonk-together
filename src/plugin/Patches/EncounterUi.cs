@@ -2,12 +2,12 @@
 
 //using Assets.Scripts.Utility;
 //using HarmonyLib;
-//using MegabonkTogether.Helpers;
+//using OmniBonk.Helpers;
 //using Microsoft.Extensions.DependencyInjection;
 //using System.Collections;
 //using UnityEngine;
 
-//namespace MegabonkTogether.Patches
+//namespace OmniBonk.Patches
 //{
 //    [HarmonyPatch(typeof(EncounterUi))]
 //    internal static class EncounterUiPatches

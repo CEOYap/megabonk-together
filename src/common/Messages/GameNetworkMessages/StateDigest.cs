@@ -1,26 +1,12 @@
 using System.Collections.Generic;
 using MemoryPack;
 
-namespace MegabonkTogether.Common.Messages.GameNetworkMessages
+namespace OmniBonk.Common.Messages.GameNetworkMessages
 {
     /// <summary>
-    /// Desync detector. A periodic summary of the host's view of the run, which each client diffs
-    /// against its own and logs where they disagree.
-    ///
-    /// <para><b>Why it exists.</b> Most divergence in this project has been found by comparing
-    /// screenshots from two machines — OB-12's counters, OB-21's barrier rounds, OB-9's enemy health.
-    /// Every field here is something that has drifted before, chosen so the next drift becomes a log
-    /// line instead of an observation someone has to notice.</para>
-    ///
-    /// <para><b>Reports, never corrects.</b> Nothing on the receiving side writes any of these values
-    /// back into the game. Papering over a mismatch would remove the evidence it exists to produce.</para>
-    ///
-    /// <para><b>Off by default</b>, behind <c>Diagnostics.LogDesync</c>, and sent only by a host that
-    /// has it on. A peer on a build without this type cannot deserialize it, so it must only be
-    /// enabled when every peer runs the same build — which is the only way it is used.</para>
-    ///
-    /// <para>Carries a dictionary, so it must travel on a reliable channel: LiteNetLib fragments
-    /// reliable channels only.</para>
+    /// Desync detector: the host's periodic view of the run; clients diff and log, never correct.
+    /// <para>Off by default (<c>Diagnostics.LogDesync</c>); enable only when all peers run the same build.
+    /// Reliable only: carries a dictionary, and LiteNetLib fragments reliable channels only.</para>
     /// </summary>
     [MemoryPackable]
     public partial class StateDigest : IGameNetworkMessage

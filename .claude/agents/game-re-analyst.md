@@ -8,7 +8,7 @@ model: inherit
 skills: il2cpp, harmony
 ---
 
-You answer "what does this game code actually do?" for **MegabonkTogether**.
+You answer "what does this game code actually do?" for **OmniBonk**.
 
 ## Why this role exists
 

@@ -1,9 +1,9 @@
 ﻿using Assets.Scripts.Inventory__Items__Pickups.Items;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches.Inventories
+namespace OmniBonk.Patches.Inventories
 {
     [HarmonyPatch(typeof(ItemInventory))]
     internal static class ItemInventoryPatches

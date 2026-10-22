@@ -1,13 +1,13 @@
 ﻿using Assets.Scripts._Data.Tomes;
-using MegabonkTogether.Common.Messages;
-using MegabonkTogether.Common.Models;
-using MegabonkTogether.Services;
+using OmniBonk.Common.Messages;
+using OmniBonk.Common.Models;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 
-namespace MegabonkTogether.Scripts.NetPlayer
+namespace OmniBonk.Scripts.NetPlayer
 {
     public class NetPlayersDisplayer : MonoBehaviour
     {

@@ -4,21 +4,18 @@
 using System;
 using System.IO;
 
-namespace MegabonkTogether.Helpers
+namespace OmniBonk.Helpers
 {
     /// <summary>
-    /// Hands the host's Friendlies room code to a test bot running in a second copy of the game on
-    /// the same PC. Both copies resolve <see cref="Path"/> to the same file in the user's temp
-    /// folder. Written on every Friendlies host, whatever <c>BotMode</c> says (design, call 4): it
-    /// is a few bytes, and a second switch the owner forgot would make the bot silently never join.
-    /// Never throws; an IO failure is logged once.
+    /// Passes the host's room code to a test bot on the same PC via a temp file. Written regardless of
+    /// <c>BotMode</c>, so a forgotten switch cannot stop the bot joining. Never throws.
     /// </summary>
     internal static class BotRoomCodeFile
     {
         private static bool loggedFailure;
 
         internal static string Path { get; } =
-            System.IO.Path.Combine(System.IO.Path.GetTempPath(), "MegabonkTogether-bot-roomcode.txt");
+            System.IO.Path.Combine(System.IO.Path.GetTempPath(), "OmniBonk-bot-roomcode.txt");
 
         internal static void Write(string roomCode)
         {

@@ -1,6 +1,6 @@
-﻿using MegabonkTogether.Common.Models;
+﻿using OmniBonk.Common.Models;
 
-namespace MegabonkTogether.Extensions
+namespace OmniBonk.Extensions
 {
     static internal class PickupExtensions
     {

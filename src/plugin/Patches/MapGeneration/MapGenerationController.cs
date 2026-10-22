@@ -1,10 +1,10 @@
 ﻿using Assets.Scripts.Managers;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using static MapGenerationController;
 
-namespace MegabonkTogether.Patches.MapGeneration
+namespace OmniBonk.Patches.MapGeneration
 {
     [HarmonyPatch(typeof(_GenerateMap_d__39))]
     internal class MapGenerationControllerGenMapPatches
@@ -12,11 +12,7 @@ namespace MegabonkTogether.Patches.MapGeneration
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
 
-        /// <summary>
-        /// Save prefabs (Spawned by server message)
-        /// Also set custom seed for crypt generator on the graveyard map
-        /// Also add specific prefabs if any in the map
-        /// </summary>
+        /// <summary>Seeds the Graveyard crypt generator; clients register prefabs for host spawn messages.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(_GenerateMap_d__39.MoveNext))]
         public static void MoveNext_Prefix(_GenerateMap_d__39 __instance, ref bool __result)
@@ -91,9 +87,6 @@ namespace MegabonkTogether.Patches.MapGeneration
             }
         }
 
-        /// <summary>
-        /// Store world size for later use
-        /// </summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(_GenerateMap_d__39.MoveNext))]
         public static void MoveNext_Postfix(_GenerateMap_d__39 __instance, ref bool __result)
@@ -111,10 +104,7 @@ namespace MegabonkTogether.Patches.MapGeneration
 
                 Plugin.Instance.SetWorldSize(levelWorldSize);
 
-                // OB-36. What the restores (StopDungeon, TeleportPlayerBackToBounds) go back to, so it
-                // must be the range this level quantizes with, not the raw map size. The raw size here
-                // meant falling off the Graveyard map moved that peer from 5000 to the map size while
-                // everyone else stayed on 5000.
+                // OB-36: restores must return to the quantization range, not the raw map size.
                 Plugin.Instance.OriginalWorldSize = levelWorldSize;
             }
         }

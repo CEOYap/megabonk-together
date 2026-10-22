@@ -1,7 +1,7 @@
 ---
 name: bepinex
 description: |
-  BepInEx 6 IL2CPP plugin lifecycle for MegabonkTogether — BasePlugin.Load, the DI host, ModConfig bindings, logging, and the auto-updater/changelog flow.
+  BepInEx 6 IL2CPP plugin lifecycle for OmniBonk — BasePlugin.Load, the DI host, ModConfig bindings, logging, and the auto-updater/changelog flow.
   Use when: changing Plugin.cs startup or teardown, adding a config entry, registering a service or injected type, adding a log line, or the plugin fails to load / loads but does nothing.
 allowed-tools: Read, Edit, Write, Glob, Grep, Bash
 ---
@@ -101,8 +101,11 @@ For on-screen debugging during a session, use `Helpers/ScreenTextHelper.cs` rath
 - `AutoUpdaterService` checks GitHub releases at startup when `CheckForUpdates` is true.
   Thunderstore builds ship with this path disabled — see the `THUNDERSTORE` compile constant in
   the **build-and-release** skill.
-- `ChangelogService` reads `src/plugin/CHANGELOG.toml` (copied to output via
-  `CopyToOutputDirectory`) and shows entries when `PreviousVersion` differs from the current one.
+- `ChangelogService` shows the in-game changelog when `ShowChangelog` is set (after an update,
+  or on first launch). It first fetches `CHANGELOG.toml` from the root of `CEOYap/OmniBonk` on
+  `main` (5 s timeout) and saves it over the local copy; on any failure it reads the copy that
+  ships next to the DLL. Entries newer than `PreviousVersion`, up to the current version, are
+  shown; an empty `PreviousVersion` shows only the newest entry.
 
 **Releasing means editing three places:** the csproj `<Version>`, a new `[version."X.Y.Z"]` block
 in `CHANGELOG.toml`, and the changelog section of `README.md`.

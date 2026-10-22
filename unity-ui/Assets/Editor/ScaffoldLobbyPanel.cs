@@ -4,7 +4,7 @@ using UnityEditor;
 using UnityEngine;
 using UnityEngine.UI;
 
-namespace MegabonkTogether.UiAuthoring
+namespace OmniBonk.UiAuthoring
 {
     /// <summary>
     /// Generates Assets/Prefabs/LobbyPanel.prefab: the hierarchy the runtime binds to, styled.
@@ -158,7 +158,7 @@ namespace MegabonkTogether.UiAuthoring
 
         #endregion
 
-        [MenuItem("MegabonkTogether/Scaffold Lobby Panel Prefab")]
+        [MenuItem("OmniBonk/Scaffold Lobby Panel Prefab")]
         public static void Scaffold()
         {
             // Application.isBatchMode first: EditorUtility.DisplayDialog cannot be answered from a
@@ -223,7 +223,7 @@ namespace MegabonkTogether.UiAuthoring
             Object.DestroyImmediate(root);
             AssetDatabase.Refresh();
 
-            Debug.Log($"[MT] Wrote {PrefabPath}. Run MegabonkTogether/Build UI Bundle, then rebuild the plugin.");
+            Debug.Log($"[MT] Wrote {PrefabPath}. Run OmniBonk/Build UI Bundle, then rebuild the plugin.");
 
             if (!Application.isBatchMode)
             {

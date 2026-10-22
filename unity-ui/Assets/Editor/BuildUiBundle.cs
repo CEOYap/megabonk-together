@@ -2,7 +2,7 @@ using System.IO;
 using UnityEditor;
 using UnityEngine;
 
-namespace MegabonkTogether.UiAuthoring
+namespace OmniBonk.UiAuthoring
 {
     /// <summary>
     /// Builds every prefab under Assets/Prefabs into a single AssetBundle and drops it straight
@@ -30,7 +30,7 @@ namespace MegabonkTogether.UiAuthoring
         /// </summary>
         private const string PluginResourcesRelativePath = "../src/plugin/Resources";
 
-        [MenuItem("MegabonkTogether/Build UI Bundle %#b")]
+        [MenuItem("OmniBonk/Build UI Bundle %#b")]
         public static void Build()
         {
             var prefabGuids = AssetDatabase.FindAssets("t:Prefab", new[] { PrefabFolder });

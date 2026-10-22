@@ -1,5 +1,5 @@
 name: Bug Report
-description: Report a bug or issue with MegabonkTogether
+description: Report a bug or issue with OmniBonk
 title: "[Bug]: "
 labels:
   - bug
@@ -40,7 +40,7 @@ body:
 
         Logs are typically located at: `{Your computer}/Megabonk/BepInEx/LogOutput.log` , look at the hour and date to find the correct one or use the one without a number for the latest log.
 
-        You can drag and drop the log file here, or paste the relevant portions of the log (especially any errors or warnings related to MegabonkTogether).
+        You can drag and drop the log file here, or paste the relevant portions of the log (especially any errors or warnings related to OmniBonk).
       placeholder: Paste your BepInEx logs here or drag and drop the log file.
       render: shell
     validations:

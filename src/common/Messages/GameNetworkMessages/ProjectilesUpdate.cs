@@ -1,7 +1,7 @@
-using MegabonkTogether.Common.Models;
+using OmniBonk.Common.Models;
 using MemoryPack;
 
-namespace MegabonkTogether.Common.Messages
+namespace OmniBonk.Common.Messages
 {
     [MemoryPackable]
     public partial class ProjectilesUpdate : IGameNetworkMessage

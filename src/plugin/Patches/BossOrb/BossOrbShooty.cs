@@ -1,8 +1,8 @@
 ﻿using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches.BossOrbPatch
+namespace OmniBonk.Patches.BossOrbPatch
 {
     [HarmonyPatch(typeof(BossOrbShooty))]
     internal static class BossOrbShootyPatches

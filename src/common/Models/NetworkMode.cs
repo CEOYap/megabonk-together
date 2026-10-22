@@ -1,4 +1,4 @@
-﻿namespace MegabonkTogether.Common.Models
+﻿namespace OmniBonk.Common.Models
 {
     public enum NetworkModeType
     {

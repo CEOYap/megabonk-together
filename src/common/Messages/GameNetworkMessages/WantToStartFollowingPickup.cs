@@ -1,6 +1,6 @@
 ﻿using MemoryPack;
 
-namespace MegabonkTogether.Common.Messages.GameNetworkMessages
+namespace OmniBonk.Common.Messages.GameNetworkMessages
 {
     [MemoryPackable]
     public partial class WantToStartFollowingPickup : IGameNetworkMessage

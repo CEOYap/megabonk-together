@@ -1,17 +1,15 @@
 ﻿using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches.Interactables
+namespace OmniBonk.Patches.Interactables
 {
     [HarmonyPatch(typeof(InteractableDesertGrave))]
     internal static class InteractableDesertGravePatches
     {
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetRequiredService<ISynchronizationService>();
 
-        /// <summary>
-        /// Manually deactivate desert grave on client
-        /// </summary>
+        /// <summary>Deactivates the desert grave on clients.</summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(InteractableDesertGrave.Interact))]
         public static void Interact_Postfix(InteractableDesertGrave __instance)

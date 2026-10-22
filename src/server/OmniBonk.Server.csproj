@@ -4,7 +4,7 @@
         <OutputType>Exe</OutputType>
 	      <TargetFramework>net6.0</TargetFramework>
 	      <AssemblyName>OmniBonk.Server</AssemblyName>
-	      <RootNamespace>MegabonkTogether.Server</RootNamespace>
+	      <RootNamespace>OmniBonk.Server</RootNamespace>
 	      <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
@@ -20,7 +20,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\common\MegabonkTogether.Common.csproj" />
+    <ProjectReference Include="..\common\OmniBonk.Common.csproj" />
   </ItemGroup>
 
   <ItemGroup>

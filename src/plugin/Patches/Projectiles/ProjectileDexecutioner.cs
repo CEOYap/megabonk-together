@@ -1,9 +1,9 @@
 ﻿using Assets.Scripts.Inventory__Items__Pickups.Weapons.Projectiles;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches.Projectiles
+namespace OmniBonk.Patches.Projectiles
 {
     [HarmonyPatch(typeof(ProjectileDexecutioner))]
     internal static class ProjectileDexecutionerPatches

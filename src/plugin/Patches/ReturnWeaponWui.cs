@@ -1,8 +1,8 @@
 ﻿using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     [HarmonyPatch(typeof(ReturnWeaponWui))]
     internal static class ReturnWeaponWuiPatches
@@ -10,9 +10,7 @@ namespace MegabonkTogether.Patches
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
 
-        /// <summary>
-        /// Use remote player position when boss returns their weapon
-        /// </summary>
+        /// <summary>Use the remote player's position when the boss returns their weapon.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ReturnWeaponWui.Update))]
         public static void Update_Prefix(ReturnWeaponWui __instance, out bool __state)
@@ -38,9 +36,6 @@ namespace MegabonkTogether.Patches
         }
 
 
-        /// <summary>
-        /// Remove the position request after updating
-        /// </summary>
         [HarmonyFinalizer]
         [HarmonyPatch(nameof(ReturnWeaponWui.Update))]
         public static void Update_Finalizer(bool __state)

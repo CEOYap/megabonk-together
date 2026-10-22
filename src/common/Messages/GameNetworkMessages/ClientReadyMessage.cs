@@ -1,7 +1,7 @@
-﻿using MegabonkTogether.Common.Messages.WsMessages;
+﻿using OmniBonk.Common.Messages.WsMessages;
 using MemoryPack;
 
-namespace MegabonkTogether.Common.Messages
+namespace OmniBonk.Common.Messages
 {
     [MemoryPackable]
     public partial class ClientReadyMessage : IWsMessage

@@ -1,20 +1,20 @@
 ---
 name: csharp
 description: |
-  MegabonkTogether code conventions: project layout, the DI service pattern, naming, nullability, and where each kind of code belongs.
+  OmniBonk code conventions: project layout, the DI service pattern, naming, nullability, and where each kind of code belongs.
   Use when: adding a service, patch, script, message or helper; deciding which of the three projects a file goes in; or reviewing whether new code matches existing style.
 allowed-tools: Read, Edit, Write, Glob, Grep, Bash
 ---
 
-# MegabonkTogether Conventions
+# OmniBonk Conventions
 
-Three projects, one solution (`MegabonkTogether.sln`), all `net6.0`:
+Three projects, one solution (`OmniBonk.sln`), all `net6.0`:
 
 | Project | Path | What it is | Can reference game types? |
 |---|---|---|---|
-| `MegabonkTogether.Common` | `src/common/` | Wire format — messages + models, MemoryPack only | **No.** Pure .NET. |
-| `MegabonkTogether.Plugin` | `src/plugin/` | BepInEx IL2CPP plugin, `AssemblyName=MegabonkTogether` | Yes |
-| `MegabonkTogether.Server` | `src/server/` | ASP.NET matchmaking + relay (`Sdk.Web`, Docker) | **No.** Never links Unity. |
+| `OmniBonk.Common` | `src/common/` | Wire format — messages + models, MemoryPack only | **No.** Pure .NET. |
+| `OmniBonk.Plugin` | `src/plugin/` | BepInEx IL2CPP plugin, `AssemblyName=OmniBonk` | Yes |
+| `OmniBonk.Server` | `src/server/` | ASP.NET matchmaking + relay (`Sdk.Web`, Docker) | **No.** Never links Unity. |
 
 Common is referenced by both ends, so **anything in `src/common/` must compile without Unity or IL2CPP**. A position in a message is `QuantizedVector3` (`src/common/Models/`), never `UnityEngine.Vector3`.
 
@@ -81,7 +81,7 @@ EventManager.OnChestOpened(chestOpened);                  // from the receive pa
 
 | Thing | Convention | Example |
 |---|---|---|
-| Namespace | `MegabonkTogether.<Folder>` | `MegabonkTogether.Services` |
+| Namespace | `OmniBonk.<Folder>` | `OmniBonk.Services` |
 | Class / interface / method | PascalCase, `I` prefix on interfaces | `IUdpClientService`, `HandleMatch` |
 | Private field | camelCase, **no** underscore | `udpClientService`, `hasStarted` |
 | Public static tunables & flags | SCREAMING_SNAKE_CASE | `CAN_SPAWN_CHESTS`, `PLAYER_FEET_OFFSET_Y` |

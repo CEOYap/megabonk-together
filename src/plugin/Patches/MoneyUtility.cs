@@ -2,10 +2,10 @@
 using Assets.Scripts.Actors.Enemies;
 using Assets.Scripts.Inventory__Items__Pickups.GoldAndMoney;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     [HarmonyPatch(typeof(MoneyUtility))]
     internal static class MoneyUtilityPatches
@@ -14,9 +14,7 @@ namespace MegabonkTogether.Patches
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
         private static readonly ITrackerService trackerService = Plugin.Services.GetService<ITrackerService>();
 
-        /// <summary>
-        /// Skip money flying if enemy was killed by another player
-        /// </summary>
+        /// <summary>Skip money flying if enemy was killed by another player</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(MoneyUtility.OnEnemyDied))]
         public static bool OnEnemyDied_Prefix(Enemy enemy, DamageContainer deathSource)

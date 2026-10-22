@@ -3,7 +3,7 @@
   <PropertyGroup>
 	  <TargetFramework>net6.0</TargetFramework>
 	  <AssemblyName>OmniBonk.Common</AssemblyName>
-	  <RootNamespace>MegabonkTogether.Common</RootNamespace>
+	  <RootNamespace>OmniBonk.Common</RootNamespace>
 	  <ImplicitUsings>enable</ImplicitUsings>
 	  <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 	  <Nullable>enable</Nullable>

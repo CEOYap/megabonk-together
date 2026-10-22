@@ -1,7 +1,7 @@
 ---
 name: netcode
 description: |
-  MegabonkTogether's networking model — MemoryPack message contract, LiteNetLib delivery methods, host authority, tick rates, and quantization.
+  OmniBonk's networking model — MemoryPack message contract, LiteNetLib delivery methods, host authority, tick rates, and quantization.
   Use when: adding or changing an IGameNetworkMessage, choosing a DeliveryMethod, investigating desync or dropped state, touching NetworkHandler tick rates, or changing anything in src/common/Messages.
 allowed-tools: Read, Edit, Write, Glob, Grep, Bash
 ---

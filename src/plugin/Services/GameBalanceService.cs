@@ -1,10 +1,10 @@
-using MegabonkTogether.Configuration;
+using OmniBonk.Configuration;
 using Assets.Scripts.Actors.Enemies;
 using Assets.Scripts.Managers;
 using System;
 using System.Linq;
 
-namespace MegabonkTogether.Services
+namespace OmniBonk.Services
 {
     public interface IGameBalanceService
     {
@@ -33,49 +33,21 @@ namespace MegabonkTogether.Services
     internal class GameBalanceService(IPlayerManagerService playerManagerService, IEndlessRunService endlessRunService) : IGameBalanceService
     {
         private const float hpScalingPerAdditionalPlayer = Tunables.HP_SCALING_PER_ADDITIONAL_PLAYER;
-        // FIX P1-4: was GetAllPlayersAlive().Count(), which materialised a Player[] plus two LINQ
-        // iterators just to read its length. Six multiplier getters read this property.
+        // FIX P1-4: non-allocating count; read by six multiplier getters.
         private int PlayersCount => playerManagerService.GetAlivePlayerCount();
         private const float baseBossLampInitialChargeTimeSeconds = 3.0f;
 
-        // Keyed on the instance id. StageData is a ScriptableObject, so `==` would work here — but
-        // Unity's overload is a native call per comparison *and* it does not depend on
-        // Il2CppInterop handing back the same wrapper each time, which the id does not either.
-        //
-        // This was written as a `Pointer` read, which does not compile: the csproj references
-        // UnityEngine.CoreModule from `unity-libs`, where UnityEngine.Object extends System.Object.
-        // Only the `interop` copy extends Il2CppSystem.Object -> Il2CppObjectBase, which is where
-        // `Pointer` is declared. So no Unity-derived type has `Pointer` at compile time in this
-        // project, however it may look at runtime — every other `.Pointer` in the repo is on a
-        // variable already typed as Il2CppObjectBase. GetInstanceID() is one native call, against
-        // the IndexOf-over-the-stage-list it replaces; the memoisation is still the win.
+        // Keyed on instance id. `.Pointer` does not compile on Unity types here: the csproj's
+        // unity-libs UnityEngine.Object does not derive from Il2CppObjectBase.
         private static int cachedStageInstanceId;
         private static int cachedStageIndex;
 
         /// <summary>
-        /// PERF 04 item 3: was an <c>IndexOf</c> over the stage list on **every access** — an
-        /// interop equality call per element — and the multiplier getters that read it run per
-        /// enemy spawn and per pickup.
-        ///
-        /// <para>Memoised against the current stage's own identity rather than invalidated by an
-        /// event: the answer is a pure function of that reference, so checking it is both cheaper
-        /// than the lookup and cannot go stale. `04-performance-and-gc.md` suggested caching on
-        /// stage-change events, which needs a subscription and would silently serve a wrong
-        /// difficulty if one were ever missed — this cannot.</para>
-        ///
-        /// <para>The one theoretical hole is a destroyed stage object: <c>GetInstanceID()</c> on a
-        /// destroyed <c>UnityEngine.Object</c> is not the safe read a pointer field would have
-        /// been. Stages are asset references that live for the run, so that does not happen here;
-        /// it is worth knowing before copying this pattern onto runtime objects. <b>UNVERIFIED:</b>
-        /// that stage assets outlive every caller has not been observed in-game, only reasoned
-        /// from their being map assets.</para>
-        ///
-        /// <para><b>UNVERIFIED alternative:</b> the game has its own
-        /// <c>MapController.GetStageIndex()</c> (static, returns Int32 — confirmed present in the
-        /// interop metadata, body unknown). If it indexes the same list this does, it replaces all
-        /// of this. It is not used yet because a different indexing basis — global progression
-        /// rather than position within the map's stage list — would silently shift every
-        /// difficulty multiplier. Check it against the dump before switching.</para>
+        /// PERF 04 item 3: stage index memoised on the current stage's identity, so it cannot go
+        /// stale. Read per enemy spawn and per pickup.
+        /// <para><b>UNVERIFIED:</b> that stage assets outlive every caller (GetInstanceID on a destroyed object).</para>
+        /// <para><b>UNVERIFIED alternative:</b> <c>MapController.GetStageIndex()</c> exists but its
+        /// indexing basis is unknown; check the dump before switching.</para>
         /// </summary>
         private static int StageIndex
         {
@@ -97,13 +69,7 @@ namespace MegabonkTogether.Services
         }
 
 
-        /// <summary>
-        /// The stage the balance tables use. Outside Endless, the stage's place in its map. In
-        /// Endless the room's place in its map says nothing about how far the run is, and a
-        /// stage-1 room late in a run used to get stage-1 balance: there it is the run's progress
-        /// instead, the stage index or the number of stage changes so far, whichever is greater,
-        /// held at the last stage's tables.
-        /// </summary>
+        /// <summary>Stage for the balance tables. In Endless, run progress (max of index and transitions), capped at the last stage.</summary>
         private int BalanceStageIndex => endlessRunService.Active
             ? System.Math.Min(2, System.Math.Max(StageIndex, endlessRunService.Transitions))
             : StageIndex;

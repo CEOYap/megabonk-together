@@ -1,70 +1,36 @@
 ﻿using Assets.Scripts.Inventory.Stats;
 using Assets.Scripts.Menu.Shop;
-using MegabonkTogether.Common.Messages;
-using MegabonkTogether.Common.Messages.GameNetworkMessages;
+using OmniBonk.Common.Messages;
+using OmniBonk.Common.Messages.GameNetworkMessages;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 
-namespace MegabonkTogether.Services
+namespace OmniBonk.Services
 {
     public interface IPlayerStatsSyncService
     {
-        /// <summary>Samples the local player's tracked stats and broadcasts them if any changed.</summary>
         void SendIfChanged();
 
-        /// <summary>Stores a peer's stat block.</summary>
         void ApplyRemote(PlayerStatsChanged message);
 
-        /// <summary>
-        /// A peer's value for one stat, or null when this peer has not been told it yet.
-        /// Null means "unknown" and callers must leave the visual alone rather than assume zero.
-        /// </summary>
+        /// <summary>Null means unknown: leave the visual alone, do not assume zero.</summary>
         float? GetRemoteStat(uint ownerId, int stat);
 
-        /// <summary>
-        /// OB-26. The mean Difficulty of every connected player, for the host's shared-world readers.
-        /// <paramref name="localDifficulty"/> is the local player's own value, used until the 2 Hz
-        /// sample has taken one.
-        /// </summary>
+        /// <summary>OB-26: mean Difficulty of all players, for the host's shared-world readers.</summary>
         float GetTeamDifficulty(float localDifficulty);
 
         void Reset();
     }
 
     /// <summary>
-    /// OB-1. Replicates the globals that decide how a player's attacks are drawn, so other peers can
-    /// draw them with the owner's numbers.
-    ///
-    /// <para><b>Why this exists at all.</b> Every <c>WeaponUtility</c> stat accessor is
-    /// <c>weaponStats[stat] + PlayerStats.GetStat(stat)</c>, and <c>PlayerStats.GetStat</c> is static
-    /// — it reads whoever is asking. A remote player's attack was therefore built from their weapon
-    /// and the observer's globals. Shield orbit count, aura size, projectile count and projectile
-    /// size were all that one defect; the entry originally described only the countable one.</para>
-    ///
-    /// <para><b>Why a stat block rather than a per-visual message.</b> Replicating "this player's
-    /// shield has N orbs" fixes the case somebody happened to notice and leaves aura size wrong.
-    /// The stats are the shared cause, there are few of them, and they move only on level-up and
-    /// item pickup.</para>
-    ///
-    /// <para><b>Why polled rather than event-driven.</b> The game raises stat changes through
-    /// several paths — level-up, item added, weapon added, tome added — and hooking each is more
-    /// surface than a comparison of five floats on a slow tick. Polling also catches a path nobody
-    /// enumerated, which is the failure mode this bug already has a history of.</para>
+    /// OB-1: replicates player stat globals so peers draw remote attacks with the owner's numbers
+    /// (<c>PlayerStats.GetStat</c> is static and reads the observer's). Polled, so no change path is missed.
     /// </summary>
     internal class PlayerStatsSyncService : IPlayerStatsSyncService
     {
         /// <summary>
-        /// The stats a remote attack's appearance is built from, as <c>EStat</c> ints.
-        ///
-        /// <para><b>Projectiles and SizeMultiplier are measured</b> — they are what
-        /// <c>GetAttackQuantity</c> and <c>GetAttackSizeMultiplier</c> read, decompiled at
-        /// VA <c>0x1804346F0</c> and <c>0x1804347A0</c>, joined by <c>ProjectileBounces</c> at
-        /// <c>0x180435930</c> for OB-18. The rest are predicted from the same shape and cost nothing
-        /// to carry; a stat that turns out not to matter is a few bytes a run.</para>
-        ///
-        /// <para><b>This list is meant to grow.</b> The message carries a keyed dictionary rather
-        /// than named fields precisely so a stat can be added without a protocol change — adding one
-        /// here is the whole edit.</para>
+        /// Tracked <c>EStat</c> ints. "Measured" ones are decompiled readers (VA <c>0x1804346F0</c>,
+        /// <c>0x1804347A0</c>, <c>0x180435930</c>). Keyed dictionary, so adding one needs no protocol change.
         /// </summary>
         internal static readonly int[] TrackedStats =
         [
@@ -76,11 +42,8 @@ namespace MegabonkTogether.Services
             (int)EStat.AttackSpeed,               // 15
             (int)EStat.Difficulty,                // 38 — OB-26, read by the host for the team average
 
-            // OB-38. What a hit's damage is built from (decompiled: WeaponUtility.GetDamage,
-            // GetNewDamage, GetCritChance, GetCritDamageMultiplier, GetKnockback, GetDamageContainer,
-            // Enemy.Damage, the burn and poison debuffs, the on-hit items). The host builds every
-            // teammate's hits, and read all of these from itself. TeammateCombatStats substitutes
-            // them while a teammate's hit is being built or applied.
+            // OB-38: damage inputs (decompiled). TeammateCombatStats substitutes them while the host
+            // builds a teammate's hit.
             (int)EStat.DamageMultiplier,          // 12
             (int)EStat.EffectDurationMultiplier,  // 14
             (int)EStat.CritChance,                // 18
@@ -97,26 +60,17 @@ namespace MegabonkTogether.Services
             BaseDamageKey,
         ];
 
-        /// <summary>
-        /// OB-38. <c>MyPlayer.baseDamage</c> (defaultBaseDamage + character level, decompiled
-        /// <c>MyPlayer.CalculateBaseDamage</c>), which several on-hit items and the burn debuff read
-        /// as a raw field. Not an EStat: carried under a key no EStat uses, which the dictionary was
-        /// made for. A peer on an older build stores it and never reads it.
-        /// </summary>
+        /// <summary>OB-38: <c>MyPlayer.baseDamage</c>, a raw field not an EStat, under a key no EStat uses.</summary>
         internal const int BaseDamageKey = 1000;
 
-        // INetTransport, NOT IUdpClientService. IUdpClientService is always the LiteNetLib session;
-        // only INetTransport is switched to the Steam transport by UseSteamTransport (Plugin.cs).
-        // Sending through IUdpClientService under Steam writes into a socket with no peers, and
-        // nothing ever leaves the machine -- which is how this sent nothing for whole sessions.
+        // INetTransport, NOT IUdpClientService, which sends nowhere under the Steam transport.
         private readonly INetTransport transport;
         private readonly IPlayerManagerService playerManagerService;
 
         private readonly Dictionary<int, float> lastSent = [];
         private readonly ConcurrentDictionary<uint, Dictionary<int, float>> remoteStats = [];
 
-        // OB-26. The readers that want the team average run per enemy, some per frame, so the mean
-        // is computed once a frame rather than once a read.
+        // OB-26: cached once per frame; readers run per enemy.
         private int teamDifficultyFrame = -1;
         private float teamDifficulty;
         private float lastLoggedTeamDifficulty = float.NaN;
@@ -173,19 +127,14 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            // The whole block is sent, not only the deltas: a peer that missed an earlier message
-            // would otherwise hold a mix of old and new values, and the block is five floats.
+            // Whole block, not deltas, so a missed message cannot leave mixed values.
             IGameNetworkMessage message = new PlayerStatsChanged
             {
                 OwnerId = local.ConnectionId,
                 Stats = new Dictionary<int, float>(lastSent)
             };
 
-            // Reliable because nothing supersedes it on any schedule: globals can sit unchanged for
-            // the rest of a run, so a dropped update leaves every observer drawing this player's
-            // attacks wrongly until they next level up. Ordered because two rapid level-ups must not
-            // apply out of sequence. It also carries a dictionary, which rules out an unreliable
-            // channel regardless — LiteNetLib fragments reliable channels only.
+            // ReliableOrdered: nothing supersedes it, and it carries a dictionary.
             if (playerManagerService.IsLocalConnectionId(local.ConnectionId)
                 && (Plugin.Instance?.NetworkHandler?.IsHost ?? false))
             {
@@ -207,12 +156,8 @@ namespace MegabonkTogether.Services
             remoteStats.TryGetValue(message.OwnerId, out var previous);
             remoteStats[message.OwnerId] = new Dictionary<int, float>(message.Stats);
 
-            // Constant attacks that CACHE a stat (Chunkers caches its count and size; Aegis its
-            // cooldown) only refresh in OnStatUpdate. On the local player the game calls that from
-            // PlayerStatsNew.A_StatUpdate whenever a stat moves; on a remote avatar nothing did, so
-            // those stayed at the values they were built with. The values they recompute come from
-            // WeaponUtility, which the OB-1 postfixes already correct to this owner -- so telling
-            // them a stat changed is all that was missing.
+            // Constant attacks that cache stats (Chunkers, Aegis) only refresh in OnStatUpdate, which
+            // nothing calls on a remote avatar.
             var changed = new List<int>();
             foreach (var stat in message.Stats)
             {
@@ -251,17 +196,8 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>
-        /// <para><b>Mean, not sum or maximum</b> — the project's decision, see
-        /// <c>docs/netplay/16-session-handover.md</c>. The mod already scales enemy HP for player
-        /// count, so a sum would count players twice; a maximum imposes one player's curse on all.</para>
-        ///
-        /// <para><b>A teammate whose stat block has not arrived is left out</b> rather than counted
-        /// as zero, so a late block does not dip the run for a moment. <b>Dead players are kept</b>:
-        /// their build still defines the run, and dropping them would make a death soften the
-        /// world.</para>
-        ///
-        /// <para>The local value is the 2 Hz sample rather than a fresh read: this is called from
-        /// inside <c>PlayerStatsNew.GetStat</c>, and Difficulty moves only on pickups and level-ups.</para>
+        /// Mean (HP already scales with player count). Unknown teammates are skipped, dead ones kept.
+        /// Uses the sampled local value: this runs inside <c>PlayerStatsNew.GetStat</c>.
         /// </summary>
         public float GetTeamDifficulty(float localDifficulty)
         {
@@ -292,9 +228,7 @@ namespace MegabonkTogether.Services
             return teamDifficulty;
         }
 
-        // Logged on change only, which is also the first use: the line proves the patch reaches
-        // the readers at all (handover trap 1), and Difficulty moves a handful of times a run.
-        // Compared as numbers before any string is built: this runs every frame a reader does.
+        // On change only; compare numbers before building strings (runs per frame).
         private void LogTeamDifficultyIfChanged(float local, int count)
         {
             if (teamDifficulty == lastLoggedTeamDifficulty && count == lastLoggedCount)

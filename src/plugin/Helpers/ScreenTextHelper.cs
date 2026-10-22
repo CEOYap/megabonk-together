@@ -2,7 +2,7 @@ using Assets.Scripts.Utility;
 using System.Collections;
 using UnityEngine;
 
-namespace MegabonkTogether.Helpers
+namespace OmniBonk.Helpers
 {
     public static class ScreenTextHelper
     {

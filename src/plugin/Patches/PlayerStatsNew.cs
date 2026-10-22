@@ -1,14 +1,12 @@
 ﻿using Assets.Scripts.Inventory__Items__Pickups.Stats;
 using Assets.Scripts.Menu.Shop;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
-    /// <summary>
-    /// Use netplayer stats from his inventory when requested instead of local player stats
-    /// </summary>
+    /// <summary>Returns a net player's own stats when requested, not the local player's.</summary>
     [HarmonyPatch(typeof(PlayerStatsNew))]
     internal static class PlayerStatsNewPatches
     {

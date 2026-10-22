@@ -1,12 +1,12 @@
 ﻿using Assets.Scripts.Managers;
 using HarmonyLib;
-using MegabonkTogether.Common;
-using MegabonkTogether.Common.Models;
-using MegabonkTogether.Configuration;
-using MegabonkTogether.Helpers;
-using MegabonkTogether.Patches.Enemies;
-using MegabonkTogether.Scripts.Button;
-using MegabonkTogether.Services;
+using OmniBonk.Common;
+using OmniBonk.Common.Models;
+using OmniBonk.Configuration;
+using OmniBonk.Helpers;
+using OmniBonk.Patches.Enemies;
+using OmniBonk.Scripts.Button;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using System.Linq;
 using System.Threading.Tasks;
@@ -15,7 +15,7 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.Localization.Components;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     [HarmonyPatch(typeof(WindowManager))]
     internal static class WindowManagerPatches
@@ -23,22 +23,14 @@ namespace MegabonkTogether.Patches
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
         private static readonly IAutoUpdaterService autoUpdaterService = Plugin.Services.GetService<IAutoUpdaterService>();
-        // The seam, not the LiteNetLib implementation. This gate asks whether every peer has
-        // chosen a character before the host may confirm a map; against a transport that is not
-        // carrying the session those answers are "yes" and "zero", because its peer set is empty.
-        // So on a Steam session the gate passed unconditionally — it was not blocking anything, it
-        // was not checking anything.
+        // Must be INetTransport: the inactive transport answers "all ready" from an empty peer set.
         private static readonly INetTransport udpClientService = Plugin.Services.GetService<INetTransport>();
         private static bool hasShownUpdateModal = false;
         private static GameObject friendliesInfoDisplay;
         private static GameObject readyStatusDisplay;
         private static MyButton previousSelectedButton = null;
 
-        /// <summary>
-        /// Reset networking and net players displayer when going back to main menu/
-        /// Check for updates
-        /// Create friendlies info in character menu if in friendlies mode
-        /// </summary>
+        /// <summary>Main menu: tear down networking and check for updates. Character menu: friendlies info.</summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(WindowManager.WindowOpened))]
         public static void WindowOpened_Postfix(Window newWindow)
@@ -54,11 +46,7 @@ namespace MegabonkTogether.Patches
                 Plugin.Instance.ClearPrefabs();
                 Plugin.Instance.RestoreDeath(false);
 
-                // The lobby panel is the netplay UI, so returning to the main menu has to take it
-                // down. ResetNetworking above has just ended the session underneath it, and a panel
-                // left showing a lobby that no longer exists is worse than no panel. OnDestroy
-                // gives the menu chrome back and unsubscribes, so destroying the object is the
-                // whole teardown.
+                // The session just ended; destroying the panel is its whole teardown (OnDestroy).
                 var lobbyPanel = Scripts.Modal.LobbyPanel.Current;
                 if (lobbyPanel != null)
                 {
@@ -74,8 +62,7 @@ namespace MegabonkTogether.Patches
 
                 if (autoUpdaterService.IsCustomBuild() && hasShownUpdateModal) return;
 
-                // FIX P2-4: this call site never respected the setting, so turning auto-update
-                // off still hit the GitHub API every time the main menu opened.
+                // FIX P2-4: respect the auto-update setting.
                 if (!ModConfig.CheckForUpdates.Value) return;
 
                 Task.Run(async () =>
@@ -118,19 +105,8 @@ namespace MegabonkTogether.Patches
         }
 
         /// <summary>
-        /// Re-enable confirm button on character menu when closed.
-        ///
-        /// <para><b>Guarded because it threw.</b> A Steam co-op session put one
-        /// <c>NullReferenceException</c> here on the client. Two things on this line can be null
-        /// and the name check rules out neither: the cast returns null when the window named
-        /// "W_Character" is not actually a <c>CharacterMenu</c>, and <c>b_confirm</c> is null on a
-        /// menu whose buttons have already been torn down — which is the ordinary case when the
-        /// window is closing. A destroyed Unity object also compares equal to null here, which is
-        /// the behaviour wanted: there is nothing to re-enable on a corpse.</para>
-        ///
-        /// <para>The cast goes through <see cref="WindowCast.AsCharacterMenu"/>: a bare <c>as</c>
-        /// returns null whenever Il2CppInterop hands back a plain <c>Window</c> wrapper, which is
-        /// what threw 4,362 times on 2026-10-18 in <c>Update_Postix</c> below.</para>
+        /// Re-enables the confirm button on close. Null-guarded (buttons may be torn down). Uses
+        /// <see cref="WindowCast.AsCharacterMenu"/>: a bare <c>as</c> fails on a plain Il2Cpp <c>Window</c> wrapper.
         /// </summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(WindowManager.WindowClosed))]
@@ -153,10 +129,7 @@ namespace MegabonkTogether.Patches
             character.b_confirm.RefreshState();
         }
 
-        /// <summary>
-        /// Make confirm button inactive on character menu if less than 2 players in friendlies host mode
-        /// Make map confirm button inactive if less than 2 players or not all ready in friendlies host mode
-        /// </summary>
+        /// <summary>Friendlies host: disable confirm buttons until 2+ players are present and ready.</summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(WindowManager.Update))]
         public static void Update_Postix()
@@ -169,8 +142,7 @@ namespace MegabonkTogether.Patches
 
             if (WindowManager.activeWindow?.name == "W_Character" && Plugin.Instance.Mode.Mode == NetworkModeType.Friendlies && Plugin.Instance.Mode.Role == Role.Host)
             {
-                // Every frame, so a null here must return rather than throw: it did, 4,362 times in
-                // one lobby, and each throw also skipped setting the button's state.
+                // Per frame: must not throw.
                 var character = WindowCast.AsCharacterMenu(WindowManager.activeWindow);
                 if (character != null && character.b_confirm != null)
                 {

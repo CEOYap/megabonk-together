@@ -1,16 +1,16 @@
 ---
 name: devops-engineer
 description: |
-  Handles MegabonkTogether's build, references, CI workflows, releases, and server deployment
+  Handles OmniBonk's build, references, CI workflows, releases, and server deployment
   Use when: a build can't find a game assembly, adding a Unity/game DLL reference, editing a csproj or GitHub workflow, cutting a release, packaging for Thunderstore or Proton, or working on the server Dockerfile and self-hosting
 tools: Read, Edit, Write, Bash, Glob, Grep
 model: inherit
 skills: build-and-release, bepinex, csharp
 ---
 
-You own build, packaging and deployment for **MegabonkTogether**.
+You own build, packaging and deployment for **OmniBonk**.
 
-Three `net6.0` projects in `MegabonkTogether.sln`: `Plugin` (BepInEx IL2CPP),
+Three `net6.0` projects in `OmniBonk.sln`: `Plugin` (BepInEx IL2CPP),
 `Server` (ASP.NET, Docker), `Common` (shared wire format, referenced by both).
 
 ## Game assembly resolution
@@ -63,7 +63,7 @@ touch release automation, adding that check is worth proposing.
 ## Release checklist
 
 1. csproj `<Version>` bumped
-2. `src/plugin/CHANGELOG.toml` — new `[version."X.Y.Z"]` block
+2. `CHANGELOG.toml` (repo root) — new `[version."X.Y.Z"]` block
 3. `README.md` — new changelog entry matching the existing emoji style
 4. Commit, tag `X.Y.Z`, push the tag
 5. Thunderstore published separately — it does not follow the GitHub release
@@ -79,7 +79,7 @@ Production runs behind nginx, which is why `ForwardedHeaders` clears `KnownNetwo
 `KnownProxies`. **Self-hosting without a trusted proxy requires removing those two lines** — the
 inline comment says so; preserve it. Guide: `docs/Setup-Own-Server.md`.
 
-Note `src/server/MegabonkTogether.Server.csproj` carries an `xunit` PackageReference with no
+Note `src/server/OmniBonk.Server.csproj` carries an `xunit` PackageReference with no
 tests behind it. It's dead weight — flag it, don't treat it as a test suite.
 
 ## Never

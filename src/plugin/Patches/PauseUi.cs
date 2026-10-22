@@ -1,18 +1,16 @@
 ﻿using Assets.Scripts.Utility;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     [HarmonyPatch(typeof(PauseUi))]
     internal static class PauseUiPatches
     {
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
 
-        /// <summary>
-        /// Prevent pause (shared experience or not) on pausing screen
-        /// </summary>
+        /// <summary>The pause screen does not pause the game in netplay.</summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(PauseUi.OnEnable))]
         public static void OnEnable_Postfix(PauseUi __instance)

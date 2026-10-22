@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 
-namespace MegabonkTogether.Server.Services
+namespace OmniBonk.Server.Services
 {
 
     public interface IMetricsService
@@ -31,50 +31,50 @@ namespace MegabonkTogether.Server.Services
 
         public MetricsService()
         {
-            meter = new Meter("MegabonkTogether.Server", "1.0.0");
+            meter = new Meter("OmniBonk.Server", "1.0.0");
 
             meter.CreateObservableGauge(
-                "megabonk.connected_clients",
+                "omnibonk.connected_clients",
                 () => connectedClientsCount,
                 description: "Number of currently connected clients");
 
             meter.CreateObservableGauge(
-                "megabonk.daily_unique_clients",
+                "omnibonk.daily_unique_clients",
                 () => GetDailyUniqueClientsCount(),
                 description: "Number of unique clients connected today");
 
             meter.CreateObservableGauge(
-                "megabonk.daily_total_connections",
+                "omnibonk.daily_total_connections",
                 () => GetDailyTotalConnections(),
                 description: "Total number of connections today (including reconnections)");
 
             meter.CreateObservableGauge(
-                "megabonk.alltime_total_connections",
+                "omnibonk.alltime_total_connections",
                 () => allTimeTotalConnections,
                 description: "Total number of connections all time (including reconnections)");
 
             meter.CreateObservableGauge(
-                "megabonk.peak_unique_connections",
+                "omnibonk.peak_unique_connections",
                 () => peakUniqueConnections,
                 description: "Peak number of unique clients connected in a single day");
 
             meter.CreateObservableGauge(
-                "megabonk.daily_runs_by_map_stage",
+                "omnibonk.daily_runs_by_map_stage",
                 () => GetDailyRunsByMapAndStage(),
                 description: "Number of runs started today grouped by map and stage");
 
             meter.CreateObservableGauge(
-                "megabonk.daily_character_usage",
+                "omnibonk.daily_character_usage",
                 () => GetDailyCharacterUsage(),
                 description: "Number of times each character was picked today");
 
             meter.CreateObservableGauge(
-                "megabonk.active_shared_experience_lobbies",
+                "omnibonk.active_shared_experience_lobbies",
                 () => activeSharedExperienceLobbies,
                 description: "Number of active lobbies in shared experience mode");
 
             meter.CreateObservableGauge(
-                "megabonk.active_regular_lobbies",
+                "omnibonk.active_regular_lobbies",
                 () => activeRegularLobbies,
                 description: "Number of active lobbies in regular mode");
 

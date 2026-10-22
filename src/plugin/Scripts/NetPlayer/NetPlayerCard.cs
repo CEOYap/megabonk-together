@@ -1,14 +1,14 @@
 ﻿using Assets.Scripts._Data.Tomes;
-using MegabonkTogether.Common.Models;
-using MegabonkTogether.Helpers;
-using MegabonkTogether.Services;
+using OmniBonk.Common.Models;
+using OmniBonk.Helpers;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using System.Linq;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
-namespace MegabonkTogether.Scripts.NetPlayer
+namespace OmniBonk.Scripts.NetPlayer
 {
     public class NetPlayerCard : MonoBehaviour
     {

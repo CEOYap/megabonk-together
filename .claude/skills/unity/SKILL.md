@@ -1,7 +1,7 @@
 ---
 name: unity
 description: |
-  Unity-side rules for the MegabonkTogether plugin — main-thread marshalling, injected MonoBehaviour lifecycle, coroutines, object pooling, and per-frame cost.
+  Unity-side rules for the OmniBonk plugin — main-thread marshalling, injected MonoBehaviour lifecycle, coroutines, object pooling, and per-frame cost.
   Use when: writing or editing anything in src/plugin/Scripts/, spawning or despawning GameObjects, adding an Update loop, running work from a network callback, or chasing an FPS drop or pool-related exception.
 allowed-tools: Read, Edit, Write, Glob, Grep, Bash
 ---

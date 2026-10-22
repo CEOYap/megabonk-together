@@ -1,11 +1,11 @@
-using MegabonkTogether.Common.Messages;
-using MegabonkTogether.Common.Messages.GameNetworkMessages;
-using MegabonkTogether.Common.Models;
-using MegabonkTogether.Scripts;
+using OmniBonk.Common.Messages;
+using OmniBonk.Common.Messages.GameNetworkMessages;
+using OmniBonk.Common.Models;
+using OmniBonk.Scripts;
 using System;
 using System.Collections.Generic;
 
-namespace MegabonkTogether.Services
+namespace OmniBonk.Services
 {
     public static class EventManager
     {
@@ -912,12 +912,7 @@ namespace MegabonkTogether.Services
             });
         }
 
-        /// <summary>
-        /// Host-side "the barrier is satisfied, release it". Carries no payload because the stamp is
-        /// assembled by the single owner of the round counter (<c>SynchronizationService
-        /// .ReleaseBarrier</c>) rather than by whichever receive path noticed the barrier was full —
-        /// a stamp built in two places is a stamp that does not identify a round.
-        /// </summary>
+        /// <summary>Host-side. No payload: only <c>SynchronizationService.ReleaseBarrier</c> builds the round stamp.</summary>
         public static void SubscribeReleaseBarrierEvents(Action action)
         {
             ReleaseBarrierEvents += action;
@@ -944,11 +939,7 @@ namespace MegabonkTogether.Services
             });
         }
 
-        /// <summary>
-        /// Host-side "re-announce the open readiness round". Payload-free for the same reason
-        /// <see cref="OnReleaseBarrier"/> is: the stamp is owned by one place, and a receive path
-        /// that assembled its own would be able to name a round that does not exist.
-        /// </summary>
+        /// <summary>Host-side re-announce; payload-free like <see cref="OnReleaseBarrier"/>.</summary>
         public static void SubscribeReadinessRoundReAskEvents(Action action)
         {
             ReadinessRoundReAskEvents += action;
@@ -962,11 +953,7 @@ namespace MegabonkTogether.Services
             });
         }
 
-        /// <summary>
-        /// The host has ended the lobby and everyone should advance to character selection.
-        /// Payload-free: the host has already validated readiness, and re-deriving that decision on
-        /// the client would give two places an opinion about when the lobby ends.
-        /// </summary>
+        /// <summary>Host ended the lobby; clients advance without re-deciding.</summary>
         public static void SubscribeLobbyStartRequestedEvents(Action action)
         {
             LobbyStartRequestedEvents += action;
@@ -985,15 +972,7 @@ namespace MegabonkTogether.Services
             });
         }
 
-        /// <summary>
-        /// Host-side. A client toggled its lobby readiness.
-        ///
-        /// <para>Published rather than handed straight to the lobby service, and not only for
-        /// tidiness: <c>UdpClientService</c> taking <c>ILobbyViewService</c> as a constructor
-        /// dependency created a cycle — the lobby service needs <c>INetTransport</c>, which is the
-        /// same object — and the container deadlocked building it. Going through here is what keeps
-        /// the transport unaware of the things that consume its messages.</para>
-        /// </summary>
+        /// <summary>Host-side. Routed through here to avoid a transport/lobby-service DI cycle (it deadlocked).</summary>
         public static void SubscribeLobbyReadyChangedEvents(Action<LobbyReadyChanged> action)
         {
             LobbyReadyChangedEvents += action;
@@ -1013,7 +992,6 @@ namespace MegabonkTogether.Services
             LobbyRosterEvents += action;
         }
 
-        /// <summary>The host's lobby roster, with every member's name.</summary>
         public static void OnLobbyRoster(LobbyRoster roster)
         {
             MainThreadDispatcher.Enqueue(() =>

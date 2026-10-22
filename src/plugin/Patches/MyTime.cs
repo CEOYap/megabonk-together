@@ -1,19 +1,16 @@
 ﻿using Assets.Scripts.Utility;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     [HarmonyPatch(typeof(MyTime))]
     internal static class MyTimePatches
     {
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
 
-        /// <summary>
-        /// No pause during netplay when no shared experience
-        /// </summary>
-        /// <returns></returns>
+        /// <summary>No pause during netplay without shared experience.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(MyTime.Pause))]
         public static bool Pause_Postfix()

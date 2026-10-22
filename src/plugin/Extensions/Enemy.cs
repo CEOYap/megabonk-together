@@ -1,17 +1,15 @@
 ﻿using Assets.Scripts.Actors.Enemies;
-using MegabonkTogether.Common.Models;
-using MegabonkTogether.Helpers;
-using MegabonkTogether.Scripts.Snapshot;
+using OmniBonk.Common.Models;
+using OmniBonk.Helpers;
+using OmniBonk.Scripts.Snapshot;
 
-namespace MegabonkTogether.Extensions
+namespace OmniBonk.Extensions
 {
     public static class EnemyExtensions
     {
         public static EnemyModel ToModel(this Enemy enemy, uint enemyId)
         {
-            // PERF: one `enemy.transform` instead of two. Component.get_transform is patched by
-            // this mod, so each access is a Harmony detour on top of the native property — and
-            // this runs per enemy, 40 times a second, on the host.
+            // PERF: one access; get_transform is Harmony-patched and this runs per enemy at 40 Hz.
             var transform = enemy.transform;
 
             return new EnemyModel()

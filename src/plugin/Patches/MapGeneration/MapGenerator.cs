@@ -1,8 +1,8 @@
 ﻿using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches.MapGeneration
+namespace OmniBonk.Patches.MapGeneration
 {
     [HarmonyPatch(typeof(MapGenerator))]
     internal static class MapGeneratorPatches

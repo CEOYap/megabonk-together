@@ -2,7 +2,7 @@ using Assets.Scripts._Data.Tomes;
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace MegabonkTogether.Scripts.NetPlayer
+namespace OmniBonk.Scripts.NetPlayer
 {
     public class CustomInventoryHud : MonoBehaviour
     {

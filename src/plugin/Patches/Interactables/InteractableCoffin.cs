@@ -1,10 +1,10 @@
 ﻿// Useless class but if one day i want multiple coffins boss battle at the same time on the graveyard...
 
 //using HarmonyLib;
-//using MegabonkTogether.Services;
+//using OmniBonk.Services;
 //using Microsoft.Extensions.DependencyInjection;
 
-//namespace MegabonkTogether.Patches.Interactables
+//namespace OmniBonk.Patches.Interactables
 //{
 //    [HarmonyPatch(typeof(InteractableCoffin))]
 //    internal static class InteractableCoffinPatches

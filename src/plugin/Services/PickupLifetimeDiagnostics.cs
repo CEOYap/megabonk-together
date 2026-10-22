@@ -2,55 +2,24 @@ using System.Collections.Concurrent;
 using System.Linq;
 using System.Threading;
 
-namespace MegabonkTogether.Services
+namespace OmniBonk.Services
 {
     /// <summary>
-    /// OB-5. Separates the two explanations for a pickup instruction naming an id this peer cannot
-    /// resolve, which is the one thing the existing warnings cannot do.
-    ///
-    /// <para><b>The question.</b> A 2026-08-07 capture logged <b>184</b>
-    /// <c>Pickup N not found in PickupManagerService</c> warnings in one session, and the entry's
-    /// two candidates want opposite fixes:</para>
-    ///
-    /// <list type="bullet">
-    /// <item><b>never-seen</b> — the spawn was never registered on this peer. A replication gap;
-    /// the fix is upstream, in how the pickup reaches the client at all.</item>
-    /// <item><b>seen-then-removed</b> — the pickup was consumed before the instruction for it
-    /// arrived. A lifetime/ordering race; the correct fix is to ignore the instruction quietly,
-    /// because nothing is actually wrong.</item>
-    /// </list>
-    ///
-    /// <para><b>Why the log could not already tell them apart.</b> The success path of
-    /// <c>OnReceivedSpawnedPickup</c> logs nothing, so an absent id looks identical either way.
-    /// This keeps a <c>HashSet</c> of every id ever registered this session — the entry's own
-    /// recommended next step — and the warning branch then asks it which case this is.</para>
-    ///
-    /// <para><b>Reports on a throttle, and only when something failed.</b> Same shape as the
-    /// kill-attribution diagnostic: a healthy session says nothing. That matters because the
-    /// player-visible symptom is now reported as fixed — the pull works — so this is expected to
-    /// run mostly silent and only characterise the residual drops.</para>
-    ///
-    /// <para><b>Deliberately not behind a config flag.</b> The counters are two integer increments
-    /// and a set lookup on a path that already builds a warning string; the reporting is one line
-    /// per 10 s at most. Gating it would mean the next capture arrives without it, which is how
-    /// this bug stayed open for five sessions.</para>
+    /// OB-5: classifies "pickup not found" as never-registered (a replication gap) or
+    /// registered-then-removed (consumed first; harmless). Throttled, silent when healthy, and
+    /// deliberately not behind a config flag.
     /// </summary>
     internal static class PickupLifetimeDiagnostics
     {
         private const double REPORT_INTERVAL_SECONDS = 10d;
 
-        /// <summary>
-        /// Every pickup id this peer has registered this session, including ones since removed.
-        /// Bounded by pickups per run, and an id is 4 bytes — a long run is tens of thousands of
-        /// entries, which is far cheaper than the question it answers.
-        /// </summary>
+        /// <summary>Every id registered this session, including removed ones.</summary>
         private static readonly ConcurrentDictionary<uint, byte> everRegistered = new();
 
         private static readonly ConcurrentDictionary<string, int> neverSeen = new();
         private static readonly ConcurrentDictionary<string, int> seenThenRemoved = new();
         private static long lastReportTicks;
 
-        /// <summary>Called wherever a pickup id becomes known to this peer, host or client.</summary>
         internal static void RecordRegistered(uint pickupId)
         {
             if (pickupId != 0)
@@ -59,12 +28,7 @@ namespace MegabonkTogether.Services
             }
         }
 
-        /// <summary>
-        /// Called from a "pickup not found" branch. <paramref name="site"/> names the handler so the
-        /// report can say whether one path dominates — the 2026-08-07 capture had 184 failures in
-        /// <c>OnReceivedPickupFollowingPlayer</c> against 14 in <c>OnReceivedPickupApplied</c>, and
-        /// that ratio is itself a clue.
-        /// </summary>
+        /// <summary><paramref name="site"/> names the handler, so the report shows which path dominates.</summary>
         internal static void RecordMiss(string site, uint pickupId)
         {
             var bucket = everRegistered.ContainsKey(pickupId) ? seenThenRemoved : neverSeen;
@@ -135,12 +99,7 @@ namespace MegabonkTogether.Services
                 : string.Join(", ", rows.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Key} x{kv.Value}"));
         }
 
-        /// <summary>
-        /// Clears everything so a session starts from zero. The id set MUST be cleared here: ids are
-        /// allocated from a per-session counter, so a stale set would report a fresh session's
-        /// never-registered pickups as registered-then-removed — the exact answer this exists to
-        /// give correctly.
-        /// </summary>
+        /// <summary>The id set must be cleared: ids restart per session.</summary>
         internal static void Reset()
         {
             everRegistered.Clear();

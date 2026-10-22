@@ -1,10 +1,10 @@
 ﻿using Assets.Scripts.Actors.Player;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using UnityEngine;
 
-namespace MegabonkTogether.Patches.Player
+namespace OmniBonk.Patches.Player
 {
     [HarmonyPatch(typeof(MyPlayer))]
     internal class MyPlayerPatches
@@ -12,10 +12,7 @@ namespace MegabonkTogether.Patches.Player
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
 
-        /// <summary>
-        /// Use our netplayer player position instead of the default one if needed.
-        /// Useful for example with spawning projectiles
-        /// </summary>
+        /// <summary>Answers with a remote player's position while one is queued (e.g. spawning their projectiles).</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(MyPlayer.GetFeetPosition))]
         public static bool GetFeetPosition_Prefix(ref Vector3 __result)

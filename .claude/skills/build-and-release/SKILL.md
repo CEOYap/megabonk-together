@@ -1,21 +1,21 @@
 ---
 name: build-and-release
 description: |
-  Building, referencing and shipping MegabonkTogether — MegabonkPath vs stripped-libs, the THUNDERSTORE and PROTON compile constants, the four GitHub workflows, and the release checklist.
+  Building, referencing and shipping OmniBonk — MegabonkPath vs stripped-libs, the THUNDERSTORE and PROTON compile constants, the four GitHub workflows, and the release checklist.
   Use when: a build fails to find a game assembly, adding a new Unity/game DLL reference, changing a csproj or workflow, cutting a release or bumping a version, or setting up Docker/self-hosting for the server.
 allowed-tools: Read, Edit, Write, Glob, Grep, Bash
 ---
 
 # Build and Release
 
-Solution: `MegabonkTogether.sln` — plugin, server, common. All `net6.0`. SDK 6.0.x in CI.
+Solution: `OmniBonk.sln` — plugin, server, common. All `net6.0`. SDK 6.0.x in CI.
 
 ```bash
-dotnet build MegabonkTogether.sln -c Debug
+dotnet build OmniBonk.sln -c Debug
 ```
 
 ```bash
-dotnet build src/plugin/MegabonkTogether.Plugin.csproj -c Release
+dotnet build src/plugin/OmniBonk.Plugin.csproj -c Release
 ```
 
 ## Game assembly references
@@ -40,7 +40,7 @@ $env:MegabonkPath = "C:\Program Files (x86)\Steam\steamapps\common\Megabonk"
 Three steps, all required:
 
 1. Add a `<Reference>` with `<Private>false</Private>` under `$(AssemblyPath)` (interop) or
-   `$(UnityLibPath)` (unity-libs) in `MegabonkTogether.Plugin.csproj`.
+   `$(UnityLibPath)` (unity-libs) in `OmniBonk.Plugin.csproj`.
 2. Add a line to `src/plugin/strip-dlls.bat` producing the stripped copy.
 3. Run `strip-dlls.bat` with `MegabonkPath` set, and commit the new stripped DLL.
 
@@ -87,8 +87,8 @@ match its release.
 
 ## Release checklist
 
-1. `src/plugin/MegabonkTogether.Plugin.csproj` → bump `<Version>`
-2. `src/plugin/CHANGELOG.toml` → new `[version."X.Y.Z"]` block with a `changes = [...]` array
+1. `src/plugin/OmniBonk.Plugin.csproj` → bump `<Version>`
+2. `CHANGELOG.toml` (repo root) → new `[version."X.Y.Z"]` block with a `changes = [...]` array
 3. `README.md` → new section in the changelog `<details>` block (emoji-prefixed, matching style)
 4. Commit, then tag `X.Y.Z` and push the tag — `build-plugin.yml` does the rest
 5. Thunderstore is a separate publish; it does not auto-update from the GitHub release
@@ -107,7 +107,7 @@ bound to `ConfigOptions`. It runs behind nginx in production, which is why `Forw
 clears `KnownNetworks`/`KnownProxies` — **if you self-host without a trusted proxy, remove those
 two lines** (the code says so inline). Self-hosting guide: `docs/Setup-Own-Server.md`.
 
-`src/server/MegabonkTogether.Server.csproj` carries an `xunit` PackageReference with no tests
+`src/server/OmniBonk.Server.csproj` carries an `xunit` PackageReference with no tests
 behind it — it is dead weight, not a signal that a test suite exists.
 
 ## Common mistakes

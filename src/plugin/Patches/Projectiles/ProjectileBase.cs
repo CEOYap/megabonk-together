@@ -1,11 +1,11 @@
 ﻿using Assets.Scripts.Inventory__Items__Pickups.Weapons.Projectiles;
 using Assets.Scripts.Objects.Particles___Effects.ParticleOpacity;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using MonoMod.Utils;
 
-namespace MegabonkTogether.Patches.Projectiles
+namespace OmniBonk.Patches.Projectiles
 {
     [HarmonyPatch(typeof(ProjectileBase))]
     internal class ProjectileBasePatches
@@ -15,14 +15,11 @@ namespace MegabonkTogether.Patches.Projectiles
         private static readonly IProjectileManagerService projectileManagerService = Plugin.Services.GetService<IProjectileManagerService>();
         private static readonly ITrackerService trackerService = Plugin.Services.GetService<ITrackerService>();
 
-        // PERF: per-projectile caches for the opacity path below. Keyed by instance id rather than
-        // by the component, so a destroyed projectile cannot keep an Il2Cpp wrapper alive.
+        // PERF: keyed by instance id so a destroyed projectile cannot keep an Il2Cpp wrapper alive.
         private static readonly System.Collections.Generic.Dictionary<int, ParticleOpacity> opacityComponents = new();
         private static readonly System.Collections.Generic.Dictionary<int, bool> hiddenState = new();
 
-        /// <summary>
-        /// Make sure to spawn projectiles at the net player's position
-        /// </summary>
+        /// <summary>Spawn projectiles at the net player's position.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileBase.TryInit))]
         public static void TryInit_Prefix(ProjectileBase __instance)
@@ -54,9 +51,7 @@ namespace MegabonkTogether.Patches.Projectiles
         }
 
 
-        /// <summary>
-        /// Ignore HitEnemy for projectiles on clients (Simulated by server). Also track which player is hitting the enemy for stats tracking (money flying, item procs, kills)
-        /// </summary>
+        /// <summary>Prefix-false on clients (host simulates hits). Host sets the tracker owner for credit.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileBase.HitEnemy))]
         public static bool HitEnemy_Prefix(ProjectileBase __instance, out bool __state)
@@ -72,16 +67,11 @@ namespace MegabonkTogether.Patches.Projectiles
 
             if (isServer)
             {
-                // OB-41. The inventory store rather than the spawned avatars: it still answers at the
-                // portal, where ResetForNextLevel clears the avatars while projectiles are in flight.
+                // OB-41: inventory store, not avatars, which are cleared at the portal mid-flight.
                 var weapon = __instance.weaponBase;
                 var ownerId = playerManagerService.GetWeaponOwnerId(weapon);
 
-                // OB-14. A null lookup leaves the hit attributed to whoever the tracker already
-                // had -- on the host, the host -- which is how a teammate's weapon ends up in the
-                // host's damage panel. The existing anomaly counters cannot see this: a null sets
-                // nothing, so it is not a pairing anomaly, and the 2026-08-17 host log reported
-                // zero anomalies while the panel was demonstrably wrong.
+                // OB-14: a null lookup credits the host; the pairing counters cannot see that.
                 TrackerAttributionDiagnostics.RecordWeaponOwnerLookup(ownerId.HasValue);
 
                 if (ownerId.HasValue)
@@ -109,16 +99,8 @@ namespace MegabonkTogether.Patches.Projectiles
 
 
         /// <summary>
-        /// Remove the tracking.
-        ///
-        /// <para>This pair was unbalanced in <b>both</b> directions. The old postfix unset whenever
-        /// a session was up, including on clients where the prefix returned false without ever
-        /// setting — that is the <c>unset-while-clear</c> count
-        /// <see cref="Services.TrackerAttributionDiagnostics"/> reports every run and describes as
-        /// "expected on clients (ProjectileBase.HitEnemy pairing) and harmless". It is now simply
-        /// absent rather than explained away. In the other direction, a throw inside the game's
-        /// <c>HitEnemy</c> skipped the postfix entirely and stranded a set player id, which is the
-        /// half that actually misattributes kill credit ([P1-5](../../docs/netplay/01-critical-fixes.md)).</para>
+        /// P1-5: finalizer, not postfix, so a throw in HitEnemy cannot strand the owner; unsets only
+        /// what the prefix set.
         /// </summary>
         [HarmonyFinalizer]
         [HarmonyPatch(nameof(ProjectileBase.HitEnemy))]
@@ -157,9 +139,7 @@ namespace MegabonkTogether.Patches.Projectiles
         //    return true;
         //}
 
-        /// <summary>
-        /// Synchronize projectile destruction server-side only
-        /// </summary>
+        /// <summary>Clients skip destroying synced projectiles; the host decides.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileBase.ProjectileDone))]
         public static bool ProjectileDone_Postfix(ProjectileBase __instance)
@@ -203,19 +183,7 @@ namespace MegabonkTogether.Patches.Projectiles
         }
 
 
-        /// <summary>
-        /// PERF: two costs removed, both paid per remote projectile per frame.
-        ///
-        /// <para><b>The component lookup.</b> <c>GetComponentInChildren</c> is a native hierarchy
-        /// walk, and it ran every frame for a component that cannot change. Cached per projectile,
-        /// keyed by instance id.</para>
-        ///
-        /// <para><b>The refresh itself.</b> <c>Refresh(true)</c> ran on <b>both</b> branches every
-        /// frame — so a visible projectile spent the whole run re-applying an opacity it already
-        /// had. It now fires only when the hide state actually changes, which is the same
-        /// transition tracking <see cref="Helpers.DistanceThrottler"/> already does for renderers.
-        /// The two writes to <c>SaveManager…particle_opacity</c> go with it.</para>
-        /// </summary>
+        /// <summary>PERF: caches the component and refreshes only when the hide state changes.</summary>
         private static void UpdateProjectileOpacity(ProjectileBase projectile, bool hide)
         {
             var instanceId = projectile.GetInstanceID();
@@ -233,8 +201,6 @@ namespace MegabonkTogether.Patches.Projectiles
 
             if (particleOpacity == null)
             {
-                // Recorded so the hierarchy walk is not repeated every frame for a projectile
-                // that has no ParticleOpacity at all.
                 hiddenState[instanceId] = hide;
                 return;
             }
@@ -254,14 +220,13 @@ namespace MegabonkTogether.Patches.Projectiles
             hiddenState[instanceId] = hide;
         }
 
-        /// <summary>Drops a finished projectile's cached entries.</summary>
         internal static void ForgetProjectile(int instanceId)
         {
             opacityComponents.Remove(instanceId);
             hiddenState.Remove(instanceId);
         }
 
-        /// <summary>Clears both caches so they cannot carry Il2Cpp wrappers across a session.</summary>
+        /// <summary>So caches cannot carry Il2Cpp wrappers across sessions.</summary>
         internal static void ClearOpacityCache()
         {
             opacityComponents.Clear();

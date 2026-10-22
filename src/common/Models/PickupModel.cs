@@ -1,7 +1,7 @@
 ﻿using MemoryPack;
 using System.Numerics;
 
-namespace MegabonkTogether.Common.Models
+namespace OmniBonk.Common.Models
 {
     [MemoryPackable]
     public partial class PickupModel

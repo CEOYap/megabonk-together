@@ -1,20 +1,18 @@
 ﻿using Assets.Scripts.Managers;
 using HarmonyLib;
-using MegabonkTogether.Helpers;
-using MegabonkTogether.Services;
+using OmniBonk.Helpers;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using UnityEngine;
 
-namespace MegabonkTogether.Patches.MapGeneration
+namespace OmniBonk.Patches.MapGeneration
 {
     [HarmonyPatch(typeof(RsgController._GenerateMap_d__41))]
     internal static class RsgControllerGenerateMapPatches
     {
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
 
-        /// <summary>
-        /// For the server, register all pots and chests in all crypt pieces for synchronization
-        /// </summary>
+        /// <summary>Host registers crypt pots and chests for sync.</summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(RsgController._GenerateMap_d__41.MoveNext))]
         public static void MoveNext_Postfix(RsgController._GenerateMap_d__41 __instance, bool __result)

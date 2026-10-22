@@ -79,10 +79,10 @@ jobs:
           cat thunderstore.toml
 
       - name: Restore
-        run: dotnet restore src/plugin/MegabonkTogether.Plugin.csproj
+        run: dotnet restore src/plugin/OmniBonk.Plugin.csproj
 
       - name: Build (Release) with THUNDERSTORE flag
-        run: dotnet build src/plugin/MegabonkTogether.Plugin.csproj --configuration Release --no-restore
+        run: dotnet build src/plugin/OmniBonk.Plugin.csproj --configuration Release --no-restore
         env:
           THUNDERSTORE_BUILD: "true"
 
@@ -104,6 +104,9 @@ jobs:
           for f in "$OUTPUT_DIR"/*.pdb; do
             [ -e "$f" ] && cp "$f" "$THUNDERSTORE_DIR/"
           done
+
+          # In-game changelog: offline fallback when GitHub can't be reached.
+          [ -e "$OUTPUT_DIR/CHANGELOG.toml" ] && cp "$OUTPUT_DIR/CHANGELOG.toml" "$THUNDERSTORE_DIR/"
 
           if [ ! "$(ls -A $THUNDERSTORE_DIR)" ]; then
             echo "No files copied to $THUNDERSTORE_DIR"

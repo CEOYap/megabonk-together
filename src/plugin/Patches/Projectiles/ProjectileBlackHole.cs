@@ -1,8 +1,8 @@
 ﻿using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches.Projectiles
+namespace OmniBonk.Patches.Projectiles
 {
     [HarmonyPatch(typeof(ProjectileBlackHole))]
     internal static class ProjectileBlackHolePatches
@@ -10,9 +10,7 @@ namespace MegabonkTogether.Patches.Projectiles
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
 
-        /// <summary>
-        /// Use the correct player (local / remote) transform
-        /// </summary>
+        /// <summary>Use the owning player's (local or remote) transform.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileBlackHole.MyUpdate))]
         public static bool MyUpdate_Prefix(ProjectileBlackHole __instance, out bool __state)
@@ -43,9 +41,6 @@ namespace MegabonkTogether.Patches.Projectiles
             return true;
         }
 
-        /// <summary>
-        /// Restore original transform after prefix
-        /// </summary>
         [HarmonyFinalizer]
         [HarmonyPatch(nameof(ProjectileBlackHole.MyUpdate))]
         public static void MyUpdate_Finalizer(bool __state)
@@ -59,9 +54,7 @@ namespace MegabonkTogether.Patches.Projectiles
         }
 
 
-        /// <summary>
-        /// Use the correct player (local / remote) transform
-        /// </summary>
+        /// <summary>Use the owning player's (local or remote) transform.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileBlackHole.MyFixedUpdate))]
         public static bool MyFixedUpdate_Prefix(ProjectileBlackHole __instance, out bool __state)
@@ -92,9 +85,6 @@ namespace MegabonkTogether.Patches.Projectiles
             return true;
         }
 
-        /// <summary>
-        /// Restore original transform after prefix
-        /// </summary>
         [HarmonyFinalizer]
         [HarmonyPatch(nameof(ProjectileBlackHole.MyFixedUpdate))]
         public static void MyFixedUpdate_Finalizer(bool __state)
@@ -107,9 +97,7 @@ namespace MegabonkTogether.Patches.Projectiles
             playerManagerService.UnqueueNetplayerPositionRequest();
         }
 
-        /// <summary>
-        /// Use the correct player (local / remote) transform
-        /// </summary>
+        /// <summary>Use the owning player's (local or remote) transform.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileBlackHole.TryInit))]
         public static bool TryInit_Prefix(ProjectileBlackHole __instance, out bool __state)
@@ -140,9 +128,6 @@ namespace MegabonkTogether.Patches.Projectiles
             return true;
         }
 
-        /// <summary>
-        /// Restore original transform after prefix
-        /// </summary>
         [HarmonyFinalizer]
         [HarmonyPatch(nameof(ProjectileBlackHole.TryInit))]
         public static void TryInit_Finalizer(bool __state)

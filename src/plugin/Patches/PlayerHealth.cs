@@ -1,9 +1,9 @@
 ﻿using Assets.Scripts.Inventory__Items__Pickups;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     [HarmonyPatch(typeof(PlayerHealth))]
     internal static class PlayerHealthPatches
@@ -11,10 +11,6 @@ namespace MegabonkTogether.Patches
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
 
-        /// <summary>
-        /// Synchronize player death event
-        /// </summary>
-        /// <param name="__instance"></param>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(PlayerHealth.PlayerDied))]
         public static void PlayerDied_Postfix(PlayerHealth __instance)
@@ -27,9 +23,7 @@ namespace MegabonkTogether.Patches
             synchronizationService.OnPlayerDied();
         }
 
-        /// <summary>
-        /// Prevent remote inventory tick
-        /// </summary>
+        /// <summary>Prevents remote inventory ticks.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(PlayerHealth.Tick))]
         public static bool Tick_Prefix(PlayerHealth __instance)

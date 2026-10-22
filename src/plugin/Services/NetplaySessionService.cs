@@ -1,48 +1,25 @@
-﻿using MegabonkTogether.Common.Models;
-using MegabonkTogether.Configuration;
-using MegabonkTogether.Helpers;
+﻿using OmniBonk.Common.Models;
+using OmniBonk.Configuration;
+using OmniBonk.Helpers;
 using System;
 using System.Collections;
 using UnityEngine;
 
-namespace MegabonkTogether.Services
+namespace OmniBonk.Services
 {
-    /// <summary>
-    /// The session lifecycle, lifted out of <c>NetworkMenuTab</c>'s button handlers and coroutines.
-    ///
-    /// <para>The two coroutines it replaces were near-copies of each other that differed only in
-    /// which screen they put back on failure. Here there is one, because the difference was never
-    /// about connecting — it was about who was showing it.</para>
-    /// </summary>
+    /// <summary>The netplay session lifecycle: host, join, quickplay, cancel.</summary>
     internal class NetplaySessionService(
         ISteamLobbyService steamLobbyService,
         ISteamNetSessionService steamNetSessionService) : INetplaySessionService
     {
-        /// <summary>
-        /// How long to wait for Steam to create or join a lobby. Steam's own calls are usually
-        /// sub-second; this is generous because the alternative to waiting is a lobby panel with no
-        /// lobby behind it.
-        /// </summary>
         private const float SteamLobbyWaitSeconds = 20f;
 
-        /// <summary>
-        /// How long to wait for the sockets after the lobby exists. Generous because Steam's relay
-        /// access can still be coming up when a player presses Host seconds after launch, and that
-        /// wait is ordinary rather than a fault.
-        /// </summary>
+        /// <summary>Generous: relay access may still be coming up just after launch.</summary>
         private const float SteamSessionWaitSeconds = 30f;
 
-        /// <summary>
-        /// How long to wait for the matchmaker before giving up. Carried over unchanged from the
-        /// menu's coroutines, where both used 30.
-        /// </summary>
         private const float ConnectTimeoutSeconds = 30f;
 
-        /// <summary>
-        /// How long a host waits for its room code after the connection reports ready. The code
-        /// arrives on the websocket a moment later; a host without one can still use the panel to
-        /// leave, so this is bounded rather than required.
-        /// </summary>
+        /// <summary>Bounded, not required: the code arrives on the websocket shortly after ready.</summary>
         private const float RoomCodeWaitSeconds = 5f;
 
         private const float PollIntervalSeconds = 0.5f;
@@ -96,10 +73,7 @@ namespace MegabonkTogether.Services
         {
             if (ModConfig.UseSteamTransport.Value)
             {
-                // Quickplay needs a pool of strangers to match against, which on Steam means a
-                // lobby browser filtered on the protocol version. That exists as a plan and not as
-                // code, and silently falling back to the matchmaker would put this player on a
-                // transport the setting says they are not using.
+                // No Steam lobby browser yet; never fall back silently to the matchmaker.
                 Fail("Quickplay is not available on the Steam transport yet. Host or join by code.");
                 return;
             }
@@ -136,9 +110,7 @@ namespace MegabonkTogether.Services
                 Plugin.Log.LogWarning($"[session] ResetNetworking threw during cancel: {ex.GetType().Name}: {ex.Message}");
             }
 
-            // Leaving the lobby is what ends a Steam session, not a separate teardown call: the
-            // session service watches lobby membership and shuts the transport down when it goes.
-            // One thing ends the session rather than two that could disagree about whether it has.
+            // Leaving the lobby is what ends a Steam session; the session service watches membership.
             if (ModConfig.UseSteamTransport.Value)
             {
                 steamLobbyService.LeaveLobby();
@@ -147,10 +119,7 @@ namespace MegabonkTogether.Services
             SetState(NetplayConnectState.Idle, "");
         }
 
-        /// <summary>
-        /// Refuses a second attempt while one is running, rather than starting a coroutine that
-        /// would race the first over <c>Plugin.Instance.Mode</c>.
-        /// </summary>
+        /// <summary>Refuses while busy, or two coroutines would race over <c>Mode</c>.</summary>
         private bool BeginAttempt(string message)
         {
             if (IsBusy)
@@ -161,8 +130,7 @@ namespace MegabonkTogether.Services
 
             SetState(NetplayConnectState.Connecting, message);
 
-            // The Steam path has no matchmaker to reach, and starting the websocket anyway would
-            // hand this player a room on a server whose session they are never going to join.
+            // Steam has no matchmaker; the websocket would hand out an unused room.
             if (!ModConfig.UseSteamTransport.Value)
             {
                 Plugin.Instance.NetworkHandler.HandleNetworking();
@@ -176,7 +144,6 @@ namespace MegabonkTogether.Services
             connectionCoroutine = CoroutineRunner.Instance.Run(routine);
         }
 
-        /// <summary>Waits for the matchmaker connection. Shared by every entry point.</summary>
         private IEnumerator AwaitMatchmaker()
         {
             var elapsed = 0f;
@@ -202,7 +169,6 @@ namespace MegabonkTogether.Services
 
             if (Plugin.Instance.Mode.Role == Role.Host)
             {
-                // The code arrives on the websocket a moment after the connection reports ready.
                 var codeWait = 0f;
                 while (codeWait < RoomCodeWaitSeconds && string.IsNullOrEmpty(Plugin.Instance.Mode.RoomCode))
                 {
@@ -241,11 +207,7 @@ namespace MegabonkTogether.Services
             SetState(NetplayConnectState.Ready, "");
         }
 
-        /// <summary>
-        /// Hosting on Steam: create the lobby, then let the lobby panel take over. The socket is not
-        /// opened here — <see cref="ISteamNetSessionService"/> does that the moment it sees a lobby
-        /// we own, and publishes readiness only once it has succeeded.
-        /// </summary>
+        /// <summary>The socket is opened by <see cref="ISteamNetSessionService"/> once it sees our lobby.</summary>
         private IEnumerator WatchSteamHost()
         {
             steamLobbyService.CreateLobby(maxMembers: 6);
@@ -260,14 +222,9 @@ namespace MegabonkTogether.Services
 
             PlaySelectSfx();
 
-            // The lobby panel reads the room code off Mode, so the Steam lobby's own code goes here
-            // and the panel needs no knowledge of which transport produced it.
             Plugin.Instance.Mode.RoomCode = steamLobbyService.LobbyCode;
 
-            // The lobby existing is not the session existing. Starting the netplay loops before the
-            // listen socket is open produced a host with no transport and an empty roster, which
-            // the lobby panel reported as "Cannot toggle readiness: no local player" and which a
-            // client could wait on forever.
+            // Wait for the listen socket: starting loops earlier leaves a host with no transport.
             yield return AwaitSteamSession();
 
             if (steamNetSessionService.State != SteamSessionState.Live)
@@ -281,14 +238,11 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>
-        /// Joining on Steam: find and enter the lobby by its code. Connecting to the host is not
-        /// done here — the session service waits until the host publishes that its socket is open,
-        /// because connecting before that fails in a way that reads like a NAT problem.
+        /// The session service connects only once the host publishes its socket is open.
         /// </summary>
         private IEnumerator WatchSteamJoin(string code)
         {
-            // Accepting an invite already put us in the lobby, and searching for it again would
-            // leave and re-enter the session we are trying to join.
+            // An accepted invite already put us in the lobby.
             var alreadyHere = steamLobbyService.State == SteamLobbyState.InLobby
                 && string.Equals(steamLobbyService.LobbyCode, code, StringComparison.OrdinalIgnoreCase);
 
@@ -318,7 +272,6 @@ namespace MegabonkTogether.Services
             SetState(NetplayConnectState.Ready, "");
         }
 
-        /// <summary>Waits for the sockets, which the session service brings up on its own tick.</summary>
         private IEnumerator AwaitSteamSession()
         {
             var elapsed = 0f;
@@ -331,17 +284,11 @@ namespace MegabonkTogether.Services
             }
         }
 
-        /// <summary>
-        /// A failure message that says what actually went wrong rather than "timed out". The
-        /// session service records the detail; a bare timeout reads as a network fault even when
-        /// the cause was Steam still starting.
-        /// </summary>
         private string SteamSessionFailure(string prefix) =>
             string.IsNullOrEmpty(steamNetSessionService.StatusMessage)
                 ? $"{prefix}: timed out waiting for Steam."
                 : $"{prefix}: {steamNetSessionService.StatusMessage}";
 
-        /// <summary>Waits for a create or join to settle, either way.</summary>
         private IEnumerator AwaitSteamLobby()
         {
             var elapsed = 0f;
@@ -426,8 +373,7 @@ namespace MegabonkTogether.Services
             }
             catch (Exception ex)
             {
-                // A subscriber throwing must not abandon the coroutine that raised this, or the
-                // session would sit in a state nobody advances.
+                // Must not abandon the coroutine that raised this.
                 Plugin.Log.LogError($"[session] A StateChanged subscriber threw: {ex}");
             }
         }

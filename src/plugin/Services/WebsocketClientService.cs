@@ -1,8 +1,8 @@
-using MegabonkTogether.Common.Messages;
-using MegabonkTogether.Common.Messages.WsMessages;
-using MegabonkTogether.Common.Models;
-using MegabonkTogether.Configuration;
-using MegabonkTogether.Scripts;
+using OmniBonk.Common.Messages;
+using OmniBonk.Common.Messages.WsMessages;
+using OmniBonk.Common.Models;
+using OmniBonk.Configuration;
+using OmniBonk.Scripts;
 using MemoryPack;
 using System;
 using System.Collections.Generic;
@@ -11,7 +11,7 @@ using System.Net.WebSockets;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace MegabonkTogether.Services
+namespace OmniBonk.Services
 {
     public interface IWebsocketClientService
     {
@@ -251,14 +251,8 @@ namespace MegabonkTogether.Services
 
             if (!hasFoundMatch)
             {
-                // A failed attempt used to leave its players behind, and a retrying peer comes back
-                // with a NEW ConnectionId. The next MatchInfo then added that identity alongside the
-                // abandoned one, so the host held three players for a two-player match. IsLobbyReady
-                // requires All(p => p.IsReady), and the abandoned identity can never become ready
-                // because it no longer exists on any peer — the host waits on it forever while the
-                // client sits on "Waiting for host". Observed over the internet, where the relay
-                // guarantees a retry, but nothing about it is internet-specific: any client retry
-                // does it, including on a LAN.
+                // A retry arrives with a new ConnectionId; a leftover identity would never become
+                // ready and the lobby would hang.
                 playerManagerService.ClearLobbyPlayers();
             }
 

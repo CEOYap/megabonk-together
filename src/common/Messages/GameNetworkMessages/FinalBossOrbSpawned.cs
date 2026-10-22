@@ -5,7 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace MegabonkTogether.Common.Messages
+namespace OmniBonk.Common.Messages
 {
     [MemoryPackable]
     public partial class FinalBossOrbSpawned : IGameNetworkMessage

@@ -1,8 +1,8 @@
 ﻿using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches.Interactables
+namespace OmniBonk.Patches.Interactables
 {
     [HarmonyPatch(typeof(InteractableCharacterFight))]
     internal static class InteractableCharacterFightPatches

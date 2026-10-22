@@ -1,17 +1,11 @@
 using Assets.Scripts._Data.MapsAndStages;
 using System.Collections.Generic;
 
-namespace MegabonkTogether.Helpers
+namespace OmniBonk.Helpers
 {
     /// <summary>
-    /// Endless Run's rooms. A regular room is one stage of a map; a boss room is a map's final boss
-    /// stage. The values travel in <c>EndlessNextRoom.Room</c>, so they are wire format: append only,
-    /// never renumber.
-    ///
-    /// <para><b>Graveyard</b> is one map whose rooms are areas of one scene: the first crypt, the
-    /// surface with its keys, the second crypt (the boss dungeon), and the Ghost King's room. Each
-    /// loads the Graveyard scene's stage 0, then <see cref="EndlessGraveyard"/> moves the arrival
-    /// into the right area.</para>
+    /// Endless Run rooms. Sent in <c>EndlessNextRoom.Room</c>, so wire format: append only, never renumber.
+    /// <para>Graveyard rooms are areas of one scene (stage 0); <see cref="EndlessGraveyard"/> places the arrival.</para>
     /// </summary>
     public enum EndlessRoom
     {
@@ -45,10 +39,7 @@ namespace MegabonkTogether.Helpers
 
         internal static bool IsBoss(EndlessRoom room) => room is EndlessRoom.Ent or EndlessRoom.Pharaoh or EndlessRoom.GhostKing;
 
-        /// <summary>
-        /// Loaded through <c>LoadFinalStage</c>: a map's final-boss stage. The Ghost King is a boss
-        /// room too, but lives in the Graveyard scene's stage 0, so it loads like a regular room.
-        /// </summary>
+        /// <summary>Loaded via <c>LoadFinalStage</c>. The Ghost King is a boss room but loads like a regular one.</summary>
         internal static bool LoadsFinalStage(EndlessRoom room) => room is EndlessRoom.Ent or EndlessRoom.Pharaoh;
 
         internal static bool IsGraveyard(EndlessRoom room) => Map(room) == EMap.Graveyard;

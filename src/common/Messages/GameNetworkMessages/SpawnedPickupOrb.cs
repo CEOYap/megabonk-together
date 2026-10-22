@@ -1,7 +1,7 @@
 ﻿using MemoryPack;
 using System.Numerics;
 
-namespace MegabonkTogether.Common.Messages
+namespace OmniBonk.Common.Messages
 {
     [MemoryPackable]
     public partial class SpawnedPickupOrb : IGameNetworkMessage

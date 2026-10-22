@@ -4,18 +4,16 @@
 using Assets.Scripts.Utility;
 using Assets.Scripts.Inventory__Items__Pickups.Interactables;
 using Assets.Scripts.Actors.Player;
-using MegabonkTogether.Configuration;
-using MegabonkTogether.Services;
+using OmniBonk.Configuration;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using UnityEngine;
 
-namespace MegabonkTogether.Scripts.Bot
+namespace OmniBonk.Scripts.Bot
 {
     /// <summary>
-    /// The test bot (design: <c>docs/superpowers/specs/2026-10-19-test-bot-design.md</c>). Decides
-    /// what the bot wants each frame and writes it to <see cref="BotInput"/>; it never calls sync
-    /// services or sends messages, so everything it does reaches the other peer the way a player's
-    /// actions do. Does nothing unless <see cref="ModConfig.BotMode"/> is on.
+    /// The test bot. Writes only to <see cref="BotInput"/>, never to sync services, so its actions
+    /// replicate like a player's. Inert unless <see cref="ModConfig.BotMode"/> is on.
     /// </summary>
     public class BotController : MonoBehaviour
     {
@@ -100,8 +98,7 @@ namespace MegabonkTogether.Scripts.Bot
             if (!announced)
             {
                 announced = true;
-                // The owner is always focused on their own window, and an unfocused Unity player may
-                // pause; the cap leaves the PC to the owner's copy (design, calls 1 and 2).
+                // An unfocused player may pause; the FPS cap leaves the PC to the owner's copy.
                 Application.runInBackground = true;
                 Application.targetFrameRate = 30;
                 Plugin.Log.LogInfo("[bot] BotMode on: runInBackground, 30 FPS cap.");
@@ -145,10 +142,7 @@ namespace MegabonkTogether.Scripts.Bot
 
             nextJoinCheckTime = Time.unscaledTime + 1f;
 
-            // Only from a main menu that has been up a moment. Opening the "Menu" window runs
-            // ResetNetworking (WindowManagerPatches.WindowOpened_Postfix), so a join started while the
-            // game was still loading connected and was torn down at once when the menu appeared
-            // (2026-10-19: HandleMatchInfo True, then "Session ended" on the next line).
+            // Only from a settled main menu: opening "Menu" runs ResetNetworking and kills an early join.
             if (WindowManager.activeWindow == null || WindowManager.activeWindow.name != "Menu")
             {
                 menuSince = -1f;
@@ -167,11 +161,7 @@ namespace MegabonkTogether.Scripts.Bot
                 return;
             }
 
-            // Through the Play Together button's JoinLobby, the path an accepted Steam invite takes
-            // (SteamTicker): it opens the lobby panel and then joins behind it. Calling
-            // INetplaySessionService.Join directly connected with no panel, so there was no Ready
-            // button, and a panel opened later started a second session over the first. JoinLobby
-            // does nothing while a panel is already up, so wait for none.
+            // Via JoinLobby so a lobby panel (with its Ready button) exists; it no-ops while a panel is up.
             var playTogether = Plugin.Instance.PlayTogetherButton;
             if (playTogether == null || Modal.LobbyPanel.Current != null)
             {
@@ -202,8 +192,7 @@ namespace MegabonkTogether.Scripts.Bot
             Plugin.Log.LogWarning($"[bot] join did not reach the lobby in {JOIN_TIMEOUT_SECONDS:F0}s; cancelling and retrying.");
             netplaySessionService.Cancel();
 
-            // The join opened a lobby panel; a retry waits for no panel, so take it down the way
-            // returning to the menu does (WindowManagerPatches.WindowOpened_Postfix).
+            // A retry waits for no panel, so remove the one the join opened.
             var panel = Modal.LobbyPanel.Current;
             if (panel != null)
             {
@@ -215,10 +204,7 @@ namespace MegabonkTogether.Scripts.Bot
             nextJoinCheckTime = Time.unscaledTime + 2f;
         }
 
-        /// <summary>
-        /// Moves between the menu, lobby and run states from the session's own flags, so a dropped
-        /// session or a return to the menu always lands the bot back in <see cref="BotState.Idle"/>.
-        /// </summary>
+        /// <summary>Derives the bot state from the session flags, so a dropped session returns to <see cref="BotState.Idle"/>.</summary>
         private void UpdateSessionState()
         {
             var initialized = synchronizationService.HasNetplaySessionInitialized();
@@ -236,9 +222,7 @@ namespace MegabonkTogether.Scripts.Bot
                 return;
             }
 
-            // The file is NOT deleted here: with two bots the first one to arrive used to delete it
-            // and the second never saw a code. The host deletes it when the run starts
-            // (SynchronizationService.StartGame), which is the moment no more joins make sense.
+            // Room-code file not deleted here (other bots need it); the host deletes it at StartGame.
             if (State == BotState.Joining && initialized)
             {
                 State = BotState.InLobby;
@@ -246,8 +230,7 @@ namespace MegabonkTogether.Scripts.Bot
             }
             else if (State == BotState.Idle && initialized)
             {
-                // A session this bot did not start (joined by hand, or by an invite). Without this the
-                // bot stayed Idle for the whole run: 2026-10-19, player 3, never readied or moved.
+                // A session joined by hand or invite.
                 State = BotState.InLobby;
                 Plugin.Log.LogInfo("[bot] adopting a session it did not start; in the lobby.");
             }
@@ -316,9 +299,7 @@ namespace MegabonkTogether.Scripts.Bot
                 return;
             }
 
-            // Paused by any encounter window (MyTime.Pause freezes physics but not Time.time), or
-            // between Started states (loading, the ready barrier): no input is fed then, so nothing
-            // may count as "no progress". Hold still and restart the stuck and give-up clocks.
+            // Paused (MyTime.Pause does not freeze Time.time) or not started: hold and restart the stuck clocks.
             if (!synchronizationService.HasNetplaySessionStarted() || MyTime.paused)
             {
                 BotInput.Move = Vector2.zero;
@@ -386,11 +367,7 @@ namespace MegabonkTogether.Scripts.Bot
             SteerTo(me, target, owner);
         }
 
-        /// <summary>
-        /// Detours are optional; following is not. A throw here once stopped the bot moving at all
-        /// (it came before the steering call every frame), so the search is fenced off: the first
-        /// failure is logged and detours stay off for the session.
-        /// </summary>
+        /// <summary>Detours are optional; a throw disables them for the session rather than stopping movement.</summary>
         private BaseInteractable FindDetourSafely(Vector3 bot, Vector3 owner)
         {
             if (detoursDisabled)
@@ -497,11 +474,7 @@ namespace MegabonkTogether.Scripts.Bot
             return true;
         }
 
-        /// <summary>
-        /// Walks to the coffin and presses interact. Reviving starts a fight (the reviver spawns an
-        /// enemy that must die first), so after the press the bot stays at the coffin until the host
-        /// is alive again.
-        /// </summary>
+        /// <summary>Uses the coffin, then fights the revive ghost until the host is alive.</summary>
         private void TickRevive(MyPlayer me)
         {
             RefreshOwner();
@@ -539,8 +512,7 @@ namespace MegabonkTogether.Scripts.Bot
                 return;
             }
 
-            // During the revive fight, go after the ghost: it wanders, and a bot parked at the coffin
-            // could not reach it (2026-10-19: a 5.7M ghost lost ~4k HP a minute, 40u from the bot).
+            // Chase the ghost; it wanders away from the coffin.
             var target = coffinPosition;
             var ghost = coffin != null ? coffin.SpawnedGhost : null;
             var fightingGhost = pressedCoffin && ghost != null && ghost.hp > 0;
@@ -549,22 +521,12 @@ namespace MegabonkTogether.Scripts.Bot
                 target = ghost.transform.position;
             }
 
-            // The stuck-teleport lands on the ground under the ghost during the fight. Not next to the
-            // owner: the owner is the dead player, so the bot went back to the corpse every 6 s while
-            // the ghost wandered off (2026-10-20 run 1: a 169K ghost lost ~15K in 90 s). And not at
-            // the ghost itself: it flies through terrain (run 2: sampled at y -56 on Forest ground
-            // around -20), and teleporting to it put the bots, then the revived host, outside the
-            // world.
+            // Stuck-teleport anchor during the fight: ground under the ghost (it flies through terrain).
             var anchor = fightingGhost ? GroundUnder(target, coffinPosition) : (OwnerPosition ?? coffinPosition);
             SteerTo(me, target, anchor);
         }
 
-        /// <summary>
-        /// The walkable ground under <paramref name="point"/>: a downward ray from well above it,
-        /// accepted only when it lands near <paramref name="reference"/>'s height (the coffin, where
-        /// the owner died on the ground). Anything else, a miss or a hit far above or below,
-        /// returns the reference. Triggers are ignored so the ray does not stop on pickups.
-        /// </summary>
+        /// <summary>Ground under <paramref name="point"/> if near <paramref name="reference"/>'s height, else the reference.</summary>
         private static Vector3 GroundUnder(Vector3 point, Vector3 reference, float heightBand = 25f)
         {
             const float rayHeight = 80f;
@@ -610,11 +572,7 @@ namespace MegabonkTogether.Scripts.Bot
             CheckStuck(me, target, distance, owner);
         }
 
-        /// <summary>
-        /// Teleports next to the host after <c>BotStuckSeconds</c> without getting 1 unit closer to
-        /// the target. The follow point moves, so progress is measured against the best distance so
-        /// far, reset whenever the bot arrives. Also catches falling out of the map.
-        /// </summary>
+        /// <summary>Teleports to the host after <c>BotStuckSeconds</c> without beating the best distance by 1 unit.</summary>
         private void CheckStuck(MyPlayer me, Vector3 target, float distance, Vector3 owner)
         {
             var now = Time.time;
@@ -640,10 +598,7 @@ namespace MegabonkTogether.Scripts.Bot
                 return;
             }
 
-            // OB-53: a spot beside the owner only if there is ground there at the owner's own height;
-            // otherwise exactly where the owner stands, which is known to be in the world. The bare
-            // "+2 on X" put the bot inside a wall next to the host and out of the map (2026-10-20,
-            // Forest: seven teleports in a minute, then it died out there and its coffin with it).
+            // OB-53: beside the owner only if there is ground there, else on the owner (never in a wall).
             var destination = GroundUnder(owner + new Vector3(2f, 0f, 0f), owner, 3f);
             if (destination == owner)
             {
@@ -765,10 +720,8 @@ namespace MegabonkTogether.Scripts.Bot
         }
 
         /// <summary>
-        /// Selects and confirms a random character through the menu's own handlers
-        /// (<c>OnSelectCharacter</c> / <c>OnConfirmCharacter</c>, VA <c>0x18054A290</c> /
-        /// <c>0x180549C90</c>), the path a click takes. Confirm on a character that cannot be used
-        /// shows a popup and returns, so only <c>canUseCharacter</c> buttons are candidates.
+        /// Picks a random <c>canUseCharacter</c> character via the menu's handlers (VA <c>0x18054A290</c> /
+        /// <c>0x180549C90</c>); confirming an unusable one only shows a popup.
         /// </summary>
         private static bool PickRandomCharacter(CharacterMenu menu)
         {

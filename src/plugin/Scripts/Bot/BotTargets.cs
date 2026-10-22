@@ -3,27 +3,16 @@
 #if DEBUG
 using Assets.Scripts.Inventory__Items__Pickups.Chests;
 using Assets.Scripts.Inventory__Items__Pickups.Interactables;
-using MegabonkTogether.Scripts.Interactables;
-using MegabonkTogether.Services;
+using OmniBonk.Scripts.Interactables;
+using OmniBonk.Services;
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace MegabonkTogether.Scripts.Bot
+namespace OmniBonk.Scripts.Bot
 {
     /// <summary>
-    /// Test bot: what it may walk to. Chests and shrines it is nearer to than the host (design goal 6),
-    /// and the host's revive coffin.
-    ///
-    /// <para><b>Chests and shrines only.</b> An allowlist rather than "any interactable": portals and
-    /// boss spawners are the owner's objectives, a shady guy opens a shop the bot has no use for, and
-    /// the cursed shrine adds a boss curse to everyone's run. Candidates come from
-    /// <c>Physics.OverlapSphere</c> on the game's own interactable layer
-    /// (<c>DetectInteractables.whatIsInteractable</c>), at most once a second.</para>
-    ///
-    /// <para><b>The coffin is the mod's <see cref="InteractableReviver"/></b>, not the game's
-    /// <c>InteractableDesertGrave</c>: <c>SpawnReviver</c> destroys the grave component and adds the
-    /// reviver. The Desert map's own puzzle graves are <c>InteractableDesertGrave</c> too, so
-    /// searching for that type would have found the wrong objects.</para>
+    /// Test bot targets: chests and shrines nearer to it than the host (allowlist), and the host's
+    /// revive coffin, which is the mod's <see cref="InteractableReviver"/>, not <c>InteractableDesertGrave</c>.
     /// </summary>
     internal static class BotTargets
     {

@@ -1,45 +1,17 @@
 ﻿using UnityEngine;
 
-namespace MegabonkTogether.Helpers
+namespace OmniBonk.Helpers
 {
     /// <summary>
-    /// Puts an interactable that somebody else used onto this peer's own "used / total" counter —
-    /// the panel behind the <b>Shrine Counter</b> setting, at
-    /// <c>GameUI/GameUI/Debug/EnemyInformation/Shrines</c>.
-    ///
-    /// <para><b>What it is counting.</b> <c>InteractablesStatus</c> holds a
-    /// <c>Dictionary&lt;string, InteractableStatusContainer&gt;</c> keyed by an interactable's debug
-    /// name, and each container carries <c>numUsed</c> and <c>numTotal</c> — the two halves of
-    /// "Chests 4 / 46". <c>numUsed</c> is raised by the interactable's own interaction path, and
-    /// that is the path the mod replaces with a shortcut when replicating somebody else's
-    /// interaction: <c>Destroy</c> removes the object and <c>Used</c> writes a log line, so the
-    /// remote peer sees the object go and never counts it. Two players splitting a map therefore
-    /// finish with two tallies that add up to roughly the right total between them and agree
-    /// nowhere. OB-12 in <c>docs/netplay/08-observed-bugs.md</c>.</para>
-    ///
-    /// <para><b>Why calling the game's own handler rather than incrementing the field.</b>
-    /// <c>OnInteractableUse</c> resolves the debug name through the interactable's own virtual
-    /// <c>GetDebugName</c>, skips <c>InteractableMicrowave</c> — exactly that one type, by an
-    /// explicit <c>GetType()</c> comparison, and NOT "types that have their own handlers", which is
-    /// what this comment claimed until 2026-08-17 and is what let a shady guy be counted twice —
-    /// and raises
-    /// <c>A_InteractableUsed</c> so the panel redraws. Reaching into
-    /// <c>interactablesByName</c> directly would reimplement the first two and skip the third.
-    /// Decompiled before being called (VA <c>0x18051B1D0</c>, cached under
-    /// <c>megabonk-re/decompiled/</c>) and it does exactly and only that.</para>
-    ///
-    /// <para><b>It is private in the game and public on the proxy.</b> Il2CppInterop generates
-    /// public members regardless of the original accessibility, which is what makes this callable
-    /// at all. It also means the compiler cannot warn if a future game build renames or drops it —
-    /// see the note on the caller about where the <c>try</c> has to go.</para>
+    /// OB-12: counts a remotely-used interactable on this peer's "used / total" Shrine Counter, since
+    /// the replication shortcut (Destroy/Used) skips the game's own count.
+    /// <para>Calls the game's <c>OnInteractableUse</c> (decompiled, VA <c>0x18051B1D0</c>): it resolves
+    /// the debug name, skips only <c>InteractableMicrowave</c>, and raises <c>A_InteractableUsed</c>.
+    /// Private in the game, public on the proxy, so a rename will not be caught by the compiler.</para>
     /// </summary>
     internal static class InteractableCounterHelper
     {
-        /// <summary>
-        /// What this peer's counter read for one interactable, before a replicated interaction was
-        /// dispatched. <see cref="Name"/> is captured up front on purpose: the debug name comes off
-        /// the live component, and some branches destroy the object before we get to look again.
-        /// </summary>
+        /// <summary>Counter before dispatch. Name captured early: dispatch may destroy the object.</summary>
         internal readonly struct Snapshot
         {
             internal Snapshot(string name, int? used)
@@ -50,11 +22,10 @@ namespace MegabonkTogether.Helpers
 
             internal string Name { get; }
 
-            /// <summary>Null when the counter could not be read at all — then nothing is inferred.</summary>
+            /// <summary>Null when unreadable; then nothing is inferred.</summary>
             internal int? Used { get; }
         }
 
-        /// <summary>Reads this peer's <c>numUsed</c> for an interactable, before dispatching to it.</summary>
         internal static Snapshot Take(GameObject interactableObj)
         {
             if (interactableObj == null)
@@ -68,35 +39,10 @@ namespace MegabonkTogether.Helpers
                 return new Snapshot(null, null);
             }
 
-            // OB-12, shady guy. The one interactable whose count lands *asynchronously*, which is
-            // what defeats the measure-then-count shape everything else uses.
-            //
-            // Decompiled rather than reasoned about, because the last three attempts at OB-12
-            // failed by reasoning:
-            //   InteractableShadyGuy.Interact()  (VA 0x1804CD400) sets a static "current shady
-            //     guy", calls UpdatePrices, opens the shop through
-            //     EncounterWindows.AddEncounter(7) -- and returns FALSE.
-            //   InteractablesStatus.OnInteractableUse (VA 0x18051B1D0) opens with
-            //     `if (!success) return;`, so vanilla's generic path never counts a shady guy.
-            //   InteractableShadyGuy.OnShadyGuyDone (VA 0x1804CD5F0) runs when the shop is
-            //     finished, guarded on the static still being this instance, and raises the
-            //     Action<InteractableShadyGuy> that InteractablesStatus.Init subscribes
-            //     OnShadyGuyUsed (VA 0x18051B4A0) to. That handler does numUsed += 1.
-            //
-            // So a shady guy is counted exactly once in vanilla, by a dedicated path, when the
-            // window closes -- not when Interact() is called.
-            //
-            // The replication dispatch replays shadyGuy.Interact() on the receiving peer, so that
-            // peer's own window will eventually close and the game will count it. But
-            // CountIfDispatchDidNot compares numUsed immediately, sees it unchanged -- because the
-            // real count is still minutes away -- and adds one. The window then closes and the game
-            // adds another. Two per replicated shady guy on the receiver, one on the sender: which
-            // is exactly the reported "host 4 of 2, client 2 of 2".
-            //
-            // Excluded here rather than in CountIfDispatchDidNot so the snapshot and the count can
-            // never disagree about it. Resolved with GetComponentInChildren, matching the dispatch
-            // exactly, so the two agree on what a shady guy is. Not `is`/`as`: those test the
-            // managed wrapper on an Il2CppInterop proxy, not the object.
+            // OB-12: shady guy is counted asynchronously by OnShadyGuyUsed (VA 0x18051B4A0) when its
+            // shop closes; Interact() (VA 0x1804CD400) returns false so OnInteractableUse skips it.
+            // Counting here too would double it. GetComponentInChildren matches the dispatch; not
+            // `is`/`as`, which test the Il2CppInterop wrapper.
             if (interactableObj.GetComponentInChildren<InteractableShadyGuy>() != null)
             {
                 Plugin.Log.LogDebug(
@@ -108,17 +54,7 @@ namespace MegabonkTogether.Helpers
             var name = interactable.GetDebugName();
             var used = ReadUsedCount(name);
 
-            // OB-12. The challenge-shrine row is still out of sync after the counter fix and the
-            // reason is not visible offline: InteractablesStatus.Init subscribes to
-            // DetectInteractables, BaseInteractable, ChargeShrine, InteractableMicrowave and
-            // InteractableShadyGuy -- nothing challenge-specific -- so a challenge shrine counts
-            // through the same OnInteractableUse path this helper already calls, and should have
-            // worked. Naming the key and its value is what separates "wrong key", "key absent" and
-            // "counted but by something else" on the next run. Debug level: one line per replicated
-            // interaction, not per frame.
-            // Logs the GameObject's name rather than the component's type: GetType() on an
-            // Il2CppInterop proxy reports the managed wrapper, which is the trap this branch has
-            // paid for more than once, whereas the object name is what it is.
+            // OB-12: diagnostic for the challenge-shrine row. Object name, not GetType() (proxy wrapper).
             Plugin.Log.LogDebug(
                 $"OB-12: snapshot '{name}' from object '{interactableObj.name}' reads " +
                 $"{(used.HasValue ? used.Value.ToString() : "<no key>")}.");
@@ -127,24 +63,11 @@ namespace MegabonkTogether.Helpers
         }
 
         /// <summary>
-        /// OB-12. Counts the interactable only if the dispatch did not already count it.
-        ///
-        /// <para><b>Why measured rather than reasoned about.</b> The <c>Interact</c> branch of
-        /// <c>OnReceivedInteractableUsed</c> replays the real interaction on some sub-paths
-        /// (<c>microwave.Interact()</c> and friends) and opts out on others (dead player, cannot
-        /// afford, cannot interact). Where the real interaction runs, the game raises the counter
-        /// itself, so counting unconditionally would double it — turning a counter that reads too
-        /// low into one that reads too high. Deciding per sub-branch would work today and would be
-        /// silently wrong the next time a sub-branch is added. Comparing the number before and
-        /// after needs no such judgement: whatever ran, this counts once.</para>
-        ///
-        /// <para><b>OB-12's cause has now been corrected three times</b>, and each previous attempt
-        /// failed by reasoning about which path executes instead of checking. That is the whole
-        /// argument for this shape.</para>
+        /// OB-12: counts only if the dispatch did not. Measured before/after rather than reasoned per
+        /// branch, since some branches replay the real interaction and count it themselves.
         /// </summary>
         internal static void CountIfDispatchDidNot(GameObject interactableObj, Snapshot before)
         {
-            // Nothing readable to compare against — do not guess in either direction.
             if (before.Used == null || string.IsNullOrEmpty(before.Name))
             {
                 return;
@@ -153,13 +76,9 @@ namespace MegabonkTogether.Helpers
             var after = ReadUsedCount(before.Name);
             if (after == null || after.Value != before.Used.Value)
             {
-                // Either the counter vanished, or the dispatch already counted it. Both mean stop.
                 return;
             }
 
-            // The object may have been destroyed by the dispatch. If it was, the game almost
-            // certainly counted it too and we would have returned above; reaching here with a dead
-            // object is the rare case, and there is no live component to resolve a name from.
             if (interactableObj == null)
             {
                 Plugin.Log.LogDebug(
@@ -171,29 +90,14 @@ namespace MegabonkTogether.Helpers
             CountAsUsed(interactableObj);
         }
 
-        /// <summary>
-        /// Resolves the interactable the same way the dispatch does: the component on the object
-        /// itself first, children only as a fallback.
-        ///
-        /// <para><b>Why this matters.</b> <c>OnReceivedInteractableUsed</c> reaches for its types
-        /// with <c>GetComponent&lt;T&gt;()</c>, while this helper used
-        /// <c>GetComponentInChildren&lt;BaseInteractable&gt;()</c>. On a prefab whose first
-        /// <c>BaseInteractable</c> in the hierarchy is not the one the dispatch acts on, the two
-        /// disagree — the snapshot would then watch one row while the count landed on another, which
-        /// reads exactly like an interactable that is never counted.</para>
-        /// </summary>
+        /// <summary>Self first, then children, matching the dispatch's GetComponent, so both watch the same row.</summary>
         private static BaseInteractable ResolveInteractable(GameObject interactableObj)
         {
             var onSelf = interactableObj.GetComponent<BaseInteractable>();
             return onSelf != null ? onSelf : interactableObj.GetComponentInChildren<BaseInteractable>();
         }
 
-        /// <summary>
-        /// Reads <c>numUsed</c> for a debug name, or null if it cannot be read.
-        ///
-        /// <para><c>interactablesByName</c> is an <c>Il2CppSystem</c> dictionary, so this uses its
-        /// own <c>TryGetValue</c> rather than anything LINQ-shaped.</para>
-        /// </summary>
+        /// <summary>Null if unreadable. Il2CppSystem dictionary: use its own TryGetValue, not LINQ.</summary>
         private static int? ReadUsedCount(string debugName)
         {
             if (string.IsNullOrEmpty(debugName))
@@ -215,10 +119,7 @@ namespace MegabonkTogether.Helpers
             return container.numUsed;
         }
 
-        /// <summary>
-        /// Counts <paramref name="interactableObj"/> as used by this peer. Must be called
-        /// <b>before</b> the object is destroyed — the debug name comes off the live component.
-        /// </summary>
+        /// <summary>Call <b>before</b> the object is destroyed; the name comes off the live component.</summary>
         internal static void CountAsUsed(GameObject interactableObj)
         {
             if (interactableObj == null)
@@ -232,10 +133,7 @@ namespace MegabonkTogether.Helpers
                 return;
             }
 
-            // success: true — the peer that sent this only broadcasts after its own interaction
-            // succeeded, and the host relays with SendToAllClientsExcept(OwnerId), so nobody ever
-            // receives their own message back. Every peer reaching here is one that did not
-            // perform the interaction and is therefore one that has not counted it.
+            // success: true. Senders only broadcast on success and never receive their own message back.
             InteractablesStatus.OnInteractableUse(interactable, true);
         }
     }

@@ -1,8 +1,8 @@
 ﻿using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches.Projectiles
+namespace OmniBonk.Patches.Projectiles
 {
     [HarmonyPatch(typeof(ProjectileHeroSword))]
     internal static class ProjectileHeroSwordPatches
@@ -10,9 +10,7 @@ namespace MegabonkTogether.Patches.Projectiles
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
 
-        /// <summary>
-        /// Use the correct player (local / remote) transform
-        /// </summary>
+        /// <summary>Use the owning player's transform.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileHeroSword.MyUpdate))]
         public static bool MyUpdate_Prefix(ProjectileHeroSword __instance, out bool __state)
@@ -43,9 +41,7 @@ namespace MegabonkTogether.Patches.Projectiles
             return true;
         }
 
-        /// <summary>
-        /// Restore original transform after prefix
-        /// </summary>
+        /// <summary>Restore the original transform.</summary>
         [HarmonyFinalizer]
         [HarmonyPatch(nameof(ProjectileHeroSword.MyUpdate))]
         public static void MyUpdate_Finalizer(bool __state)
@@ -58,9 +54,7 @@ namespace MegabonkTogether.Patches.Projectiles
             playerManagerService.UnqueueNetplayerPositionRequest();
         }
 
-        /// <summary>
-        /// Use the correct player (local / remote) transform
-        /// </summary>
+        /// <summary>Use the owning player's transform.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileHeroSword.MyFixedUpdate))]
         public static bool MyFixedUpdate_Prefix(ProjectileHeroSword __instance, out bool __state)
@@ -91,9 +85,7 @@ namespace MegabonkTogether.Patches.Projectiles
             return true;
         }
 
-        /// <summary>
-        /// Restore original transform after prefix
-        /// </summary>
+        /// <summary>Restore the original transform.</summary>
         [HarmonyFinalizer]
         [HarmonyPatch(nameof(ProjectileHeroSword.MyFixedUpdate))]
         public static void MyFixedUpdate_Finalizer(bool __state)
@@ -107,9 +99,7 @@ namespace MegabonkTogether.Patches.Projectiles
         }
 
 
-        /// <summary>
-        /// Use the correct player (local / remote) transform
-        /// </summary>
+        /// <summary>Use the owning player's transform.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileHeroSword.TryInit))]
         public static bool TryInit_Prefix(ProjectileHeroSword __instance, out bool __state)
@@ -140,9 +130,7 @@ namespace MegabonkTogether.Patches.Projectiles
             return true;
         }
 
-        /// <summary>
-        /// Restore original transform after prefix
-        /// </summary>
+        /// <summary>Restore the original transform.</summary>
         [HarmonyFinalizer]
         [HarmonyPatch(nameof(ProjectileHeroSword.TryInit))]
         public static void TryInit_Finalizer(bool __state)

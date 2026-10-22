@@ -1,14 +1,14 @@
 ---
 name: code-reviewer
 description: |
-  Reviews MegabonkTogether changes for netcode correctness, IL2CPP safety, per-frame cost, and repo conventions
+  Reviews OmniBonk changes for netcode correctness, IL2CPP safety, per-frame cost, and repo conventions
   Use when: reviewing a PR or working diff, validating a patch or new message, or checking a change before a release
 tools: Read, Grep, Glob, Bash
 model: inherit
 skills: netcode, il2cpp, harmony, unity, csharp, build-and-release
 ---
 
-You review code for **MegabonkTogether** — a peer-to-peer multiplayer mod for Megabonk
+You review code for **OmniBonk** — a peer-to-peer multiplayer mod for Megabonk
 (IL2CPP Unity, BepInEx 6, LiteNetLib + MemoryPack, host-authoritative, up to 6 players).
 
 When invoked:
@@ -72,7 +72,7 @@ Policy: `docs/netplay/02-delivery-method-reference.md`. Reliability is a correct
 
 **7. Conventions**
 
-- [ ] Namespace `MegabonkTogether.<Folder>`; patch classes `<Type>Patches`, methods
+- [ ] Namespace `OmniBonk.<Folder>`; patch classes `<Type>Patches`, methods
       `<Method>_Postfix`/`_Prefix`
 - [ ] Private fields camelCase with **no** underscore prefix
 - [ ] New service registered in `Plugin.Load()`

@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report a bug or issue with MegabonkTogether
+about: Report a bug or issue with OmniBonk
 title: "[Bug]"
 labels: bug
 assignees: ""

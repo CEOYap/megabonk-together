@@ -2,31 +2,11 @@ using System.Collections.Concurrent;
 using System.Linq;
 using System.Threading;
 
-namespace MegabonkTogether.Services
+namespace OmniBonk.Services
 {
     /// <summary>
-    /// OB-10. Attributes the host-only guard rejections that both transports were reporting
-    /// anonymously, and collapses them into one throttled line.
-    ///
-    /// <para><b>The problem this replaces.</b> A client repeatedly enters a host-only send path,
-    /// the guard drops the send, and nothing breaks — but the warning carried no context at all, so
-    /// 1,841 identical lines (matchmaker transport, 2026-08-07) and then <b>20,078</b> of them
-    /// (Steam transport, 2026-08-17) said only that it had happened. The entry's recorded next step
-    /// was <c>[CallerMemberName]</c> on the guard, which would have named <c>SendToAllClients</c> —
-    /// something already known, since the guard has four callers and they are all send methods.
-    /// <b>The message type is the useful identifier</b>: it names the gameplay path directly, so
-    /// "SpawnedEnemy x1200" points at the patch that is missing its ownership check.</para>
-    ///
-    /// <para><b>Aggregating is not silencing.</b> The entry says a guard firing 1,841 times is
-    /// information and the fix is upstream of it. Both still hold: nothing is suppressed, the count
-    /// is reported in full, and it now says <i>what</i> was rejected. What is removed is 20,078
-    /// individual log writes on a path that runs several times a second — which
-    /// <c>docs/netplay/04-performance-and-gc.md</c> and the BepInEx guidance both treat as a real
-    /// per-frame cost in its own right.</para>
-    ///
-    /// <para>Reports itself on a throttle rather than sitting behind a config flag, in the same
-    /// shape as the kill-attribution diagnostic. A healthy session prints only its end-of-session
-    /// total, <c>0</c>, because a healthy session never rejects a send.</para>
+    /// OB-10: counts rejected host-only sends by message type (which names the patch missing its
+    /// ownership check) and reports them throttled. A healthy session totals 0.
     /// </summary>
     internal static class HostGuardDiagnostics
     {
@@ -36,10 +16,7 @@ namespace MegabonkTogether.Services
         private static long lastReportTicks;
         private static long sessionTotal;
 
-        /// <summary>
-        /// Records one rejected host-only send. <paramref name="messageTypeName"/> may be null when
-        /// the caller only had raw bytes; the entry is still counted, under the send method alone.
-        /// </summary>
+        /// <summary><paramref name="messageTypeName"/> may be null; then counted under the send method.</summary>
         internal static void Record(string transport, string sendMethod, string messageTypeName)
         {
             var key = string.IsNullOrEmpty(messageTypeName)
@@ -63,8 +40,7 @@ namespace MegabonkTogether.Services
                 return;
             }
 
-            // Only the thread that wins this swap reports, so concurrent rejections cannot
-            // double-log. Same guard the kill-attribution diagnostic uses.
+            // Only the swap winner reports, so concurrent threads cannot double-log.
             if (Interlocked.CompareExchange(ref lastReportTicks, nowTicks, last) != last)
             {
                 return;
@@ -103,17 +79,7 @@ namespace MegabonkTogether.Services
                 "so nothing is broken, but the work leading up to it was done for nothing.");
         }
 
-        /// <summary>
-        /// Flushes what the throttle is still holding, prints the session's total, then clears
-        /// counters and the throttle so each session starts from zero.
-        ///
-        /// <para><b>Why the flush.</b> <see cref="Report"/> prints only when a rejection arrives
-        /// after the interval, and the first one only primes it. A run with a handful of rejections,
-        /// or the last batch of any run, was therefore counted and never printed — so a log with no
-        /// <c>[host-guard]</c> line could not prove that nothing was rejected. The total line is
-        /// printed even when it is zero, for the same reason: absence of a line no longer means
-        /// anything, so a clean session says so.</para>
-        /// </summary>
+        /// <summary>Flushes held counts and always prints the session total (even 0), then clears.</summary>
         internal static void Reset()
         {
             LogPending("since the last report, at session end");

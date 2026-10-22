@@ -5,41 +5,17 @@ using Assets.Scripts.Inventory__Items__Pickups.Weapons;
 using Assets.Scripts.Inventory__Items__Pickups.Weapons.Projectiles;
 using Assets.Scripts.Menu.Shop;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using System.Collections.Generic;
 
-namespace MegabonkTogether.Patches.Items
+namespace OmniBonk.Patches.Items
 {
     /// <summary>
-    /// OB-38. While the host builds or applies a teammate's hit, the hit reads that teammate's
-    /// combat stats instead of the host's.
-    ///
-    /// <para><b>The defect</b> (decompiled, build 21750826). Every stat read on a hit is the static
-    /// <c>PlayerStats.GetStat(EStat)</c>, which takes no player and answers for the local one:
-    /// <c>WeaponUtility.GetDamage</c> and <c>GetNewDamage</c> read DamageMultiplier (12),
-    /// <c>GetDamageContainer</c> / <c>GetCritChance</c> / <c>GetCritDamageMultiplier</c> read 18 and
-    /// 19, <c>GetKnockback</c> 24, <c>Enemy</c> EliteDamageMultiplier (23), the burn and poison
-    /// debuffs 12 and 56, and on-hit items 9, 10 and 24. The host builds every teammate's hits, so
-    /// all of a teammate's damage, crits and knockback came from the host's build. Several on-hit
-    /// items and the burn debuff also read <c>MyPlayer.baseDamage</c> as a raw field.</para>
-    ///
-    /// <para><b>The fix.</b> The owner's values already travel in <c>PlayerStatsChanged</c>
-    /// (OB-1); the combat stats and baseDamage were added to its keyed dictionary, so no message
-    /// changed. A postfix on <c>GetStat</c> substitutes the teammate's value for the stats in
-    /// <see cref="CombatStats"/> only, and only while a teammate's hit is in scope:</para>
-    /// <list type="bullet">
-    /// <item>a weapon accessor called with a teammate's weapon (the owner comes from the argument,
-    /// so it holds where no tracker scope exists yet), or</item>
-    /// <item>the tracker attributing the current hit to a teammate (projectile hits, auras, the
-    /// teammate's on-hit items, their debuff ticks).</item>
-    /// </list>
-    /// <para>Other stats are never substituted: drop chances, gold, XP and the host's own movement
-    /// keep reading the host. <c>GetNewDamage</c> with item modifiers reads the local player's
-    /// stat components directly rather than through <c>GetStat</c>; that path is rescaled by the
-    /// ratio of the two DamageMultipliers, which is exact for a multiplicative modifier and close
-    /// for an additive one.</para>
-    ///
+    /// OB-38: a teammate's hit, built on the host, reads the teammate's combat stats. Decompiled:
+    /// the static <c>PlayerStats.GetStat</c> always answers for the local player.
+    /// <para>Only <see cref="CombatStats"/> are substituted, and only while a teammate's weapon scope or
+    /// tracker scope is active. <c>GetNewDamage</c> with item modifiers is rescaled by the DamageMultiplier ratio.</para>
     /// <para><b>UNVERIFIED.</b> Not run in-game.</para>
     /// </summary>
     internal static class TeammateCombatStats
@@ -65,19 +41,14 @@ namespace MegabonkTogether.Patches.Items
             (int)EStat.FreezeChance,
             (int)EStat.PoisonDamageMultiplier,
 
-            // OB-43. Read by the on-hit items the host runs for their owner (Dragonfire 9 and 10,
-            // Lightning Orb and Grandma's Tonic 9, item projectiles 10 and 11) and by
-            // GetWeaponDamage (Thorns, 3). Already synced for OB-1; the OB-1 accessor corrections
-            // stay consistent under substitution (Size is rebuilt from the owner's value, the
-            // others subtract GetStat and add the owner's).
+            // OB-43: read by on-hit items and GetWeaponDamage; consistent with the OB-1 corrections.
             (int)EStat.Thorns,
             (int)EStat.SizeMultiplier,
             (int)EStat.DurationMultiplier,
             (int)EStat.ProjectileSpeedMultiplier,
         ];
 
-        // A weapon accessor's owner, from its argument. Active with a null owner means "the
-        // host's own weapon", which must win over a teammate tracker scope around it.
+        // Active with a null owner = host's own weapon, overriding a surrounding tracker scope.
         private static bool weaponScopeActive;
         private static uint? weaponScopeOwner;
 
@@ -147,10 +118,7 @@ namespace MegabonkTogether.Patches.Items
 
         internal static void ResetDiagnostics() => loggedSubstitution = false;
 
-        /// <summary>
-        /// Swaps <c>MyPlayer.baseDamage</c> to the teammate's for the duration of a call that reads
-        /// it as a raw field. Returns the value to restore, or null when nothing was swapped.
-        /// </summary>
+        /// <summary>Swaps the raw <c>MyPlayer.baseDamage</c> field; returns the value to restore, or null.</summary>
         internal static float? EnterBaseDamage(uint owner)
         {
             var me = MyPlayer.Instance;
@@ -179,11 +147,7 @@ namespace MegabonkTogether.Patches.Items
     }
 
     /// <summary>
-    /// OB-43. The mod's existing "act as this teammate" switch: while a teammate is at the front of
-    /// the position-request queue, MyPlayer's transform, GameManager.GetPlayerInventory and
-    /// PlayerStatsNew.GetStat answer for them (UnityComponent, GameManager and PlayerStatsNew
-    /// patches). The queue is a FIFO peeked at its front, so a push is only safe when it is empty;
-    /// if the teammate is already in front there is nothing to do.
+    /// OB-43: "act as this teammate" via the position-request queue. Only pushes when the queue is empty.
     /// </summary>
     internal static class PositionRequest
     {
@@ -210,9 +174,7 @@ namespace MegabonkTogether.Patches.Items
     }
 
     /// <summary>
-    /// OB-43. Spicy Meatball and Quin's Mask cache their explosion size from GetStat(Size) in
-    /// OnInitOrAmountChanged (decompiled). On the host that runs when a teammate's item is added to
-    /// their copy, with no teammate in scope, so the host's Size was cached. Run it as the owner.
+    /// OB-43: Spicy Meatball and Quin's Mask cache Size in OnInitOrAmountChanged (decompiled); run it as the owner.
     /// </summary>
     internal static class TeammateItemInit
     {
@@ -281,8 +243,7 @@ namespace MegabonkTogether.Patches.Items
     [HarmonyPatch(typeof(PlayerStats))]
     internal static class PlayerStatsTeammatePatches
     {
-        // Hot path: the cheapest checks (the bypass flag, then whether any owner is in scope at
-        // all) come first. Outside a teammate's hit this costs a field read and a null check.
+        // Hot path: cheapest checks first. No netplay guard needed: CurrentTeammate is null outside a host session.
         [HarmonyPostfix]
         [HarmonyPatch(nameof(PlayerStats.GetStat))]
         public static void GetStat_Postfix(EStat stat, ref float __result)

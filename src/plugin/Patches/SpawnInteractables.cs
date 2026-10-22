@@ -1,12 +1,12 @@
 ﻿using Assets.Scripts.Managers;
 using HarmonyLib;
-using MegabonkTogether.Helpers;
-using MegabonkTogether.Services;
+using OmniBonk.Helpers;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using MonoMod.Utils;
 using System.Linq;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     [HarmonyPatch(typeof(SpawnInteractables))]
     internal class SpawnInteractablesPatches
@@ -14,10 +14,7 @@ namespace MegabonkTogether.Patches
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
         private static readonly IGameBalanceService gameBalanceService = Plugin.Services.GetService<IGameBalanceService>();
 
-        /// <summary>
-        /// Add prefabs (Spawned by server)
-        /// Also adjust free chest spawn rate
-        /// </summary>  
+        /// <summary>Host spawns chests (with the free-chest rate scaled); clients only register prefabs.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(SpawnInteractables.SpawnChests))]
         public static bool SpawnChests_Prefix(SpawnInteractables __instance)
@@ -43,9 +40,6 @@ namespace MegabonkTogether.Patches
             return true;
         }
 
-        /// <summary>
-        /// Send spawned chests to clients
-        /// </summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(SpawnInteractables.SpawnChests))]
         public static void SpawnChests_Postfix(SpawnInteractables __instance)
@@ -83,10 +77,7 @@ namespace MegabonkTogether.Patches
         }
 
 
-        /// <summary>
-        /// Add prefabs (Spawned by server)
-        /// </summary>
-        /// <returns></returns>
+        /// <summary>Host-only spawning.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(SpawnInteractables.SpawnRails))]
         public static bool SpawnRails_Prefix(SpawnInteractables __instance)
@@ -107,10 +98,6 @@ namespace MegabonkTogether.Patches
 
             return true;
         }
-
-        /// <summary>
-        /// Send spawned rails to clients
-        /// </summary>
 
         [HarmonyPostfix]
         [HarmonyPatch(nameof(SpawnInteractables.SpawnRails))]
@@ -140,9 +127,7 @@ namespace MegabonkTogether.Patches
         }
 
 
-        /// <summary>
-        /// Prevent shrine spawning on clients (Spawned by server) (Do you know a shadyGuy is a shrine ?)
-        /// </summary>
+        /// <summary>Host-only shrine spawning (Shady Guy counts as a shrine).</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(SpawnInteractables.SpawnShrines))]
         public static bool SpawnShrines_Prefix(SpawnInteractables __instance)
@@ -162,9 +147,7 @@ namespace MegabonkTogether.Patches
             return true;
         }
 
-        /// <summary>
-        /// Send spawned shrines to clients. Intentionnaly omit shadyGuy and microwave, we want to wait for the rarity to be set before sending those (Will be sended at ShadyGuy.Start patch and Microwave.Start patch)
-        /// </summary>
+        /// <summary>Omits Shady Guy and Microwave: they are sent from their Start patches once rarity is set.</summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(SpawnInteractables.SpawnShrines))]
         public static void SpawnShrines_Postfix(SpawnInteractables __instance)

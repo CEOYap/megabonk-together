@@ -1,9 +1,9 @@
 ﻿using Assets.Scripts.Game.Spawning;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     [HarmonyPatch(typeof(SpawnPositions))]
     internal class SpawnPositionsPatches
@@ -11,9 +11,7 @@ namespace MegabonkTogether.Patches
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
 
-        /// <summary>
-        /// Randomly select a player to get the enemy spawn position
-        /// </summary>
+        /// <summary>Spawns enemies around a random player.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(SpawnPositions.GetEnemySpawnPosition))]
         public static void GetEnemySpawnPosition_Prefix()

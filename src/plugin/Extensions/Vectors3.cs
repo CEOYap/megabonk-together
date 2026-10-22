@@ -1,6 +1,6 @@
 ﻿using UnityEngine;
 
-namespace MegabonkTogether.Extensions
+namespace OmniBonk.Extensions
 {
     internal static class VectorsExtensions
     {

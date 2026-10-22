@@ -1,55 +1,26 @@
 using Assets.Scripts.Inventory__Items__Pickups.Items;
 using Assets.Scripts.Inventory__Items__Pickups.Items.ItemImplementations;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches.Items
+namespace OmniBonk.Patches.Items
 {
     /// <summary>
-    /// OB-14. Stops a teammate's damaging items from running a second time on this machine.
-    ///
-    /// <para><b>The owner already runs them.</b> Each player's own game runs their items, and a
-    /// client forwards every item hit to the host: <c>Enemy.Damage_Postfix</c> sends any hit whose
-    /// source is in <c>AllowedDamageSource</c>, which is every <c>EItem</c> name, and an item's
-    /// source is exactly <c>EItem.ToString()</c> (decompiled, <c>ItemElectricPlug..ctor</c> at VA
-    /// <c>0x1804561A0</c>). So the owner's copy is the real one and reaches every peer.</para>
-    ///
-    /// <para><b>Every other peer holds a second, live copy.</b> <c>NetPlayer.AddItem</c> adds each
-    /// teammate item to a real <c>ItemInventory</c>, so its <c>Init</c> runs and subscribes to the
-    /// game's static events, and on the host <c>NetPlayer.Update</c> calls the teammate's
-    /// <c>PlayerInventory.PhysicsTick</c>, which runs <c>ItemInventory.Tick</c> and every item's
-    /// <c>Tick</c> (VA <c>0x1804E0680</c>, <c>0x180443500</c>). That copy dealt real damage, with
-    /// no attribution, so it also landed on the host's damage panel. The 2026-10-18 end screens
-    /// (host: the client's items at LVL 0, more than the owner's own number):</para>
-    /// <list type="bullet">
-    /// <item><b>Electric Plug</b> 34.1K against 408. <c>Init</c> (VA <c>0x180455A20</c>) subscribes
-    /// <c>OnPlayerHit</c> to the static <c>PlayerHealth</c> hit event, so the copy zapped enemies
-    /// every time <i>this</i> machine's player was hit.</item>
-    /// <item><b>Cursed Doll</b> 27.7K against 14.9K. Damages cursed enemies in <c>Tick</c>
-    /// (VA <c>0x18043FC70</c>).</item>
-    /// <item><b>Bob (Dead)</b> 23.6K against 3,634. Spawns ghosts in <c>Tick</c>
-    /// (VA <c>0x18043A5D0</c>).</item>
-    /// </list>
-    ///
-    /// <para><b>Why these three and not every item's Tick.</b> Some item ticks may do things only
-    /// the host is allowed to do (a client cannot spawn pickups), in which case the host's copy is
-    /// the only one that works. These three were each decompiled or shown on the end screens to
-    /// deal damage; others need the same check before they are gated. Same family as OB-2, which
-    /// gated <c>ItemGhost.OnInteracted</c> for the same reason.</para>
-    ///
+    /// OB-14. Stops a teammate's damaging items running a second time here. The owner's copy is the
+    /// real one and its hits are forwarded; teammate items here are live copies (their <c>Init</c>
+    /// subscribes to static events, and the host ticks them), which dealt unattributed damage.
+    /// <para>Gated per item, only where decompiled to deal damage (Electric Plug VA 0x180455A20,
+    /// Cursed Doll 0x18043FC70, Bob 0x18043A5D0): some ticks may do host-only work. Cf. OB-2.</para>
     /// <para><b>UNVERIFIED.</b> Not run in-game.</para>
     /// </summary>
     internal static class RemoteItemCopies
     {
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
 
-        /// <summary>
-        /// True when this item belongs to a teammate's inventory on this machine. Compared by native
-        /// pointer: the item holds its own inventory, so no search is needed in a per-frame path.
-        /// </summary>
         internal static bool InSession => synchronizationService.HasNetplaySessionStarted();
 
+        /// <summary>True for a teammate's item on this machine. Native pointer compare; per-frame safe.</summary>
         internal static bool IsTeammateCopy(ItemBase item)
         {
             if (item == null || !synchronizationService.HasNetplaySessionStarted())
@@ -99,21 +70,9 @@ namespace MegabonkTogether.Patches.Items
     }
 
     /// <summary>
-    /// OB-42. Holy Book turns its player's healing into damage around that player
-    /// ("Healing will now radiate damage to nearby enemies": every 1.5 s, roughly
-    /// (8 + level) x 0.5 x healing received, radius (5 + copies) x Size).
-    ///
-    /// <para><b>Decompiled.</b> <c>OnHeal(PlayerHealth ph, float hpHealed, bool isShield)</c>
-    /// (VA 0x18045D100) is a static heal-event handler that adds <c>hpHealed</c> to
-    /// <c>healsThisTick</c> and never looks at <c>ph</c>: every copy counted every player's heals.
-    /// <c>Tick</c> (0x18045D250) then damages enemies around <c>MyPlayer.Instance</c>, reading
-    /// <c>MyPlayer.baseDamage</c> and the Size stat. So a teammate's copy on the host radiated the
-    /// host's (and everyone's) healing around the host, unattributed, as the host's damage; and the
-    /// owner's own copy also counted healing that was not theirs.</para>
-    ///
-    /// <para><b>Now</b> it matches Cursed Doll and Bob: only the owner's machine runs it, whose
-    /// damage reaches the host through the client's item forward, and it counts only its own
-    /// player's heals. <b>UNVERIFIED.</b></para>
+    /// OB-42. Holy Book: only the owner's machine runs it, counting only its own player's heals.
+    /// Decompiled: <c>OnHeal</c> (VA 0x18045D100) ignores <c>ph</c>, and <c>Tick</c> (0x18045D250)
+    /// damages around <c>MyPlayer.Instance</c>. <b>UNVERIFIED.</b>
     /// </summary>
     [HarmonyPatch(typeof(ItemHolyBook))]
     internal static class ItemHolyBookPatches
@@ -128,10 +87,7 @@ namespace MegabonkTogether.Patches.Items
                 return false;
             }
 
-            // OB-48 diagnostic. Tick raises the static ItemHolyBook.A_OnUse, which every
-            // HolyBookEffect plays. On 2026-10-20 the host, holding no Holy Book, saw the effect on
-            // its own character, with no Holy Book damage recorded. If a book ticks here while the
-            // local player holds none, this copy was not recognised as a teammate's: name it once.
+            // OB-48 diagnostic: a book ticking here while we hold none was not recognised as a teammate's.
             if (RemoteItemCopies.InSession && !LocalHoldsHolyBook() && !loggedForeignTick)
             {
                 loggedForeignTick = true;
@@ -164,12 +120,8 @@ namespace MegabonkTogether.Patches.Items
     }
 
     /// <summary>
-    /// OB-48. <c>HolyBookEffect</c> is a component on the player. <c>Awake</c> (VA 0x1804983B0,
-    /// decompiled) subscribes <c>OnUse(radius)</c> to the static <c>ItemHolyBook.A_OnUse</c>, which
-    /// <c>ItemHolyBook.Tick</c> raises each time any copy of the book radiates. So any Holy Book on
-    /// this machine played the effect on this machine's player, whether or not they held one. The
-    /// game's own <c>Refresh</c> (0x180498AE0) only shows the book when the local inventory holds
-    /// one; <c>OnUse</c> now follows the same rule. Visual only. <b>UNVERIFIED.</b>
+    /// OB-48. <c>HolyBookEffect.OnUse</c> listens to a static event (Awake, VA 0x1804983B0), so any
+    /// copy played it on our player. Now shown only if we hold a book, like <c>Refresh</c>. Visual only. <b>UNVERIFIED.</b>
     /// </summary>
     [HarmonyPatch(typeof(HolyBookEffect))]
     internal static class HolyBookEffectPatches

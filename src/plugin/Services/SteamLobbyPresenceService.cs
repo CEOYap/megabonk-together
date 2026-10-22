@@ -1,50 +1,29 @@
-﻿namespace MegabonkTogether.Services
+﻿namespace OmniBonk.Services
 {
     /// <summary>
-    /// Keeps a Steam lobby alive alongside the matchmaker lobby, so there is something for Steam's
-    /// invite dialog and the friends list to point at.
-    ///
-    /// <para><b>This is a bridge, not the migration.</b> Netplay still runs entirely over the
-    /// existing transport and the WebSocket matchmaker; the Steam lobby carries no gameplay traffic
-    /// and no members that matter. What it carries is the matchmaker's join code, published as
-    /// lobby data — so a friend who accepts an invite can read the code out of the Steam lobby and
-    /// join the real one with it. That keeps invites working without moving a single byte of
-    /// gameplay onto Steam sockets, which is Phase 4's job.</para>
-    ///
-    /// <para>Host only. A client's Steam lobby would be a second, competing advertisement of the
-    /// same session, and Steam's invite dialog would send friends to the wrong one.</para>
+    /// Matchmaker transport only: a host-owned Steam lobby carrying the matchmaker code, so Steam
+    /// invites work. It carries no gameplay traffic.
     /// </summary>
     internal class SteamLobbyPresenceService(
         ILobbyViewService lobbyViewService,
         ISteamLobbyService steamLobbyService,
         ISteamService steamService)
     {
-        /// <summary>
-        /// The matchmaker code currently published into the Steam lobby, so a rewrite only happens
-        /// when it actually changes. <c>SetLobbyData</c> is a network round trip on Steam's side,
-        /// and this is polled.
-        /// </summary>
+        /// <summary>SetLobbyData is a round trip; only rewrite on change.</summary>
         private string publishedCode = "";
 
-        /// <summary>
-        /// The room code we last tried to follow, so a host without Steam costs one search rather
-        /// than one every tick.
-        /// </summary>
+        /// <summary>One search per room code, not per tick.</summary>
         private string joinedForCode = "";
 
         public void Poll()
         {
-            // No Steam, no bridge, and no complaint: an instance launched outside Steam is a
-            // supported way to run and simply has no invite button.
+            // Running outside Steam is supported.
             if (!steamService.IsAvailable)
             {
                 return;
             }
 
-            // With the Steam transport carrying the session there is nothing to bridge: the Steam
-            // lobby is not standing in for a matchmaker room, it *is* the room, and it is created
-            // and joined by the session path rather than here. Left running, this would publish a
-            // matchmaker code that does not exist and leave lobbies it did not create.
+            // On the Steam transport the lobby is the room; the session path owns it.
             if (Configuration.ModConfig.UseSteamTransport.Value)
             {
                 return;
@@ -71,8 +50,6 @@
             switch (steamLobbyService.State)
             {
                 case SteamLobbyState.None:
-                    // Six, matching the mod's own maximum. The number is Steam's cap on the lobby,
-                    // not ours on the session, but there is no reason for them to disagree.
                     steamLobbyService.CreateLobby(maxMembers: 6);
                     return;
 
@@ -80,27 +57,15 @@
                     PublishMatchmakerCode();
                     return;
 
-                // Pending resolves itself on the next poll. Failed is left alone deliberately:
-                // retrying a refused CreateLobby every quarter second would turn one Steam problem
-                // into a stream of them, and the invite button simply stays hidden.
+                // Failed is not retried; the invite button stays hidden.
                 default:
                     return;
             }
         }
 
         /// <summary>
-        /// Puts a client into the same Steam lobby as its host, found by the matchmaker room code
-        /// they are both already in.
-        ///
-        /// <para>Membership is the point, not the code: everything the Steam lobby is for from here
-        /// — per-member readiness, personas, avatars — needs both players to actually be in it. A
-        /// client that typed a room code never saw a Steam lobby id, and one that accepted an
-        /// invite deliberately left again after reading the code, so both arrive here.</para>
-        ///
-        /// <para><b>Failure is silent and harmless.</b> The session is carried by the matchmaker
-        /// either way; without this only the extras hung off the Steam lobby are missing. Attempted
-        /// once per room code so a host who is not running Steam does not produce a search every
-        /// quarter second forever.</para>
+        /// Puts a client in its host's Steam lobby (for avatars and personas). Failure is harmless;
+        /// tried once per room code.
         /// </summary>
         private void FollowHostLobby()
         {

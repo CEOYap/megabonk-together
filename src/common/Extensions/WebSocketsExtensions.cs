@@ -1,8 +1,8 @@
-﻿using MegabonkTogether.Common.Messages.WsMessages;
+﻿using OmniBonk.Common.Messages.WsMessages;
 using MemoryPack;
 using System.Net.WebSockets;
 
-namespace MegabonkTogether.Common.Extensions
+namespace OmniBonk.Common.Extensions
 {
     public static class WebSocketsExtensions
     {

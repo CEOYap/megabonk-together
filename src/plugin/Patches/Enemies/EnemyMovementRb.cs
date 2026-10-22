@@ -4,7 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using MonoMod.Utils;
 using UnityEngine;
 
-namespace MegabonkTogether.Patches.Enemies
+namespace OmniBonk.Patches.Enemies
 {
     [HarmonyPatch(typeof(EnemyMovementRb))]
     internal class EnemyMovementRbPatch
@@ -12,10 +12,7 @@ namespace MegabonkTogether.Patches.Enemies
         private static readonly Services.ISynchronizationService synchronizationService = Plugin.Services.GetService<Services.ISynchronizationService>();
         private static readonly Services.IPlayerManagerService playerManagerService = Plugin.Services.GetService<Services.IPlayerManagerService>();
 
-        /// <summary>
-        /// Enemies will update their target position each Update
-        /// We ensure to target the correct player (local or remote)
-        /// </summary>
+        /// <summary>Resolves the enemy's target to the right player, local or remote.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(EnemyMovementRb.GetTargetPosition))]
         public static bool GetTargetPosition_PostFix(ref Vector3 __result, EnemyMovementRb __instance)
@@ -33,10 +30,7 @@ namespace MegabonkTogether.Patches.Enemies
 
                 if (localPlayer.ConnectionId == id.Value)
                 {
-                    // PERF: was GetComponent<Rigidbody>() then .transform.position — a native
-                    // component lookup per enemy per movement tick to reach a transform that is
-                    // the same object as the player's own. A Rigidbody's transform IS its
-                    // GameObject's transform.
+                    // PERF: same transform as the Rigidbody's, without a GetComponent per tick.
                     __result = GameManager.Instance.player.transform.position;
                     return false;
                 }
@@ -55,9 +49,7 @@ namespace MegabonkTogether.Patches.Enemies
         }
 
 
-        /// <summary>
-        /// Only the server is allowed to update enemy movement
-        /// </summary>
+        /// <summary>Enemy movement is host-only.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(EnemyMovementRb.FindNextPosition))]
         public static bool FindNextPosition_Prefix(EnemyMovementRb __instance)
@@ -76,9 +68,7 @@ namespace MegabonkTogether.Patches.Enemies
             return true;
         }
 
-        /// <summary>
-        /// Prevent clients from updating enemy movement
-        /// </summary> 
+        /// <summary>Enemy movement is host-only.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(EnemyMovementRb.MyFixedUpdate))]
         public static bool MyFixedUpdate_Prefix(EnemyMovementRb __instance)
@@ -97,9 +87,7 @@ namespace MegabonkTogether.Patches.Enemies
             return true;
         }
 
-        /// <summary>
-        /// Prevent clients from updating enemy movement
-        /// </summary> 
+        /// <summary>Enemy movement is host-only.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(EnemyMovementRb.TryClimbWall))]
         public static bool TryClimbWall_Prefix(EnemyMovementRb __instance)
@@ -118,9 +106,7 @@ namespace MegabonkTogether.Patches.Enemies
             return true;
         }
 
-        /// <summary>
-        /// Prevent clients from updating enemy movement
-        /// </summary> 
+        /// <summary>Enemy movement is host-only.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(EnemyMovementRb.CheckGrounded))]
         public static bool CheckGrounded_Prefix(EnemyMovementRb __instance)
@@ -139,9 +125,7 @@ namespace MegabonkTogether.Patches.Enemies
             return true;
         }
 
-        /// <summary>
-        /// Prevent clients from updating enemy movement
-        /// </summary> 
+        /// <summary>Enemy movement is host-only.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(EnemyMovementRb.DashStart))]
         public static bool DashStart_Prefix(EnemyMovementRb __instance)
@@ -160,9 +144,7 @@ namespace MegabonkTogether.Patches.Enemies
             return true;
         }
 
-        /// <summary>
-        /// Prevent clients from updating enemy movement
-        /// </summary> 
+        /// <summary>Enemy movement is host-only.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(EnemyMovementRb.StartMovement))]
         public static bool StartMovement_Prefix(EnemyMovementRb __instance)

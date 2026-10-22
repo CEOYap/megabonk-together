@@ -1,7 +1,7 @@
 ﻿using System.Collections.Generic;
 using System.Linq;
 
-namespace MegabonkTogether.Services
+namespace OmniBonk.Services
 {
     public interface ILocalizationService
     {
@@ -14,24 +14,24 @@ namespace MegabonkTogether.Services
     {
         public readonly Dictionary<(string, string), string> LocalizationOverrides = new()
         {
-            { ("MegabonkTogether", "MatchSuccess"), "Match" },
-            { ("MegabonkTogether", "MatchSuccessDesc"), "Joined as {0} a lobby of {1} players successfully!" },
-            { ("MegabonkTogether", "PlayerDisconnected"), "Disconnected" },
-            { ("MegabonkTogether", "PlayerDisconnected_Description"), "Player {0} disconnected" },
-            { ("MegabonkTogether", "AllPlayerDisconnected"), "Disconnected" },
-            { ("MegabonkTogether", "AllPlayerDisconnected_Description"), "All players left!" },
-            { ("MegabonkTogether", "HostDisconnected"), "Disconnected" },
-            { ("MegabonkTogether", "HostDisconnected_Description"), "Host left!" },
-            { ("MegabonkTogether", "ClientDisconnected"), "Disconnected" },
-            { ("MegabonkTogether", "ClientDisconnected_Description"), "Client disconnected" },
-            { ("MegabonkTogether", "FriendliesHostSuccess"), "Friendlies" },
-            { ("MegabonkTogether", "FriendliesHostSuccessDesc"), "Hosting a friendly lobby" },
-            { ("MegabonkTogether", "FriendliesClientSuccess"), "Friendlies" },
-            { ("MegabonkTogether", "FriendliesClientSuccessDesc"), "Joined {0} lobby" },
-            { ("MegabonkTogether", "FriendliesClientJoinSuccess"), "Friendlies" },
-            { ("MegabonkTogether", "FriendliesClientJoinSuccessDesc"), "{0} joined " },
-            { ("MegabonkTogether", "VersionMismatch"), "Different version" },
-            { ("MegabonkTogether", "VersionMismatch_Description"), "{0} has a different mod version. Everyone needs the same version to start." }
+            { ("OmniBonk", "MatchSuccess"), "Match" },
+            { ("OmniBonk", "MatchSuccessDesc"), "Joined as {0} a lobby of {1} players successfully!" },
+            { ("OmniBonk", "PlayerDisconnected"), "Disconnected" },
+            { ("OmniBonk", "PlayerDisconnected_Description"), "Player {0} disconnected" },
+            { ("OmniBonk", "AllPlayerDisconnected"), "Disconnected" },
+            { ("OmniBonk", "AllPlayerDisconnected_Description"), "All players left!" },
+            { ("OmniBonk", "HostDisconnected"), "Disconnected" },
+            { ("OmniBonk", "HostDisconnected_Description"), "Host left!" },
+            { ("OmniBonk", "ClientDisconnected"), "Disconnected" },
+            { ("OmniBonk", "ClientDisconnected_Description"), "Client disconnected" },
+            { ("OmniBonk", "FriendliesHostSuccess"), "Friendlies" },
+            { ("OmniBonk", "FriendliesHostSuccessDesc"), "Hosting a friendly lobby" },
+            { ("OmniBonk", "FriendliesClientSuccess"), "Friendlies" },
+            { ("OmniBonk", "FriendliesClientSuccessDesc"), "Joined {0} lobby" },
+            { ("OmniBonk", "FriendliesClientJoinSuccess"), "Friendlies" },
+            { ("OmniBonk", "FriendliesClientJoinSuccessDesc"), "{0} joined " },
+            { ("OmniBonk", "VersionMismatch"), "Different version" },
+            { ("OmniBonk", "VersionMismatch_Description"), "{0} has a different mod version. Everyone needs the same version to start." }
         };
 
         private readonly Queue<IEnumerable<string>> NextLocalizedDescription = new();

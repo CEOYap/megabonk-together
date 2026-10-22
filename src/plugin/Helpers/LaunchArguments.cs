@@ -1,33 +1,16 @@
 using System;
 
-namespace MegabonkTogether.Helpers
+namespace OmniBonk.Helpers
 {
     /// <summary>
-    /// Reads what Steam put on the command line when it launched the game.
-    ///
-    /// <para>This is half of "join a friend's game". When a player accepts an invite or presses
-    /// <b>Join Game</b> while the game is <i>not</i> running, Steam starts it with
-    /// <c>+connect_lobby &lt;id&gt;</c> appended, and that is the only signal the mod gets — the
-    /// warm case, where the game is already open, arrives as a
-    /// <c>GameLobbyJoinRequested_t</c> callback instead, which this install cannot receive.</para>
-    ///
-    /// <para><b>Deliberately not a Steam call.</b> <c>SteamApps.GetLaunchCommandLine</c> would
-    /// answer the same question, but it marshals a string out through a caller-sized buffer, and
-    /// the process command line is already sitting in .NET with no interop involved at all. Free,
-    /// and it cannot crash.</para>
+    /// Reads Steam's <c>+connect_lobby &lt;id&gt;</c>, added when an invite launches the game.
+    /// Not <c>SteamApps.GetLaunchCommandLine</c>: that marshals through a caller-sized buffer.
     /// </summary>
     public static class LaunchArguments
     {
         private const string ConnectLobbyFlag = "+connect_lobby";
 
-        /// <summary>
-        /// The lobby id Steam asked us to join at launch, or 0.
-        ///
-        /// <para>Steam appends the flag and the id as two separate arguments. A malformed or
-        /// missing id is treated as absent rather than as an error: the command line is attacker-
-        /// adjacent input in the sense that anything can be typed on it, and there is nothing to
-        /// gain from failing loudly over a value we simply will not act on.</para>
-        /// </summary>
+        /// <summary>0 if absent or malformed.</summary>
         public static ulong GetConnectLobbyId()
         {
             string[] args;

@@ -1,12 +1,12 @@
 using Assets.Scripts.Actors.Enemies;
-using MegabonkTogether.Helpers;
-using MegabonkTogether.Services;
+using OmniBonk.Helpers;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using System.Linq;
 using TMPro;
 using UnityEngine;
 
-namespace MegabonkTogether.Scripts
+namespace OmniBonk.Scripts
 {
     public class CameraState
     {
@@ -152,9 +152,6 @@ namespace MegabonkTogether.Scripts
             pitch = Mathf.Clamp(pitch, -80f, 80f);
         }
 
-        /// <summary>
-        /// Update rotation from the game's player rotation input
-        /// </summary>
         public void UpdateFromPlayerRotation(Vector3 playerRotation)
         {
             float deltaYaw = playerRotation.y - lastPlayerRotation.y;
@@ -198,18 +195,12 @@ namespace MegabonkTogether.Scripts
             SwitchToTarget(allNetPlayers[targetIndex].ConnectionId);
         }
 
-        /// <summary>
-        /// Switch the camera to follow a target transform
-        /// </summary>
         public void SwitchToTarget(uint targetId)
         {
             var allNetPlayers = playerManager.GetAllSpawnedNetPlayers().ToList();
             var target = allNetPlayers.FirstOrDefault(p => p.ConnectionId == targetId);
 
-            // FIX P2-1: resolve the target before touching the camera, not after. That player can
-            // already be gone — a disconnect between picking the id and switching to it — and the
-            // old order saved and disabled the player camera first, so a missing target threw on
-            // target.ConnectionId *and* left the camera disabled with nothing driving it.
+            // FIX P2-1: resolve the target before disabling the camera; it may already be gone.
             if (target == null || target.Model == null) // Unity's overloaded == also catches a destroyed object
             {
                 Plugin.Log.LogWarning($"Cannot spectate player {targetId}: their NetPlayer is missing or already destroyed.");
@@ -307,10 +298,7 @@ namespace MegabonkTogether.Scripts
             UpdateUI();
         }
 
-        /// <summary>
-        /// Check collision and get the safe distance for camera.
-        /// Did my best to mimic the original function
-        /// </summary>
+        /// <summary>Camera collision distance, approximating the game's own function.</summary>
         private float GetSafeDistance(Vector3 targetPosition, Vector3 cameraDirection, float desiredDistance)
         {
             Ray ray = new(targetPosition, cameraDirection);
@@ -331,7 +319,6 @@ namespace MegabonkTogether.Scripts
 
                 GameObject obj = hit.collider.gameObject;
 
-                // Skip objects that camera should ignore
                 if (obj.CompareTag("MainCamera")) continue;
                 if (obj.CompareTag("Player")) continue;
                 if (obj.CompareTag("CameraFade")) continue;
@@ -341,7 +328,7 @@ namespace MegabonkTogether.Scripts
                 if (obj.GetComponentInChildren<Enemy>() != null) continue;
                 if (hit.collider.isTrigger) continue;
 
-                // This should handle shield pickup that was getting in the way of camera
+                // e.g. the shield pickup.
                 if (targetTransform != null && obj.transform.IsChildOf(targetTransform))
                 {
                     continue;
@@ -356,10 +343,7 @@ namespace MegabonkTogether.Scripts
             return closestDistance;
         }
 
-        /// <summary>
-        /// Moves the spectator camera off a destroyed target: to another spawned player if one is
-        /// left, otherwise back to the local player so the camera is not stranded on nothing.
-        /// </summary>
+        /// <summary>Switches to another player, or back to the local player if none remain.</summary>
         private void RecoverFromDestroyedTarget()
         {
             var remaining = playerManager.GetAllSpawnedNetPlayers()
@@ -376,8 +360,7 @@ namespace MegabonkTogether.Scripts
             Plugin.Log.LogWarning("Spectated player is gone; switching the spectator camera to another player.");
             SwitchToTarget(remaining[0].ConnectionId);
 
-            // SwitchToTarget bails out if that player turns out to be gone as well. Without this
-            // the next frame lands back here and warns again, every frame.
+            // SwitchToTarget may bail too; avoid re-warning every frame.
             if (targetTransform == null)
             {
                 ResetToLocalPlayer();
@@ -388,17 +371,8 @@ namespace MegabonkTogether.Scripts
         {
             if (!isFollowingTarget) return;
 
-            // FIX P2-1 (second dangling path): the spectated peer can leave while we are watching
-            // them. PlayerManagerService.RemovePlayer destroys their NetPlayer GameObject and
-            // nothing notifies this component, so targetTransform is left dangling: LateUpdate
-            // early-returns and the camera freezes, while Plugin.GetDistanceToPlayer keeps
-            // reading .position off the destroyed object on two per-frame paths.
-            //
-            // Recovering here rather than in the disconnect handlers is deliberate — two
-            // independent paths remove a player (the host's PlayerDisconnected message and the
-            // websocket ClientDisconnected) and they race, so a handler-side fix would have to be
-            // duplicated and could still miss teardown. This costs one Unity null check per
-            // frame, and only while spectating.
+            // FIX P2-1: the spectated peer can be destroyed with no notification. Recovered here
+            // because two racing disconnect paths remove players.
             if (targetTransform == null) // Unity's overloaded == also catches a destroyed object
             {
                 RecoverFromDestroyedTarget();

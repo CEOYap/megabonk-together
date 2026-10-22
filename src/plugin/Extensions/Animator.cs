@@ -1,7 +1,7 @@
-﻿using MegabonkTogether.Common.Messages;
+﻿using OmniBonk.Common.Messages;
 using UnityEngine;
 
-namespace MegabonkTogether.Extensions
+namespace OmniBonk.Extensions
 {
     public static class AnimatorExtensions
     {

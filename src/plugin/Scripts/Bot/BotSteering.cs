@@ -3,7 +3,7 @@
 #if DEBUG
 using UnityEngine;
 
-namespace MegabonkTogether.Scripts.Bot
+namespace OmniBonk.Scripts.Bot
 {
     /// <summary>
     /// Pure steering maths for the test bot: no game state, only vectors in and out.
@@ -13,11 +13,7 @@ namespace MegabonkTogether.Scripts.Bot
         /// <summary>Seconds for one lap of the ring around the host.</summary>
         private const float LAP_SECONDS = 20f;
 
-        /// <summary>
-        /// A point on a ring around the host, radius 0.6 × <paramref name="followDistance"/>, whose
-        /// angle advances with <paramref name="time"/>, so the bot circles and strafes instead of
-        /// parking behind the host.
-        /// </summary>
+        /// <summary>A point circling the host, so the bot strafes rather than parks.</summary>
         internal static Vector3 PickFollowPoint(Vector3 owner, Vector3 bot, float followDistance, float time)
         {
             var angle = time / LAP_SECONDS * 2f * Mathf.PI;
@@ -26,11 +22,8 @@ namespace MegabonkTogether.Scripts.Bot
         }
 
         /// <summary>
-        /// The stick input that moves the player along <paramref name="worldDirection"/>. Decompiled
-        /// (<c>PlayerMovement.InputVectorRelativeToLook</c>, VA <c>0x18033E040</c>): the game turns
-        /// the two movement axes into <c>feet.forward × vertical + feet.right × horizontal</c>, so the
-        /// direction is projected onto the flattened forward and right of <paramref name="feet"/>.
-        /// x = MoveHorizontal, y = MoveVertical, length at most 1.
+        /// Stick input for <paramref name="worldDirection"/>, projected onto <paramref name="feet"/>'s
+        /// forward/right (decompiled <c>InputVectorRelativeToLook</c>, VA 0x18033E040).
         /// </summary>
         internal static Vector2 ToInputAxes(Vector3 worldDirection, Transform feet)
         {

@@ -1,13 +1,11 @@
 ﻿using HarmonyLib;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     [HarmonyPatch(typeof(CharacterMenu))]
     internal static class CharacterMenuPatches
     {
-        /// <summary>
-        /// Save character icons for displayer
-        /// </summary>
+        /// <summary>Caches character icons for the player cards.</summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(CharacterMenu.TryInit))]
         public static void TryInit_Postfix(CharacterMenu __instance)

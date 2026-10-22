@@ -1,10 +1,8 @@
 using System;
 
-namespace MegabonkTogether.Scripts.Button
+namespace OmniBonk.Scripts.Button
 {
-    /// <summary>
-    /// CustomButton that use a System.Action instead of Unity Action since they are broken right now with BepInex and/or Il2Cpp
-    /// </summary>
+    /// <summary>Uses a System.Action: Unity Actions are broken under BepInEx IL2CPP.</summary>
     public class CustomButton : MyButtonNormal
     {
         private Action onClickAction;

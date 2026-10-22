@@ -1,7 +1,7 @@
-using MegabonkTogether.Common.Messages.GameNetworkMessages;
+using OmniBonk.Common.Messages.GameNetworkMessages;
 using MemoryPack;
 
-namespace MegabonkTogether.Common.Messages
+namespace OmniBonk.Common.Messages
 {
     [MemoryPackable]
     [MemoryPackUnion(0, typeof(LobbyUpdates))]

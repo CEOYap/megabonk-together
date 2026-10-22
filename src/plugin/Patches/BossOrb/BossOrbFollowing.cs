@@ -1,17 +1,15 @@
 ﻿using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches.BossOrbPatch
+namespace OmniBonk.Patches.BossOrbPatch
 {
     [HarmonyPatch(typeof(BossOrb))]
     internal static class BossOrbFollowingPatches
     {
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
 
-        /// <summary>
-        /// Skip on client to prevent trail artifacts.
-        /// </summary>
+        /// <summary>Skip on client to prevent trail artifacts.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(BossOrb.FloatMovement))]
         public static bool FloatMovement_Prefix(BossOrb __instance)

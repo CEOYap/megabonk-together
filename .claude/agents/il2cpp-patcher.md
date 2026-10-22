@@ -8,7 +8,7 @@ model: inherit
 skills: harmony, il2cpp, unity, csharp
 ---
 
-You write the game-facing layer of **MegabonkTogether**: Harmony patches against Megabonk's
+You write the game-facing layer of **OmniBonk**: Harmony patches against Megabonk's
 IL2CPP `Assembly-CSharp`, and managed MonoBehaviours injected into the IL2CPP runtime.
 
 The plugin compiles against Il2CppInterop **proxy** assemblies in

@@ -1,14 +1,14 @@
 ﻿using Assets.Scripts.Inventory__Items__Pickups.Weapons.Projectiles;
-using MegabonkTogether.Common.Models;
-using MegabonkTogether.Extensions;
-using MegabonkTogether.Helpers;
-using MegabonkTogether.Scripts.Snapshot;
+using OmniBonk.Common.Models;
+using OmniBonk.Extensions;
+using OmniBonk.Helpers;
+using OmniBonk.Scripts.Snapshot;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 
-namespace MegabonkTogether.Services
+namespace OmniBonk.Services
 {
     public interface IProjectileManagerService
     {
@@ -29,9 +29,7 @@ namespace MegabonkTogether.Services
     internal class ProjectileManagerService : IProjectileManagerService
     {
         private readonly ConcurrentDictionary<uint, ProjectileBase> spawnedProjectile = [];
-        // FIX P2-5: id -> owning connection id, kept in step with spawnedProjectile. Same key
-        // space, so it is only ever the ids this peer allocated; remote projectiles carry their
-        // owner on the message and are tracked by the interpolator instead.
+        // FIX P2-5: id -> owner, for ids this peer allocated. Received ones live in the interpolator.
         private readonly ConcurrentDictionary<uint, uint> projectileOwners = [];
         private Dictionary<uint, Projectile> previousSpawnedProjectilesDelta = [];
         private uint currentProjectileId = 0;
@@ -108,8 +106,7 @@ namespace MegabonkTogether.Services
                 return 0;
             }
 
-            // FIX P2-5: record who this projectile belongs to. Nothing did, which is why
-            // RemoveProjectilesByOwnerId could only ever guess — see the comment there.
+            // FIX P2-5.
             projectileOwners[currentProjectileId] = ownerId;
 
             return currentProjectileId;
@@ -185,14 +182,7 @@ namespace MegabonkTogether.Services
         }
 
         /// <summary>
-        /// Destroys every projectile this peer is simulating on behalf of <paramref name="connectionId"/>.
-        /// Called when that peer disconnects; their projectiles otherwise keep flying, holding the
-        /// weapon and attack of a NetPlayer that has just been destroyed.
-        ///
-        /// <para>FIX P2-5: the filter used to be <c>kv.Key == connectionId</c> — comparing the
-        /// <b>projectile id</b> to a connection id, because no owner was recorded anywhere. It
-        /// removed, at most, the single projectile whose id happened to equal that connection id,
-        /// and normally nothing at all.</para>
+        /// FIX P2-5: on disconnect, destroys that peer's projectiles, both simulated here and received.
         /// </summary>
         public void RemoveProjectilesByOwnerId(uint connectionId)
         {
@@ -209,8 +199,7 @@ namespace MegabonkTogether.Services
                     continue;
                 }
 
-                // Guarded per projectile: one already-destroyed GameObject must not abandon the
-                // rest of the sweep (the P1-7 lesson).
+                // P1-7: guard per item.
                 try
                 {
                     GameObject.DestroyImmediate(removedProjectile.gameObject);
@@ -221,9 +210,7 @@ namespace MegabonkTogether.Services
                 }
             }
 
-            // The other half: projectiles RECEIVED from that peer. They never enter
-            // spawnedProjectile — they are instantiated and handed to the interpolator under the
-            // sender's id — so they need their own sweep, in their own id space.
+            // Received projectiles: interpolator, sender's id space.
             if (projectileInterpolator != null)
             {
                 try

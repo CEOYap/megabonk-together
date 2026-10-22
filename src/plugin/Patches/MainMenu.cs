@@ -1,13 +1,13 @@
 ﻿using HarmonyLib;
-using MegabonkTogether.Common;
-using MegabonkTogether.Configuration;
-using MegabonkTogether.Scripts.Button;
-using MegabonkTogether.Scripts.Modal;
-using MegabonkTogether.Services;
+using OmniBonk.Common;
+using OmniBonk.Configuration;
+using OmniBonk.Scripts.Button;
+using OmniBonk.Scripts.Modal;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using System.Threading.Tasks;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     [HarmonyPatch(typeof(MainMenu))]
     internal static class MainMenuPatches
@@ -19,9 +19,7 @@ namespace MegabonkTogether.Patches
 
         private static bool hasCheckedChangelog = false;
 
-        /// <summary>
-        /// Add the mod's button, with its version underneath, to the main menu
-        /// </summary>
+        /// <summary>Adds the mod's button, with its version underneath.</summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(MainMenu.Start))]
         public static void Start_Postfix(MainMenu __instance)
@@ -30,10 +28,8 @@ namespace MegabonkTogether.Patches
 
             var go = UnityEngine.Object.Instantiate(playBtn.gameObject);
 
-            // Captured before the original goes, applied after the replacement arrives. Destroying
-            // it outright left background null and every hover on the button threw — see
-            // Helpers/ButtonStyle.
-            var style = MegabonkTogether.Helpers.ButtonStyle.CaptureAndRemove(go);
+            // See Helpers/ButtonStyle: otherwise every hover throws.
+            var style = OmniBonk.Helpers.ButtonStyle.CaptureAndRemove(go);
 
             UnityEngine.UI.Button button = go.GetComponentInChildren<UnityEngine.UI.Button>();
             if (button != null)
@@ -46,7 +42,7 @@ namespace MegabonkTogether.Patches
             customButton.SetMainMenu(__instance);
 
             var textWrapper = go.GetComponent<ButtonTextWrapper>();
-            textWrapper.t_text.text = MegabonkTogether.Helpers.ModVersionLabel.Name;
+            textWrapper.t_text.text = OmniBonk.Helpers.ModVersionLabel.Name;
 
             var version = new UnityEngine.GameObject("VersionText");
             version.transform.SetParent(textWrapper.t_text.transform);
@@ -59,7 +55,7 @@ namespace MegabonkTogether.Patches
             versionTmp.fontSize = tmpText.fontSize * 0.45f;
             versionTmp.alignment = tmpText.alignment;
             versionTmp.color = tmpText.color;
-            versionTmp.text = MegabonkTogether.Helpers.ModVersionLabel.ShortVersion;
+            //versionTmp.text = OmniBonk.Helpers.ModVersionLabel.ShortVersion;
 
 
             var menuColumn = playBtn.transform.parent;
@@ -78,11 +74,12 @@ namespace MegabonkTogether.Patches
             {
                 hasCheckedChangelog = true;
 
+                // Fresh install: PreviousVersion stays empty, which makes the changelog show only the
+                // newest entry. Closing the popup records the current version, so it shows once.
                 if (string.IsNullOrEmpty(ModConfig.PreviousVersion.Value) && !autoUpdaterService.IsCustomBuild())
                 {
-                    Plugin.Log.LogInfo("First time with changelog system detected");
+                    Plugin.Log.LogInfo("First launch: showing the current version's changelog");
                     ModConfig.ShowChangelog.Value = true;
-                    ModConfig.PreviousVersion.Value = "1.0.0";
                     ModConfig.Save();
                 }
 
@@ -96,24 +93,12 @@ namespace MegabonkTogether.Patches
         }
 
         /// <summary>
-        /// Puts an empty spacer in the menu column before our button, as tall as the part of the
-        /// button that pokes out above its own rect, so the gap under Shop matches the others.
-        ///
-        /// <para><b>Why the button pokes out.</b> It is cloned with no parent, so it starts at
-        /// scale 1 in world space, and <c>SetParent</c> keeps world size by default. The menu canvas
-        /// is scaled down, so Unity scales the clone up to compensate: in play it was drawn about
-        /// 1.5x the size of the buttons around it. The column lays children out by their unscaled
-        /// rect, so the extra height spilled into the gap above it. The bigger button is how it has
-        /// always looked, so it is kept and the column is given room for it instead.</para>
-        ///
-        /// <para>The spacer is a sized rect and a <see cref="UnityEngine.UI.LayoutElement"/>, so a
-        /// layout group reads the same height whether or not it controls child heights. Confirmed
-        /// in play on 2026-10-21: the gap under Shop now matches the others.</para>
+        /// Spacer for the button's overhang: <c>SetParent</c> keeps world scale, so the clone ends
+        /// up ~1.5x larger than its rect. The larger look is kept on purpose.
         /// </summary>
         private static void AddSpacerAbove(UnityEngine.Transform menuColumn, UnityEngine.Transform button, UnityEngine.Transform reference)
         {
-            // Measured as it will be once parented, without parenting it yet: the scale it is about
-            // to get is its world scale over the column's.
+            // The scale it will get once parented.
             var columnScale = menuColumn.lossyScale.y;
             var scaleRatio = columnScale > 0f ? button.lossyScale.y / columnScale / reference.localScale.y : 1f;
 
@@ -177,10 +162,7 @@ namespace MegabonkTogether.Patches
             });
         }
 
-        /// <summary>
-        /// Synchronize the selected character and prevent going to map selection if not host (Wait for host)
-        /// </summary>
-        /// <returns></returns>
+        /// <summary>Syncs the selected character; clients wait for the host instead of picking a map.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(MainMenu.GoToMapSelection))]
         public static bool GoToMapSelection_Prefix()
@@ -207,9 +189,7 @@ namespace MegabonkTogether.Patches
             return true;
         }
 
-        /// <summary>
-        /// Restore the button's text when going back to main menu (because its disappears for some reason)
-        /// </summary>
+        /// <summary>Restores the button text, which otherwise disappears.</summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(MainMenu.GoToMenu))]
         public static void GoToMenu_Postfix()
@@ -217,7 +197,7 @@ namespace MegabonkTogether.Patches
             if (Plugin.Instance.PlayTogetherButton != null)
             {
                 var textWrapper = Plugin.Instance.PlayTogetherButton.GetComponent<ButtonTextWrapper>();
-                textWrapper.t_text.text = MegabonkTogether.Helpers.ModVersionLabel.Name;
+                textWrapper.t_text.text = OmniBonk.Helpers.ModVersionLabel.Name;
             }
         }
     }

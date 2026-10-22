@@ -2,13 +2,13 @@ using Assets.Scripts.Actors;
 using Assets.Scripts.Actors.Enemies;
 using Assets.Scripts.Managers;
 using Il2CppInterop.Runtime;
-using MegabonkTogether.Helpers;
-using MegabonkTogether.Services;
+using OmniBonk.Helpers;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using System.Collections;
 using UnityEngine;
 
-namespace MegabonkTogether.Scripts.Interactables
+namespace OmniBonk.Scripts.Interactables
 {
     public class InteractableReviver : BaseInteractable
     {
@@ -24,10 +24,10 @@ namespace MegabonkTogether.Scripts.Interactables
         private uint reviverId;
         private uint ownerId;
 
-        /// <summary>The player this coffin revives. Read by the test bot to find the host's coffin.</summary>
+        /// <summary>Read by the test bot.</summary>
         internal uint OwnerId => ownerId;
 
-        /// <summary>The revive fight's ghost once it has spawned, else null. Read by the test bot.</summary>
+        /// <summary>Null until spawned. Read by the test bot.</summary>
         internal Enemy SpawnedGhost => spawned;
 
 
@@ -72,14 +72,7 @@ namespace MegabonkTogether.Scripts.Interactables
             Enemy.A_EnemyDied += enemyDiedDelegate;
         }
 
-        /// <summary>
-        /// FIX 1/6: was `GetPlayer(ownerId).Name`, unguarded. `GetPlayer` returns null once that
-        /// player has disconnected, and their coffin outlives them — so reviving a departed peer
-        /// threw here. Confirmed in a 3-player session: this single NRE latched the reviver
-        /// globals (see <see cref="SpawnEnemy"/>) and cost every client 581 consecutive enemy
-        /// spawns. Falls back to the raw id rather than throwing; a cosmetic name is never worth
-        /// an exception.
-        /// </summary>
+        /// <summary>FIX 1/6: the owner may have disconnected; fall back to the id rather than throw.</summary>
         public string GetFullName()
         {
             var owner = playerManagerService.GetPlayer(ownerId);
@@ -162,16 +155,8 @@ namespace MegabonkTogether.Scripts.Interactables
 
             chargeFx.SetActive(false);
 
-            // FIX 2/6: CurrentReviver / CurrentReviverOwner are process-wide statics read by
-            // SynchronizationService.OnSpawnedEnemy for EVERY enemy spawn. They used to be set
-            // here and cleared four lines later, with an unguarded throw in between — so one
-            // failed revive latched them for the rest of the run, and from then on the host
-            // rebalanced the HP of unrelated enemies and stamped a stale ReviverId onto every
-            // SpawnedEnemy message. Observed in a 3-player session: 581 consecutive enemy spawns
-            // broken on the client.
-            //
-            // try/finally is legal in an iterator as long as no `yield return` sits inside it,
-            // and none does here — the yields are before and after this block.
+            // FIX 2/6: these statics are read on every enemy spawn, so always clear them (finally).
+            // No yield may go inside this try.
             Enemy enemy = null;
             try
             {

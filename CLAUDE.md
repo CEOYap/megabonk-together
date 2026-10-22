@@ -1,11 +1,12 @@
-# OmniBonk (MegabonkTogether)
+# OmniBonk
 
 Peer-to-peer multiplayer mod for **Megabonk** (IL2CPP Unity, BepInEx 6). Up to 6 players,
 host-authoritative, LiteNetLib UDP + MemoryPack, with a WebSocket matchmaking server that
 relays when a direct connection can't be established.
 
-Released as **OmniBonk** from 1.0.0: plugin GUID, assembly and release zips say `OmniBonk`; the C# namespaces,
-project files and the `Common` assembly keep `MegabonkTogether`. Rename record:
+Renamed from Megabonk Together to **OmniBonk** at 1.0.0: plugin GUID, assemblies, namespaces, project
+files and the solution all say `OmniBonk`. Only `[BepInIncompatibility("MegabonkTogether")]` in
+`Plugin.cs` keeps the old name, on purpose: it names the old plugin so the two never load together. Rename record:
 [`docs/netplay/19-session-handover.md`](docs/netplay/19-session-handover.md), section 3.
 The docs index, the CONFIRMED / LIKELY / UNVERIFIED status legend, and standing ground rules:
 [`docs/README.md`](docs/README.md).
@@ -51,7 +52,7 @@ at 2–5%, not on LAN.
 ## Build
 
 ```bash
-dotnet build MegabonkTogether.sln -c Debug
+dotnet build OmniBonk.sln -c Debug
 ```
 
 Set `MegabonkPath` to a Megabonk install to compile against that install's interop assemblies
@@ -70,8 +71,8 @@ Debug-only and is skipped when `CI` or `GITHUB_ACTIONS` is set.
 
 Three files move together, then a tag:
 
-1. `src/plugin/MegabonkTogether.Plugin.csproj` → bump `<Version>`
-2. `src/plugin/CHANGELOG.toml` → new `[version."X.Y.Z"]` block. **Shown in-game** — write it
+1. `src/plugin/OmniBonk.Plugin.csproj` → bump `<Version>`
+2. `CHANGELOG.toml` (repo root) → new `[version."X.Y.Z"]` block. **Shown in-game** — write it
    for a player, not a developer.
 3. `README.md` → matching entry in the changelog `<details>` block
 4. Tag `X.Y.Z` and push it; `.github/workflows/build-plugin.yml` builds and publishes

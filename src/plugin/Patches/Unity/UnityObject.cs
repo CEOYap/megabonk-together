@@ -2,21 +2,19 @@
 using HarmonyLib;
 using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.InteropTypes;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using MonoMod.Utils;
 using System;
 using UnityEngine;
 
-namespace MegabonkTogether.Patches.Unity
+namespace OmniBonk.Patches.Unity
 {
     [HarmonyPatch(typeof(UnityEngine.Object))]
     internal static class UnityObjectPatches
     {
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
-        /// <summary>
-        /// Only the server should be allowed to spawn chests unless explicitly allowed
-        /// </summary>
+        /// <summary>Host only spawns chests, unless a client is applying the host's.</summary>
 
         [HarmonyPrefix]
         [HarmonyPatch(nameof(UnityEngine.Object.Instantiate), [typeof(UnityEngine.Object), typeof(UnityEngine.Vector3), typeof(UnityEngine.Quaternion)])]
@@ -42,9 +40,7 @@ namespace MegabonkTogether.Patches.Unity
         }
 
 
-        /// <summary>
-        /// Deal with boss spawner instantiation on ProceduralMesh map
-        /// </summary>
+        /// <summary>Boss spawner instantiation on ProceduralMesh maps.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(UnityEngine.Object.Instantiate), [typeof(UnityEngine.Object), typeof(UnityEngine.Vector3), typeof(UnityEngine.Quaternion)])]
         public static bool Instantiate_Prefix(UnityEngine.Object original, Vector3 position, Quaternion rotation)
@@ -66,11 +62,7 @@ namespace MegabonkTogether.Patches.Unity
             return true;
         }
 
-        /// <summary>
-        /// Send chest spawn info when server. Also, the server register what final boss orbs are spawned (sent later on each SpawnOrb postfix)
-        /// Also send BossSpawner info when on procedural map
-        /// For clients, register the spawned chest received from the server
-        /// </summary>
+        /// <summary>Host: sends chest and procedural boss spawner spawns, registers final boss orbs. Client: registers received chests.</summary>
 
         [HarmonyPostfix]
         [HarmonyPatch(nameof(UnityEngine.Object.Instantiate), [typeof(UnityEngine.Object), typeof(UnityEngine.Vector3), typeof(UnityEngine.Quaternion)])]
@@ -216,10 +208,7 @@ namespace MegabonkTogether.Patches.Unity
             }
         }
 
-        /// <summary>
-        /// Synchronize final boss orb destruction (client and server)
-        /// </summary>
-        /// <param name="obj"></param>
+        /// <summary>Synchronizes final boss orb destruction.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(UnityEngine.Object.Destroy), [typeof(UnityEngine.Object)])]
         public static void Destroy_Postfix(Il2CppObjectBase obj)
@@ -229,10 +218,7 @@ namespace MegabonkTogether.Patches.Unity
                 return;
             }
 
-            // FIX 6/6: obj.Pointer was dereferenced unguarded. UnityEngine.Object.Destroy(null) is
-            // legal and a no-op, so any game code calling it threw an NRE straight out of this
-            // patch into the IL2CPP trampoline — where nothing catches it. Observed twice in a
-            // 3-player session, during a disconnect.
+            // FIX 6/6: Destroy(null) is legal; an NRE here escapes into the IL2CPP trampoline uncaught.
             if (obj == null)
             {
                 return;

@@ -1,10 +1,10 @@
 ﻿using Assets.Scripts.Inventory__Items__Pickups.Items;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using MonoMod.Utils;
 
-namespace MegabonkTogether.Patches.Interactables
+namespace OmniBonk.Patches.Interactables
 {
     [HarmonyPatch(typeof(InteractableMicrowave))]
     internal static class InteractableMicroWavePatches
@@ -12,9 +12,7 @@ namespace MegabonkTogether.Patches.Interactables
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
         private static readonly ISpawnedObjectManagerService spawnedObjectManagerService = Plugin.Services.GetService<ISpawnedObjectManagerService>();
 
-        /// <summary>
-        /// On client, use the rarity sent by server
-        /// </summary>
+        /// <summary>On client, use the rarity sent by server</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(InteractableMicrowave.Start))]
         public static void Start_Prefix(InteractableMicrowave __instance)
@@ -38,9 +36,7 @@ namespace MegabonkTogether.Patches.Interactables
         }
 
 
-        /// <summary>
-        /// On server, send the microwave to clients (we wait for start to have the correct rarity)
-        /// </summary>
+        /// <summary>On server, send the microwave to clients (we wait for start to have the correct rarity)</summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(InteractableMicrowave.Start))]
         public static void Start_Postfix(InteractableMicrowave __instance)

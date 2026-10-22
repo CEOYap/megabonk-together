@@ -1,18 +1,16 @@
 ﻿using Assets.Scripts.Game.Combat.EnemySpecialAttacks;
 using HarmonyLib;
-using MegabonkTogether.Services;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MegabonkTogether.Patches
+namespace OmniBonk.Patches
 {
     [HarmonyPatch(typeof(SpecialAttackController))]
     internal static class SpecialAttackControllerPatches
     {
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
 
-        /// <summary>
-        /// Only the server can use enemy special attacks unless allowed
-        /// </summary>
+        /// <summary>Only the host uses enemy special attacks, unless explicitly allowed.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(SpecialAttackController.UseSpecialAttack))]
         public static bool UseSpecialAttack_Prefix(SpecialAttackController __instance, EnemySpecialAttack attack)
@@ -31,9 +29,6 @@ namespace MegabonkTogether.Patches
             return true;
         }
 
-        /// <summary>
-        /// Synchronize enemy special attack 
-        /// </summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(SpecialAttackController.UseSpecialAttack))]
         public static void UseSpecialAttack_Postfix(SpecialAttackController __instance, EnemySpecialAttack attack)

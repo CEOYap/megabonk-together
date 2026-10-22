@@ -1,29 +1,22 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace MegabonkTogether.Scripts.Snapshot
+namespace OmniBonk.Scripts.Snapshot
 {
     public class ProjectileInterpolator : MonoBehaviour
     {
         private readonly Dictionary<uint, GameObject> activeProjectiles = new Dictionary<uint, GameObject>();
         private readonly Dictionary<uint, List<ProjectileSnapshot>> snapshotsBuffers = new Dictionary<uint, List<ProjectileSnapshot>>();
-        // FIX P2-5 (remainder): id -> owning connection id. These ids come from the SENDER's
-        // counter, so they are a different id space from ProjectileManagerService.spawnedProjectile
-        // and cannot share its map. Without an owner here, a departed peer's received projectiles
-        // stayed registered and kept being interpolated against snapshots that would never arrive.
+        // FIX P2-5: id -> owner, so a departed peer's projectiles can be dropped. Sender id space,
+        // separate from ProjectileManagerService's.
         private readonly Dictionary<uint, uint> projectileOwners = new Dictionary<uint, uint>();
 
-        /// <summary>
-        /// id -> the time at which it may actually be destroyed. See <see cref="UnregisterProjectile"/>.
-        /// </summary>
+        /// <summary>id -> earliest destroy time. See <see cref="UnregisterProjectile"/>.</summary>
         private readonly Dictionary<uint, double> pendingRemoval = new Dictionary<uint, double>();
 
-        /// <summary>Reused across frames so the removal sweep does not allocate per Update.</summary>
         private readonly List<uint> expiredScratch = new List<uint>();
 
-        // Seconds, despite the name — it is subtracted from Time.timeAsDouble directly. Remote
-        // projectiles are therefore drawn 100 ms behind the host, which is what UnregisterProjectile
-        // has to wait out.
+        // Seconds, despite the name.
         protected float interpolationDelayMs = 0.1f;
         protected int maxBufferSize = 30;
 
@@ -49,10 +42,6 @@ namespace MegabonkTogether.Scripts.Snapshot
             }
         }
 
-        /// <summary>
-        /// Destroys projectiles whose deferred removal has come due. Collected first and destroyed
-        /// after, because destroying inside the enumeration would invalidate it.
-        /// </summary>
         private void SweepPendingRemovals()
         {
             var now = Time.timeAsDouble;
@@ -92,10 +81,7 @@ namespace MegabonkTogether.Scripts.Snapshot
                 snapshotsBuffers[snapshot.Id] = buffer;
             }
 
-            // Same ordering guard as EnemyInterpolator. These streams are unreliable, so a late
-            // packet can arrive after a newer one, and the pair scan and the front-pruning below
-            // both assume the buffer is sorted by timestamp. Out of order the interpolator walks
-            // backwards and the remote object visibly snaps back.
+            // Unreliable stream: drop out-of-order snapshots; the buffer must stay sorted.
             if (buffer.Count > 0 && snapshot.Timestamp <= buffer[buffer.Count - 1].Timestamp)
             {
                 return;
@@ -158,13 +144,7 @@ namespace MegabonkTogether.Scripts.Snapshot
 
             transform.position = Vector3.Lerp(older.Position, newer.Position, t);
 
-            // Quaternion.LookRotation on a zero vector logs "Look rotation viewing vector is zero"
-            // and returns identity. Both snapshots are read every frame for every remote
-            // projectile, so a stationary or quantization-collapsed direction snapped the
-            // projectile to identity twice per frame and flooded the log: 208,936 of those
-            // warnings on the client in one Run C, against zero on the host. Keeping the previous
-            // rotation is strictly better than snapping to identity, and Unity's own logging is
-            // expensive enough at that rate to matter on its own.
+            // LookRotation(zero) logs a warning per call and snaps to identity; keep the rotation.
             if (older.Rotation == Vector3.zero || newer.Rotation == Vector3.zero)
             {
                 return;
@@ -195,8 +175,7 @@ namespace MegabonkTogether.Scripts.Snapshot
             activeProjectiles[id] = projectile;
             projectileOwners[id] = ownerId;
 
-            // Ids are recycled, so a new projectile can land on one still waiting out its deferred
-            // removal. Without this it would be destroyed mid-flight a fraction of a second later.
+            // Ids are recycled; cancel a pending removal of the old one.
             pendingRemoval.Remove(id);
 
             if (!snapshotsBuffers.ContainsKey(id))
@@ -205,11 +184,7 @@ namespace MegabonkTogether.Scripts.Snapshot
             }
         }
 
-        /// <summary>
-        /// Drops every projectile received from <paramref name="ownerId"/>. Called when that peer
-        /// disconnects: no further snapshots will arrive for them, so they would otherwise sit in
-        /// <see cref="activeProjectiles"/> for the rest of the run, walked by every Update.
-        /// </summary>
+        /// <summary>On disconnect: no further snapshots will arrive for that peer.</summary>
         public void UnregisterProjectilesByOwner(uint ownerId)
         {
             List<uint> toRemove = null;
@@ -232,58 +207,29 @@ namespace MegabonkTogether.Scripts.Snapshot
 
             foreach (var id in toRemove)
             {
-                // Immediate: that peer is gone, so no further snapshot will arrive and there is
-                // nothing for the deferred path to wait for.
                 RemoveProjectileNow(id);
             }
         }
 
         /// <summary>
-        /// <para>The <c>rocket.rocket.ProjectileDone()</c> call that used to stand here was a
-        /// double free. Decompiled <c>Rocket$$ProjectileDone</c> ends with
-        /// <c>gameObject.SetActive(false)</c> followed by <c>ObjectPool&lt;GameObject&gt;.Release</c>
-        /// on the <b>Rocket's own</b> GameObject — which is a child of <paramref name="id"/>'s
-        /// object. The very next line then destroyed the parent, taking the just-pooled child with
-        /// it, so <c>PoolManager</c> kept a destroyed GameObject and handed it out again later.
-        /// That is the pool-starvation shape <c>Helpers/PoolHelper.cs</c> exists to paper over.</para>
-        ///
-        /// <para>Destroying without releasing is what every other projectile type already does on a
-        /// client: <see cref="Patches.Projectiles.ProjectileBasePatches.ProjectileDone_Postfix"/>
-        /// suppresses the pooled despawn for anything carrying a netplayId, and the object is
-        /// destroyed outright.</para>
-        ///
-        /// <para><b>Deliberately not changed:</b> <c>DestroyImmediate</c> stays. <c>Destroy</c> is
-        /// the safer call and <c>ProjectileManagerService.RemoveProjectile</c> uses it, but
-        /// swapping it here is a separate change with its own ordering risk.</para>
+        /// Destroys without calling <c>Rocket.ProjectileDone</c>: decompiled, it releases the child
+        /// rocket to the pool, so destroying the parent after would pool a destroyed object.
         /// </summary>
         public void UnregisterProjectile(uint id)
         {
             if (!activeProjectiles.ContainsKey(id))
             {
-                // Never registered, or already swept. Drop any residue and stop.
                 snapshotsBuffers.Remove(id);
                 projectileOwners.Remove(id);
                 pendingRemoval.Remove(id);
                 return;
             }
 
-            // Deferred, not immediate. Update draws every remote projectile interpolationDelayMs
-            // behind the host, but ProjectileDone is a discrete event applied the moment it
-            // arrives — so destroying here killed the projectile while its rendered copy was still
-            // 100 ms of travel short of the target. Reported as rockets vanishing and ending their
-            // animation mid-flight on the way to an enemy, after the mid-flight *explosion* had
-            // already been fixed separately.
-            //
-            // Waiting one interpolation delay lets the buffered snapshots play out to the position
-            // the host ended at. It keeps interpolating in the meantime; only the destroy waits.
+            // Deferred by one interpolation delay, or the rendered copy dies short of its target.
             pendingRemoval[id] = Time.timeAsDouble + interpolationDelayMs;
         }
 
-        /// <summary>
-        /// Destroys immediately, skipping the interpolation-delay wait in
-        /// <see cref="UnregisterProjectile"/>. For cases where no further snapshot is coming and
-        /// waiting would just hold a dead object: a departed peer, or teardown.
-        /// </summary>
+        /// <summary>No deferral: for a departed peer or teardown.</summary>
         public void RemoveProjectileNow(uint id)
         {
             if (activeProjectiles.TryGetValue(id, out var toDel))

@@ -1,14 +1,14 @@
 ﻿using Assets.Scripts._Data.MapsAndStages;
 using Assets.Scripts.Managers;
 using Il2CppInterop.Runtime;
-using MegabonkTogether.Configuration;
-using MegabonkTogether.Services;
+using OmniBonk.Configuration;
+using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using System.Linq;
 using System.Threading.Tasks;
 using UnityEngine;
 
-namespace MegabonkTogether.Scripts
+namespace OmniBonk.Scripts
 {
     public class NetworkHandler : MonoBehaviour
     {
@@ -49,11 +49,7 @@ namespace MegabonkTogether.Scripts
         private IEnemyManagerService enemyManagerService;
         private IDesyncDetectorService desyncDetectorService;
 
-        /// <summary>
-        /// OB-1. Globals move on level-up and item pickup, so 2 Hz is far faster than they change
-        /// and costs five stat reads a second. Polled rather than hooked because the game raises
-        /// stat changes through several paths and missing one is this bug's existing failure mode.
-        /// </summary>
+        /// <summary>OB-1. Polled at 2 Hz rather than hooked: stat changes come through too many paths.</summary>
         private const float statsCheckInterval = 0.5f;
         private float statsCheckAccumulator = 0f;
 
@@ -71,12 +67,10 @@ namespace MegabonkTogether.Scripts
             websocketClientService = Plugin.Services.GetRequiredService<IWebsocketClientService>();
             playerManagerService = Plugin.Services.GetRequiredService<IPlayerManagerService>();
 
-            // OB-1. Subscribed here rather than in the service's constructor: DI builds services
-            // lazily, so a service nobody has resolved yet would never receive anything.
+            // OB-1. Subscribed here: DI is lazy, so an unresolved service would never receive anything.
             playerStatsSyncService = Plugin.Services.GetRequiredService<IPlayerStatsSyncService>();
             EventManager.SubscribePlayerStatsChangedEvents(playerStatsSyncService.ApplyRemote);
 
-            // Same reason as above: subscribed here so the service exists before a digest arrives.
             desyncDetectorService = Plugin.Services.GetRequiredService<IDesyncDetectorService>();
             EventManager.SubscribeStateDigestEvents(desyncDetectorService.OnDigestReceived);
 
@@ -89,16 +83,7 @@ namespace MegabonkTogether.Scripts
             isGameStarted = false;
         }
 
-        /// <summary>
-        /// The Steam transport's equivalent of <see cref="OnMatchFound"/>: brings the per-frame
-        /// loops up for a session that has no matchmaker behind it.
-        ///
-        /// <para>Separate from <c>OnMatchFound</c> rather than folded into it because the two learn
-        /// the same fact from different places and at different moments. A matchmaker session is
-        /// told its role by the server in <c>MatchInfo</c>; a Steam session reads it off lobby
-        /// ownership, which Steam already arbitrates. Sharing an entry point would mean one of them
-        /// inferring a role it was never given.</para>
-        /// </summary>
+        /// <summary>Steam-transport counterpart of <see cref="OnMatchFound"/>; the role comes from lobby ownership.</summary>
         public void BeginSteamSession(bool isHost)
         {
             hasFoundMatch = true;
@@ -108,9 +93,7 @@ namespace MegabonkTogether.Scripts
             stateBroadcastService = Plugin.Services.GetRequiredService<IStateBroadcastService>();
             synchronizationService = Plugin.Services.GetRequiredService<ISynchronizationService>();
 
-            // Still told, even though it carries nothing here. SynchronizationService asks the
-            // LiteNetLib service for IsHost in a couple of places that have not moved to
-            // INetTransport yet, and a null there reads as "role undecided".
+            // Some callers still read IsHost from the LiteNetLib service.
             udpClientService.UpdateMode(isHost);
 
             Plugin.Log.LogInfo($"[steam-session] Netplay loops started as {(isHost ? "HOST" : "CLIENT")}.");
@@ -133,12 +116,7 @@ namespace MegabonkTogether.Scripts
 
                 udpClientService.Poll();
 
-                // The Steam transport's receive pump belongs here, with the netplay loop, and not
-                // only on SteamTicker. SteamTicker is the Steam *lobby* ticker: it is fine for the
-                // menu, but a session that has loaded into a run depends on it for every inbound
-                // message, and the first in-game test of the Steam path stalled with both ends
-                // sending and neither receiving - a symmetry that points at the pump rather than
-                // the wire. Polling twice a frame is harmless; the second call finds an empty queue.
+                // Pumped here as well as in SteamTicker; in-run receive stalled without it. A second poll is harmless.
                 if (ModConfig.UseSteamTransport.Value)
                 {
                     steamNetTransport ??= Plugin.Services.GetService<ISteamNetTransport>();
@@ -173,21 +151,10 @@ namespace MegabonkTogether.Scripts
                     playerStatsSyncService?.SendIfChanged();
                 }
 
-                // Desync detector. Returns on its first line when the switch is off.
                 desyncDetectorService?.Tick(Time.deltaTime);
 
-                // OB-13. Edge-triggered, so a well-behaved window costs two lines for the whole
-                // window rather than one per frame or per second. It has to be sampled every frame
-                // and not on an accumulator: the hypothesis is a pause that is cleared and restored
-                // by another screen, which can happen inside a single frame.
-                //
-                // The try is at this call site rather than inside Sample, deliberately. Sample reads
-                // Physics.simulationMode, which links against the managed unity-libs copy of
-                // PhysicsModule; if that does not resolve against this runtime the result is a
-                // MissingMethodException raised when the *containing* method is JIT-compiled, so a
-                // try within Sample could never execute. It has to sit one level up. The game's own
-                // MyTime.Pause calls set_simulationMode, so it should resolve — "should" being why
-                // this is guarded rather than assumed. A diagnostic must never take a session down.
+                // OB-13. Every frame: the pause can flip within one frame. The try must stay here, one
+                // level up: an unresolved Physics.simulationMode throws MissingMethodException at JIT time.
                 if (!encounterPauseDiagnosticsFailed)
                 {
                     try
@@ -201,10 +168,7 @@ namespace MegabonkTogether.Scripts
                             $"[pause] OB-13 diagnostic disabled for this session: {ex.Message}");
                     }
                 }
-                // The active transport, whichever it is — a diagnostic that reads the wrong one
-                // reports on a socket nobody is using.
-                // The active transport, whichever it is — a diagnostic that reads the wrong one
-                // reports on a socket nobody is using. Cached, never resolved per frame.
+                // The active transport, cached.
                 netTransport ??= Plugin.Services.GetRequiredService<INetTransport>();
                 Services.BandwidthDiagnostics.Sample(
                     ModConfig.LogBandwidth.Value, netTransport, playerManagerService);
@@ -236,9 +200,7 @@ namespace MegabonkTogether.Scripts
                     {
                         enemyUpdateAccumulator -= enemyUpdatetickInterval;
 
-                        // The tick's summed hits go out before its enemy delta, so a client
-                        // replays the damage (numbers, damage panel) before the HP that already
-                        // includes it arrives.
+                        // Hits before the enemy delta, so clients replay damage before the HP that includes it.
                         synchronizationService.FlushEnemyDamage();
                         stateBroadcastService.UpdateEnemies();
                     }
@@ -309,15 +271,8 @@ namespace MegabonkTogether.Scripts
             Plugin.Instance.Mode = new();
             isHost = false;
 
-            // Leaving the Steam lobby is part of ending a Steam session, and this is the single
-            // path every teardown funnels through — cancel, failure, and backing out of the lobby
-            // panel all reach here.
-            //
-            // It became load-bearing when the invite flow stopped leaving the lobby it joined: a
-            // player who backed out was still a member of a lobby nothing would release, so the
-            // next invite was refused with "Refusing to join a lobby while InLobby" and they were
-            // stuck until they restarted the game. Guarded, because on the matchmaker path the
-            // Steam lobby belongs to the presence bridge and is not ours to close.
+            // Every teardown funnels here; leave the Steam lobby or the next invite is refused.
+            // Guarded: on the matchmaker path the lobby belongs to the presence bridge.
             if (ModConfig.UseSteamTransport.Value)
             {
                 try
@@ -330,16 +285,9 @@ namespace MegabonkTogether.Scripts
                 }
             }
 
-            // FIX P0-5: clear the match flag on teardown. HasNetplaySessionInitialized() reads
-            // this, and ~40 patch sites gate on it — SaveManager most importantly. It was
-            // previously only reset in HandleNetworking(), i.e. when STARTING a session, so after
-            // any netplay game it stayed true and singleplayer silently kept taking the netplay
-            // path — progression not saved — until the game was restarted.
-            // (Leaderboards no longer reads this; that block is unconditional. See P0-0.)
+            // FIX P0-5: ~40 patches (SaveManager included) gate on this; left set, singleplayer takes netplay paths.
             hasFoundMatch = null;
 
-            // Clear transform-fallback counters so each session's diagnostics start from zero,
-            // rather than a new session inheriting counts pending from the previous one.
             Patches.Unity.TransformFallbackDiagnostics.Reset();
             Services.TrackerAttributionDiagnostics.Reset();
             Services.HostGuardDiagnostics.Reset();
@@ -356,15 +304,11 @@ namespace MegabonkTogether.Scripts
             Services.UnityExceptionDiagnostics.RemindWhereTracesAre();
             Services.UnityExceptionDiagnostics.Reset();
 
-            // PERF 1A: drop switcher registrations from the finished session. Their enemies are
-            // gone, so OnDisable may never fire for them.
+            // PERF 1A: OnDisable may never fire for the finished session's enemies.
             Enemies.TargetSwitcherManager.Clear();
             Snapshot.EnemyInterpolatorManager.Clear();
 
-            // Encounter-UI statics hold references from the finished session — a MyButton, a
-            // Coroutine handle, a TMP component parented to UI the session destroys. Handing any
-            // of those back to the game in the next session is a NullReferenceException on a
-            // destroyed Component, which is the signature of a reported crash.
+            // Encounter-UI statics hold destroyed components from the finished session.
             Patches.ChestWindowUiPatches.Reset();
             Patches.LevelUpScreenPatches.Reset();
             Patches.Projectiles.ProjectileBasePatches.ClearOpacityCache();
@@ -386,9 +330,6 @@ namespace MegabonkTogether.Scripts
                 udpClientService = null;
             }
 
-            // Separate from the transport's reset, and deliberately not folded into it: the stream
-            // pacing is per session but has nothing to do with the socket, and the transport no
-            // longer owns it.
             try
             {
                 stateBroadcastService?.Reset();
