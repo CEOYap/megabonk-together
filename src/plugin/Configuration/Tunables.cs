@@ -65,6 +65,14 @@ namespace OmniBonk.Configuration
         /// <summary>Steam transport promotes unreliable sends above this to reliable, bytes. Backstop; logs when it fires.</summary>
         internal const int MAX_UNRELIABLE_BYTES = 1200;
 
+        /// <summary>
+        /// Steam per-connection send rate, bytes/s, set as both <c>SendRateMin</c> and <c>SendRateMax</c>.
+        /// Steam does not estimate bandwidth, so this is the pacing rate, not a target; its header documents
+        /// a 256 KB/s default, which a 479-enemy swarm's host exceeded (docs/netplay/04-performance-and-gc.md).
+        /// A ceiling on bursts, not added usage. <b>UNVERIFIED</b> in play; the per-connection log line says what Steam applied.
+        /// </summary>
+        internal const int STEAM_SEND_RATE_BYTES_PER_SECOND = 512 * 1024;
+
         #endregion
 
         #region Distance throttling

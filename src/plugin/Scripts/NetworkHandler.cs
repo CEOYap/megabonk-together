@@ -217,6 +217,9 @@ namespace OmniBonk.Scripts
                         stateBroadcastService.UpdateTumbleWeeds();
                     }
                 }
+
+                // One flush for the whole frame's sends; unreliable is Nagled on Steam so they share packets.
+                steamNetTransport?.FlushPendingSends();
             }
             catch (System.Exception ex)
             {
