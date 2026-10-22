@@ -439,7 +439,7 @@ section.**
 > |---|---|
 > | "enemy positions are full-precision `float`… send `short` quantized values" | **Done.** `EnemyModel.Position` is `QuantizedVector3` and `Yaw` is `QuantizedRotation`. |
 > | "nothing measures byte counts today" / "add byte counters" | **Done.** `[Diagnostics] LogBandwidth` reports per-message-type bytes and per-peer link state every 10 s. |
-> | (not anticipated here) | A **budgeted priority stream** now caps the enemy tick — `MAX_ENEMY_TICK_BYTES = 3600`, `ENEMY_MODEL_WIRE_BYTES = 15`, so `MAX_ENEMIES_PER_TICK = 240`, with `ENEMY_REFRESH_PERIOD_TICKS = 40` bounding staleness. Oversized ticks are also split to sub-MTU datagrams. |
+> | (not anticipated here) | A **budgeted priority stream** now caps the enemy tick — `MAX_ENEMY_TICK_BYTES = 3600`, `ENEMY_MODEL_WIRE_BYTES = 19` (was 15 when this box was written), so `MAX_ENEMIES_PER_TICK = 189`, with `ENEMY_REFRESH_PERIOD_TICKS = 40` bounding staleness. Oversized ticks are also split to sub-MTU datagrams. |
 >
 > **What that makes the current ceiling.** At `ENEMY_UPDATE_TICK_RATE = 40` Hz the enemy stream is
 > capped at 3600 B × 40 ≈ **144 KB/s** — and `SendToAllClients` sends that to *each* client, so the
@@ -481,6 +481,74 @@ benefit cannot be observed in-house. Weigh that before spending the refactor.
 reports per-message-type byte totals and per-peer link quality every 10 s. Tuning is now measurable
 rather than guessed, which makes `POSITION_TRESHOLD` the cheapest next lever: it is measurable at two
 players, and raising it carries no correctness risk.
+
+### Steam send headroom at a 479-enemy swarm (2026-10-23)
+
+**Status:** the evidence is CONFIRMED (host log). The fixes are **UNVERIFIED**: they build and were
+checked offline, but nobody has run them in game.
+
+**Evidence.** Host log from 2026-10-22, Desert3 final swarm, 479 enemies, 2 players, Steam
+transport. The `[bw]` report showed 267 KB/s of payload out:
+
+| Stream | KB/s | Rate |
+|---|---|---|
+| `LobbyUpdates(enemies)` | 143 | 200 sends/s, 732 B/send |
+| `EnemyDamaged` | 61 | 1,128 msgs/s |
+| `ProjectilesUpdate` | 38 | |
+
+The peer line showed `pending 22186 B reliable, 313099 B unreliable`. The aggregation line read
+`1144.3 hits/s -> 1128.4 msgs/s, 1.0 hits per message`. Only two 10 s samples in the run had more
+than 100 KB of unreliable backlog, and nothing looked wrong in play.
+
+**Diagnosis.** There were three causes.
+
+1. **The link was over Steam's default send rate.** Steam's `steamnetworkingtypes.h` says
+   `SendRateMin` and `SendRateMax` both default to 256K. It also says the library does not yet
+   estimate bandwidth, so both "should always be set to the same value" to fix a rate. The mod set
+   neither. 267 KB/s of payload before any headers is over 256 KB/s, so Steam queued the rest.
+   The header also gives a 512 KB `SendBufferSize` default, and the 335 KB pending was about 65%
+   of it. Past that limit, `SendMessage` returns `k_EResultLimitExceeded`, which would also drop
+   **reliable** sends. **UNVERIFIED** that the Steam client build uses the open-source header's
+   defaults. The new log line reads them at runtime (see below).
+2. **Per-enemy summing does nothing in a swarm.** `EnemyDamageAggregator` keyed on enemy and
+   flushed one message per key. With 479 distinct enemies, each one takes about one hit per tick,
+   so 1.0 hits per message.
+3. **Every unreliable send was NoNagle.** That is about 1,400 messages/s, and probably as many
+   packets, each paying UDP, relay and Steam headers that count against the rate but not against
+   `[bw]`. **UNVERIFIED** that NoNagle meant one packet per message. The new `out pkt/s` field
+   measures it.
+
+**Changes.**
+
+| Change | Where | Expected effect at the same swarm (estimate) |
+|---|---|---|
+| `SendRateMin = SendRateMax = 512 KB/s` per connection, set after `AcceptConnection` (host) and `ConnectP2P` (client), logged once at Connected | `SteamNetTransport.ApplySendRate`, `Tunables.STEAM_SEND_RATE_BYTES_PER_SECOND` | Twice the headroom of Steam's default. It is a ceiling, not added usage: Steam paces to it but only sends what we queue. |
+| Unreliable sends are Nagled. `NetworkHandler` calls `FlushPendingSends()` once per frame after the tick loop | `SteamNetTransport.ToSteamFlags` / `FlushPendingSends` | One tick's chunks and batches share packets, so packets/s should fall well below 1,400. If the flush throws, sends fall back to NoNagle. |
+| `EnemyDamagedBatch` (tag 84) carries every enemy's summed hits for a tick in batches of up to 900 B | `EnemyDamageAggregator`, `SynchronizationService.SendEnemyDamagedBatch` | About 1,128 msgs/s become about 40–80 batches/s, and about 61 KB/s becomes about 37 KB/s (measured offline: 29 B per entry plus tables, against 57 B per `EnemyDamaged`). |
+
+**The enemy stream is chunked, and its budget is right.** Read it this way: `SendStreamUpdate`
+splits the 40 Hz tick against `MAX_PACKET_SIZE_BYTES - 100` = 900 B. At 189 enemies per tick,
+the average is 19 B per enemy, so 47 enemies per chunk and **5 chunks per tick (4 × 47 + 1)**.
+That is the 200 sends/s at 732 B average. 3600 B × 40 Hz = 144 KB/s, which matches the 143 KB/s
+measured. The stream sat at its cap, which is what the cap is for.
+
+The budget stays at 3600. Raising it adds fidelity, but the host's upload grows by budget × rate
+× (players − 1), which is about 720 KB/s at six players already. At 479 enemies and 189 per tick,
+each enemy still updates about every 2.5 ticks (about 16 Hz), and `EnemyInterpolator` smooths
+between updates. The 1-enemy fifth chunk costs about 40 extra messages/s. With Nagle it now
+shares a packet, so it was not worth coupling `MAX_ENEMY_TICK_BYTES` to the chunk arithmetic.
+If swarm motion looks coarse on clients, tune `ENEMY_POSITION_THRESHOLD` before the budget.
+
+**What to look for in the next host log (`LogBandwidth` on).**
+
+- Once per connection: `[steam-net] Send rate to … min/max 524288/524288 B/s, live … B/s, send
+  buffer … B (Steam global defaults: min/max …)`. The global defaults are Steam's real values for
+  this client build. If they are not 262144, update the defaults stated above.
+- `[bw]   EnemyDamaged aggregation: … hits/s -> … entries/s -> … batches/s`. The batch rate
+  should be about 1–2 per enemy tick.
+- The peer line now ends `out N pkt/s X KB/s of R KB/s`. That is wire-level, headers included.
+  Compare `X` with the `[bw]` payload total, and check that `pending … B unreliable` stays near
+  zero through the swarm.
 
 ---
 
