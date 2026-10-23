@@ -4856,6 +4856,9 @@ items found four families:
 
 A client never sees even its **own** on-hit effects, since the host runs `PostDamage` for it.
 
+**Full audit** (per-item VAs, pool offsets, `ItemProjectile` internals, proposed hooks for families
+2 to 4): [`reverse-engineering/02-item-visual-audit.md`](../reverse-engineering/02-item-visual-audit.md).
+
 **Fixed (family 1):** tag 85 `ItemProjectilesSpawned` (protocol 5). A postfix on `ItemProjectile.Set`
 queues the values `Set` computed (direction, speed, lifetime, up-time, index, range, source) and the
 owner; one batch per frame goes host-to-all or client-to-host (the host draws and relays). Receivers

@@ -36,6 +36,7 @@ how each fix was reasoned out, and what the transport layer looks like.
 |---|---|
 | [`reverse-engineering/00-decompilation-guide.md`](reverse-engineering/00-decompilation-guide.md) | Toolchain and workflow for inspecting the IL2CPP game build |
 | [`reverse-engineering/01-investigation-targets.md`](reverse-engineering/01-investigation-targets.md) | Concrete types and methods to decompile, each tied to an open question in the code |
+| [`reverse-engineering/02-item-visual-audit.md`](reverse-engineering/02-item-visual-audit.md) | Which items and weapons draw visuals on one machine only, the game chokepoints, and the replication design (OB-56) |
 
 ### Reference
 
