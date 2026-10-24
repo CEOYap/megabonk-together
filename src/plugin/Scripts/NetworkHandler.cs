@@ -273,6 +273,8 @@ namespace OmniBonk.Scripts
             isConnectedToMatchMaker = null;
             Plugin.Instance.Mode = new();
             Plugin.Services.GetService<IItemProjectileVisualService>()?.Reset();
+            Patches.Projectiles.RocketPatches.Reset();
+            Patches.Items.EventListenerOwnership.ResetKillers();
             isHost = false;
 
             // Every teardown funnels here; leave the Steam lobby or the next invite is refused.

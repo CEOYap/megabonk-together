@@ -336,8 +336,15 @@ namespace OmniBonk.Scripts.NetPlayer
                 GameObject.Destroy(ReturnWeaponWui.gameObject);
             }
 
-            // Can be destroyed before Initialize gave it an inventory.
-            inventory?.Cleanup(); //Cleanup is important to prevent interference with local player
+            // Not while the inventory is kept for this player: a level change or rebuild reuses it
+            // without Init, and ItemInventory.Cleanup (decompiled 0x180442570) calls every item's
+            // Cleanup, unsubscribing its static listeners (Soul Harvester, Borgor, ...) and clearing
+            // the on-hit set, so the teammate's items went dead on the host from stage 2. Disconnect
+            // and the session reset clean it up instead. Can be null before Initialize.
+            if (inventory != null && playerManagerService?.IsKeptInventory(connectionId, inventory) != true)
+            {
+                inventory.Cleanup();
+            }
 
             if (this.Model != null)
             {

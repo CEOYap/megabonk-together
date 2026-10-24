@@ -54,6 +54,7 @@ namespace OmniBonk.Patches.Projectiles
                 return true;
             }
 
+            visualService.NoteCopyEndedOnEnemy();
             __instance.ProjectileDone();
             __result = true;
             return false;

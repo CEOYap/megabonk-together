@@ -1803,6 +1803,7 @@ namespace OmniBonk.Services
                             rocketProjectileInstance.rocket.transform.eulerAngles = Quantizer.Dequantize(rocketProjectile.RocketRotation);
                             DynamicData.For(rocketProjectileInstance).Set("netplayId", projectile.Id);
                             DynamicData.For(rocketProjectileInstance.rocket).Set("ownerId", projectile.OwnerId);
+                            Patches.Projectiles.RocketPatches.MarkReceived(rocketProjectileInstance.rocket);
                             break;
                         case EWeapon.Shotgun:
                             var message = projectile as SpawnedShotgunProjectile;

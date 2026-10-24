@@ -16,6 +16,8 @@ namespace OmniBonk.Scripts.Snapshot
 
         private readonly List<uint> expiredScratch = new List<uint>();
 
+        private static bool loggedFirstExplosion;
+
         // Seconds, despite the name.
         protected float interpolationDelayMs = 0.1f;
         protected int maxBufferSize = 30;
@@ -58,7 +60,46 @@ namespace OmniBonk.Scripts.Snapshot
 
             foreach (var id in expiredScratch)
             {
+                PlayRocketExplosion(id);
                 RemoveProjectileNow(id);
+            }
+        }
+
+        /// <summary>
+        /// The client never runs <c>Rocket.ProjectileDone</c> for a received rocket (RocketPatches), and
+        /// that is where the explosion is drawn. Decompiled (0x1804F3FA0): one object from
+        /// <c>PoolManager.explosionPool</c>, placed at the rocket's position plus its forward. Damage
+        /// cannot leak: client <c>Enemy.Damage</c> is blocked and a weapon source is never forwarded.
+        /// <b>UNVERIFIED</b> that the explosion prefab carries nothing beyond its visual.
+        /// </summary>
+        private void PlayRocketExplosion(uint id)
+        {
+            if (!activeProjectiles.TryGetValue(id, out var projectile) || projectile == null)
+            {
+                return;
+            }
+
+            var rocket = projectile.GetComponent<ProjectileRocket>()?.rocket;
+            var pool = Assets.Scripts.Objects.Pooling.PoolManager.Instance?.explosionPool;
+            if (rocket == null || pool == null || !rocket.gameObject.activeSelf)
+            {
+                return;
+            }
+
+            var explosion = pool.Get();
+            if (explosion == null)
+            {
+                return;
+            }
+
+            var rocketTransform = rocket.transform;
+            explosion.transform.position = rocketTransform.position + rocketTransform.forward;
+            explosion.SetActive(true);
+
+            if (!loggedFirstExplosion)
+            {
+                loggedFirstExplosion = true;
+                Plugin.Log.LogInfo("[rocket] Drew the first explosion for a received rocket.");
             }
         }
 

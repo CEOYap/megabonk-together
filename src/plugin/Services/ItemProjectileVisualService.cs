@@ -27,6 +27,9 @@ namespace OmniBonk.Services
 
         void ForgetCopy(ItemProjectile projectile);
 
+        /// <summary>Diagnostics: a copy ended on an enemy without dealing damage.</summary>
+        void NoteCopyEndedOnEnemy();
+
         /// <summary>A real projectile was just set up on this machine: queue it for the other peers.</summary>
         void OnLocalProjectileSet(ItemProjectile projectile);
 
@@ -47,6 +50,12 @@ namespace OmniBonk.Services
         private ItemProjectilesSpawned pending = new();
         private bool flushScheduled;
         private bool loggedUnknownPool;
+
+        // Diagnostics, logged at most every 10 s while copies arrive: drawn per kind, sent, ended on an enemy.
+        private readonly int[] drawnByKind = new int[3];
+        private int sentSpawns;
+        private int copiesEndedOnEnemy;
+        private float nextSummaryAt;
 
         public bool BuildingCopy { get; private set; }
 
@@ -75,8 +84,13 @@ namespace OmniBonk.Services
             }
         }
 
+        public void NoteCopyEndedOnEnemy() => copiesEndedOnEnemy++;
+
         public void Reset()
         {
+            System.Array.Clear(drawnByKind);
+            sentSpawns = 0;
+            copiesEndedOnEnemy = 0;
             copies.Clear();
             pending = new ItemProjectilesSpawned();
             flushScheduled = false;
@@ -140,6 +154,8 @@ namespace OmniBonk.Services
 
             var batch = pending;
             pending = new ItemProjectilesSpawned();
+            sentSpawns += batch.Spawns.Count;
+            LogSummaryIfDue();
 
             if (synchronizationService.IsServerMode() == true)
             {
@@ -173,6 +189,8 @@ namespace OmniBonk.Services
                 }
             }
 
+            LogSummaryIfDue();
+
             // A client's batch: every entry has the sender as owner. Relay to the other clients.
             if (isHost && received.Spawns[0].OwnerId != localId)
             {
@@ -199,6 +217,11 @@ namespace OmniBonk.Services
             if (projectile == null)
             {
                 return;
+            }
+
+            if (spawn.Kind < drawnByKind.Length)
+            {
+                drawnByKind[spawn.Kind]++;
             }
 
             // Marked before Set: Set runs CheckSpawnCollision, which must already treat it as a copy.
@@ -233,6 +256,21 @@ namespace OmniBonk.Services
                     orb.orbitTarget = owner.Model.transform;
                 }
             }
+        }
+
+        private void LogSummaryIfDue()
+        {
+            var now = Time.realtimeSinceStartup;
+            if (now < nextSummaryAt)
+            {
+                return;
+            }
+
+            nextSummaryAt = now + 10f;
+            logger.LogInfo(
+                $"[item-fx] session so far: sent {sentSpawns}; drew souls {drawnByKind[(int)ItemProjectileKind.AngrySoul]}, "
+                + $"orbs {drawnByKind[(int)ItemProjectileKind.Orb]}, ghosts {drawnByKind[(int)ItemProjectileKind.Ghost]}; "
+                + $"{copiesEndedOnEnemy} copies ended on an enemy.");
         }
 
         /// <summary>

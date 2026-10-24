@@ -2,6 +2,7 @@
 using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
 using MonoMod.Utils;
+using System.Collections.Generic;
 
 namespace OmniBonk.Patches.Projectiles
 {
@@ -10,6 +11,30 @@ namespace OmniBonk.Patches.Projectiles
     {
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
         private static readonly IPlayerManagerService playerManagerService = Plugin.Services.GetService<IPlayerManagerService>();
+
+        /// <summary>
+        /// Received rockets by Unity instance id, which belongs to the native object. The
+        /// <c>DynamicData</c> "ownerId" tag alone is lost: Il2CppInterop caches wrappers weakly
+        /// (<c>Il2CppObjectPool</c>) and <c>DynamicData</c> keys on the wrapper, so once the tagging
+        /// wrapper is collected the next access gets a fresh, untagged one. The client then ran the
+        /// game's flight on top of the interpolator (OB-25: 15,080 LookRotation warnings, all from
+        /// <c>Rocket.StepMovement</c>). Main thread only.
+        /// </summary>
+        private static readonly HashSet<int> receivedRockets = [];
+
+        internal static void MarkReceived(Rocket rocket)
+        {
+            if (rocket != null)
+            {
+                receivedRockets.Add(rocket.GetInstanceID());
+            }
+        }
+
+        internal static void Reset() => receivedRockets.Clear();
+
+        private static bool IsReceived(Rocket rocket)
+            => receivedRockets.Contains(rocket.GetInstanceID())
+               || DynamicData.For(rocket).Get<uint?>("ownerId").HasValue;
 
         /// <summary>
         /// Uses the owner's transform, and prefix-false on clients for host-owned rockets.
@@ -35,8 +60,8 @@ namespace OmniBonk.Patches.Projectiles
 
             if (!isHost)
             {
-                // Received rockets carry ownerId and are driven by ProjectileInterpolator.
-                return !DynamicData.For(__instance).Get<uint?>("ownerId").HasValue;
+                // Received rockets are driven by ProjectileInterpolator.
+                return !IsReceived(__instance);
             }
 
             var netPlayer = playerManagerService.GetNetPlayerByWeapon(__instance.weaponBase);
@@ -68,7 +93,7 @@ namespace OmniBonk.Patches.Projectiles
                 return true;
             }
 
-            return !DynamicData.For(__instance).Get<uint?>("ownerId").HasValue;
+            return !IsReceived(__instance);
         }
 
         /// <summary>Restore original transform after prefix</summary>

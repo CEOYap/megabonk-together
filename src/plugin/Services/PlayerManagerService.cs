@@ -60,6 +60,9 @@ namespace OmniBonk.Services
         /// <summary>Teammates' inventories; unlike avatars, these survive a level change.</summary>
         public ICollection<PlayerInventory> GetRemoteInventories();
 
+        /// <summary>True while <paramref name="inventory"/> is the one kept for that player across levels.</summary>
+        public bool IsKeptInventory(uint connectionId, PlayerInventory inventory);
+
         /// <summary>
         /// The teammate holding <paramref name="weapon"/>, or null for the local player's or nobody's.
         /// Works during a level change.
@@ -861,6 +864,12 @@ namespace OmniBonk.Services
             return playerInventories.Values;
         }
 
+        public bool IsKeptInventory(uint connectionId, PlayerInventory inventory)
+            => inventory != null
+               && playerInventories.TryGetValue(connectionId, out var kept)
+               && kept != null
+               && kept.Pointer == inventory.Pointer;
+
         public bool IsGameOver()
         {
             return players.Values.All(p => p.Hp == 0);
@@ -870,10 +879,17 @@ namespace OmniBonk.Services
         {
             RemovePlayer(connectionId);
 
-            var inventory = GetPlayerInventory(connectionId);
-            if (inventory != null)
+            if (playerInventories.TryRemove(connectionId, out var inventory) && inventory != null)
             {
-                playerInventories.TryRemove(connectionId, out _);
+                // The NetPlayer skips this while the inventory is kept (NetPlayer.Destroy).
+                try
+                {
+                    inventory.Cleanup();
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning($"Could not clean up inventory for departed player {connectionId}: {ex.Message}");
+                }
             }
 
             Plugin.Instance.NetPlayersDisplayer.RemovePlayer(connectionId);

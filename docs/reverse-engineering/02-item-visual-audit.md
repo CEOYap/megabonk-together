@@ -95,7 +95,7 @@ attacks (Aura, Aegis, Laser, Dragon Breath, Chunkers) are drawn on every machine
 
 ## Chokepoints
 
-### 1. `ItemProjectile` — fixed (tag 85)
+### 1. `ItemProjectile` — fixed (tag 85), confirmed in play 2026-10-24 for Soul Harvester and Energy Core
 
 - **Creation:** the only callers of `Set` (0x1804D1CC0) are `ItemEnergyCore.FireOrb`,
   `ItemSoulHarvester.OnEnemyDied`, `ItemSoulHarvester.SpawnProjectile` and
@@ -232,4 +232,6 @@ per-item hooks.
   ctors). Lightning Orb passes `"LightningOrb"` into `WeaponUtility.LightningStrike` (0x180435DA0),
   which calls `Enemy.DamageFromPlayerWeapon`. So the client's replay of tag 41 may forward the host's
   hit back to the host, which applies it again.
-- **Weapon-rocket explosions** are likely never seen on clients (see Weapons above).
+- **Weapon-rocket explosions** were never seen on clients once OB-25's fix made `RocketPatches`
+  reliably skip `Rocket.ProjectileDone` (2026-10-24 playtest). `ProjectileInterpolator` now draws one
+  from `explosionPool` when it removes a received rocket; confirmed in play 2026-10-24.

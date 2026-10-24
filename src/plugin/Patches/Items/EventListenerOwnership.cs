@@ -4,9 +4,11 @@ using Assets.Scripts.Inventory__Items__Pickups.AbilitiesPassive.Implementations;
 using Assets.Scripts.Inventory__Items__Pickups.Items;
 using Assets.Scripts.Inventory__Items__Pickups.Items.ItemImplementations;
 using Assets.Scripts.Inventory__Items__Pickups.Weapons.WeaponPassives;
+using Assets.Scripts.Actors.Enemies;
 using HarmonyLib;
 using OmniBonk.Services;
 using Microsoft.Extensions.DependencyInjection;
+using System.Collections.Generic;
 
 namespace OmniBonk.Patches.Items
 {
@@ -121,6 +123,59 @@ namespace OmniBonk.Patches.Items
             return owner.HasValue && owner == LocalId;
         }
 
+        // Host only: who killed each enemy, by Unity instance id. Pool reuse overwrites an entry at
+        // the next death, so nothing is removed until the session resets.
+        private static readonly Dictionary<int, uint> killers = [];
+
+        internal static void ResetKillers() => killers.Clear();
+
+        /// <summary>Called as an enemy dies, inside the kill's attribution scope.</summary>
+        internal static void NoteKiller(Enemy enemy)
+        {
+            if (!InSession || !IsHost || enemy == null)
+            {
+                return;
+            }
+
+            var actor = Actor();
+            if (actor.HasValue)
+            {
+                killers[enemy.GetInstanceID()] = actor.Value;
+            }
+        }
+
+        /// <summary>
+        /// <see cref="RunOnHost"/> for a listener that fires after the kill's scope has closed, using the
+        /// killer noted at death. <paramref name="killer"/> is set when it ran for a recorded kill.
+        /// </summary>
+        internal static bool RunOnHostForKill(uint? copyOwner, Enemy enemy, out uint? killer)
+        {
+            killer = null;
+            if (!InSession)
+            {
+                return true;
+            }
+
+            if (!IsHost)
+            {
+                return false;
+            }
+
+            if (enemy == null || !killers.TryGetValue(enemy.GetInstanceID(), out var noted))
+            {
+                // Released without a recorded death (despawned): the original rule.
+                return RunOnHost(copyOwner);
+            }
+
+            if (!copyOwner.HasValue || copyOwner.Value != noted)
+            {
+                return false;
+            }
+
+            killer = noted;
+            return true;
+        }
+
         internal static bool IsLocalHealth(PlayerHealth health)
         {
             var local = GameManager.Instance?.player?.inventory?.playerHealth;
@@ -198,13 +253,46 @@ namespace OmniBonk.Patches.Items
             => EventListenerOwnership.RunOnHost(EventListenerOwnership.OwnerOf(__instance));
     }
 
+    /// <summary>
+    /// Despite its name, <c>OnEnemyDied</c> is subscribed to <c>Enemy.A_EnemyReleasedFromPool</c>
+    /// (decompiled <c>Init</c> 0x180465A20 writes static offset 0x20; dump.cs names 0x20), so it runs when
+    /// the corpse returns to the pool, after the kill's scope has closed. With <see cref="EventListenerOwnership.RunOnHost"/>
+    /// every death looked like the host's and a teammate's copy never fired. The call is scoped to the
+    /// noted killer so the souls are shared as theirs.
+    /// </summary>
     [HarmonyPatch(typeof(ItemSoulHarvester))]
     internal static class ItemSoulHarvesterListenerPatches
     {
+        private static readonly ITrackerService trackerService = Plugin.Services.GetService<ITrackerService>();
+
         [HarmonyPrefix]
         [HarmonyPatch("OnEnemyDied")]
-        public static bool Prefix(ItemSoulHarvester __instance)
-            => EventListenerOwnership.RunOnHost(EventListenerOwnership.OwnerOf(__instance));
+        public static bool Prefix(ItemSoulHarvester __instance, Enemy enemy, out uint? __state)
+        {
+            __state = null;
+            if (!EventListenerOwnership.RunOnHostForKill(EventListenerOwnership.OwnerOf(__instance), enemy, out var killer))
+            {
+                return false;
+            }
+
+            if (killer.HasValue && trackerService.GetCurrentPlayerId() == null)
+            {
+                trackerService.SetCurrentPlayerId(killer.Value);
+                __state = killer;
+            }
+
+            return true;
+        }
+
+        [HarmonyFinalizer]
+        [HarmonyPatch("OnEnemyDied")]
+        public static void Finalizer(uint? __state)
+        {
+            if (__state.HasValue)
+            {
+                trackerService.UnsetCurrentPlayerId();
+            }
+        }
     }
 
     [HarmonyPatch(typeof(PassiveAbilityZooma))]

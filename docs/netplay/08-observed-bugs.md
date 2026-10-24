@@ -2960,7 +2960,7 @@ outside a hit. Bosses only, and from the interpolator only on an actual change.
 fight, so some damage reached the boss, but the log cannot say whose.
 
 
-## OB-25 — `Look rotation viewing vector is zero` floods the client log while the host fires rockets — CONFIRMED, **cosmetic; parked for a design pass**
+## OB-25 — `Look rotation viewing vector is zero` floods the client log while the host fires rockets — **FIXED 2026-10-24, confirmed in play**
 
 **What it is.** A Unity warning, not an error: something called `Quaternion.LookRotation` with a
 zero-length direction. Unity returns the identity rotation and carries on, so at worst a projectile
@@ -3030,6 +3030,68 @@ The 2026-10-22 run still logged **15,080** of these on the client, about a third
 Either some client rockets carry no `ownerId`, or another `LookRotation` call is logging. Next step:
 one run with `[Diagnostics] LogUnityStackTraces = true` and `LogUnityMessageStackTraces = true` on the
 client; its `Player.log` then names the caller.
+
+### 2026-10-23 — stack trace captured; root cause found and fixed, not yet run in game
+
+The client's `Player.log` from the 2026-10-22 run gives one stack for **all 15,080**:
+`Quaternion.LookRotation(Vector3)` ← `Rocket.StepMovement()` ← `Rocket.FixedUpdate()`. So received
+rockets **do** run the game's flight on the client, although `MyFixedUpdate_Prefix` should skip any
+rocket tagged with `ownerId`, and clients never tick weapons (`WeaponInventory.Tick_Prefix`). The host
+logged 9 all run: simulation alone rarely yields a zero direction; simulation plus the interpolator's
+teleports does. Decompiled `ProjectileRocket.TryInit` (0x1804F0C10) reuses its child rocket (field
+0x68), so the tag is not lost to a swapped child.
+
+**Root cause (CONFIRMED by decompiling the two libraries, not yet in game):** the tag lives on a
+managed wrapper that nothing keeps alive.
+
+- MonoMod `DynamicData.For` stores data in a `ConditionalWeakTable<object, …>`, keyed by the
+  managed object's reference identity (ilspy of the game's `MonoMod.Utils.dll`).
+- `Il2CppObjectPool.Get` caches wrappers for non-injected types in a
+  `ConcurrentDictionary<IntPtr, WeakReference<Il2CppObjectBase>>`; once the weak target is collected
+  it builds a new wrapper for the same native pointer (ilspy of `Il2CppInterop.Runtime.dll`).
+- `SynchronizationService` tags `rocketProjectileInstance.rocket`, a wrapper read once and dropped.
+  The interpolator holds the parent `ProjectileRocket`, never the child. After the next GC, the
+  `__instance` Harmony passes to `MyFixedUpdate_Prefix` is a fresh, untagged wrapper, so the prefix
+  lets the game fly the rocket while the interpolator teleports it.
+
+That makes the miss depend on GC timing, which fits a spam that came and went; the link to which way
+the player faced is most likely coincidence.
+
+Fix: `RocketPatches` keeps received rockets in a `HashSet<int>` of `GetInstanceID()`, which belongs to
+the native object, filled at the spawn site and cleared with the other per-session state in
+`NetworkHandler`. The prefixes check it first and the `DynamicData` tag second. The earlier
+`GetMovementDirection` stopgap was dropped as no longer needed.
+
+**2026-10-24 playtest:** the spam is gone on Player2, but so were rocket explosions: the client now
+always skips `Rocket.ProjectileDone`, the only place they are drawn, and before the fix they showed
+only because the tag was lost. `ProjectileInterpolator.PlayRocketExplosion` now draws one when it
+removes a received rocket. Not yet run in game.
+
+The second 2026-10-24 test did not exercise it: Player2's install still had the previous DLL (see
+OB-56). A `[rocket] Drew the first explosion for a received rocket.` line now confirms the path ran.
+
+**Third 2026-10-24 test:** Player2 again ran the old DLL (same hash as the 2026-10-23 21:38 build; no
+`[item-fx]` line in its log while the host logged one every 10 s), so the client explosion was still
+untested. The path it relies on is confirmed by decompiling: the host's `Rocket.ProjectileDone` draws
+the explosion, then invokes `A_ProjectileDone`; `ProjectileRocket.Awake` (0x1804F0A10) subscribes
+`OnRocketDone` (0x18044C360, folded with `ProjectileHoming.DestroySelf`) to it, which calls
+`ProjectileBase.ProjectileDone`, the patch that sends `ProjectileDone`. `ProjectileRocket`'s
+`MyFixedUpdate`, `MyUpdate`, `StepMovement` and `FindMovementDirection` are the shared empty stub
+0x1803321E0, so the parent ends only through its child. The client therefore receives one
+`ProjectileDone` per rocket, and `ProjectileInterpolator` draws the explosion when it removes it.
+
+**Confirmed in play, 2026-10-24 (fourth test, both installs on the same build):** rocket explosions show
+on Player2, whose log has `[rocket] Drew the first explosion for a received rocket.` and no
+`Look rotation` warnings over two stages. The host logged two, both in the menu before the run.
+Local test, 0% loss.
+
+**Same hazard elsewhere, not fixed:** every `DynamicData` tag on a game object is lost the same way
+if nothing holds its wrapper. A dictionary holding a *different* wrapper does not help: on clients,
+`OnReceivedSpawnedProjectile` tags the `ProjectileBase` component but registers its `GameObject` with
+the interpolator, so the `netplayId` that `ProjectileBase.ProjectileDone_Postfix` checks is exposed
+too. The likely symptom is a received weapon projectile ending early on the client (UNVERIFIED: not
+seen in logs). Interactables tagged on `gameObject` and enemies tagged for `targetId` need the same
+check before relying on their tags.
 
 ### 2026-10-19 — decompiled: the caller is `Rocket.StepMovement`
 
@@ -4837,7 +4899,7 @@ exit and looked up object 0. In shared experience that used to pause the receivi
 barrier on every final-boss exit; it now returns. The final-portal lookup also threw instead of
 warning when no portal existed.
 
-## OB-56 — Item visuals drawn on one machine only; a teammate's Soul Harvester never fired — **PARTLY FIXED 2026-10-23, not yet confirmed in play**
+## OB-56 — Item visuals drawn on one machine only; a teammate's Soul Harvester never fired — **family 1 FIXED, confirmed in play 2026-10-24; families 2 to 4 open**
 
 **Seen:** 2026-10-22, the client could not see the Soul Harvester "red ghosts" or Energy Core orbs,
 although both items worked (their end-screen damage panels list them).
@@ -4870,6 +4932,52 @@ damage (prefix-false). Homing targets are picked locally, so copies can diverge 
 together with OB-39's `RunOnHost` a teammate's Soul Harvester never fired on the host. Removed, with
 its `itemProcs` counter. The 2026-10-22 panels showed 36.9M for the host's copy and 542K for the
 client's.
+
+**2026-10-24 playtest:** Energy Core and Ghost/Bob copies showed on Player2; Soul Harvester showed
+nowhere, and the client's end screen had no SoulHarvester row. The host sent no
+`ItemProjectilesSpawned` at all, so the teammate's copy still never fired. **Cause, CONFIRMED by
+decompiling:** `ItemSoulHarvester.Init` (0x180465A20) subscribes `OnEnemyDied` to static offset 0x20
+of `Enemy`, which dump.cs names `A_EnemyReleasedFromPool`, not `A_EnemyDied` (0x8, used by Borgor,
+Plague and Blood Magic). It fires when the corpse returns to the pool, after the kill's tracker scope
+has closed, so `RunOnHost` saw every death as the host's. `OnEnemyDied` itself has no chance roll:
+2 souls (`numProjectiles`, ctor) per release.
+
+**Fix, not yet run in game:** the host notes the killer by enemy instance id in the `Enemy.EnemyDied`
+prefixes (`EventListenerOwnership.NoteKiller`). The Soul Harvester prefix checks that killer
+(`RunOnHostForKill`) and scopes the call to them, so the `ItemProjectile.Set` postfix shares the souls
+under the right owner. An enemy released without a recorded death keeps the old rule.
+
+**2026-10-24 second playtest, souls and explosions still missing.** Two findings:
+
+1. **Player2 ran the old build.** `D:\Games\Megabonk` still had the 2026-10-23 21:38 DLL (no
+   `NoteKiller`, no `PlayRocketExplosion`); only the Steam install had the new one. The Debug auto-copy
+   goes to `MegabonkPath` only, so a second local install must be updated by hand.
+2. **A teammate's items went dead on the host from stage 2 (CONFIRMED by decompiling).**
+   `NetPlayer.Destroy` called `inventory.Cleanup()`. A stage change destroys the NetPlayer, yet the host
+   keeps that `PlayerInventory` in `playerInventories` and hands it to the next NetPlayer without `Init`.
+   `ItemInventory.Cleanup` (0x180442570) calls each item's `Cleanup` (vtable +0x188, slot 5 assuming the
+   usual 0x138 base) and clears `itemsWithOnHitProcs`; `ItemSoulHarvester.Cleanup` (0x180465770) removes
+   itself from `Enemy` static 0x20. So from stage 2 every static listener and on-hit proc of a teammate's
+   items stopped on the host, not only Soul Harvester. Stage changes themselves do not clean the local
+   inventory: `PlayerInventory.Cleanup` (0x1804E02A0) is called only from `MapController.RestartRun`,
+   `StartNewMap` and `TryCleanupInventory`. The rebuild path in `PlayerManagerService` (Destroy, then
+   Initialize) had the same flaw.
+
+   **Fix, not yet run in game:** the NetPlayer skips the cleanup while the inventory is still the kept one
+   (`IsKeptInventory`); `Disconnect` now cleans it when it drops it, and the session reset already did.
+
+The host did spawn and send souls in stage 1 of this test. Reading that from `[bw]` needs care:
+`BandwidthDiagnostics.Record` adds bytes x recipients but counts every call as a send, so the host's
+relays of client batches to zero other clients pull its `B/send` below one soul (31 to 49 B against
+73 B). After stage 1 the line fell out of the top-8 list. An `[item-fx]` summary (sent, drawn per kind,
+copies ended on an enemy, at most every 10 s) now makes this direct.
+
+**Confirmed in play, 2026-10-24 (fourth test, both installs on the same build):** Soul Harvester souls
+show for Player2's copy. The host's `[item-fx]` "sent" count kept rising after the stage change
+(28 at the start of stage 2, 80 by the end), so the teammate's item survives the NetPlayer rebuild.
+Counts agree across the two logs: the host sent 80 and Player2 drew 80 souls; Player2 sent 242 and the
+host drew 242 orbs. 58 of 80 soul copies and 208 of 242 orb copies ended on an enemy, as the originals
+do. Ghost/Bob was not exercised (0 drawn). Local test, 0% loss.
 
 **Not done:** families 2 to 4. Not visuals and needing their own sync: Borgor (a host-only burger
 pickup that heals `MyPlayer`), Dragonfire's damaging firefield, Golden Shield money, Campfire and Bob's

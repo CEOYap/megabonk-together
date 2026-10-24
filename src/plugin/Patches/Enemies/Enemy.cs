@@ -116,6 +116,8 @@ namespace OmniBonk.Patches.Enemies
                 return;
             }
 
+            Items.EventListenerOwnership.NoteKiller(__instance);
+
             var currentTracker = trackerService.GetCurrentPlayerId();
             if (currentTracker.HasValue && currentTracker.Value != playerManagerService.GetLocalPlayer().ConnectionId) { return; }
 
@@ -150,6 +152,8 @@ namespace OmniBonk.Patches.Enemies
             {
                 return;
             }
+
+            Items.EventListenerOwnership.NoteKiller(__instance);
 
             var currentTracker = trackerService.GetCurrentPlayerId();
             if (currentTracker.HasValue && currentTracker.Value != playerManagerService.GetLocalPlayer().ConnectionId) { return; }
