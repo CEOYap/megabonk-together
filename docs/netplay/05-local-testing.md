@@ -203,6 +203,62 @@ after a hiccup, and a problem when they repeat.
 
 ---
 
+## Hands-off session (no one at the keyboard)
+
+`scripts/test/run-local-session.ps1` runs a whole two-copy session by itself: one copy is an
+**auto-host** (`[Bot] AutoHost = true` on top of `BotMode`), the other the usual follow bot.
+
+```powershell
+pwsh scripts/test/run-local-session.ps1 -Minutes 12 -StageMinutes 4 -ClientItems "SoulHarvester, EnergyCore"
+```
+
+What it does, in order:
+
+1. Builds Debug (skip with `-NoBuild`) and copies the output into **both** copies' `plugins\OmniBonk`,
+   checking the hash, so the two copies cannot run different builds.
+2. Backs up each copy's `OmniBonk.cfg` and `BepInEx.cfg` (`*.session-backup`) and writes the test
+   settings: `BotMode`, `AutoHost` (host only), `TestItems`, `PlayerName`, `UseSteamTransport = false`,
+   `CheckForUpdates = false`, `AllowSavesDuringNetplay = false`, `WriteUnityLog = true`.
+3. Starts the matchmaking server if nothing listens on port 5000.
+4. Launches both copies windowed (960×540) from their exe, host first.
+5. After `-Minutes`, closes both, restores the configs, and copies both logs plus a `summary.txt`
+   into `artifacts\local-session\<timestamp>` (gitignored).
+
+A run killed before step 5 leaves its `*.session-backup` files; the next run restores them first.
+
+**What the auto-host does** (`Scripts/Bot/BotController.AutoHost.cs`): opens a lobby through the
+Play Together button (the room code reaches the bot through the room-code file), readies, presses
+Start once `AutoHostPlayers` are in and ready, picks a random character, selects `AutoHostMap`
+(default **Desert**: the fewest obstacles, platforms and puzzles for a bot; crypt rooms and Forest
+trap it) by clicking that map's `MapEntry` button, confirms, then
+wanders the stage and uses chests and shrines like the bot. After `AutoHostStageMinutes` it opens
+the stage's portal (`InteractableBossSpawner.portal`, which the game opens when the boss dies),
+walks or teleports to it and presses interact through `BotInput`, so the stage change goes through
+the mod's normal interact sync. It logs `[bot] on stage N`, `stage time up`, `entering the portal`.
+
+**Two traps found on the first runs:**
+
+- Both copies share one Megabonk save folder (`LocalLow\Ved\Megabonk\Saves`); closing them together
+  collided on `stats.json`. Hence `AllowSavesDuringNetplay = false` for test sessions.
+- **An old `MegabonkTogether` plugin anywhere under `plugins` stops OmniBonk loading** (`Could not
+  load [OmniBonk 1.0.0] because it is incompatible with: MegabonkTogether`), by design. A build from a
+  worktree cut before the rename auto-copies one there through `MegabonkPath`. The script refuses to
+  start while one is present.
+
+**Seeing the game without a person:** `scripts/test/capture-game-windows.ps1` saves a PNG of each
+running copy (PrintWindow, so the windows need not be in front). The logs say what code ran; a
+capture shows which map the run is on, or a host pushing into a wall.
+
+**Three more traps from the first runs:**
+
+- `EndlessRun` on starts in crypt rooms, which have no boss portal; the script turns it off.
+- The map screen keeps the last map played; without `AutoHostMap` a run starts wherever the player's
+  copy last was.
+- `GetComponentsInChildren<T>(bool)` compiles against the stubs but throws `MissingMethodException`
+  in game; use `Il2CppFindHelper.RuntimeGetComponentsInChildren<T>`.
+
+What it cannot do: judge visuals, or test anything Steam-dependent (see below).
+
 ## Letting a bot die
 
 `[Bot] BotInvincible` (default `true`) controls whether a `BotMode` copy can take damage. Set it to

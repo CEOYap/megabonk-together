@@ -28,6 +28,10 @@ namespace OmniBonk.Configuration
         public static ConfigEntry<bool> BotInvincible { get; private set; }
         public static ConfigEntry<float> BotFollowDistance { get; private set; }
         public static ConfigEntry<float> BotStuckSeconds { get; private set; }
+        public static ConfigEntry<bool> AutoHost { get; private set; }
+        public static ConfigEntry<int> AutoHostPlayers { get; private set; }
+        public static ConfigEntry<float> AutoHostStageMinutes { get; private set; }
+        public static ConfigEntry<string> AutoHostMap { get; private set; }
         public static ConfigEntry<string> TestItems { get; private set; }
 #endif
         public static ConfigEntry<bool> LogEncounterPause { get; private set; }
@@ -129,6 +133,39 @@ namespace OmniBonk.Configuration
                 6f,
                 "Developer tool. Seconds without progress toward its target before the bot " +
                 "teleports next to the host."
+            );
+            AutoHost = config.Bind(
+                "Bot",
+                "AutoHost",
+                false,
+                "Developer tool, leave off for normal play. With BotMode on, this copy hosts instead " +
+                "of joining: it opens a lobby (its room code reaches BotMode copies through the " +
+                "room-code file), starts once AutoHostPlayers are in and ready, picks a character and " +
+                "the map, wanders the stage, and moves on to the next stage after AutoHostStageMinutes. " +
+                "Together with a BotMode copy, a test session needs no one at the keyboard " +
+                "(scripts/test/run-local-session.ps1). Needs a restart."
+            );
+            AutoHostPlayers = config.Bind(
+                "Bot",
+                "AutoHostPlayers",
+                2,
+                "Developer tool. With AutoHost on, how many players (the host included) must be in " +
+                "the lobby and ready before it starts."
+            );
+            AutoHostStageMinutes = config.Bind(
+                "Bot",
+                "AutoHostStageMinutes",
+                3f,
+                "Developer tool. With AutoHost on, minutes on each stage before the host opens the " +
+                "stage's portal and goes through it. 0 stays on the first stage."
+            );
+            AutoHostMap = config.Bind(
+                "Bot",
+                "AutoHostMap",
+                "Desert",
+                "Developer tool. With AutoHost on, the map it picks: Forest, Desert, Hell or Graveyard " +
+                "(the game's EMap names). Desert has the fewest obstacles and puzzles for a bot. Empty " +
+                "keeps whatever map the menu has selected."
             );
 #endif
             LogFrameTiming = config.Bind(

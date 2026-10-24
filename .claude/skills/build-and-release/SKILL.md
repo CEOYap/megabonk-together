@@ -35,6 +35,12 @@ is skipped when `GITHUB_ACTIONS` or `CI` is set.
 $env:MegabonkPath = "C:\Program Files (x86)\Steam\steamapps\common\Megabonk"
 ```
 
+The auto-copy writes into the user's real game install. **In a worktree cut before the rename,
+build with `CI=true`**: otherwise its `MegabonkTogether` build lands in `plugins/` and OmniBonk
+then refuses to load (`[BepInIncompatibility("MegabonkTogether")]`). The copy also reaches only
+the `MegabonkPath` install. For a two-copy test, `scripts/test/run-local-session.ps1` deploys to
+both and checks the hashes (CLAUDE.md, "Testing in game").
+
 ### Adding a new game or Unity DLL reference
 
 Three steps, all required:

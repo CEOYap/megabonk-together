@@ -47,7 +47,7 @@ in-game — say that plainly rather than implying coverage. The interop assembli
 `src/plugin/stripped-libs/` are signature-only stubs with no method bodies, so any behaviour
 inferred from a game method's signature is an assumption: mark it **UNVERIFIED**, as
 `docs/netplay/01-critical-fixes.md` does. Netcode bugs are mostly invisible at 0% loss — test
-at 2–5%, not on LAN.
+at 2–5%, not on LAN. A local two-copy run is possible without a person: see **Testing in game**.
 
 ## Build
 
@@ -66,6 +66,50 @@ $env:MegabonkPath = "<path-to>\steamapps\common\Megabonk"
 silently falls back to the committed `src/plugin/stripped-libs/`, which may be stale. It does
 not error. Check this first when a game type looks wrong or missing. The auto-copy is
 Debug-only and is skipped when `CI` or `GITHUB_ACTIONS` is set.
+
+## Testing in game (hands-off)
+
+Two copies of the game on this PC can play a session with no one at the keyboard: an **auto-host**
+(`[Bot] AutoHost`) and a follow bot (`[Bot] BotMode`). Both are Debug-only (`#if DEBUG`); a Release
+build has neither. Run it after a change that needs in-game evidence, before telling the user it works:
+
+```powershell
+pwsh scripts/test/run-local-session.ps1 -Minutes 12 -StageMinutes 4 -ClientItems "SoulHarvester, EnergyCore"
+```
+
+It builds Debug, copies the DLL into **both** copies and checks the hashes match, writes test
+settings over each copy's `OmniBonk.cfg`/`BepInEx.cfg` (backed up, restored at the end — and at the
+start of the next run if one was killed), starts the matchmaker if port 5000 is free, launches both
+windowed, and leaves both logs and a `summary.txt` in `artifacts\local-session\<timestamp>`. The host
+lobbies, starts, picks **Desert** (`-Map`; crypt rooms and Forest trap a bot), wanders, and takes the
+stage portal every `-StageMinutes`. Defaults: host `C:\Program Files (x86)\Steam\steamapps\common\Megabonk`,
+client `D:\Games\Megabonk` (`-HostPath`, `-ClientPath`).
+
+How to run it from a session:
+
+- **Launch it with `run_in_background`** and send output to a file in an existing folder
+  (`*> file`). A broken output pipe kills the script before it restores the user's configs.
+- **Do not poll with sleeps.** Wait on log markers with an `until grep -q …` loop, and keep any
+  Monitor filter to milestones: the `[bot] stuck` line repeats every few seconds.
+- **Check progress in the logs** (`BepInEx/LogOutput.log` in each copy): `[bot] hosting`, `joining`,
+  `selected the Desert map`, `run started`, `on stage N`, `entering the portal`; feature markers such
+  as `[item-fx] session so far` and `[rocket] Drew the first explosion`.
+- **Look at the game** when the logs are not enough: `pwsh scripts/test/capture-game-windows.ps1`
+  saves a PNG of each window (works unfocused), which you can then read.
+- **Stop early** by closing the game windows (`CloseMainWindow`); the script notices, restores the
+  configs and saves the logs. Never kill the script process itself.
+- **Do not start a session while the user is playing** — it fails fast if a copy is already running.
+
+What it cannot prove: anything at real packet loss (it runs at 0%), anything Steam-dependent, or how
+something looks — report those as not verified. Random characters mean a given weapon may not appear;
+use `-HostItems`/`-ClientItems` for items, and check the log shows the feature actually ran.
+
+**Trap:** OmniBonk refuses to load beside the old `MegabonkTogether` plugin
+(`[BepInIncompatibility]`). A Debug build from a worktree cut before the rename auto-copies one into
+`MegabonkPath`'s `plugins` folder. Build such worktrees with `CI=true`, which skips the auto-copy. The
+script refuses to start while one is present.
+
+Full detail: [`docs/netplay/05-local-testing.md`](docs/netplay/05-local-testing.md), "Hands-off session".
 
 ## Releasing
 
@@ -93,6 +137,7 @@ GitHub release.
 | Where a file goes, service and DI conventions | `csharp` | — |
 | FPS, stutter, GC | `unity`, `netcode` | [`docs/netplay/04-performance-and-gc.md`](docs/netplay/04-performance-and-gc.md) |
 | "What does the game actually do here?" | `il2cpp` | **Decompile it — see below** |
+| "Does it work in game?" | — | **Run a hands-off session — see Testing in game** |
 | Game formulas, enums, item/weapon behaviour | — | [`lukeod/megabonk_research`](https://github.com/lukeod/megabonk_research) — see below |
 
 ## Answering "what does this method actually do?"

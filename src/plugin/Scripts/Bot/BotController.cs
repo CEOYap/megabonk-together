@@ -13,9 +13,10 @@ namespace OmniBonk.Scripts.Bot
 {
     /// <summary>
     /// The test bot. Writes only to <see cref="BotInput"/>, never to sync services, so its actions
-    /// replicate like a player's. Inert unless <see cref="ModConfig.BotMode"/> is on.
+    /// replicate like a player's. Inert unless <see cref="ModConfig.BotMode"/> is on. With
+    /// <see cref="ModConfig.AutoHost"/> it hosts instead of joining (BotController.AutoHost.cs).
     /// </summary>
-    public class BotController : MonoBehaviour
+    public partial class BotController : MonoBehaviour
     {
         internal enum BotState { Idle, Joining, InLobby, Following, Detouring, Reviving, Rewarding }
 
@@ -101,7 +102,7 @@ namespace OmniBonk.Scripts.Bot
                 // An unfocused player may pause; the FPS cap leaves the PC to the owner's copy.
                 Application.runInBackground = true;
                 Application.targetFrameRate = 30;
-                Plugin.Log.LogInfo("[bot] BotMode on: runInBackground, 30 FPS cap.");
+                Plugin.Log.LogInfo($"[bot] BotMode on{(IsAutoHost ? " as auto-host" : "")}: runInBackground, 30 FPS cap.");
             }
 
             UpdateSessionState();
@@ -109,7 +110,15 @@ namespace OmniBonk.Scripts.Bot
             switch (State)
             {
                 case BotState.Idle:
-                    TryJoin();
+                    if (IsAutoHost)
+                    {
+                        TryHost();
+                    }
+                    else
+                    {
+                        TryJoin();
+                    }
+
                     break;
                 case BotState.Joining:
                 case BotState.InLobby:
@@ -242,7 +251,7 @@ namespace OmniBonk.Scripts.Bot
             if (State == BotState.InLobby && started)
             {
                 State = BotState.Following;
-                Plugin.Log.LogInfo("[bot] run started, following the host.");
+                Plugin.Log.LogInfo(IsAutoHost ? "[bot] run started, hosting." : "[bot] run started, following the host.");
             }
         }
 
@@ -260,6 +269,7 @@ namespace OmniBonk.Scripts.Bot
             EndRevive();
             BotTargets.ResetStage();
             DropTarget();
+            ResetAutoHost();
         }
 
         /// <summary>The bot's own player, or null between stages and on loading screens.</summary>
@@ -296,6 +306,7 @@ namespace OmniBonk.Scripts.Bot
                 EndDetour();
                 EndRevive();
                 BotTargets.ResetStage();
+                OnStageGone();
                 return;
             }
 
@@ -330,6 +341,12 @@ namespace OmniBonk.Scripts.Bot
 
         private void TickFollow(MyPlayer me)
         {
+            if (IsAutoHost)
+            {
+                TickHostRun(me);
+                return;
+            }
+
             RefreshOwner();
             if (!OwnerPosition.HasValue)
             {
@@ -404,6 +421,12 @@ namespace OmniBonk.Scripts.Bot
         private void TickDetour(MyPlayer me)
         {
             RefreshOwner();
+            if (IsAutoHost)
+            {
+                // The host follows no one: its own position is the anchor.
+                OwnerPosition = me.transform.position;
+            }
+
             if (!OwnerPosition.HasValue || detourTarget == null || !detourTarget.CanInteract())
             {
                 EndDetour();
@@ -686,6 +709,11 @@ namespace OmniBonk.Scripts.Bot
             }
 
             nextLobbyActionTime = Time.unscaledTime + 1f;
+
+            if (IsAutoHost && TickHostLobby())
+            {
+                return;
+            }
 
             // The ready button lives on the lobby panel; on a path without one there is nothing to press.
             // Needs the local player: pressing earlier only logs "Cannot toggle readiness".

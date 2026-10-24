@@ -14,7 +14,7 @@ how each fix was reasoned out, and what the transport layer looks like.
 | [`netplay/01-critical-fixes.md`](netplay/01-critical-fixes.md) | **Start here.** Ranked, implementable fix list with root cause, patch, and test for each |
 | [`netplay/02-delivery-method-reference.md`](netplay/02-delivery-method-reference.md) | Reliability policy, the full current message→channel map, and how to classify a new message |
 | [`netplay/04-performance-and-gc.md`](netplay/04-performance-and-gc.md) | Measured allocation sites, hot paths, and the ordered list of what to fix for 400–600 enemy density |
-| [`netplay/05-local-testing.md`](netplay/05-local-testing.md) | Two netplay clients on one PC and one Steam account — and what that setup cannot prove |
+| [`netplay/05-local-testing.md`](netplay/05-local-testing.md) | Two netplay clients on one PC and one Steam account, including the hands-off auto-host session (`scripts/test/run-local-session.ps1`) — and what that setup cannot prove |
 | [`netplay/07-shared-experience-audit.md`](netplay/07-shared-experience-audit.md) | The shared-experience pause/reward barrier: protocol, its holes, and the reported softlock issues |
 | [`netplay/08-observed-bugs.md`](netplay/08-observed-bugs.md) | Backlog of bugs seen in play and not yet fixed: Aegis orbit count, Ghost item summons, and the two encounter-barrier symptoms from the 2026-08-06 session |
 | [`netplay/09-performance-audit.md`](netplay/09-performance-audit.md) | Second pass on per-frame cost: the three globally patched Unity properties, the per-enemy interpolator Update, and what a profiler capture would settle |

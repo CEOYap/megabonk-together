@@ -56,7 +56,9 @@ here that nobody read.
    `Plugin.Log.LogInfo` **only outside hot paths** and removed before merge. Diagnostic logging left in a
    hot path has cost a release a performance pass before.
 5. **Verify before claiming.** State what you actually observed. If a fix wasn't run in-game,
-   say it's untested.
+   say it's untested. A local two-copy run needs no person:
+   `scripts/test/run-local-session.ps1` (CLAUDE.md, "Testing in game"). It runs at 0% loss and
+   cannot judge visuals, so it does not verify those.
 
 ## Build failures
 

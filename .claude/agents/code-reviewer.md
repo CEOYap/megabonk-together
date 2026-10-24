@@ -86,7 +86,9 @@ Policy: `docs/netplay/02-delivery-method-reference.md`. Reliability is a correct
 ## Verification claims
 
 The codebase has no automated tests. Treat any claim that a change "works" as unverified unless
-it was run in-game. Say so plainly rather than implying coverage that doesn't exist.
+it was run in-game. Say so plainly rather than implying coverage that doesn't exist. A hands-off
+local session (`scripts/test/run-local-session.ps1`) counts as in-game evidence only for what its
+logs show ran, at 0% loss; a feature whose marker is absent from the logs was not exercised.
 
 Behaviour inferred from a proxy signature is an assumption, not a fact — flag it **UNVERIFIED**
 and point at `docs/reverse-engineering/00-decompilation-guide.md`.
