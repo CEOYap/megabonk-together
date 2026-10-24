@@ -131,6 +131,9 @@ namespace OmniBonk.Services
                 case FlaskExploded flaskExploded:
                     EventManager.OnFlaskExploded(flaskExploded);
                     break;
+                case EnemyHitEffects enemyHitEffects:
+                    EventManager.OnEnemyHitEffects(enemyHitEffects);
+                    break;
                 case SpawnedEnemySpecialAttack spawnedEnemySpecialAttack:
                     EventManager.OnSpawnedEnemySpecialAttack(spawnedEnemySpecialAttack);
                     break;

@@ -39,6 +39,7 @@ namespace OmniBonk.Services
         private static event Action<ItemProjectilesSpawned> ItemProjectilesSpawnedEvents;
         private static event Action<MineExploded> MineExplodedEvents;
         private static event Action<FlaskExploded> FlaskExplodedEvents;
+        private static event Action<EnemyHitEffects> EnemyHitEffectsEvents;
         private static event Action<SpawnedEnemySpecialAttack> SpawnedEnemySpecialAttackEvents;
         private static event Action<StartingChargingPylon> StartingChargingPylonEvents;
         private static event Action<StoppingChargingPylon> StoppingChargingPylonEvents;
@@ -478,6 +479,20 @@ namespace OmniBonk.Services
             MainThreadDispatcher.Enqueue(() =>
             {
                 FlaskExplodedEvents?.Invoke(exploded);
+            });
+        }
+
+        /// <summary>Clients. The host's weapon hit sparks; see <see cref="EnemyHitEffects"/>.</summary>
+        public static void SubscribeEnemyHitEffectsEvents(Action<EnemyHitEffects> action)
+        {
+            EnemyHitEffectsEvents += action;
+        }
+
+        public static void OnEnemyHitEffects(EnemyHitEffects effects)
+        {
+            MainThreadDispatcher.Enqueue(() =>
+            {
+                EnemyHitEffectsEvents?.Invoke(effects);
             });
         }
 

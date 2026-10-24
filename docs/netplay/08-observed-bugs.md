@@ -5177,3 +5177,77 @@ showed purple flask bursts at the host's character.
 Not covered: packet loss; whether the client's explosion looks the same as the host's (stills
 only); Bluetooth's missing hit sparks on clients (handover 21, item 2); the 10 s effect lifetime
 (UNVERIFIED: the particle length was not read).
+
+## OB-60 — Weapon hit sparks never drawn on clients, or drawn on the client's own clock — **FIXED 2026-10-25, confirmed in a hands-off run (0% loss)**
+
+Found by the audit in `docs/reverse-engineering/02-item-visual-audit.md` ("Weapon projectiles with
+rocket- or mine-like problems", part 1). Not reported in play.
+
+**Call graph (decompiled and xref'd, CONFIRMED in code):**
+
+- Every weapon spark goes through `EffectManager.EnemyHitEffect(hitPos, moveDir, hitEnemy, EWeapon,
+  weaponHitEffect, useSfx)` (0x1804FC150). It maps the weapon to a source string (a static
+  `Dictionary<EWeapon, string>` on `EffectManager`) and calls the string overload (0x1804FBE40). That
+  takes an `AttackHit` from `PoolManager.GetProjectileHit` (0x18040A700), puts it at `hitPos` facing
+  -moveDir (identity for a zero moveDir) and calls `AttackHit.Play` (0x1804DA9B0: particle system and
+  `RandomSfx` only).
+- Pools are keyed by source. `weaponHitEffect` only seeds a new pool, and null seeds it with
+  `powerupPrefab`.
+- The 15 callers of the `EWeapon` overload:
+  - `WeaponAttack.ProjectileHit` (0x1804504D0), which passes `prefabHit` (0x30) and has 18 callers
+    of its own.
+  - Dexecutioner `SpawnEffect`, which also passes `prefabHit`.
+  - These pass null: Aegis `UseShield`, `CombatAura`, `IceAura`, `DamageZone`, Firefield /
+    Axe / Bananarang `TryPopDamage`, Black Hole `CheckDamage`, Dragon's Breath, `LaserBeamAttack`,
+    `RotatingProjectiles` (Chunkers).
+  - `XpDamager`, which passes `EWeapon.None`.
+- Items call the string overload directly (Cactus, Electric Plug, Holy Book, Mirror, `PlayerHealth.Retaliate`,
+  `ItemProjectile.ProjectileDone`); those are item visual family 3, not covered here.
+- On clients:
+  - Every weapon projectile hit path and Aura are host-only.
+  - Aegis and the laser run on their owner's machine only, and the host does not run a client's.
+  - Frostwalker, Chunkers, Dragon's Breath, the melee, Scythe and Shotgun zones, Sniper, Whirlwind and
+    Dice still run as local copies, damage blocked, and drew sparks at their own collisions.
+
+So a client drew none of the host-only sparks, and drew local ones that did not match the host's
+hits.
+
+**First fix, replaced the same day:** drawing one spark per weapon entry of `EnemyDamagedBatch`. It
+reached only 72-86% of the host's count, guessed at debuff ticks, and missed every spark that
+bypasses `ProjectileHit` (the host counter counted `ProjectileHit` only).
+
+**Fix (protocol 8, tag 88 `EnemyHitEffects`, host to all clients, `ReliableUnordered`):**
+
+- `EnemyHitEffectPatches` (prefix on the `EWeapon` overload, enemy hits only):
+  - **Host:** queues each call: weapon, quantized position, direction x127, and whether a prefab was
+    passed and whether it used sfx. `NetworkHandler` flushes the queue once per enemy tick, and a
+    batch also goes out when it reaches 120 entries.
+  - **Client:** refuses every local call except replays and calls inside the local player's own Aegis
+    `FixedUpdate` or laser `HitEnemy` / `StopLaser`.
+- `WeaponHitSparks.OnReceived` replays each entry through the same overload, passing the attack's
+  `prefabHit` where the host passed one, so the same pool is used.
+- `[hit-fx]` line: host sparks sent; client sparks drawn from the host, local ones refused, own
+  Aegis/laser ones kept.
+
+**Hands-off run, 2026-10-25** (9 min, Desert, one stage, host `Axe, Katana, Aura, Frostwalker`,
+client `Aegis, SpaceNoodle`). Each side's first `[hit-fx]` line after the same `[desync]` digest:
+
+| Digest | #13 | #25 | #37 | #49 | #61 | #73 | #85 | #97 |
+|---|---|---|---|---|---|---|---|---|
+| Host sent | 27 | 52 | 119 | 150 | 473 | 590 | 765 | 1317 |
+| Client drew | 27 | 52 | 119 | 150 | 473 | 589 | 765 | 1317 |
+| Client refused (local) | 12 | 33 | 76 | 96 | 257 | 319 | 403 | 620 |
+| Client kept (own Aegis/laser) | 4 | 8 | 12 | 13 | 41 | 51 | 60 | 98 |
+
+Exact at seven of eight digests. #73 is one apart, which is log timing, since #85 is exact again.
+The 620 refused are sparks the client used to draw on its own clock. No mod errors, no
+`Look rotation` warnings, no exceptions in `Player.log`. Two client warnings at connect time ("Not
+connected to host", "Disconnected peer 0 not found") came from a dropped first P2P attempt before
+the lobby, which the retry fixed; not from this change.
+
+Not covered:
+- Packet loss: a reliable channel, so sparks arrive late rather than never.
+- How the sparks look: not looked at.
+- Other clients' Aegis and laser sparks: owner-run, so the host never draws them, and a third
+  player still sees none.
+- Item sparks: string overload, item family 3.

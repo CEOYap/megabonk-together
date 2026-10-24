@@ -18,8 +18,10 @@
         /// explosion (OB-58).</para>
         /// <para>7: tag 87 <c>FlaskExploded</c>. A protocol-6 client would never draw a host Poison Flask's
         /// explosion, since clients no longer explode received flasks themselves.</para>
+        /// <para>8: tag 88 <c>EnemyHitEffects</c>. A protocol-7 client would draw no weapon hit sparks,
+        /// since clients no longer draw their own (OB-60).</para>
         /// </summary>
-        public const int Version = 7;
+        public const int Version = 8;
 
         /// <summary>Prefixed: lobby data is a flat namespace shared with the base game.</summary>
         public const string VersionKey = "mt_protocol";

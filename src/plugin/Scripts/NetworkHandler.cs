@@ -202,6 +202,7 @@ namespace OmniBonk.Scripts
 
                         // Hits before the enemy delta, so clients replay damage before the HP that includes it.
                         synchronizationService.FlushEnemyDamage();
+                        Helpers.WeaponHitSparks.Flush();
                         stateBroadcastService.UpdateEnemies();
                     }
 
@@ -276,6 +277,7 @@ namespace OmniBonk.Scripts
             Patches.Projectiles.RocketPatches.Reset();
             Patches.Projectiles.ProjectileBasePatches.ResetReceived();
             Helpers.ExplosionDiagnostics.Reset();
+            Helpers.WeaponHitSparks.Reset();
             Patches.Items.EventListenerOwnership.ResetKillers();
             isHost = false;
 

@@ -364,9 +364,9 @@ sizes.
 
 ### Fix options, not done
 
-1. **Hit effects without a protocol change:** a client already receives every host hit through
-   `EnemyDamagedBatch` (weapon damage source and enemy id), so it could call that weapon's
-   `ProjectileHit` at the enemy. Covers all of category 1 at once.
+1. **Hit effects:** done 2026-10-25 (OB-60, tag 88 `EnemyHitEffects`, protocol 8). The host sends
+   every weapon `EnemyHitEffect` call it draws (15 callers, see OB-60), clients replay exactly those
+   and refuse their own, except their own Aegis and laser. Counts matched hands-off.
 2. **Poison Flask and Bluetooth:** done 2026-10-25 (OB-59, tag 87 `FlaskExploded`, protocol 7).
    Clients skip the local trigger on received copies and play the host's flask explosions; counts
    matched hands-off.
