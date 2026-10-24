@@ -150,6 +150,24 @@ namespace MegabonkTogether.Patches.Items
             return owner.HasValue && owner == LocalId;
         }
 
+        /// <summary>
+        /// OB-57. A listener on one of the local player's own events (evade, damage taken): only the
+        /// local player's passive runs. There is no hit to attribute, so this does not go through
+        /// <see cref="Actor"/>, which is null on a client outside a replayed hit.
+        /// </summary>
+        internal static bool RunForLocalPlayerEvent(PassiveAbility passive)
+            => !InSession || IsLocalPassive(passive);
+
+        /// <summary>
+        /// The local player's own passive, by pointer. Not via <see cref="LocalId"/>: a null id
+        /// would turn off the owner's own passive rather than only the teammates' copies.
+        /// </summary>
+        internal static bool IsLocalPassive(PassiveAbility passive)
+        {
+            var local = GameManager.Instance?.player?.inventory?.passiveAbility;
+            return local != null && passive != null && local.Pointer == passive.Pointer;
+        }
+
         internal static bool IsLocalHealth(PlayerHealth health)
         {
             var local = GameManager.Instance?.player?.inventory?.playerHealth;
@@ -270,5 +288,38 @@ namespace MegabonkTogether.Patches.Items
         [HarmonyPatch("OnEnemyDied")]
         public static bool Prefix(WeaponPassiveBloodMagic __instance)
             => EventListenerOwnership.RunOnHost(EventListenerOwnership.OwnerOf(__instance));
+    }
+
+    /// <summary>
+    /// OB-57. <c>OnEvade</c> (VA 0x18047D210) is on the static <c>PlayerHealth.A_Evaded</c>, so a
+    /// teammate's copy executed enemies on this machine's evades. It damages the evaded enemy with
+    /// its current HP (a boss: a wave-scaled amount) through <c>DamageFromPlayerOther</c>, source
+    /// <c>"Shadowstep"</c>. The owner's own execute reaches the host through
+    /// <c>EnemyPatch.AllowedDamageSource</c>.
+    /// </summary>
+    [HarmonyPatch(typeof(PassiveAbilityShadowstep))]
+    internal static class PassiveAbilityShadowstepListenerPatches
+    {
+        [HarmonyPrefix]
+        [HarmonyPatch("OnEvade")]
+        public static bool Prefix(PassiveAbilityShadowstep __instance)
+            => EventListenerOwnership.RunForLocalPlayerEvent(__instance);
+    }
+
+    /// <summary>
+    /// OB-57. <c>OnCheckStopDamage</c> (VA 0x180477FA0) is on the static
+    /// <c>PlayerHealth.A_CheckStopDamage</c>. When the shared static cooldown is up it zeroes the
+    /// local player's damage and calls <c>UseFlex</c> (0x180478340): that copy gains a stack and a
+    /// damage stat, hits enemies around the local player (source <c>"Flex"</c>), and starts the
+    /// cooldown for every copy. So a teammate's copy blocked our hits and took the cooldown from
+    /// our own Flex.
+    /// </summary>
+    [HarmonyPatch(typeof(PassiveAbilityFlex))]
+    internal static class PassiveAbilityFlexListenerPatches
+    {
+        [HarmonyPrefix]
+        [HarmonyPatch("OnCheckStopDamage")]
+        public static bool Prefix(PassiveAbilityFlex __instance)
+            => EventListenerOwnership.RunForLocalPlayerEvent(__instance);
     }
 }

@@ -21,7 +21,10 @@ namespace MegabonkTogether.Patches.Enemies
         private static readonly IEnemyManagerService enemyManagerService = Plugin.Services.GetService<IEnemyManagerService>();
         private static readonly ITrackerService trackerService = Plugin.Services.GetService<ITrackerService>();
 
-        public static readonly HashSet<string> AllowedDamageSource = new(Enum.GetNames(typeof(EItem)));
+        // OB-57. Plus the passives whose hit only the owner's game can make (it reacts to the
+        // owner's own evade or damage taken), so a client's must reach the host. Their sources are
+        // constants in the passive (decompiled ctors), not EItem names.
+        public static readonly HashSet<string> AllowedDamageSource = new(Enum.GetNames(typeof(EItem))) { "Shadowstep", "Flex" };
 
         public static readonly DistanceThrottler EnemiesDistanceThrottler = new();
 

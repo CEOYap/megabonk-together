@@ -4786,3 +4786,64 @@ retried until given up.
   been overwritten by another copy of the game, so there was no stack trace.
 
 **UNVERIFIED, not run in-game.**
+
+## OB-57 — A teammate's Shadowstep and Flex reacted to the local player's evades and hits; a client's own were dropped — **FIXED 2026-10-24, UNVERIFIED, not run in-game**
+
+Found by the `Init` audit in `docs/reverse-engineering/02-item-visual-audit.md` ("Same mechanisms
+as Rocket, Soul Harvester and Energy Core", part 1). Not seen in play. Every machine holds a live
+copy of each teammate's passive (OB-14), and both passives subscribe to static `PlayerHealth`
+events that fire for this machine's player only. OB-39 gated the enemy-event listeners. It did
+not gate these.
+
+**Shadowstep.** `OnEvade` (VA `0x18047D210`, decompiled) is on `PlayerHealth.A_Evaded`. It damages
+the evaded enemy through `DamageFromPlayerOther`, source `"Shadowstep"`. The damage is the enemy's
+current HP, or a wave-scaled amount for a boss, so it is an execute. `isExecute` is set, but
+`Enemy.Damage` (`0x1804AC7B0`) does not read it.
+
+- On the host, a teammate's copy executed enemies on the host's evades.
+- On a client, all copies (the owner's own too) were lost. `Enemy.Damage` is host-only, and
+  `Damage_Postfix` forwards only sources in `AllowedDamageSource`. That set held only `EItem`
+  names, and `"Shadowstep"` is not one.
+
+**Flex.** `OnCheckStopDamage` (`0x180477FA0`) is on `PlayerHealth.A_CheckStopDamage`. It does nothing
+until the cooldown is up. The cooldown is a **static** field, `flexReadyAtTime`, shared by every
+copy. When the cooldown is up, it zeroes the local player's damage (`BossDamage` is only scaled
+down; a `BypassAll` hit is not blocked unless it is from Kevin or `HealthRegen`), and calls `UseFlex`
+(`0x180478340`). `UseFlex` does these things:
+
+- starts the shared cooldown;
+- gives that copy a stack and a damage stat (`SetStat`);
+- hits and debuffs the enemies within its radius of the local player, source `"Flex"`;
+- shows the popup and plays the sound.
+
+So a teammate's Flex blocked the local player's hits, and it could take the cooldown before our
+own copy did. On a client, the owner's own Flex hits were lost in the same way as Shadowstep.
+
+**Fixed.**
+
+- `PassiveAbilityShadowstep.OnEvade` and `PassiveAbilityFlex.OnCheckStopDamage` run only for the
+  local player's own passive (`EventListenerOwnership.RunForLocalPlayerEvent`), compared by
+  pointer. This does not use the tracker's attacker: these events are not hits, and on a client
+  the attacker is null outside a replayed hit.
+- `EnemyPatch.AllowedDamageSource` also holds `"Shadowstep"` and `"Flex"`. A client's own hit now
+  goes to the host, which applies it in the client's tracker scope and runs the client's on-hit
+  items through `PostDamage`, as for a forwarded item hit (OB-42).
+
+**Limits.**
+
+- A client's Shadowstep sends the enemy HP that the client sees. Client HP follows the host's
+  replays, so it is usually equal or higher, and the execute still kills. If the client HP is
+  lower, the enemy can live.
+- `isExecute` is not on the wire, so the host may draw it as a normal damage number.
+- Flex's debuff (`AddDebuff(8, …)`) and knockback on a client are not looked at here.
+- `A_Evaded` and `A_CheckStopDamage` carry no `PlayerHealth`. If the host's teammate
+  `PlayerHealth` copies also raise them, that is a separate leak, the same as for Mirror and
+  Phantom Shroud (OB-43).
+
+**To confirm in play** (at 2–5 % loss):
+
+1. A client with Shadowstep evades: the enemy dies on every peer, and the client's damage row
+   shows Shadowstep.
+2. The host evades while a client has Shadowstep: no execute.
+3. A teammate has Flex: the host is not protected by it.
+4. A client's own Flex blocks a hit and damages nearby enemies on the host.
