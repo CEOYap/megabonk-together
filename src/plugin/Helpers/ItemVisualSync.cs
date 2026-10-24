@@ -95,6 +95,10 @@ namespace OmniBonk.Helpers
         /// <summary>Replayed pooled objects, by instance id, so their damage paths stay off.</summary>
         private static readonly HashSet<int> replayedObjects = new();
 
+        /// <summary>Replayed pooled objects per pool, oldest first, for recycling when a pool is full.</summary>
+        private static readonly Dictionary<ItemVisualPool, Queue<GameObject>> replayedByPool = new();
+        private static int recycled;
+
         private static readonly Dictionary<(uint Owner, ItemPlayerFx Fx), EffectPlayer> playerFx = new();
 
         private static uint nextRocketId;
@@ -490,21 +494,22 @@ namespace OmniBonk.Helpers
             {
                 case ItemVisualKind.Pooled:
                     {
-                        // A pooled object destroyed while inactive comes back as a dead entry, which Get
-                        // drops; the items guard against it too, so try a few.
-                        var pool = GetPool((ItemVisualPool)e.Sub);
-                        GameObject obj = null;
-                        for (var attempt = 0; pool != null && obj == null && attempt < 4; attempt++)
-                        {
-                            obj = pool.Get();
-                        }
-
+                        var kind = (ItemVisualPool)e.Sub;
+                        var pool = GetPool(kind);
+                        var obj = TakeFromPool(kind, pool);
                         if (obj == null)
                         {
                             return false;
                         }
 
                         replayedObjects.Add(obj.GetInstanceID());
+                        if (!replayedByPool.TryGetValue(kind, out var queue))
+                        {
+                            queue = new Queue<GameObject>();
+                            replayedByPool[kind] = queue;
+                        }
+
+                        queue.Enqueue(obj);
                         obj.transform.SetPositionAndRotation(pos, ToRotation(e));
                         obj.transform.localScale = new Vector3(e.Sx, e.Sy, e.Sz);
                         return true;
@@ -785,6 +790,53 @@ namespace OmniBonk.Helpers
             return true;
         }
 
+        /// <summary>
+        /// Decompiled: <c>CreatePooledItem</c> (0x180409800) and <c>CreatePooledItemTimeout</c>
+        /// (0x1804096E0) return null once a pool holds <c>maxSize</c> objects, and <c>ReturnToPool</c>
+        /// (<c>OnEnable</c> 0x180522710, <c>Update</c> 0x180522820) times its release on <c>MyTime</c>,
+        /// which stops while this player is in a reward screen. So replays could fill a pool the host's
+        /// running clock keeps draining (488 of 685 missed in one hands-off run). A dead entry (destroyed
+        /// while inactive) also comes back as null. When the pool gives nothing, the oldest copy replayed
+        /// into it is released and the pool asked again.
+        /// </summary>
+        private static GameObject TakeFromPool(ItemVisualPool kind, UnityEngine.Pool.ObjectPool<GameObject> pool)
+        {
+            if (pool == null)
+            {
+                return null;
+            }
+
+            for (var attempt = 0; attempt < 4; attempt++)
+            {
+                var obj = pool.Get();
+                if (obj != null)
+                {
+                    return obj;
+                }
+            }
+
+            if (!replayedByPool.TryGetValue(kind, out var queue))
+            {
+                return null;
+            }
+
+            while (queue.Count > 0)
+            {
+                var oldest = queue.Dequeue();
+                // Only a copy still out: one that went back may since have been taken by this machine's own item.
+                if (oldest == null || !oldest.activeSelf || !replayedObjects.Contains(oldest.GetInstanceID()))
+                {
+                    continue;
+                }
+
+                pool.Release(oldest);
+                recycled++;
+                return pool.Get();
+            }
+
+            return null;
+        }
+
         private static UnityEngine.Pool.ObjectPool<GameObject> GetPool(ItemVisualPool pool)
         {
             var pm = PoolManager.Instance;
@@ -837,6 +889,8 @@ namespace OmniBonk.Helpers
             poolSuspend = 0;
             taken.Clear();
             replayedObjects.Clear();
+            replayedByPool.Clear();
+            recycled = 0;
             playerFx.Clear();
             sentRockets.Clear();
             rocketCopies.Clear();
@@ -899,7 +953,7 @@ namespace OmniBonk.Helpers
             Plugin.Log.LogInfo(
                 $"[item-vfx] session so far: sent pooled {sent[1]}, sparks {sent[2]}, zap {sent[3]}, mirror {sent[4]}, player {sent[5]}, " +
                 $"rockets {sent[6]}/{sent[7]}; drew pooled {drawn[1]}, sparks {drawn[2]}, zap {drawn[3]}, mirror {drawn[4]}, " +
-                $"player {drawn[5]}, rockets {drawn[6]}/{drawn[7]}; missed {Describe(missed)}. " +
+                $"player {drawn[5]}, rockets {drawn[6]}/{drawn[7]}; missed {Describe(missed)}, recycled {recycled}. " +
                 $"Sent/drew firefield {sent[8]}/{drawn[8]}, borgor {sent[9]}/{drawn[9]} eaten {sent[10]}/{drawn[10]}, " +
                 $"camp {sent[11]}/{drawn[11]} end {sent[12]}/{drawn[12]}, lantern {sent[13]}/{drawn[13]}.");
         }

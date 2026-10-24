@@ -5390,14 +5390,41 @@ Bonker, SpicyMeatball`, client `Mirror, ElectricPlug, Cactus, BobsLantern, Campf
 HolyBook`. The final run had both sets, plus client `Aegis`. The retry for dead pool entries came
 after run B. No mod errors, no `Look rotation` warnings, no exceptions in `Player.log`.
 
+**Follow-up runs, same day.** These used two new Debug harness options: `[Testing] TestCharacter` /
+`-HostCharacter` to choose the bot's character, and `-ClientVulnerable`. The harness made both bots
+invincible, so items that react to their owner being hit (Mirror, Electric Plug, Cactus, Aegis) never
+fired.
+
+- Run C (host `TonyMcZoom` for the Zooma passive, client vulnerable with `Mirror, ElectricPlug, Cactus`
+  and `Aegis, SpaceNoodle`) exercised the kinds missing above:
+  - Zap: 29 / 29.
+  - Mirror: 6 / 6.
+  - Electric Plug: 26 / 26.
+  - Client item sparks plus its own Aegis and laser sparks: 474 / 475.
+  - But the client missed 488 of 685 pooled effects in one burst.
+- Decompiled cause, CONFIRMED in code:
+  - `CreatePooledItem` (0x180409800) and `CreatePooledItemTimeout` (0x1804096E0) return null once a
+    pool holds `maxSize` objects.
+  - `ReturnToPool` (`OnEnable` 0x180522710, `Update` 0x180522820) times its release on `MyTime`,
+    which stops while that player is in a reward screen.
+  - So the client's copies stayed out while the host's clock kept draining its own pool.
+- Fix: when a pool gives nothing, the oldest copy still out from a replay is released and the pool
+  asked again.
+- Run D (same, plus host `IceCube, SpicyMeatball`, client `CursedDoll`): exact both ways.
+  - Pooled: 1164 / 1164 and 952 / 952.
+  - Zap: 40 / 40.
+  - Mirror: 9 / 9.
+  - Electric Plug: 41 / 41.
+  - Sparks: 172 / 172.
+  - Burgers: 7 / 7.
+  - No misses, no errors, no exceptions.
+  - That run never filled a pool (`recycled 0`), so the recycling itself is UNVERIFIED in play.
+
 Not covered:
-- **Zap (Zooma) and Mirror:** 0 on both sides in every run. Zooma is a character passive, and Mirror
-  needs a reflected hit.
 - **Burgers being eaten:** the bots never ate one.
-- **A client's Aegis spark relay:** the client's Aegis never hit an enemy. A third player, the case
-  this exists for, needs three copies.
+- **A third player:** seeing a client's Aegis and laser sparks needs three copies. Client to host is
+  confirmed (run C, D).
 - **Grandma's Tonic, Plague and Bullseye:** not counted separately.
-- **The residual pooled misses:** 3 per 9 minutes.
 - Packet loss, and how any of it looks.
 
 ## OB-63 — A client sent every replayed host Lightning Orb strike back to the host, which applied it again — **FIXED 2026-10-25, confirmed hands-off**

@@ -29,7 +29,10 @@ param(
     [string] $ClientItems = "EnergyCore, SoulHarvester, Ghost",
     [string] $HostWeapons = "",
     [string] $ClientWeapons = "",
+    [string] $HostCharacter = "",
+    [string] $ClientCharacter = "",
     [string] $OutDir = "",
+    [switch] $ClientVulnerable,
     [switch] $NoBuild,
     [switch] $KeepConfigs
 )
@@ -69,8 +72,8 @@ function Set-CfgValue([string] $path, [string] $section, [string] $key, [string]
 
 function Get-Copies {
     @(
-        @{ Name = "host";   Path = $HostPath;   Player = "AutoHost"; Items = $HostItems;   Weapons = $HostWeapons;   AutoHost = "true" },
-        @{ Name = "client"; Path = $ClientPath; Player = "Bot";      Items = $ClientItems; Weapons = $ClientWeapons; AutoHost = "false" }
+        @{ Name = "host";   Path = $HostPath;   Player = "AutoHost"; Items = $HostItems;   Weapons = $HostWeapons;   Character = $HostCharacter;   AutoHost = "true" },
+        @{ Name = "client"; Path = $ClientPath; Player = "Bot";      Items = $ClientItems; Weapons = $ClientWeapons; Character = $ClientCharacter; AutoHost = "false" }
     )
 }
 
@@ -120,13 +123,14 @@ foreach ($copy in Get-Copies) {
     }
     $cfg = Join-Path $copy.Path "BepInEx\config\OmniBonk.cfg"
     Set-CfgValue $cfg "Bot" "BotMode" "true"
-    Set-CfgValue $cfg "Bot" "BotInvincible" "true"
+    Set-CfgValue $cfg "Bot" "BotInvincible" $(if ($ClientVulnerable -and $copy.Name -eq "client") { "false" } else { "true" })
     Set-CfgValue $cfg "Bot" "AutoHost" $copy.AutoHost
     Set-CfgValue $cfg "Bot" "AutoHostPlayers" "2"
     Set-CfgValue $cfg "Bot" "AutoHostStageMinutes" ([string]$StageMinutes)
     Set-CfgValue $cfg "Bot" "AutoHostMap" $Map
     Set-CfgValue $cfg "Testing" "TestItems" $copy.Items
     Set-CfgValue $cfg "Testing" "TestWeapons" $copy.Weapons
+    Set-CfgValue $cfg "Testing" "TestCharacter" $copy.Character
     Set-CfgValue $cfg "Player" "PlayerName" $copy.Player
     Set-CfgValue $cfg "Network" "ServerUrl" "ws://127.0.0.1:5000"
     Set-CfgValue $cfg "Network" "UseSteamTransport" "false"

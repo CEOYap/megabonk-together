@@ -774,6 +774,19 @@ namespace OmniBonk.Scripts.Bot
             }
 
             var pick = usable[Random.Range(0, usable.Count)];
+            var wanted = Configuration.ModConfig.TestCharacter?.Value;
+            if (!string.IsNullOrWhiteSpace(wanted))
+            {
+                foreach (var button in usable)
+                {
+                    if (button.characterData != null
+                        && string.Equals(button.characterData.eCharacter.ToString(), wanted.Trim(), System.StringComparison.OrdinalIgnoreCase))
+                    {
+                        pick = button;
+                        break;
+                    }
+                }
+            }
             menu.OnSelectCharacter(pick);
             menu.OnConfirmCharacter(pick);
             var name = pick.characterData != null ? pick.characterData.name : "?";

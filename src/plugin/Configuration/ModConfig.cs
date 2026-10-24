@@ -34,6 +34,7 @@ namespace OmniBonk.Configuration
         public static ConfigEntry<string> AutoHostMap { get; private set; }
         public static ConfigEntry<string> TestItems { get; private set; }
         public static ConfigEntry<string> TestWeapons { get; private set; }
+        public static ConfigEntry<string> TestCharacter { get; private set; }
 #endif
         public static ConfigEntry<bool> LogEncounterPause { get; private set; }
         public static ConfigEntry<bool> LogBandwidth { get; private set; }
@@ -136,6 +137,13 @@ namespace OmniBonk.Configuration
                 "when a multiplayer run starts, comma-separated by the game's EWeapon names: " +
                 "\"Mine, Rockets\". Granted once per session through the normal weapon path, so every " +
                 "peer sees them; a weapon already held is skipped."
+            );
+            TestCharacter = config.Bind(
+                "Testing",
+                "TestCharacter",
+                "",
+                "Developer tool, leave empty for normal play. The character the bot picks, by the " +
+                "game's ECharacter name (\"TonyMcZoom\"); empty or unusable picks at random."
             );
             BotStuckSeconds = config.Bind(
                 "Bot",
