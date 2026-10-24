@@ -125,6 +125,9 @@ namespace OmniBonk.Services
                 case ItemProjectilesSpawned itemProjectilesSpawned:
                     EventManager.OnItemProjectilesSpawned(itemProjectilesSpawned);
                     break;
+                case MineExploded mineExploded:
+                    EventManager.OnMineExploded(mineExploded);
+                    break;
                 case SpawnedEnemySpecialAttack spawnedEnemySpecialAttack:
                     EventManager.OnSpawnedEnemySpecialAttack(spawnedEnemySpecialAttack);
                     break;

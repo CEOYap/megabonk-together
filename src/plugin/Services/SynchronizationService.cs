@@ -317,6 +317,7 @@ namespace OmniBonk.Services
             EventManager.SubscribeReleaseBarrierEvents(ReleaseBarrier);
             EventManager.SubscribeGoldChangedEvents(OnReceivedChangeGold);
             EventManager.SubscribeChargeShrineCompletedEvents(OnReceivedChargeShrineCompleted);
+            EventManager.SubscribeMineExplodedEvents(Patches.Projectiles.ProjectileMinesPatches.OnReceivedMineExploded);
 
             cancellationToken = cancellationTokenSource.Token;
             this.udpClientService = udpClientService;
@@ -1958,6 +1959,12 @@ namespace OmniBonk.Services
 
 
                     Patches.Projectiles.ProjectileBasePatches.MarkReceived(proj.GetComponent<ProjectileBase>());
+
+                    var mine = proj.GetComponent<ProjectileMines>();
+                    if (mine != null)
+                    {
+                        Patches.Projectiles.ProjectileMinesPatches.InitReceived(mine, weapon);
+                    }
 
                     // FIX P2-5: owner registered so these are dropped when that peer leaves.
                     projectileManagerService.RegisterProjectileForInterpolation(projectile.Id, proj, projectile.OwnerId);

@@ -14,8 +14,10 @@
         /// a build without it drops every host damage batch).</para>
         /// <para>5: tag 85 <c>ItemProjectilesSpawned</c>. Bumped so a protocol-4 build, with or without
         /// tag 84, is refused rather than silently missing either message.</para>
+        /// <para>6: tag 86 <c>MineExploded</c>. A protocol-5 client would never draw a host mine's
+        /// explosion (OB-58).</para>
         /// </summary>
-        public const int Version = 5;
+        public const int Version = 6;
 
         /// <summary>Prefixed: lobby data is a flat namespace shared with the base game.</summary>
         public const string VersionKey = "mt_protocol";

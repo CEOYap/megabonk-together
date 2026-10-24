@@ -478,6 +478,7 @@ rides, so a Phase 1 translation can be checked tag by tag.
 | 83 | `ProtocolHello` | both | `ReliableOrdered`. Carries a string. A client sends it to the host every 3 s while the lobby panel is open, until the host answers with its own; the host answers each one. The host's Start is gated on every client having sent a matching `Protocol.Version`. An older build cannot read the tag and never answers, which is how it is caught. See `LobbyView.cs`. |
 | 84 | `EnemyDamagedBatch` | host periodic (enemy tick) | `Unreliable`. Each batch is 900 B or less, and the sender promotes anything at or over 1000 B to `ReliableOrdered`. It holds one enemy tick's summed hits across every enemy, and also goes out just before an `EnemyDied` whose enemy has pending hits. Ships under protocol 4: a build without it drops every batch, so clients would see no host damage numbers. |
 | 85 | `ItemProjectilesSpawned` | whoever ran the item (host to all; a client to the host, which relays) | `ReliableUnordered`: carries a list, each entry an independent one-shot; one batch per frame. Cosmetic copies of item projectiles (Soul Harvester, Energy Core, Ghost, Bob), damage-free on the receiver (`ItemProjectileVisualPatches.CheckCollision`). Protocol 5. |
+| 86 | `MineExploded` | host to all clients | `ReliableUnordered`: a one-shot, self-contained (quantized position and scale), so no ordering against `ProjectileDone` is needed. A client draws exactly the host's mine explosions; its own copies cannot tell an explosion from a timeout (OB-58). Protocol 6. |
 
 "both" means the host broadcasts it and the client requests it; the two halves may differ, and
 where they do the cell says so.
@@ -586,7 +587,7 @@ the merged `LobbyUpdates` bucket sent three sessions after the wrong stream.
 
 1. Define it under `src/common/Messages/GameNetworkMessages/`. Quantized/primitive types only —
    no `UnityEngine` types; `src/common/` compiles into the server.
-2. Add a `[MemoryPackUnion(N, ...)]` line with the **next free N** (85 as of 2026-10-23). Never
+2. Add a `[MemoryPackUnion(N, ...)]` line with the **next free N** (87 as of 2026-10-24). Never
    reuse, renumber, or remove a tag: MemoryPack is positional and peers on different mod versions
    still handshake, so a changed tag corrupts sessions silently rather than failing loudly.
    Adding a field to an existing message is the same hazard.

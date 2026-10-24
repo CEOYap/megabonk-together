@@ -308,3 +308,68 @@ for Ghost and Bob) go through tag 85. Nothing else creates one. The only other i
 projectile type is **Slutty Cannon** (`Rocket.Set` with `weaponBase == null`), still family 2, open;
 the host spawns it at the teammate (OB-43 position redirect in `HitItemOwnership`).
 `EffectManager.SpawnRockets` (0x180501AF0) has no callers, only metadata references.
+
+## Weapon projectiles with rocket- or mine-like problems — audit 2026-10-24
+
+Build 21750826. Every `ProjectileBase` subclass (22) was listed from dump.cs and all 114 non-stub
+overrides decompiled; each body was scanned for effect spawns (`EffectManager.*`, pool `Get`,
+`Instantiate`, `EffectPlayer.Play`), damage, and `ProjectileDone`, then matched against what the mod
+lets a client run on a received copy. The two OB-58 shapes were: a visual drawn inside a method the
+client skips (`Rocket.ProjectileDone`), and one the client triggers on its own clock and can repeat
+(`ProjectileMines.Explode`). A third came with it: setup only `Set`/`TryInit` does, which a client
+never runs on a received copy.
+
+**Key chokepoint, CONFIRMED by xref:** `WeaponAttack.ProjectileHit` (0x1804504D0) draws the weapon's
+hit effect (`EffectManager.EnemyHitEffect`). Its 18 callers include `ProjectileBase.HitEnemy` and
+`HitOther`, and the hit methods of Bananarang, Bluetooth, Cringe and Hero Sword, Dice, Exploding,
+Melee, Mines, Poison Flask, Scythe, Shotgun, Sniper and Whirlwind. A client's replayed
+`Enemy.Damage` (0x1804AC7B0) draws damage numbers only (`EffectManager.NewDamageNumbers`), never a
+hit effect.
+
+### 1. Hit effects never drawn on clients (the rocket shape)
+
+| Weapon class | Effect path | Blocked on clients by |
+|---|---|---|
+| Every projectile using the base hit (Arrow, Basic, Axe, Homing, ...) | `ProjectileBase.HitEnemy` → `ProjectileHit` | `ProjectileBasePatches.HitEnemy_Prefix` (false on clients) |
+| Black Hole | `MyFixedUpdate` → `CheckDamage` (0x1804E4570) → `EnemyHitEffect` | `ProjectileBlackHolePatches.MyFixedUpdate` (false on clients) |
+| Cringe Sword, Hero Sword | `MyFixedUpdate` → `CheckColliderCustom` → `ProjectileHit` | their `MyFixedUpdate` patches (false on clients) |
+| Dexecutioner | `CheckZone` | `ProjectileDexecutionerPatches.CheckZone` (false on clients) |
+| Bananarang | `MyFixedUpdate` → `HitEnemy` → `ProjectileHit`; `LateUpdate` → `TryPopDamage` → `EnemyHitEffect` | `ProjectileBananaPatches.MyFixedUpdate` (false on clients); the pop list stays empty |
+| Axe | `LateUpdate` → `TryPopDamage` (0x1804E2080) → `EnemyHitEffect` | runs, but pops `hitEnemies`, which only the blocked `HitEnemy` fills |
+
+So a client sees a received weapon's damage numbers but not its hit sparks. Wall hits
+(`ProjectileBase.HitOther`) are not patched and still draw. UNVERIFIED in game: no counter yet.
+
+### 2. Effects a client triggers on its own clock (the mine shape)
+
+- **Poison Flask, closest to the mine bug.** `HitEnemy` (0x1804EFDC0) and `HitOther` call
+  `ExplodeFlask` (0x1804EF5D0). It detaches and plays the flask's `effect` (`EffectPlayer`, real offset
+  0x80), poisons enemies in `explosionRadius` (`Enemy.AddDebuff`, ticks blocked on clients), calls
+  `ProjectileHit`, then `ProjectileDone`, which a client refuses for a received copy. Nothing else
+  deactivates the flask, so it can hit again and explode again until the host's `ProjectileDone`
+  arrives, and its explosions follow the client's collisions, not the host's.
+- **Bluetooth.** `StepMovement` (not patched) calls `HitTarget` (0x1804E6320): `ProjectileHit`, then a
+  refused `ProjectileDone`, so it can repeat.
+- **One-shot per local collision, so they diverge but do not repeat:** Whirlwind `HitEnemy`, Shotgun
+  `CheckZone`, Sniper `Hitscan`, Scythe and Melee `CheckZone`/`SpawnEffect` (their patches only redirect
+  positions).
+
+### 3. Setup only `TryInit` does
+
+A client never runs `Set`/`TryInit` on a received copy, except Firefield (the spawn calls
+`TryInit(0)`) and Black Hole (`StartScaleSize` is in its message). Attack size feeds visuals in Arrow
+(trail width), Poison Flask, Scythe and Sniper (`localScale`), and Katana, Melee and the swords (zone
+size). Axe and Shotgun also start particles or sounds there. With size upgrades, clients see default
+sizes.
+
+### Fix options, not done
+
+1. **Hit effects without a protocol change:** a client already receives every host hit through
+   `EnemyDamagedBatch` (weapon damage source and enemy id), so it could call that weapon's
+   `ProjectileHit` at the enemy. Covers all of category 1 at once.
+2. **Poison Flask and Bluetooth:** as with mines, stop the local trigger and have the host send the
+   explosion, or hide the copy after its first explosion.
+3. **Size:** apply `GetAttackSizeMultiplier` on the client (it reads that machine's stats, so it is
+   approximate), or send the host's size with the spawn (protocol change).
+
+Each can be checked hands-off with host/client counters, as `[explosions]` did for OB-58.

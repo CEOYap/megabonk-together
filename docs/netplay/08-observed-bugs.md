@@ -5098,5 +5098,23 @@ Desert, 9 min each; `[explosions]` counts the host's mine `Explode` and weapon-r
   explosions would need the host to send them (a new message, protocol bump).
 - No mod errors and no `Look rotation` warnings on either copy.
 
+**Exact mine explosions (same day, protocol 6).** Copying `TryInit`'s trigger radius onto received
+mines (`ProjectileMinesPatches.InitReceived`; `TryInit` 0x1804EF150 sets checkRadius = 2 x
+clamp(1 + 0.3 x (attack size - 1), 1, 3), constants read from `.rdata`) raised the client to 77-88%
+(197 / 151), not 100%: the client sees enemies an interpolation delay late and the host kills some
+first. So the host now sends tag 86 `MineExploded` (position, `projectileRadius` as scale) from
+`Explode`, a received mine again skips `MyFixedUpdate` on clients, and a client draws exactly the
+host's explosions. `InitReceived` stays for the scale-in look.
+
+Hands-off result, aligned on the shared `[desync]` digest numbers: mines 21/21, 22/22, 47/47
+(host exploded / client drew). The same run first showed rockets 0 drawn for two minutes: a test-only
+race, the host's `TestWeapons` grant reached the client before it had spawned the host's player and
+was dropped (`Player not found ... OnReceivedWeaponAdded`), so the client ignored host rockets until
+a level-up re-sent the weapon. `TestLoadout` now grants 5 s after run start.
+
+**Final hands-off run** (both fixes): rockets 245/245, 364/364, 406/406, 449/449 and mines 20/20,
+22/22, 43/43, 43/43 (host / client), exact from the start; no dropped `WeaponAdded`, no mod errors, no
+`Look rotation` warnings.
+
 Not covered: packet loss, and whether received non-explosive projectiles now last exactly as long as
 the host's (no counter for that).

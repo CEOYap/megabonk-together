@@ -3,6 +3,7 @@
 using Assets.Scripts.Inventory__Items__Pickups.Items;
 using OmniBonk.Configuration;
 using System;
+using System.Collections;
 
 namespace OmniBonk.Helpers
 {
@@ -10,10 +11,15 @@ namespace OmniBonk.Helpers
     /// OB-45: grants <c>[Testing] TestItems</c> once per session at run start, via
     /// <c>ItemInventory.AddItem</c> so they replicate like real pickups, and <c>TestWeapons</c> via
     /// <c>WeaponInventory.AddWeapon</c>, whose postfix sends <c>WeaponAdded</c> as a level-up pick does.
+    /// <para>Granted <see cref="GRANT_DELAY_SECONDS"/> after run start: a grant at the instant the run
+    /// starts reached a client before it had spawned the host's player, which dropped it ("Player not
+    /// found ... OnReceivedWeaponAdded"), so the client ignored the host's rockets for two minutes.</para>
     /// </summary>
     internal static class TestLoadout
     {
         private static bool granted;
+
+        private const float GRANT_DELAY_SECONDS = 5f;
 
         internal static void Reset() => granted = false;
 
@@ -25,14 +31,20 @@ namespace OmniBonk.Helpers
                 return;
             }
 
+            granted = true;
+            CoroutineRunner.Instance.Run(GrantAfterPeersSpawn(spec));
+        }
+
+        private static IEnumerator GrantAfterPeersSpawn(string spec)
+        {
+            yield return new UnityEngine.WaitForSecondsRealtime(GRANT_DELAY_SECONDS);
+
             var inventory = GameManager.Instance?.player?.inventory?.itemInventory;
             if (inventory == null)
             {
-                Plugin.Log.LogWarning("[test] OB-45: no local item inventory yet; TestItems not granted.");
-                return;
+                Plugin.Log.LogWarning("[test] OB-45: no local item inventory; TestItems and TestWeapons not granted.");
+                yield break;
             }
-
-            granted = true;
 
             foreach (var raw in spec.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             {
