@@ -16,8 +16,10 @@
         /// tag 84, is refused rather than silently missing either message.</para>
         /// <para>6: tag 86 <c>MineExploded</c>. A protocol-5 client would never draw a host mine's
         /// explosion (OB-58).</para>
+        /// <para>7: tag 87 <c>FlaskExploded</c>. A protocol-6 client would never draw a host Poison Flask's
+        /// explosion, since clients no longer explode received flasks themselves.</para>
         /// </summary>
-        public const int Version = 6;
+        public const int Version = 7;
 
         /// <summary>Prefixed: lobby data is a flat namespace shared with the base game.</summary>
         public const string VersionKey = "mt_protocol";

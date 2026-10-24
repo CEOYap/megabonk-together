@@ -228,6 +228,10 @@ namespace OmniBonk.Scripts.Snapshot
             }
         }
 
+        /// <summary>The received copy for a sender's id, if it has not been destroyed yet.</summary>
+        public GameObject GetProjectile(uint id)
+            => activeProjectiles.TryGetValue(id, out var projectile) ? projectile : null;
+
         /// <summary>On disconnect: no further snapshots will arrive for that peer.</summary>
         public void UnregisterProjectilesByOwner(uint ownerId)
         {

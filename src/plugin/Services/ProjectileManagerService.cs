@@ -22,6 +22,7 @@ namespace OmniBonk.Services
         public void RemoveProjectile(Projectile projectileId);
         public void RegisterProjectileForInterpolation(uint id, GameObject projectile, uint ownerId);
         public void UnregisterProjectileFromInterpolation(uint id);
+        public GameObject GetReceivedProjectile(uint id);
         public void UpdateProjectileSnapshots(List<ProjectileSnapshot> projectileSnapshots);
         public void RemoveProjectilesByOwnerId(uint connectionId);
     }
@@ -170,6 +171,9 @@ namespace OmniBonk.Services
                 projectileInterpolator.UnregisterProjectile(id);
             }
         }
+
+        public GameObject GetReceivedProjectile(uint id)
+            => projectileInterpolator != null ? projectileInterpolator.GetProjectile(id) : null;
 
         public void UpdateProjectileSnapshots(List<ProjectileSnapshot> projectileSnapshots)
         {

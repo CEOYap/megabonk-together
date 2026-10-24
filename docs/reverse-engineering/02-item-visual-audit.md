@@ -367,8 +367,9 @@ sizes.
 1. **Hit effects without a protocol change:** a client already receives every host hit through
    `EnemyDamagedBatch` (weapon damage source and enemy id), so it could call that weapon's
    `ProjectileHit` at the enemy. Covers all of category 1 at once.
-2. **Poison Flask and Bluetooth:** as with mines, stop the local trigger and have the host send the
-   explosion, or hide the copy after its first explosion.
+2. **Poison Flask and Bluetooth:** done 2026-10-25 (OB-59, tag 87 `FlaskExploded`, protocol 7).
+   Clients skip the local trigger on received copies and play the host's flask explosions; counts
+   matched hands-off.
 3. **Size:** apply `GetAttackSizeMultiplier` on the client (it reads that machine's stats, so it is
    approximate), or send the host's size with the spawn (protocol change).
 

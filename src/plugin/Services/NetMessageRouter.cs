@@ -128,6 +128,9 @@ namespace OmniBonk.Services
                 case MineExploded mineExploded:
                     EventManager.OnMineExploded(mineExploded);
                     break;
+                case FlaskExploded flaskExploded:
+                    EventManager.OnFlaskExploded(flaskExploded);
+                    break;
                 case SpawnedEnemySpecialAttack spawnedEnemySpecialAttack:
                     EventManager.OnSpawnedEnemySpecialAttack(spawnedEnemySpecialAttack);
                     break;

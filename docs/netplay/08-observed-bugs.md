@@ -5118,3 +5118,62 @@ a level-up re-sent the weapon. `TestLoadout` now grants 5 s after run start.
 
 Not covered: packet loss, and whether received non-explosive projectiles now last exactly as long as
 the host's (no counter for that).
+
+## OB-59 — Received Poison Flasks exploded on the client's own collisions, repeatedly; received Bluetooth daggers kept hitting — **FIXED 2026-10-25, confirmed in a hands-off run (0% loss)**
+
+Found by the audit in `docs/reverse-engineering/02-item-visual-audit.md` ("Weapon projectiles with
+rocket- or mine-like problems", part 2). Not seen in play.
+
+**Cause (decompiled, CONFIRMED in code):**
+
+1. **Poison Flask.** The overrides `HitEnemy` (0x1804EFDC0) and `HitOther` (0x1804EFDE0) only call
+   `ExplodeFlask` (0x1804EF5D0). It detaches `effect` (0x80) to the flask's position, toggles it, sets
+   its local scale to `explosionSizeDefault` (0x88) x attack size, plays it, damages and poisons the
+   enemies in `explosionRadius` x attack size, draws `ProjectileHit` for each, then calls
+   `ProjectileDone`. The base `HitEnemy` patch does not cover these overrides, so a client ran all of
+   it on a received copy at its own collisions; its `ProjectileDone` was refused, so the copy kept
+   flying and could explode again. `explosionSizeDefault` is filled from the effect's scale in
+   `TryInit` (0x1804F0240), which a client never runs on a received copy, so the client's own
+   explosions were drawn at zero scale.
+2. **Bluetooth.** `StepMovement` (0x1804E65D0) calls `HitTarget` (0x1804E6320) on reaching
+   `lastTarget`: damage, `ProjectileHit`, a bounce count, then `ProjectileDone` or the next target. On
+   a client the refused `ProjectileDone` let a received copy keep choosing and hitting targets.
+
+**Fix (protocol 7, tag 87 `FlaskExploded`, host to all clients, `ReliableUnordered`):**
+
+- `ProjectilePoisonFlaskPatches`: on clients, received flasks skip `HitEnemy` and `HitOther`. The
+  host reads the flask's id in an `ExplodeFlask` prefix (its `ProjectileDone` drops it) and sends id,
+  position and the effect's scale from the postfix. The client plays that on its copy's own `effect`
+  (detached, destroyed 10 s later) and hides the copy. A copy already gone draws nothing and is
+  counted.
+- `ProjectileBluetoothPatches`: on clients, received copies skip `HitTarget`. The host's hits
+  still reach the client as damage numbers through `EnemyDamagedBatch`. Their hit sparks are not
+  drawn, the same as for other weapons (handover 21, item 2).
+- `ProjectileInterpolator.GetProjectile` and `IProjectileManagerService.GetReceivedProjectile` find a
+  received copy by the sender's id.
+- `ExplosionDiagnostics` adds an `[explosions] flasks:` line: host flasks exploded and Bluetooth
+  hits; client flask explosions drawn, misses, and refused local calls.
+
+**Hands-off runs, 2026-10-25** (`run-local-session.ps1`, Desert, one stage):
+
+Run 1, 9 min, host `PoisonFlask, BluetoothDagger`, client `PoisonFlask`. Flasks (host exploded /
+client drew), each side's first line after the same `[desync]` digest:
+
+| Digest | #1 | #13 | #25 | #37 | #49 | #61 | #73 | #85 | #97 |
+|---|---|---|---|---|---|---|---|---|---|
+| Host | 1 | 32 | 66 | 110 | 160 | 209 | 286 | 392 | 516 |
+| Client | 1 | 32 | 67 | 110 | 160 | 211 | 289 | 394 | 522 |
+
+The counts are equal at four digests. Where they differ, the client's line was written later than
+the host's: each side throttles its own line, so neither line is a snapshot at the digest. No copy
+was gone when its explosion arrived (0 misses all run). Bluetooth: the host hit 766 times. The client
+refused 102 local `HitTarget` calls, so the old repeat path was still being reached and is now blocked.
+
+Run 2, 5 min, host and client `PoisonFlask`: last lines host 204 / client 203, 0 misses.
+
+Neither run had mod errors, `Look rotation` warnings or exceptions in `Player.log`. Client captures
+showed purple flask bursts at the host's character.
+
+Not covered: packet loss; whether the client's explosion looks the same as the host's (stills
+only); Bluetooth's missing hit sparks on clients (handover 21, item 2); the 10 s effect lifetime
+(UNVERIFIED: the particle length was not read).
