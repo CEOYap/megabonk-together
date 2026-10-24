@@ -9,7 +9,8 @@ how each fix was reasoned out, and what the transport layer looks like.
 
 | Doc | What it covers |
 |---|---|
-| [`netplay/19-session-handover.md`](netplay/19-session-handover.md) | **Current state.** Release readiness for 1.0 and the record of the rename to OmniBonk |
+| [`netplay/21-session-handover.md`](netplay/21-session-handover.md) | **Current state.** Fixing the item and weapon visual audit, tested hands-off; starting prompt included |
+| [`netplay/19-session-handover.md`](netplay/19-session-handover.md) | Release readiness for 1.0 and the record of the rename to OmniBonk |
 | [`netplay/20-shrine-charge-scaling-plan.md`](netplay/20-shrine-charge-scaling-plan.md) | Plan, not built: charge shrines faster the more players stand in them |
 | [`netplay/01-critical-fixes.md`](netplay/01-critical-fixes.md) | **Start here.** Ranked, implementable fix list with root cause, patch, and test for each |
 | [`netplay/02-delivery-method-reference.md`](netplay/02-delivery-method-reference.md) | Reliability policy, the full current message→channel map, and how to classify a new message |
@@ -62,7 +63,7 @@ Used throughout these documents:
    an environment with no .NET SDK and no game install. Treat every code block as a proposal
    unless the surrounding text says it was played. **The session handovers** separate what is
    verified in-game from what merely builds — and that distinction is the point of them. Where an
-   older doc and the latest handover ([`netplay/19-session-handover.md`](netplay/19-session-handover.md))
+   older doc and the latest handover ([`netplay/21-session-handover.md`](netplay/21-session-handover.md))
    disagree, the handover is later.
 2. **Reliability is a correctness property, not a performance knob.** See
    [`02-delivery-method-reference.md`](netplay/02-delivery-method-reference.md) before
