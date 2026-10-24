@@ -7,8 +7,10 @@ the offsets below are dump.cs's.
 
 **Status:** family 1 (`ItemProjectile`) is fixed by tag 85 `ItemProjectilesSpawned` (protocol 5),
 confirmed in play 2026-10-24. Weapon mines (OB-58), Poison Flask and Bluetooth (OB-59) and weapon
-hit sparks (OB-60) are fixed and confirmed hands-off. Families 2 to 4 and the non-visual cases are
-open. Bug log entry:
+hit sparks (OB-60) and weapon sizes (OB-61) are fixed and confirmed hands-off. Families 2 to 4 and
+the non-visual cases are fixed by tag 89 `ItemVisualEffects` (OB-62), confirmed hands-off except Zap,
+Mirror and burgers being eaten, which the bots never triggered. The Lightning Orb lead was a real
+double hit (OB-63), fixed. Bug log entry:
 [OB-56](../netplay/08-observed-bugs.md). Legend: CONFIRMED means decompiled; anything else is marked
 UNVERIFIED.
 
@@ -139,7 +141,7 @@ attacks (Aura, Aegis, Laser, Dragon Breath, Chunkers) are drawn on every machine
 - A `CheckCollision` prefix ends a marked copy on any enemy without damage; ground collisions run the
   original. The mark is cleared in `ProjectileDone` and on any real `Set`.
 
-### 2. `Rocket` — Slutty Cannon, open
+### 2. `Rocket` — Slutty Cannon, fixed (OB-62, tag 89)
 
 - `Set` (0x1804F4220) callers: Slutty Cannon, `EM.<DoSpawnRockets>` (0x180511670),
   `ProjectileRocket.TryInit`. Item rockets have `weaponBase == null`, `useGenericPool == true`.
@@ -155,7 +157,7 @@ attacks (Aura, Aegis, Laser, Dragon Breath, Chunkers) are drawn on every machine
 speed. The receiver takes from `rocketPool`, marks it, calls `Set(pos, 0, 0, null, true, source)`
 without the `ownerId` data. A `Rocket.HitEnemy` prefix ends a copy without damage.
 
-### 3. `EffectManager` and `EffectPlayer.Play` — open
+### 3. `EffectManager` and `EffectPlayer.Play` — fixed (OB-62, tag 89)
 
 Visual-only methods used by items:
 - `ElectricalPlugEffect` 0x1804FBC80 (parented to MyPlayer)
@@ -176,17 +178,19 @@ only while a scope is open: position, direction, size or prefab key, owner. Rece
 these bodies only instantiate and play, so the replay is harmless. Covers Zooma, Mirror, Electric
 Plug, Cactus and Holy Book sparks, the 5 gloves and Toxic Barrel.
 
-### 4. Pooled one-shot effects — open
+### 4. Pooled one-shot effects — fixed (OB-62, tag 89)
 
 Bonker, Ice Cube, Grandma's Tonic, Quin's Mask, Spicy Meatball, Snek, Cursed Doll, Cactus, Plague,
 Bullseye, and the Slutty Cannon explosion. The game calls `ObjectPool<GameObject>.Get` directly; that
 generic method is shared with the enemy and XP pools. `PoolManager.OnTakeFromPool` (0x18040ABF0) only
 does SetActive(true), has no code xrefs and runs before the position is set, so it is not usable.
 
-**Proposed:** a scoped postfix on `ObjectPool<GameObject>.Get` that records the returned object while
-an item scope is open, read at scope exit and sent as pool kind, position, rotation, scale and owner.
-**Whether Harmony can patch that generic IL2CPP method is UNVERIFIED.** Fallback: about 10 small
-per-item hooks.
+**Built instead (OB-62):** no patch on the generic `Get`. Both pool constructors install
+`OnTakeFromPool` as the get callback, so a postfix there, active only while an item method's scope is
+open, names the object taken (new ones too). Its transform is read when the scope closes. This was
+confirmed in play: the callback fires through the delegate. Toxic Barrel's `OnUse` must not be patched:
+IL2CPP folded it with `HolyBookEffect.OnUse`, and the patch overflowed the stack on every Holy Book
+use (OB-62).
 
 ### Pools (`PoolManager`, dump.cs)
 
@@ -219,16 +223,19 @@ per-item hooks.
 
 ---
 
-## Not visuals — each needs its own sync
+## Not visuals — fixed (OB-62) or not a bug
 
-- **Borgor:** a host-only burger pickup that heals `MyPlayer`; only the host can eat them.
-- **Dragonfire:** a damaging firefield; a copy would need `Firefield.CheckDamage` suppressed.
-- **Golden Shield:** money pickups on the owner's machine.
-- **Campfire, Bob's Lantern:** instantiated once, not pooled; per-item hooks.
+- **Borgor:** fixed. Copies on clients heal whoever eats them there, and an eaten burger is removed
+  everywhere. UNVERIFIED in play: the bots never ate one.
+- **Dragonfire:** fixed. A zero-damage copy, with `CheckDamage` and `TryPopDamage` skipped for it.
+- **Golden Shield:** not a bug. `SpawnMoney` (0x18046A6E0) flies `MoneyFlying` and calls `ChangeGold`
+  on the owner's machine, which the mod already syncs.
+- **Campfire, Bob's Lantern:** fixed. A copy per owner; the lantern copy's `KillEnemyTrigger` is
+  removed.
 
 ## Leads, UNVERIFIED (read from source, not logs)
 
-- **Lightning Orb double hit:** item `damageSource` is `EItem.ToString()` (confirmed in the
+- **Lightning Orb double hit — CONFIRMED and fixed (OB-63).** Item `damageSource` is `EItem.ToString()` (confirmed in the
   `ItemLightningOrb` 0x180460650, `ItemSoulHarvester` 0x1804661E0 and `ItemSluttyCannon` 0x1804649F0
   ctors). Lightning Orb passes `"LightningOrb"` into `WeaponUtility.LightningStrike` (0x180435DA0),
   which calls `Enemy.DamageFromPlayerWeapon`. So the client's replay of tag 41 may forward the host's

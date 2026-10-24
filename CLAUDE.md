@@ -166,7 +166,7 @@ substrings. Output lands in `megabonk-re/decompiled/<Function>.c`, cached — re
 *from* Python instead, which is why it needs that venv interpreter and not your system one. Ghidra
 must not have the project open — it takes an exclusive lock.
 
-**Two traps that have each cost real time:**
+**Three traps that have each cost real time:**
 
 - **Use the VA, not the RVA.** `dump.cs` prints both. An RVA silently resolves to an unrelated
   function rather than failing — a lookup for `Enemy.set_target` once landed on
@@ -176,6 +176,12 @@ must not have the project open — it takes an exclusive lock.
   where the `pickedUp` byte is and `.speed` where the `target` pointer is read. `dump.cs`'s offsets
   are authoritative; treat a field *name* in decompiled output as a hint, and confirm it against the
   layout.
+
+- **IL2CPP folds identical method bodies into one function.** Before patching, check the method's VA
+  is not shared: `grep -c "VA: 0x..." dump.cs` must print 1. `ToxicBarrelEffect.OnUse` and
+  `HolyBookEffect.OnUse` share one address; a patch on one made every Holy Book use recurse until the
+  client died of a stack overflow (exception 0xC00000FD, no log line, no `Player.log` entry). The
+  Windows Application event log (Id 1000) is where such a crash shows.
 
 Worth doing early rather than late: a field layout from `dump.cs` settled in one lookup what four
 playtests could not, and three separate UNVERIFIED markers in `docs/netplay/` existed only because

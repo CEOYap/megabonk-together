@@ -93,6 +93,7 @@ namespace OmniBonk.Common.Messages
     [MemoryPackUnion(86, typeof(MineExploded))]
     [MemoryPackUnion(87, typeof(FlaskExploded))]
     [MemoryPackUnion(88, typeof(EnemyHitEffects))]
+    [MemoryPackUnion(89, typeof(ItemVisualEffects))]
     public partial interface IGameNetworkMessage
     {
 

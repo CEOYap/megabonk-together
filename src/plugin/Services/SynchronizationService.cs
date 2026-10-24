@@ -320,6 +320,7 @@ namespace OmniBonk.Services
             EventManager.SubscribeMineExplodedEvents(Patches.Projectiles.ProjectileMinesPatches.OnReceivedMineExploded);
             EventManager.SubscribeFlaskExplodedEvents(Patches.Projectiles.ProjectilePoisonFlaskPatches.OnReceivedFlaskExploded);
             EventManager.SubscribeEnemyHitEffectsEvents(WeaponHitSparks.OnReceived);
+            EventManager.SubscribeItemVisualEffectsEvents(ItemVisualSync.OnReceived);
 
             cancellationToken = cancellationTokenSource.Token;
             this.udpClientService = udpClientService;

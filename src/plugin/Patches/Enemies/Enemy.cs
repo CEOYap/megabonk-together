@@ -238,6 +238,19 @@ namespace OmniBonk.Patches.Enemies
                 return;
             }
 
+            // OB-63: nor one replayed under SuppressOutbound. A client's replay of a host Lightning Orb
+            // strike (tag 41) reaches Damage with source "LightningOrb", an item name, so it was sent
+            // back and the host applied it twice.
+            if (!isServer && !Plugin.CAN_SEND_MESSAGES)
+            {
+                if (AllowedDamageSource.Contains(damageContainer.damageSource))
+                {
+                    Helpers.ReplayedHitDiagnostics.Suppressed(damageContainer.damageSource);
+                }
+
+                return;
+            }
+
             if (isServer || AllowedDamageSource.Contains(damageContainer.damageSource))
             {
                 synchronizationService.OnEnemyDamaged(__instance, damageContainer);

@@ -40,6 +40,7 @@ namespace OmniBonk.Services
         private static event Action<MineExploded> MineExplodedEvents;
         private static event Action<FlaskExploded> FlaskExplodedEvents;
         private static event Action<EnemyHitEffects> EnemyHitEffectsEvents;
+        private static event Action<ItemVisualEffects> ItemVisualEffectsEvents;
         private static event Action<SpawnedEnemySpecialAttack> SpawnedEnemySpecialAttackEvents;
         private static event Action<StartingChargingPylon> StartingChargingPylonEvents;
         private static event Action<StoppingChargingPylon> StoppingChargingPylonEvents;
@@ -493,6 +494,20 @@ namespace OmniBonk.Services
             MainThreadDispatcher.Enqueue(() =>
             {
                 EnemyHitEffectsEvents?.Invoke(effects);
+            });
+        }
+
+        /// <summary>Both. Another machine's item visuals; see <see cref="ItemVisualEffects"/>.</summary>
+        public static void SubscribeItemVisualEffectsEvents(Action<ItemVisualEffects> action)
+        {
+            ItemVisualEffectsEvents += action;
+        }
+
+        public static void OnItemVisualEffects(ItemVisualEffects effects)
+        {
+            MainThreadDispatcher.Enqueue(() =>
+            {
+                ItemVisualEffectsEvents?.Invoke(effects);
             });
         }
 

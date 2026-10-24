@@ -173,6 +173,8 @@ namespace OmniBonk.Scripts
                 Services.BandwidthDiagnostics.Sample(
                     ModConfig.LogBandwidth.Value, netTransport, playerManagerService);
 
+                Helpers.ItemVisualSync.Flush();
+
                 lobbyUpdateAccumulator += Time.deltaTime;
 
                 if (isHost && isGameStarted)
@@ -279,6 +281,8 @@ namespace OmniBonk.Scripts
             Helpers.ExplosionDiagnostics.Reset();
             Helpers.WeaponHitSparks.Reset();
             Helpers.ProjectileSizeDiagnostics.Reset();
+            Helpers.ItemVisualSync.Reset();
+            Helpers.ReplayedHitDiagnostics.Reset();
             Patches.Items.EventListenerOwnership.ResetKillers();
             isHost = false;
 

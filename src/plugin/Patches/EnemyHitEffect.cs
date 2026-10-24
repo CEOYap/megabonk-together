@@ -31,7 +31,13 @@ namespace OmniBonk.Patches
 
             if (!(synchronizationService.IsServerMode() ?? false))
             {
-                return Helpers.WeaponHitSparks.AllowLocal();
+                var allow = Helpers.WeaponHitSparks.AllowLocal(out var ownerRun);
+                if (ownerRun)
+                {
+                    Helpers.ItemVisualSync.CaptureOwnerWeaponSpark(hitPos, moveDir, eWeapon, useSfx);
+                }
+
+                return allow;
             }
 
             if (eWeapon != EWeapon.None)

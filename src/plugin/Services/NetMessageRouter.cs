@@ -134,6 +134,9 @@ namespace OmniBonk.Services
                 case EnemyHitEffects enemyHitEffects:
                     EventManager.OnEnemyHitEffects(enemyHitEffects);
                     break;
+                case ItemVisualEffects itemVisualEffects:
+                    EventManager.OnItemVisualEffects(itemVisualEffects);
+                    break;
                 case SpawnedEnemySpecialAttack spawnedEnemySpecialAttack:
                     EventManager.OnSpawnedEnemySpecialAttack(spawnedEnemySpecialAttack);
                     break;
@@ -263,6 +266,9 @@ namespace OmniBonk.Services
                     break;
                 case ItemProjectilesSpawned itemProjectilesSpawned:
                     EventManager.OnItemProjectilesSpawned(itemProjectilesSpawned);
+                    break;
+                case ItemVisualEffects itemVisualEffects:
+                    EventManager.OnItemVisualEffects(itemVisualEffects);
                     break;
                 case ProtocolHello protocolHello:
                     EventManager.OnProtocolHello(protocolHello);

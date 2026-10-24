@@ -55,9 +55,13 @@ namespace OmniBonk.Helpers
             }
         }
 
-        /// <summary>Client: true to let a local spark draw.</summary>
-        internal static bool AllowLocal()
+        /// <summary>
+        /// Client: true to let a local spark draw. <paramref name="ownerRun"/> is set for the local
+        /// player's own Aegis or laser, whose sparks only this machine draws (OB-62 sends them on).
+        /// </summary>
+        internal static bool AllowLocal(out bool ownerRun)
         {
+            ownerRun = false;
             if (replaying)
             {
                 return true;
@@ -65,6 +69,7 @@ namespace OmniBonk.Helpers
 
             if (ownerRunDepth > 0)
             {
+                ownerRun = true;
                 Bump(ref keptOwnerRun);
                 return true;
             }

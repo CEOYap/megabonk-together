@@ -5298,3 +5298,129 @@ in game the OB-1 `GetAttackSizeMultiplier` postfix, which had been UNVERIFIED. N
 exceptions in `Player.log`.
 
 Not covered: how the sizes look (not looked at); packet loss (no new message).
+
+## OB-62 — Item visuals drawn only on the machine that ran the item — **FIXED 2026-10-25, confirmed in hands-off runs (0% loss); some kinds not exercised**
+
+Closes OB-56 families 2 to 4 and the non-visual items of
+`docs/reverse-engineering/02-item-visual-audit.md`. Every item runs on exactly one machine (the host
+for procs, the owner for reactions), so anything it drew existed only there. Gameplay was unaffected
+except for Borgor: its burgers existed only on the host, so only the host could eat them.
+
+**Decompiled (CONFIRMED in code):**
+
+- **Pooled one-shots.** Bonker 0x18043B230 (bonkPool 0x1E0), Ice Cube 0x18045DBE0 (freezeFxPool
+  0x1C0), Grandma's Tonic 0x18045BF40 (0x198), Quin's Mask 0x1804631A0 (0x248), Spicy Meatball
+  0x1804671E0 (0x1B0), Snek 0x180464CF0 (0x250), Plague 0x18047B730 (poisonPool 0x128), Bullseye
+  0x180474EA0 (explosionPool 0x1D8), Cactus 0x18043C750 (0x230) and Cursed Doll 0x18043FC70 (0x1F0)
+  all take an object from a pool, then position it.
+  - Both `PoolManager.CreateObjectPool` (0x1804094C0) and `CreateObjectPoolTimeout` (0x180409290)
+    install `OnTakeFromPool` (0x18040ABF0) as the get callback. That callback names every object an
+    item takes, including newly created ones.
+- **Item hit sparks.** These are the string `EnemyHitEffect` (0x1804FBE40). By xref its callers are
+  Cactus, Electric Plug, Holy Book, Mirror, `PlayerHealth.Retaliate`, `ItemProjectile.ProjectileDone`
+  and the `EWeapon` overload. Every item caller passes a null prefab, and the pool is keyed by source,
+  so a replay with the source lands in the same pool.
+- **`ZapEffect` (0x1805025D0), `SpawnMirrorFx` (0x180501720), `ElectricalPlugEffect` (0x1804FBC80).**
+  Each has one caller by xref (Zooma, Mirror, Electric Plug).
+- **Player-attached effects.**
+  - The five gloves (e.g. Power 0x18045A980) instantiate their EM prefab once, parent it under
+    `MyPlayer.feet` (0xA0) at up x 0.01 (`.rdata` 0x18262EC1C), scale it by the radius and play it.
+    The host runs teammates' gloves, so it drew a teammate's glove effect on the host's own player.
+  - Toxic Barrel: `Activate` 0x180468080 → `ToxicBarrelEffect.OnUse` 0x180498A20.
+- **Slutty Cannon.** `ProcOnHitEffects` (0x1804646F0) calls `Rocket.Set(MyPlayer + up, ...,
+  weaponBase null, useGenericPool true, source)`. `CheckCollision` → `HitEnemy` damages, and
+  `ProjectileDone` draws the explosion.
+- **Not visuals:**
+  - Dragonfire (0x180454C90): a `Firefield` from firefieldPool 0x1C8 that damages in
+    `CheckDamage`/`TryPopDamage`.
+  - Borgor (0x18043BCE0): `Borgar` heals `MyPlayer` on any player-layer collision
+    (`OnCollisionEnter` 0x18048AC10).
+  - Campfire (`StartFire`/`EndFire` on a `Campfire` that only animates).
+  - Bob's Lantern (`Explode` 0x18043A990): EM `lanternExplosion`, a `KillEnemyTrigger`.
+  - **Golden Shield is not a bug.** `MoneyUtility.SpawnMoney` (0x18046A6E0) flies a `MoneyFlying` and
+    calls `PlayerInventory.ChangeGold` on the owner's machine, which the mod already syncs.
+
+**Fix (protocol 9, tag 89 `ItemVisualEffects`):**
+
+- `Helpers/ItemVisualSync` and `Patches/Items/ItemVisualPatches.cs` / `ItemObjectVisualPatches.cs`
+  capture each kind where it ran. Batches go out once per frame from `NetworkHandler.Update`. The host
+  sends to all clients. A client sends to the host, which draws the batch and relays it to the other
+  clients.
+- Receivers replay as the game draws it:
+  - Pooled: the same pool, the sender's transform; a dead pool entry is retried.
+  - Sparks, Zap and Mirror: the same call.
+  - Player effects: one instance per owner and kind under that player.
+  - Rockets: a copy that flies, never collides, and ends through its own `ProjectileDone` where the
+    sender's ended.
+  - Firefields: zero damage, with `CheckDamage`/`TryPopDamage` skipped.
+  - Burgers: a copy any player can eat. An eaten burger is removed everywhere else.
+  - Campfire: a copy per owner.
+  - Lantern: a copy with its `KillEnemyTrigger` removed.
+  - A replayed pooled object carrying a `DamageZone` has its `FixedUpdate` skipped.
+- On the host, a teammate's glove effect is moved to that teammate.
+- A client's own Aegis and laser sparks (owner-run, so the host never draws them) are sent as item
+  sparks under the weapon's `EffectManager.weaponNamesCache` source.
+- `[item-vfx]` logs sent, drawn and missed counts by kind on each side.
+
+**A crash found on the way (CONFIRMED):** the first build patched `ToxicBarrelEffect.OnUse`. IL2CPP had
+folded it and `HolyBookEffect.OnUse` into one function at 0x180498A20. With Holy Book on the client,
+every Holy Book use recursed through the patch until the client died of a stack overflow (Windows
+event 1000, exception 0xC00000FD, no log line). Found by bisecting hands-off runs with a file trace;
+the capture now sits on `ItemToxicBarrel.Activate`. CLAUDE.md has the trap.
+
+**Hands-off runs, 2026-10-25** (9 min each, Desert, one stage). Last line on each side; lines are
+throttled independently, so a few apart is timing:
+
+| Kind | Run A sent / drawn | Run B sent / drawn | Final run sent / drawn |
+|---|---|---|---|
+| Pooled, host → client | 1726 / 1721 (5 missed) | 788 / 767 (21 missed) | 1429 / 1431 (3 missed) |
+| Pooled, client → host | 845 / 845 | — | 865 / 863 |
+| Player effects (gloves, plug, barrel) | 131 / 131 | 139 / 139 | 80 / 80, 1 / 1 back |
+| Item rockets, spawned / finished | 306/302 / 306/302 | 205/204 / 205/204 | 297/292 / 298/293 |
+| Item sparks, client → host | 1 / 1 | 14 / 14 | 5 / 4 |
+| Dragonfire firefields | — | 237 / 237 | 223 / 224 |
+| Borgor burgers | 23 / 23 | 8 / 8 | 9 / 9 |
+| Campfire start / end | — | 15 / 15 | 19 / 19 |
+| Bob's Lantern | — | 11 / 11 | 11 / 11 |
+
+Run A: host `Bonker, IceCube, SpicyMeatball, Snek, QuinsMask, SluttyCannon, GlovePower,
+GloveLightning, GrandmasSecretTonic`, client `Cactus, CursedDoll, ElectricPlug, Mirror, HolyBook,
+ToxicBarrel`. Run B: host `Dragonfire, Borgar, LightningOrb, GloveBlood, GlovePoison, GloveCurse,
+Bonker, SpicyMeatball`, client `Mirror, ElectricPlug, Cactus, BobsLantern, Campfire, ToxicBarrel,
+HolyBook`. The final run had both sets, plus client `Aegis`. The retry for dead pool entries came
+after run B. No mod errors, no `Look rotation` warnings, no exceptions in `Player.log`.
+
+Not covered:
+- **Zap (Zooma) and Mirror:** 0 on both sides in every run. Zooma is a character passive, and Mirror
+  needs a reflected hit.
+- **Burgers being eaten:** the bots never ate one.
+- **A client's Aegis spark relay:** the client's Aegis never hit an enemy. A third player, the case
+  this exists for, needs three copies.
+- **Grandma's Tonic, Plague and Bullseye:** not counted separately.
+- **The residual pooled misses:** 3 per 9 minutes.
+- Packet loss, and how any of it looks.
+
+## OB-63 — A client sent every replayed host Lightning Orb strike back to the host, which applied it again — **FIXED 2026-10-25, confirmed hands-off**
+
+The audit's Lightning Orb lead, now CONFIRMED.
+
+**Cause:**
+
+- The host broadcasts each `WeaponUtility.LightningStrike` as tag 41. The client replays it under
+  `Plugin.SuppressOutbound()`, which clears `CAN_SEND_MESSAGES`.
+- The strike reaches `Enemy.Damage`. `Damage_Prefix` blocks it on a client (`CAN_DAMAGE_ENEMIES` is
+  false).
+- `Damage_Postfix` then forwarded any hit whose source is in `AllowedDamageSource`, which is every
+  `EItem` name, and it did not check `CAN_SEND_MESSAGES`.
+- Lightning Orb's source is "LightningOrb" (an `EItem`). So every replayed Lightning Orb strike and
+  bounce was sent back as `EnemyDamaged` and applied on the host a second time. This was real extra
+  damage, not a visual.
+
+**Fix:** `Damage_Postfix` returns on a client while `CAN_SEND_MESSAGES` is false. `[dmg-fwd]` counts
+the replayed hits it held back that the old code would have forwarded.
+
+**Hands-off, 2026-10-25** (run B and the final run of OB-62, host `LightningOrb`): the client held back
+267 and 264 Lightning Orb hits, each of which the host used to apply twice. The final run's counter
+also showed 233 Lightning Staff hits, which were never forwarded: their source is not an item name.
+The counter now counts only forwardable sources. UNVERIFIED: the host's damage totals were not
+compared before and after.
