@@ -19,6 +19,31 @@ namespace OmniBonk.Patches.Projectiles
         private static readonly System.Collections.Generic.Dictionary<int, ParticleOpacity> opacityComponents = new();
         private static readonly System.Collections.Generic.Dictionary<int, bool> hiddenState = new();
 
+        /// <summary>
+        /// Received projectiles by Unity instance id. The <c>DynamicData</c> "netplayId" tag sits on a
+        /// component wrapper nothing holds (the interpolator keeps the <c>GameObject</c>), so it was lost
+        /// once that wrapper was collected, as with rockets (OB-25), and the client then ended the copy
+        /// itself. Main thread only.
+        /// </summary>
+        private static readonly System.Collections.Generic.HashSet<int> receivedProjectiles = [];
+
+        internal static void MarkReceived(ProjectileBase projectile)
+        {
+            if (projectile != null)
+            {
+                receivedProjectiles.Add(projectile.GetInstanceID());
+            }
+        }
+
+        internal static void ForgetReceived(int instanceId) => receivedProjectiles.Remove(instanceId);
+
+        internal static void ResetReceived() => receivedProjectiles.Clear();
+
+        internal static bool IsReceived(ProjectileBase projectile)
+            => projectile != null
+               && (receivedProjectiles.Contains(projectile.GetInstanceID())
+                   || DynamicData.For(projectile).Get<uint?>("netplayId").HasValue);
+
         /// <summary>Spawn projectiles at the net player's position.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ProjectileBase.TryInit))]
@@ -150,8 +175,7 @@ namespace OmniBonk.Patches.Projectiles
             }
 
             var isServer = synchronizationService.IsServerMode() ?? false;
-            var netplayId = DynamicData.For(__instance).Get<uint?>("netplayId");
-            if (netplayId.HasValue && !isServer)
+            if (!isServer && IsReceived(__instance))
             {
                 return false;
             }

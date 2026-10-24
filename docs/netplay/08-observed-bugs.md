@@ -5050,3 +5050,37 @@ own copy did. On a client, the owner's own Flex hits were lost in the same way a
 2. The host evades while a client has Shadowstep: no execute.
 3. A teammate has Flex: the host is not protected by it.
 4. A client's own Flex blocks a hit and damages nearby enemies on the host.
+
+## OB-58 — Received weapon projectiles could end early on clients; received mines exploded on their own — **FIXED 2026-10-24, UNVERIFIED, not run in-game**
+
+Found by the audit in `docs/reverse-engineering/02-item-visual-audit.md` ("Same mechanisms as
+Rocket, Soul Harvester and Energy Core", parts 2 and 3). Not seen in play.
+
+**Cause (decompiled, CONFIRMED in code; effect UNVERIFIED in play):**
+
+1. **Lost tag, same as OB-25.** `OnReceivedSpawnedProjectile` tagged each received projectile's
+   component with a `DynamicData` "netplayId", but the interpolator keeps only its `GameObject`.
+   `Il2CppObjectPool` caches wrappers weakly, so once the component's wrapper was collected the tag
+   was gone. `ProjectileBase.ProjectileDone_Postfix` then let the client end the copy on its own clock
+   while the interpolator kept moving it. Every synced weapon except rockets (already fixed) was
+   exposed.
+2. **Mines exploded locally.** Nothing patched `ProjectileMines`. On a client a received mine's
+   `MyFixedUpdate` (0x1804EEF10) checks for enemies and calls `Explode` (0x1804EE9A0), which draws
+   from `explosionPool`, damages (blocked on clients) and calls `ProjectileDone`. With the tag held,
+   that was refused, so the mine stayed and could explode again at every check until the host's
+   `ProjectileDone` arrived.
+
+**Fix:**
+
+- `ProjectileBasePatches` keeps received projectiles in a `HashSet<int>` of `GetInstanceID()`, marked at
+  the spawn site, forgotten when the interpolator removes the copy, cleared with the session. The
+  `ProjectileDone` guard checks it first and the tag second.
+- `ProjectileMinesPatches` skips `MyFixedUpdate` on clients for received mines.
+- `ProjectileInterpolator.PlayEndExplosion` draws a mine's explosion on removal as `Explode` does: at
+  the mine, scaled by `projectileRadius`. That scale is read through Ghidra's field names, which sit
+  one slot (8 bytes) out here; the offsets check out against the check interval and radius in
+  `MyFixedUpdate`. A mine ends only by exploding: its `Timeout` is the shared empty stub.
+
+To confirm in play: mines on a client explode once, where the host's do, and the first one logs
+`[rocket] Drew the first explosion for a received mine.`; other weapons' projectiles on a client
+last as long as the host's.

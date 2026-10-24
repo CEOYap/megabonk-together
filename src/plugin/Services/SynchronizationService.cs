@@ -1957,6 +1957,8 @@ namespace OmniBonk.Services
                     }
 
 
+                    Patches.Projectiles.ProjectileBasePatches.MarkReceived(proj.GetComponent<ProjectileBase>());
+
                     // FIX P2-5: owner registered so these are dropped when that peer leaves.
                     projectileManagerService.RegisterProjectileForInterpolation(projectile.Id, proj, projectile.OwnerId);
 

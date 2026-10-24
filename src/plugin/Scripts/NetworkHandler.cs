@@ -274,6 +274,7 @@ namespace OmniBonk.Scripts
             Plugin.Instance.Mode = new();
             Plugin.Services.GetService<IItemProjectileVisualService>()?.Reset();
             Patches.Projectiles.RocketPatches.Reset();
+            Patches.Projectiles.ProjectileBasePatches.ResetReceived();
             Patches.Items.EventListenerOwnership.ResetKillers();
             isHost = false;
 

@@ -235,3 +235,75 @@ per-item hooks.
 - **Weapon-rocket explosions** were never seen on clients once OB-25's fix made `RocketPatches`
   reliably skip `Rocket.ProjectileDone` (2026-10-24 playtest). `ProjectileInterpolator` now draws one
   from `explosionPool` when it removes a received rocket; confirmed in play 2026-10-24.
+
+## Same mechanisms as Rocket, Soul Harvester and Energy Core — audit 2026-10-24
+
+Build 21750826. All 110 `Init` overrides on `ItemBase`, `PassiveAbility` and `WeaponPassive`
+subclasses were listed from dump.cs; 62 are the shared empty stub 0x1803321E0. The other 48 were
+decompiled and each static delegate they combine into was named from dump.cs's static-field offsets.
+
+### 1. Soul Harvester: a listener that fires after the kill's attribution scope has closed
+
+| Hooked event | Listeners | Verdict |
+|---|---|---|
+| `Enemy.A_EnemyReleasedFromPool` (0x20) | Soul Harvester, Cursed Doll, Bullseye | Soul Harvester **fixed** (OB-56). Cursed Doll's `OnEnemyDied` (0x18043FBE0) and Bullseye's `OnEnemyReleasedFromPool` (0x1804754E0) only remove the enemy from a set or dictionary: safe on any machine. |
+| `Enemy.A_EnemyDied` (0x8) | Borgor, Demonic Blood, Demonic Soul, Plague, Blood Magic | In scope: `Enemy.Damage` (0x1804AC7B0) calls `EnemyDied(dc)` directly (xref). One exception, `DiedNextFrame` (0x1804ACFD0), reached only from `EnemyBehaviour.FixedUpdate` for animation 0x16 enemies that expire on their own: it `Invoke`s the death a frame later, so the host is credited. No player made that kill, so only the host's copies proc. Minor. |
+| `Enemy.A_Damage` (0x30) | Demon Blade, Kevin, Joe's Dagger, Zooma, Bullseye | In scope (raised inside `Damage`). |
+
+**Every one of these 48 listeners** was also hit by the stage-change cleanup bug (OB-56, fixed): a
+teammate's copy on the host was unsubscribed from stage 2 on.
+
+**New leads, UNVERIFIED in game — a teammate's copy reacting to the local player's own event.**
+These passives hook player-side statics and have no patch:
+
+- **Shadowstep** `OnEvade` (0x18047D210), on `PlayerHealth.A_Evaded`: executes the enemy
+  (`isExecute`, `DamageFromPlayerOther`). A teammate's copy here fires on *our* evade. On the host that
+  executes enemies on the host's evades; on a client the hit is dropped (`Enemy.Damage` is host-only and
+  the source is not an item name). The owner's own Shadowstep on a client is dropped the same way.
+- **Flex** `OnCheckStopDamage` (0x180477FA0), on `PlayerHealth.A_CheckStopDamage`: calls `UseFlex`,
+  which can block the local player's damage, so a teammate's Flex may protect us.
+- **Speed Demon** (`A_TakeDamage`), **Lock In** (`AegisAttack.A_Regen`/`A_Used`), **Dice**
+  (`ProjectileDice.A_RollSix`): change only that copy's own stat modifiers. Harmless unless a teammate's
+  copy feeds the local player's stats.
+
+### 2. Rocket: a `DynamicData` tag on a wrapper nothing keeps alive
+
+`Il2CppObjectPool.Get<T>` reuses a cached wrapper only while it is alive *and* already a `T`; otherwise
+it builds a new one and replaces the cache entry. A tag survives only while something holds the exact
+wrapper it was set on.
+
+| Tag | Held by | Verdict |
+|---|---|---|
+| Enemy `netplayId`, `targetId` | `EnemyManagerService.spawnedEnemies` | Safe |
+| Pickup `pickupId`, `ownerId` | `PickupManagerService.spawnedPickups` | Safe |
+| Host projectile `netplayId`, `ownerId` | `ProjectileManagerService.spawnedProjectile` | Safe |
+| Constant attack `ownerId` | `NetPlayer.constantAttacks` (same typed object) | Safe |
+| Spawned-object `netplayId` on a `GameObject` | `SpawnedObjectManagerService.spawnedObjects` | Safe while registered |
+| Rocket child `ownerId` | nothing | **Fixed** (OB-25) |
+| **Client: received weapon projectile `netplayId`** (all non-rocket kinds) | nothing; the interpolator holds the `GameObject`, not the component | **Fixed (OB-58), not yet run in game.** Was exposed: `ProjectileBase.ProjectileDone` then runs on the client: it ends and pools the copy on its own clock while the interpolator keeps moving the pooled object. Same fix as rockets applies. |
+| Shady Guy / Microwave `rarity`, tumbleweed component, `InteractableCharacterFight` child `GameObject` | nothing | Exposed; tumbleweed reads it only as a fallback. |
+
+### 3. Rocket explosion: a visual drawn inside a method the client skips
+
+- `ProjectileBase.ProjectileDone` (0x18042C800) only deactivates; `ProjectileBase.HitEnemy` only damages.
+  Skipping them on clients loses no visual.
+- **Mines** `Explode` (0x1804EE9A0), from `MyFixedUpdate` (0x1804EEF10): draws from `explosionPool`
+  (0x1D8), damages, then calls `ProjectileBase.ProjectileDone`. Nothing patches mines, so a client's
+  received mine explodes on its own enemy check. With its tag held, `ProjectileDone` is then refused and
+  the mine stays, so it can **explode again** each check until the host's `ProjectileDone` arrives.
+  **Fixed (OB-58), not yet run in game:** received mines skip `MyFixedUpdate` on clients, and the
+  interpolator draws the host's explosion on removal.
+- **`HitEnemy` overrides** (Bananarang 0x1804E2D80, Bluetooth 0x1804E62A0, Poison Flask 0x1804EFDC0,
+  Whirlwind 0x18050D7E0) are not covered by the `ProjectileBase.HitEnemy` patch, so they run on
+  clients. Damage is still blocked by the `Enemy.Damage` prefix; host credit is still right through
+  `WeaponHitAttribution` (`GetDamageContainer`). Poison Flask's `ExplodeFlask` (0x1804EF5D0) also calls
+  `Enemy.AddDebuff` and `WeaponAttack.ProjectileHit` on the client. Its debuff ticks are blocked, but
+  what `ProjectileHit` does there is unchecked.
+
+### 4. Energy Core: an owner-run item spawning `ItemProjectile`
+
+All four `ItemProjectile.Set` callers (Soul Harvester x2, Energy Core, `EffectManager.SpawnGhostProjectile`
+for Ghost and Bob) go through tag 85. Nothing else creates one. The only other item spawner of a shared
+projectile type is **Slutty Cannon** (`Rocket.Set` with `weaponBase == null`), still family 2, open;
+the host spawns it at the teammate (OB-43 position redirect in `HitItemOwnership`).
+`EffectManager.SpawnRockets` (0x180501AF0) has no callers, only metadata references.

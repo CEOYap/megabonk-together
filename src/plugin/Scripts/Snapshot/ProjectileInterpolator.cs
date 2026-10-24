@@ -60,46 +60,76 @@ namespace OmniBonk.Scripts.Snapshot
 
             foreach (var id in expiredScratch)
             {
-                PlayRocketExplosion(id);
+                PlayEndExplosion(id);
                 RemoveProjectileNow(id);
             }
         }
 
         /// <summary>
-        /// The client never runs <c>Rocket.ProjectileDone</c> for a received rocket (RocketPatches), and
-        /// that is where the explosion is drawn. Decompiled (0x1804F3FA0): one object from
-        /// <c>PoolManager.explosionPool</c>, placed at the rocket's position plus its forward. Damage
-        /// cannot leak: client <c>Enemy.Damage</c> is blocked and a weapon source is never forwarded.
-        /// <b>UNVERIFIED</b> that the explosion prefab carries nothing beyond its visual.
+        /// The client never runs the method that draws a received projectile's explosion, so it is
+        /// drawn here when the host's <c>ProjectileDone</c> removes it. Both decompiled, one object from
+        /// <c>PoolManager.explosionPool</c> (0x1D8):
+        /// <list type="bullet">
+        /// <item>Rocket: <c>Rocket.ProjectileDone</c> (0x1804F3FA0), at the rocket's position plus its
+        /// forward. Skipped on clients by RocketPatches.</item>
+        /// <item>Mine: <c>ProjectileMines.Explode</c> (0x1804EE9A0), at the mine, scaled by
+        /// <c>projectileRadius</c>. Skipped on clients by ProjectileMinesPatches. A mine ends only by
+        /// exploding (its <c>Timeout</c> is the empty stub).</item>
+        /// </list>
+        /// Damage cannot leak: client <c>Enemy.Damage</c> is blocked and a weapon source is never
+        /// forwarded. <b>UNVERIFIED</b> that the explosion prefab carries nothing beyond its visual.
         /// </summary>
-        private void PlayRocketExplosion(uint id)
+        private void PlayEndExplosion(uint id)
         {
             if (!activeProjectiles.TryGetValue(id, out var projectile) || projectile == null)
             {
                 return;
             }
 
+            Vector3 position;
+            Vector3? scale = null;
             var rocket = projectile.GetComponent<ProjectileRocket>()?.rocket;
-            var pool = Assets.Scripts.Objects.Pooling.PoolManager.Instance?.explosionPool;
-            if (rocket == null || pool == null || !rocket.gameObject.activeSelf)
+            if (rocket != null)
             {
-                return;
+                if (!rocket.gameObject.activeSelf)
+                {
+                    return;
+                }
+
+                var rocketTransform = rocket.transform;
+                position = rocketTransform.position + rocketTransform.forward;
+            }
+            else
+            {
+                var mine = projectile.GetComponent<ProjectileMines>();
+                if (mine == null)
+                {
+                    return;
+                }
+
+                position = mine.transform.position;
+                scale = Vector3.one * mine.projectileRadius;
             }
 
-            var explosion = pool.Get();
+            var pool = Assets.Scripts.Objects.Pooling.PoolManager.Instance?.explosionPool;
+            var explosion = pool?.Get();
             if (explosion == null)
             {
                 return;
             }
 
-            var rocketTransform = rocket.transform;
-            explosion.transform.position = rocketTransform.position + rocketTransform.forward;
+            explosion.transform.position = position;
+            if (scale.HasValue)
+            {
+                explosion.transform.localScale = scale.Value;
+            }
+
             explosion.SetActive(true);
 
             if (!loggedFirstExplosion)
             {
                 loggedFirstExplosion = true;
-                Plugin.Log.LogInfo("[rocket] Drew the first explosion for a received rocket.");
+                Plugin.Log.LogInfo($"[rocket] Drew the first explosion for a received {(rocket != null ? "rocket" : "mine")}.");
             }
         }
 
@@ -275,6 +305,12 @@ namespace OmniBonk.Scripts.Snapshot
         {
             if (activeProjectiles.TryGetValue(id, out var toDel))
             {
+                var received = toDel != null ? toDel.GetComponent<Assets.Scripts.Inventory__Items__Pickups.Weapons.Projectiles.ProjectileBase>() : null;
+                if (received != null)
+                {
+                    Patches.Projectiles.ProjectileBasePatches.ForgetReceived(received.GetInstanceID());
+                }
+
                 DestroyImmediate(toDel);
                 activeProjectiles.Remove(id);
             }
