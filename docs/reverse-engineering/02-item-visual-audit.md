@@ -291,8 +291,9 @@ wrapper it was set on.
   (0x1D8), damages, then calls `ProjectileBase.ProjectileDone`. Nothing patches mines, so a client's
   received mine explodes on its own enemy check. With its tag held, `ProjectileDone` is then refused and
   the mine stays, so it can **explode again** each check until the host's `ProjectileDone` arrives.
-  **Fixed (OB-58), not yet run in game:** received mines skip `MyFixedUpdate` on clients, and the
-  interpolator draws the host's explosion on removal.
+  **Fixed (OB-58), confirmed in a hands-off run:** a received mine explodes once on the client
+  through its own enemy check, then is hidden. Drawing on every removal was wrong: most mines time
+  out through `ProjectileBase.CheckTimeout` without exploding.
 - **`HitEnemy` overrides** (Bananarang 0x1804E2D80, Bluetooth 0x1804E62A0, Poison Flask 0x1804EFDC0,
   Whirlwind 0x18050D7E0) are not covered by the `ProjectileBase.HitEnemy` patch, so they run on
   clients. Damage is still blocked by the `Enemy.Damage` prefix; host credit is still right through

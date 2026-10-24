@@ -90,6 +90,12 @@ namespace OmniBonk.Patches.Projectiles
             var isHost = synchronizationService.IsServerMode() ?? false;
             if (isHost)
             {
+                // OB-58 diagnostics; weapon rockets only (item rockets are not replicated).
+                if (__instance.weaponBase != null)
+                {
+                    Helpers.ExplosionDiagnostics.HostRocketDone();
+                }
+
                 return true;
             }
 

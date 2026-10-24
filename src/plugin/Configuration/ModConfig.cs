@@ -33,6 +33,7 @@ namespace OmniBonk.Configuration
         public static ConfigEntry<float> AutoHostStageMinutes { get; private set; }
         public static ConfigEntry<string> AutoHostMap { get; private set; }
         public static ConfigEntry<string> TestItems { get; private set; }
+        public static ConfigEntry<string> TestWeapons { get; private set; }
 #endif
         public static ConfigEntry<bool> LogEncounterPause { get; private set; }
         public static ConfigEntry<bool> LogBandwidth { get; private set; }
@@ -126,6 +127,15 @@ namespace OmniBonk.Configuration
                 "names (Big Bonk is Bonker, Thunder Mitts is GloveLightning); an unknown name is " +
                 "logged and skipped. Granted once per session, through the normal item path, so " +
                 "every peer sees them. Each run also logs its end-screen damage rows (OB-45)."
+            );
+            TestWeapons = config.Bind(
+                "Testing",
+                "TestWeapons",
+                "",
+                "Developer tool, leave empty for normal play. Weapons this copy of the game is given " +
+                "when a multiplayer run starts, comma-separated by the game's EWeapon names: " +
+                "\"Mine, Rockets\". Granted once per session through the normal weapon path, so every " +
+                "peer sees them; a weapon already held is skipped."
             );
             BotStuckSeconds = config.Bind(
                 "Bot",

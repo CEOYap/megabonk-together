@@ -8,7 +8,8 @@ namespace OmniBonk.Helpers
 {
     /// <summary>
     /// OB-45: grants <c>[Testing] TestItems</c> once per session at run start, via
-    /// <c>ItemInventory.AddItem</c> so they replicate like real pickups.
+    /// <c>ItemInventory.AddItem</c> so they replicate like real pickups, and <c>TestWeapons</c> via
+    /// <c>WeaponInventory.AddWeapon</c>, whose postfix sends <c>WeaponAdded</c> as a level-up pick does.
     /// </summary>
     internal static class TestLoadout
     {
@@ -18,8 +19,8 @@ namespace OmniBonk.Helpers
 
         internal static void GrantOnce()
         {
-            var spec = ModConfig.TestItems?.Value;
-            if (granted || string.IsNullOrWhiteSpace(spec))
+            var spec = ModConfig.TestItems?.Value ?? "";
+            if (granted || (string.IsNullOrWhiteSpace(spec) && string.IsNullOrWhiteSpace(ModConfig.TestWeapons?.Value)))
             {
                 return;
             }
@@ -59,6 +60,37 @@ namespace OmniBonk.Helpers
                 }
 
                 Plugin.Log.LogInfo($"[test] OB-45: granted {item} x{count}.");
+            }
+
+            GrantWeapons();
+        }
+
+        private static void GrantWeapons()
+        {
+            var spec = ModConfig.TestWeapons?.Value;
+            var weapons = GameManager.Instance?.player?.inventory?.weaponInventory;
+            if (string.IsNullOrWhiteSpace(spec) || weapons == null)
+            {
+                return;
+            }
+
+            foreach (var name in spec.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (!Enum.TryParse(name, true, out EWeapon weapon)
+                    || DataManager.Instance == null
+                    || !DataManager.Instance.weapons.TryGetValue(weapon, out var data))
+                {
+                    Plugin.Log.LogWarning($"[test] '{name}' is not a weapon name; skipped.");
+                    continue;
+                }
+
+                if (weapons.weapons.ContainsKey(weapon))
+                {
+                    continue;
+                }
+
+                weapons.AddWeapon(data, new Il2CppSystem.Collections.Generic.List<Assets.Scripts.Inventory__Items__Pickups.Stats.StatModifier>());
+                Plugin.Log.LogInfo($"[test] granted weapon {weapon}.");
             }
         }
     }

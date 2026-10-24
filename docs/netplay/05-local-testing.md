@@ -221,6 +221,9 @@ What it does, in order:
    `CheckForUpdates = false`, `AllowSavesDuringNetplay = false`, `WriteUnityLog = true`.
 3. Starts the matchmaking server if nothing listens on port 5000.
 4. Launches both copies windowed (960×540) from their exe, host first.
+   `-HostItems`/`-ClientItems` and `-HostWeapons`/`-ClientWeapons` (`[Testing] TestWeapons`, EWeapon
+   names such as `Mine, Rockets`) give each copy a loadout at run start. The host fires every
+   weapon, so its weapons are what the client receives.
 5. After `-Minutes`, closes both, restores the configs, and copies both logs plus a `summary.txt`
    into `artifacts\local-session\<timestamp>` (gitignored).
 

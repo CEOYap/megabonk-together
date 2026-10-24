@@ -102,7 +102,10 @@ How to run it from a session:
 
 What it cannot prove: anything at real packet loss (it runs at 0%), anything Steam-dependent, or how
 something looks — report those as not verified. Random characters mean a given weapon may not appear;
-use `-HostItems`/`-ClientItems` for items, and check the log shows the feature actually ran.
+use `-HostItems`/`-ClientItems` and `-HostWeapons`/`-ClientWeapons` (`"Mine, Rockets"`), and check the
+log shows the feature actually ran. Prefer a **count on both sides** to a single "it ran" line: OB-58's
+first fix logged its marker fine while drawing 17 times too many mine explosions, which only the
+`[explosions]` host/client counts exposed.
 
 **Trap:** OmniBonk refuses to load beside the old `MegabonkTogether` plugin
 (`[BepInIncompatibility]`). A Debug build from a worktree cut before the rename auto-copies one into

@@ -5051,7 +5051,7 @@ own copy did. On a client, the owner's own Flex hits were lost in the same way a
 3. A teammate has Flex: the host is not protected by it.
 4. A client's own Flex blocks a hit and damages nearby enemies on the host.
 
-## OB-58 — Received weapon projectiles could end early on clients; received mines exploded on their own — **FIXED 2026-10-24, UNVERIFIED, not run in-game**
+## OB-58 — Received weapon projectiles could end early on clients; received mines exploded on their own — **FIXED 2026-10-24, confirmed in a hands-off run (0% loss)**
 
 Found by the audit in `docs/reverse-engineering/02-item-visual-audit.md` ("Same mechanisms as
 Rocket, Soul Harvester and Energy Core", parts 2 and 3). Not seen in play.
@@ -5075,12 +5075,28 @@ Rocket, Soul Harvester and Energy Core", parts 2 and 3). Not seen in play.
 - `ProjectileBasePatches` keeps received projectiles in a `HashSet<int>` of `GetInstanceID()`, marked at
   the spawn site, forgotten when the interpolator removes the copy, cleared with the session. The
   `ProjectileDone` guard checks it first and the tag second.
-- `ProjectileMinesPatches` skips `MyFixedUpdate` on clients for received mines.
-- `ProjectileInterpolator.PlayEndExplosion` draws a mine's explosion on removal as `Explode` does: at
-  the mine, scaled by `projectileRadius`. That scale is read through Ghidra's field names, which sit
-  one slot (8 bytes) out here; the offsets check out against the check interval and radius in
-  `MyFixedUpdate`. A mine ends only by exploding: its `Timeout` is the shared empty stub.
+- ~~`ProjectileMinesPatches` skips `MyFixedUpdate` on clients for received mines, and
+  `ProjectileInterpolator` draws a mine's explosion on removal.~~ Replaced the same day; see the
+  hands-off runs below.
 
-To confirm in play: mines on a client explode once, where the host's do, and the first one logs
-`[rocket] Drew the first explosion for a received mine.`; other weapons' projectiles on a client
-last as long as the host's.
+**Hands-off runs, 2026-10-24** (`run-local-session.ps1`, host `Mine, Rockets`, client `Mine`,
+Desert, 9 min each; `[explosions]` counts the host's mine `Explode` and weapon-rocket
+`ProjectileDone` against the explosions each client draws):
+
+- **The first fix over-drew mines: host 42 explosions, client 710.** The assumption above that "a
+  mine ends only by exploding" was wrong. `ProjectileBase.CheckTimeout` (0x18042BB30) ends a mine
+  whose duration runs out with `ProjectileDone` and no explosion, and most mines end that way, so
+  drawing one on every removal was wrong.
+- **Revised fix:** a received mine runs its own `MyFixedUpdate` on the client again, so it explodes
+  only when an enemy is inside its radius, as on the host. A postfix on `Explode` hides the spent mine
+  (its refused `ProjectileDone` would have), so it cannot explode twice. The removal-time explosion
+  in `ProjectileInterpolator` is now for rockets only.
+- **Result after the revision**, at four matching 30 s check points: rockets 667/667, 728/728,
+  795/795, 859/859 (host finished / client drew). Mines 42/28, 66/40, 101/64, 119/73: the client
+  never over-draws, and draws about 60% of the host's. The rest are mines whose trigger enemy the
+  client sees differently (already killed by the host, or interpolated elsewhere). Exact mine
+  explosions would need the host to send them (a new message, protocol bump).
+- No mod errors and no `Look rotation` warnings on either copy.
+
+Not covered: packet loss, and whether received non-explosive projectiles now last exactly as long as
+the host's (no counter for that).

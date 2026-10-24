@@ -27,6 +27,8 @@ param(
     [string] $Map = "Desert",
     [string] $HostItems = "",
     [string] $ClientItems = "EnergyCore, SoulHarvester, Ghost",
+    [string] $HostWeapons = "",
+    [string] $ClientWeapons = "",
     [string] $OutDir = "",
     [switch] $NoBuild,
     [switch] $KeepConfigs
@@ -67,8 +69,8 @@ function Set-CfgValue([string] $path, [string] $section, [string] $key, [string]
 
 function Get-Copies {
     @(
-        @{ Name = "host";   Path = $HostPath;   Player = "AutoHost"; Items = $HostItems;   AutoHost = "true" },
-        @{ Name = "client"; Path = $ClientPath; Player = "Bot";      Items = $ClientItems; AutoHost = "false" }
+        @{ Name = "host";   Path = $HostPath;   Player = "AutoHost"; Items = $HostItems;   Weapons = $HostWeapons;   AutoHost = "true" },
+        @{ Name = "client"; Path = $ClientPath; Player = "Bot";      Items = $ClientItems; Weapons = $ClientWeapons; AutoHost = "false" }
     )
 }
 
@@ -124,6 +126,7 @@ foreach ($copy in Get-Copies) {
     Set-CfgValue $cfg "Bot" "AutoHostStageMinutes" ([string]$StageMinutes)
     Set-CfgValue $cfg "Bot" "AutoHostMap" $Map
     Set-CfgValue $cfg "Testing" "TestItems" $copy.Items
+    Set-CfgValue $cfg "Testing" "TestWeapons" $copy.Weapons
     Set-CfgValue $cfg "Player" "PlayerName" $copy.Player
     Set-CfgValue $cfg "Network" "ServerUrl" "ws://127.0.0.1:5000"
     Set-CfgValue $cfg "Network" "UseSteamTransport" "false"
