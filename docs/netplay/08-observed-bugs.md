@@ -5251,3 +5251,50 @@ Not covered:
 - Other clients' Aegis and laser sparks: owner-run, so the host never draws them, and a third
   player still sees none.
 - Item sparks: string overload, item family 3.
+
+## OB-61 — Received weapon projectiles drawn at their default size on clients — **FIXED 2026-10-25, confirmed in a hands-off run (0% loss)**
+
+Found by the audit in `docs/reverse-engineering/02-item-visual-audit.md` ("Weapon projectiles",
+part 3). Not reported in play.
+
+**Cause (decompiled, CONFIRMED in code):** a client instantiates a received projectile from its prefab
+and never runs the setup that sizes it:
+
+- `WeaponAttack.SpawnProjectile` (0x1804506F0) sets the root `localScale` to the prefab's x
+  `GetSize()` (0x1804503A0). `GetSize()` = (attack size x `projectileSizeMultiplier` -
+  `projectileSizeMultiplier`) + 1.
+- `ProjectileBase.Set` (0x18042C870) seeds `baseProjectileRadius` (0x34) from `projectileRadius`
+  (0x30) when it is 0, then sets `projectileRadius` = base x `GetSize()`.
+- `TryInit`:
+  - Arrow (0x1804E0CA0) and Bananarang (0x1804E3970) set the trail start width to the prefab width
+    x attack size.
+  - Axe (0x1804E1990) sets it to attack size x 0.25 (`.rdata` 0x18262EC44).
+  - Melee, Katana and the swords size their zones from attack size, and so does Scythe, which scales
+    the root again for a big hit. These run on the client's copy at run time.
+
+Attack size is `WeaponUtility.GetAttackSizeMultiplier` (0x1804347A0): `weaponStats[9]` x
+`PlayerStats.GetStat(9)` (the local player's static stats), capped by `maxSizeMultiplier`. The OB-1
+postfix in `WeaponUtilityPatches` already returns the owner's synced stat there, so a client can
+compute the host's value itself, and run-time readers on the copy already got it.
+
+**Fix (no protocol change):** `ReceivedProjectileSize.Apply`, called at the spawn site for every
+received projectile, repeats that setup: `projectileRadius`, root scale, and the Arrow, Bananarang and
+Axe trails. Mines keep `InitReceived`. Poison Flask is skipped because its `TryInit` resets the scale
+to one and its explosion scale comes from the host (OB-59). Rockets are skipped too.
+`ProjectileSizeDiagnostics` logs `[size]`: the host's `GetSize()` sum over projectiles it sends,
+against the client's over the copies it sizes.
+
+**Hands-off run, 2026-10-25** (9 min, Desert, one stage, host `Bow, Axe, Bananarang, Katana`, client
+`Revolver`). The size upgrades came from the bots' level-up picks. Each side's first `[size]` line
+after the same `[desync]` digest:
+
+| Digest | #13 | #37 | #61 | #85 | #97 |
+|---|---|---|---|---|---|
+| Host: projectiles / size sum / resized | 367 / 374.40 / 74 | 1014 / 1089.49 / 613 | 2039 / 2222.66 / 1500 | 3417 / 3764.99 / 2796 | 4217 / 4684.86 / 3557 |
+| Client: same | 367 / 374.40 / 74 | 1014 / 1089.49 / 613 | 2039 / 2222.66 / 1500 | 3417 / 3764.99 / 2796 | 4217 / 4684.86 / 3557 |
+
+Identical at every digest, so the client sizes each copy with the host's value. This also confirms
+in game the OB-1 `GetAttackSizeMultiplier` postfix, which had been UNVERIFIED. No mod errors, no
+exceptions in `Player.log`.
+
+Not covered: how the sizes look (not looked at); packet loss (no new message).

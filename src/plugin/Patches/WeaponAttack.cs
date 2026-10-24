@@ -31,6 +31,11 @@ namespace OmniBonk.Patches
 
             var netplayer = playerManagerService.GetNetPlayerByWeapon(__instance.weaponBase);
             synchronizationService.OnSpawnedProjectile(projectile, netplayer?.ConnectionId);
+
+            if (synchronizationService.IsServerMode() ?? false)
+            {
+                Helpers.ProjectileSizeDiagnostics.Host(__instance.GetSize());
+            }
         }
 
         /// <summary>Use the remote player's position when they spawn the projectile.</summary>

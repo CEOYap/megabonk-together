@@ -278,6 +278,7 @@ namespace OmniBonk.Scripts
             Patches.Projectiles.ProjectileBasePatches.ResetReceived();
             Helpers.ExplosionDiagnostics.Reset();
             Helpers.WeaponHitSparks.Reset();
+            Helpers.ProjectileSizeDiagnostics.Reset();
             Patches.Items.EventListenerOwnership.ResetKillers();
             isHost = false;
 

@@ -5,8 +5,10 @@ reading the mod's source. VAs come from `megabonk-re/build-21750826/dump.cs` (VA
 field names were 8 bytes off on `ItemProjectile`, `ItemProjectileOrb`, `Rocket` and `EffectManager`;
 the offsets below are dump.cs's.
 
-**Status:** family 1 (`ItemProjectile`) is fixed by tag 85 `ItemProjectilesSpawned` (protocol 5), not
-yet run in game. Families 2 to 4 and the non-visual cases are open. Bug log entry:
+**Status:** family 1 (`ItemProjectile`) is fixed by tag 85 `ItemProjectilesSpawned` (protocol 5),
+confirmed in play 2026-10-24. Weapon mines (OB-58), Poison Flask and Bluetooth (OB-59) and weapon
+hit sparks (OB-60) are fixed and confirmed hands-off. Families 2 to 4 and the non-visual cases are
+open. Bug log entry:
 [OB-56](../netplay/08-observed-bugs.md). Legend: CONFIRMED means decompiled; anything else is marked
 UNVERIFIED.
 
@@ -84,11 +86,10 @@ attacks (Aura, Aegis, Laser, Dragon Breath, Chunkers) are drawn on every machine
 - **LightningStaff:** `ProjectileLightningBolt.TryInit` calls `LightningStrike` (xref), so the strike
   is replicated by tag 41. Any other bolt visual is **UNVERIFIED**.
 - **Weapon-rocket explosion:** clients skip `Rocket.ProjectileDone` (0x1804F3FA0) for received
-  rockets (`RocketPatches`), and that method spawns the explosion from `explosionPool` 0x1D8. Clients
-  likely never see it. **UNVERIFIED.**
-- **Per-hit and projectile-done effects:** missing on clients, because `ProjectileBase.HitEnemy` and
-  `ProjectileDone` are prefix-false there. **UNVERIFIED:** Ghidra truncated `ProjectileBase.HitEnemy`
-  (0x18042BDB0).
+  rockets (`RocketPatches`), which is where the explosion is drawn. Fixed: `ProjectileInterpolator`
+  draws it when it removes a received rocket (OB-25, OB-58; counts matched hands-off).
+- **Per-hit effects:** fixed by OB-60. The host sends every weapon `EnemyHitEffect` it draws (tag 88)
+  and clients replay them.
 - `EffectManager.SpawnRockets` (0x180501AF0) has no direct call site; likely unused.
 
 ---
@@ -210,7 +211,7 @@ per-item hooks.
   `SendToAllClientsExcept(sender)`.
 - **Owner id:** `trackerService.GetCurrentPlayerId() ?? local`. On the host, the `PositionRequest`
   redirect already resolves MyPlayer-relative positions to the teammate.
-- **Wire format:** new messages are appended tags (86 onward); any layout change bumps
+- **Wire format:** new messages are appended tags (89 onward); any layout change bumps
   `Protocol.Version`. Delivery per `docs/netplay/02-delivery-method-reference.md`; batch per frame.
 - **Copies must never reach `Enemy.Damage`:** on a client the damage forward (`Enemy.Damage_Postfix`
   → `OnEnemyDamaged`) sends any hit whose `damageSource` is an item name to the host, and does not
@@ -370,7 +371,8 @@ sizes.
 2. **Poison Flask and Bluetooth:** done 2026-10-25 (OB-59, tag 87 `FlaskExploded`, protocol 7).
    Clients skip the local trigger on received copies and play the host's flask explosions; counts
    matched hands-off.
-3. **Size:** apply `GetAttackSizeMultiplier` on the client (it reads that machine's stats, so it is
-   approximate), or send the host's size with the spawn (protocol change).
+3. **Size:** done 2026-10-25 (OB-61). The client repeats `SpawnProjectile`, `Set` and the trail
+   `TryInit` sizing with `GetSize()`, which the OB-1 postfix answers with the owner's stats. Size sums
+   matched exactly hands-off.
 
 Each can be checked hands-off with host/client counters, as `[explosions]` did for OB-58.

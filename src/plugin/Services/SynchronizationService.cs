@@ -1961,6 +1961,7 @@ namespace OmniBonk.Services
 
 
                     Patches.Projectiles.ProjectileBasePatches.MarkReceived(proj.GetComponent<ProjectileBase>());
+                    Patches.Projectiles.ReceivedProjectileSize.Apply(proj.GetComponent<ProjectileBase>(), attack, weapon);
 
                     var mine = proj.GetComponent<ProjectileMines>();
                     if (mine != null)
