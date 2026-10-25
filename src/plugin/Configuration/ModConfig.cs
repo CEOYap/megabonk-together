@@ -238,9 +238,9 @@ namespace OmniBonk.Configuration
             LogBandwidth = config.Bind(
                 "Diagnostics",
                 "LogBandwidth",
-                false,
+                true,
                 "Log outgoing bandwidth per message type every 10 seconds, plus the state of the " +
-                "link to each peer. Off by default. Turn it on to find which stream is responsible " +
+                "link to each peer. On by default. Use it to find which stream is responsible " +
                 "for a bandwidth problem, or to see how a session is holding up on a poor " +
                 "connection - on the Steam transport this reports the measured delivery ratio and " +
                 "the backlog of unacknowledged data, not just round-trip time."
