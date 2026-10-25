@@ -760,13 +760,23 @@ namespace OmniBonk.Scripts.Bot
             }
 
             var usable = new System.Collections.Generic.List<MyButtonCharacter>();
+            var passives = new System.Collections.Generic.List<string>();
             foreach (var button in buttons)
             {
                 if (button != null && button.canUseCharacter)
                 {
                     usable.Add(button);
                 }
+
+                var data = button != null ? button.characterData : null;
+                if (data != null)
+                {
+                    passives.Add($"{data.eCharacter}={(data.passive != null ? data.passive.ePassive.ToString() : "?")}{(button.canUseCharacter ? "" : " (locked)")}");
+                }
             }
+
+            // So a test can pick a character for its passive (TestCharacter).
+            Plugin.Log.LogInfo($"[bot] characters: {string.Join(", ", passives)}.");
 
             if (usable.Count == 0)
             {

@@ -5420,11 +5420,27 @@ fired.
   - No misses, no errors, no exceptions.
   - That run never filled a pool (`recycled 0`), so the recycling itself is UNVERIFIED in play.
 
+**Grandma's Tonic, Plague and Bullseye on their own (same day).**
+
+- `[item-vfx]` now also counts pooled entries per pool.
+- The bot logs each character's passive when it reaches the character menu. Bullseye is **Bush**,
+  Plague is **Amog**, Zap is TonyMcZoom.
+- Run E (8 min, host `Bush`, client `Amog`, `GrandmasSecretTonic` on both, host `Revolver`), host
+  sent / client drew, at four matching digests:
+  - Grandma's Tonic: 41/41, 202/202, 240/240, 276/276.
+  - Plague (poisonPool): 24/24, 107/107, 124/124, 139/139.
+  - Bullseye (explosionPool): 128/128, 169/169, 184/184, 206/206.
+  - The client never sent a Tonic or Plague effect, so each runs only on the host and is drawn once.
+  - Cursed Doll effects came from both sides (678/677 host to client, 423/422 back), though no bot was
+    given one; they came from chests.
+- Run F (4 min, client `CursedDoll` only) shows that is right, not a double tick. Only the owner
+  ticks its doll: client sent 376, host drew 376, host sent 0.
+- No errors, no exceptions.
+
 Not covered:
 - **Burgers being eaten:** the bots never ate one.
 - **A third player:** seeing a client's Aegis and laser sparks needs three copies. Client to host is
   confirmed (run C, D).
-- **Grandma's Tonic, Plague and Bullseye:** not counted separately.
 - Packet loss, and how any of it looks.
 
 ## OB-63 — A client sent every replayed host Lightning Orb strike back to the host, which applied it again — **FIXED 2026-10-25, confirmed hands-off**

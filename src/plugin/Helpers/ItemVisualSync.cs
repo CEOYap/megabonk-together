@@ -115,6 +115,10 @@ namespace OmniBonk.Helpers
 
         private static readonly int[] sent = new int[16];
         private static readonly int[] drawn = new int[16];
+
+        /// <summary>Pooled entries by <see cref="ItemVisualPool"/>, so each item can be checked on its own.</summary>
+        private static readonly int[] sentPool = new int[16];
+        private static readonly int[] drawnPool = new int[16];
         private static readonly int[] missed = new int[16];
         private static float nextLogTime;
 
@@ -410,6 +414,11 @@ namespace OmniBonk.Helpers
         private static void Queue(ItemVisualEntry entry)
         {
             pending.Entries.Add(entry);
+            if (entry.Kind == (byte)ItemVisualKind.Pooled && entry.Sub < sentPool.Length)
+            {
+                sentPool[entry.Sub]++;
+            }
+
             Bump(sent, entry.Kind);
         }
 
@@ -460,6 +469,11 @@ namespace OmniBonk.Helpers
                         var ok = Replay(effects, entry);
                         if (ok)
                         {
+                            if (entry.Kind == (byte)ItemVisualKind.Pooled && entry.Sub < drawnPool.Length)
+                            {
+                                drawnPool[entry.Sub]++;
+                            }
+
                             Bump(drawn, entry.Kind);
                         }
                         else
@@ -902,8 +916,24 @@ namespace OmniBonk.Helpers
             campfires.Clear();
             lanterns.Clear();
             Array.Clear(sent, 0, sent.Length);
+            Array.Clear(sentPool, 0, sentPool.Length);
+            Array.Clear(drawnPool, 0, drawnPool.Length);
             Array.Clear(drawn, 0, drawn.Length);
             Array.Clear(missed, 0, missed.Length);
+        }
+
+        private static string DescribePools()
+        {
+            var parts = new List<string>();
+            for (var i = 1; i < sentPool.Length; i++)
+            {
+                if (sentPool[i] + drawnPool[i] > 0)
+                {
+                    parts.Add($"{(ItemVisualPool)i} {sentPool[i]}/{drawnPool[i]}");
+                }
+            }
+
+            return parts.Count == 0 ? "none" : string.Join(", ", parts);
         }
 
         private static string Describe(int[] counts)
@@ -955,7 +985,8 @@ namespace OmniBonk.Helpers
                 $"rockets {sent[6]}/{sent[7]}; drew pooled {drawn[1]}, sparks {drawn[2]}, zap {drawn[3]}, mirror {drawn[4]}, " +
                 $"player {drawn[5]}, rockets {drawn[6]}/{drawn[7]}; missed {Describe(missed)}, recycled {recycled}. " +
                 $"Sent/drew firefield {sent[8]}/{drawn[8]}, borgor {sent[9]}/{drawn[9]} eaten {sent[10]}/{drawn[10]}, " +
-                $"camp {sent[11]}/{drawn[11]} end {sent[12]}/{drawn[12]}, lantern {sent[13]}/{drawn[13]}.");
+                $"camp {sent[11]}/{drawn[11]} end {sent[12]}/{drawn[12]}, lantern {sent[13]}/{drawn[13]}. " +
+                $"Pooled sent/drew by pool: {DescribePools()}.");
         }
     }
 }

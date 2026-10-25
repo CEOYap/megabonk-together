@@ -150,7 +150,8 @@ try {
     $listening = Get-NetTCPConnection -LocalPort 5000 -State Listen -ErrorAction SilentlyContinue
     if (-not $listening) {
         Write-Host "Starting the matchmaking server..."
-        $server = Start-Process dotnet -ArgumentList "run", "--project", (Join-Path $repo "src\server\OmniBonk.Server.csproj") `
+        # Quoted: Start-Process joins the arguments with spaces, and the repo path may contain one.
+        $server = Start-Process dotnet -ArgumentList "run", "--project", ('"' + (Join-Path $repo "src\server\OmniBonk.Server.csproj") + '"') `
             -PassThru -WindowStyle Minimized -RedirectStandardOutput (Join-Path $OutDir "server.log") -RedirectStandardError (Join-Path $OutDir "server.err.log")
         $deadline = (Get-Date).AddSeconds(90)
         while (-not (Get-NetTCPConnection -LocalPort 5000 -State Listen -ErrorAction SilentlyContinue)) {
