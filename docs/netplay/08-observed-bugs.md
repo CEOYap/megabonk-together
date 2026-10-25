@@ -5437,11 +5437,35 @@ fired.
   ticks its doll: client sent 376, host drew 376, host sent 0.
 - No errors, no exceptions.
 
-Not covered:
-- **Burgers being eaten:** the bots never ate one.
-- **A third player:** seeing a client's Aegis and laser sparks needs three copies. Client to host is
-  confirmed (run C, D).
-- Packet loss, and how any of it looks.
+**Three copies, burgers eaten (same day).**
+
+- New harness options: `-ThirdPath` (a second client, here `D:\Games\Megabonk - Copy`, whose old
+  `MegabonkTogether` plugin was moved to its `BepInEx\disabled-plugins\`), and `-SeekBurgers`
+  (`[Testing] TestSeekBurgers`: a following bot walks into burger copies).
+- Decompiled: `Borgar.FixedUpdate` is an empty shared stub, so a burger never moves; a player must
+  touch it. `DestroyBorgar` (0x18048AB30) deactivates it and releases it to borgorPool.
+- **Bug found:** the patch on `DestroyBorgar` forgot the burger's id inside the collision, before the
+  collision postfix read it. So no eaten burger was ever sent. The id is now read in the collision
+  prefix.
+- Run G (9 min). Host `Borgar*3, Bonker`; client A vulnerable with `Aegis, SpaceNoodle`; client B
+  vulnerable with `Mirror`; both seeking burgers.
+- Burgers eaten:
+  - A ate 10 and B ate 5. The host removed 15 originals, A removed B's 5, and B removed A's 10.
+- Third player (A's effects reaching B through the host):
+  - A's own Aegis/laser and item sparks: A sent 226, B drew 226.
+  - A's Cursed Doll effects (from a chest): A sent 124, the host and B drew 124 each.
+- B to A: sparks 18 / 18, Mirror 11 / 11.
+- Host to both clients:
+  - Bonker: 137 / 137 / 137.
+  - Rockets: 319/307 on the host, 319/306 and 319/307 on the clients (timing).
+  - Campfire: 26 / 26 / 26.
+  - Burgers: 21 / 21 / 21.
+  - Weapon sparks: 3448 / 3448 / 3438 (B's last line was earlier).
+- An earlier three-copy run, before the id fix, also exercised pool recycling (94 recycled on each
+  client, nothing missed).
+- No errors, no exceptions.
+
+Not covered: packet loss, and how any of it looks.
 
 ## OB-63 — A client sent every replayed host Lightning Orb strike back to the host, which applied it again — **FIXED 2026-10-25, confirmed hands-off**
 

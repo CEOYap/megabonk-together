@@ -105,7 +105,9 @@ something looks — report those as not verified. Random characters mean a given
 use `-HostItems`/`-ClientItems` and `-HostWeapons`/`-ClientWeapons` (`"Mine, Rockets"`), and check the
 log shows the feature actually ran. `-HostCharacter`/`-ClientCharacter` (`"TonyMcZoom"`) pick a
 character for its passive. Both bots are invincible, so anything that reacts to its owner being hit
-(Mirror, Electric Plug, Cactus, Aegis) never fires unless you pass `-ClientVulnerable`. Prefer a **count on both sides** to a single "it ran" line: OB-58's
+(Mirror, Electric Plug, Cactus, Aegis) never fires unless you pass `-ClientVulnerable`. `-ThirdPath
+"D:\Games\Megabonk - Copy"` adds a second client (with `-ThirdItems`/`-ThirdWeapons`/`-ThirdCharacter`),
+for anything a third player must see. `-SeekBurgers` makes following bots walk into Borgor burgers. Prefer a **count on both sides** to a single "it ran" line: OB-58's
 first fix logged its marker fine while drawing 17 times too many mine explosions, which only the
 `[explosions]` host/client counts exposed.
 

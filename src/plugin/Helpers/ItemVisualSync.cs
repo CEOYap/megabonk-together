@@ -325,15 +325,22 @@ namespace OmniBonk.Helpers
             Queue(entry);
         }
 
-        /// <summary>A burger, the host's or a copy, was eaten here: everyone else drops theirs.</summary>
-        internal static void CaptureBorgorEaten(Borgar borgar)
+        /// <summary>The synced id of a burger, the host's or a copy; 0 for none.</summary>
+        internal static uint BorgorId(Borgar borgar)
+            => borgar != null && borgorIds.TryGetValue(borgar.GetInstanceID(), out var id) ? id : 0;
+
+        /// <summary>
+        /// A burger, the host's or a copy, was eaten here: everyone else drops theirs. Takes the id read
+        /// before the collision, since <c>DestroyBorgar</c> runs inside it and forgets the burger.
+        /// </summary>
+        internal static void CaptureBorgorEaten(uint id, Vector3 pos)
         {
-            if (borgar == null || !borgorIds.TryGetValue(borgar.GetInstanceID(), out var id))
+            if (id == 0)
             {
                 return;
             }
 
-            var entry = NewEntry(ItemVisualKind.BorgorEaten, 0, borgar.transform.position, Quaternion.identity);
+            var entry = NewEntry(ItemVisualKind.BorgorEaten, 0, pos, Quaternion.identity);
             entry.Id = id;
             Queue(entry);
         }
@@ -344,6 +351,30 @@ namespace OmniBonk.Helpers
             {
                 borgors.Remove(id);
             }
+        }
+
+        /// <summary>Test bot: the nearest live burger within <paramref name="range"/>, if any.</summary>
+        internal static Vector3? NearestBorgor(Vector3 from, float range)
+        {
+            Vector3? best = null;
+            var bestSqr = range * range;
+            foreach (var borgar in borgors.Values)
+            {
+                if (borgar == null || !borgar.gameObject.activeSelf)
+                {
+                    continue;
+                }
+
+                var pos = borgar.transform.position;
+                var sqr = (pos - from).sqrMagnitude;
+                if (sqr < bestSqr)
+                {
+                    bestSqr = sqr;
+                    best = pos;
+                }
+            }
+
+            return best;
         }
 
         internal static void CaptureCampStart(Vector3 pos) => Queue(NewEntry(ItemVisualKind.CampStart, 0, pos, Quaternion.identity));

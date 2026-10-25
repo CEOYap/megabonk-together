@@ -35,6 +35,7 @@ namespace OmniBonk.Configuration
         public static ConfigEntry<string> TestItems { get; private set; }
         public static ConfigEntry<string> TestWeapons { get; private set; }
         public static ConfigEntry<string> TestCharacter { get; private set; }
+        public static ConfigEntry<bool> TestSeekBurgers { get; private set; }
 #endif
         public static ConfigEntry<bool> LogEncounterPause { get; private set; }
         public static ConfigEntry<bool> LogBandwidth { get; private set; }
@@ -144,6 +145,13 @@ namespace OmniBonk.Configuration
                 "",
                 "Developer tool, leave empty for normal play. The character the bot picks, by the " +
                 "game's ECharacter name (\"TonyMcZoom\"); empty or unusable picks at random."
+            );
+            TestSeekBurgers = config.Bind(
+                "Testing",
+                "TestSeekBurgers",
+                false,
+                "Developer tool, leave off for normal play. A following bot walks into the nearest " +
+                "Borgor burger copy, so the eaten path runs (OB-62)."
             );
             BotStuckSeconds = config.Bind(
                 "Bot",

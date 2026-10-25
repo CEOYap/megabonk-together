@@ -339,6 +339,9 @@ namespace OmniBonk.Scripts.Bot
             }
         }
 
+        private int burgerLogs;
+        private float nextBurgerLogTime;
+
         private void TickFollow(MyPlayer me)
         {
             if (IsAutoHost)
@@ -368,6 +371,27 @@ namespace OmniBonk.Scripts.Bot
             if (TryStartRevive())
             {
                 return;
+            }
+
+            // Test only: walk into a burger copy (it heals on contact, so steer through, not to, it).
+            if (ModConfig.TestSeekBurgers.Value)
+            {
+                var burger = Helpers.ItemVisualSync.NearestBorgor(me.transform.position, 3f * ModConfig.BotFollowDistance.Value);
+                if (burger.HasValue)
+                {
+                    if (burgerLogs < 5 && Time.unscaledTime >= nextBurgerLogTime)
+                    {
+                        burgerLogs++;
+                        nextBurgerLogTime = Time.unscaledTime + 5f;
+                        Plugin.Log.LogInfo($"[bot] seeking a burger {Vector3.Distance(burger.Value, me.transform.position):F1} away.");
+                    }
+
+                    var toBurger = burger.Value - me.transform.position;
+                    toBurger.y = 0f;
+                    BotInput.Move = BotSteering.ToInputAxes(toBurger, me.playerMovement.feet);
+                    CheckStuck(me, burger.Value, toBurger.magnitude, owner);
+                    return;
+                }
             }
 
             var detour = FindDetourSafely(me.transform.position, owner);

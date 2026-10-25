@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Runs a hands-off two-player OmniBonk session on this PC: an auto-host copy and a BotMode copy.
+    Runs a hands-off OmniBonk session on this PC: an auto-host copy and one or two BotMode copies.
 
 .DESCRIPTION
     Debug builds only (the bot and auto-host are compiled out of Release). The script:
@@ -31,8 +31,15 @@ param(
     [string] $ClientWeapons = "",
     [string] $HostCharacter = "",
     [string] $ClientCharacter = "",
+    # A third copy, a second client, when set.
+    [string] $ThirdPath = "",
+    [string] $ThirdItems = "",
+    [string] $ThirdWeapons = "",
+    [string] $ThirdCharacter = "",
     [string] $OutDir = "",
     [switch] $ClientVulnerable,
+    # Following bots walk into burger copies (Borgor), so the eaten path runs.
+    [switch] $SeekBurgers,
     [switch] $NoBuild,
     [switch] $KeepConfigs
 )
@@ -74,6 +81,9 @@ function Get-Copies {
     @(
         @{ Name = "host";   Path = $HostPath;   Player = "AutoHost"; Items = $HostItems;   Weapons = $HostWeapons;   Character = $HostCharacter;   AutoHost = "true" },
         @{ Name = "client"; Path = $ClientPath; Player = "Bot";      Items = $ClientItems; Weapons = $ClientWeapons; Character = $ClientCharacter; AutoHost = "false" }
+        if ($ThirdPath) {
+            @{ Name = "client2"; Path = $ThirdPath; Player = "Bot2"; Items = $ThirdItems; Weapons = $ThirdWeapons; Character = $ThirdCharacter; AutoHost = "false" }
+        }
     )
 }
 
@@ -108,7 +118,7 @@ foreach ($copy in Get-Copies) {
     Get-ChildItem $buildOut -File | Copy-Item -Destination $plugins -Force
     if ((Get-FileHash (Join-Path $plugins "OmniBonk.dll")).Hash -ne $builtHash) { throw "Copy to $plugins did not take." }
 }
-Write-Host "Deployed build $($builtHash.Substring(0, 12)) to both copies."
+Write-Host "Deployed build $($builtHash.Substring(0, 12)) to $(@(Get-Copies).Count) copies."
 
 # 2. Back up and write the test settings.
 $backups = @()
@@ -123,9 +133,10 @@ foreach ($copy in Get-Copies) {
     }
     $cfg = Join-Path $copy.Path "BepInEx\config\OmniBonk.cfg"
     Set-CfgValue $cfg "Bot" "BotMode" "true"
-    Set-CfgValue $cfg "Bot" "BotInvincible" $(if ($ClientVulnerable -and $copy.Name -eq "client") { "false" } else { "true" })
+    Set-CfgValue $cfg "Bot" "BotInvincible" $(if ($ClientVulnerable -and $copy.Name -like "client*") { "false" } else { "true" })
     Set-CfgValue $cfg "Bot" "AutoHost" $copy.AutoHost
-    Set-CfgValue $cfg "Bot" "AutoHostPlayers" "2"
+    Set-CfgValue $cfg "Bot" "AutoHostPlayers" ([string]@(Get-Copies).Count)
+    Set-CfgValue $cfg "Testing" "TestSeekBurgers" $(if ($SeekBurgers) { "true" } else { "false" })
     Set-CfgValue $cfg "Bot" "AutoHostStageMinutes" ([string]$StageMinutes)
     Set-CfgValue $cfg "Bot" "AutoHostMap" $Map
     Set-CfgValue $cfg "Testing" "TestItems" $copy.Items
@@ -189,7 +200,7 @@ finally {
 
     if (-not $KeepConfigs) {
         foreach ($b in $backups) { Move-Item $b.Backup $b.Path -Force }
-        Write-Host "Restored both copies' configs."
+        Write-Host "Restored the copies' configs."
     }
 
     foreach ($copy in Get-Copies) {

@@ -53,18 +53,31 @@ namespace OmniBonk.Patches.Items
             }
         }
 
+        private static int collisionLogs;
+
         [HarmonyPrefix]
         [HarmonyPatch("OnCollisionEnter")]
-        private static void OnCollisionEnter_Prefix(Borgar __instance, out bool __state) => __state = __instance.gameObject.activeSelf;
+        private static void OnCollisionEnter_Prefix(Borgar __instance, Collision collision, out uint __state)
+        {
+            // The id now: DestroyBorgar runs inside the collision and forgets the burger.
+            __state = __instance.gameObject.activeSelf ? ItemVisualSync.BorgorId(__instance) : 0;
+#if DEBUG
+            if (collisionLogs < 10 && ItemVisualSync.IsSessionActive)
+            {
+                collisionLogs++;
+                var other = collision != null ? collision.gameObject : null;
+                Plugin.Log.LogInfo($"[item-vfx] burger touched by {(other != null ? other.name : "?")} on layer {(other != null ? LayerMask.LayerToName(other.layer) : "?")}.");
+            }
+#endif
+        }
 
         [HarmonyPostfix]
         [HarmonyPatch("OnCollisionEnter")]
-        private static void OnCollisionEnter_Postfix(Borgar __instance, bool __state)
+        private static void OnCollisionEnter_Postfix(Borgar __instance, uint __state)
         {
-            if (__state && !__instance.gameObject.activeSelf && ItemVisualSync.IsSessionActive)
+            if (__state != 0 && !__instance.gameObject.activeSelf && ItemVisualSync.IsSessionActive)
             {
-                ItemVisualSync.CaptureBorgorEaten(__instance);
-                ItemVisualSync.ForgetBorgor(__instance);
+                ItemVisualSync.CaptureBorgorEaten(__state, __instance.transform.position);
             }
         }
 
