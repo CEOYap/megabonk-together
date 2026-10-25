@@ -38,8 +38,9 @@ Its callers, found by xref:
 | `EnemyManager.HasMaxEnemies` | 0x180419DF0 | `limit <= numEnemies`; the summoners stop asking |
 | `SwarmSummoner.GetNumTargetEnemies` | 0x180489420 | Final Swarm target: `min(time × 2.5, limit) × multiplier + 50` (`.rdata` 0x18262EE38 = 2.5, 0x18262ECD0 = 50) |
 
-Outside the Final Swarm, `GetNumTargetEnemies` uses `(Difficulty + 1) × (stage × 65 + 240)` instead,
-where Difficulty is stat 38. It does not read the limit there.
+Outside the Final Swarm, `GetNumTargetEnemies` uses `(Difficulty + 1) × (n × 65 + 240)` instead. Here
+Difficulty is stat 38, and `n` is the `MapController` static at +8, LIKELY the stage index (not
+confirmed). It does not read the limit there.
 
 Ghidra labels `numEnemies` as `zoomValue` in these bodies; the field names are one slot out, as
 elsewhere in this build.
