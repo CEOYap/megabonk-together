@@ -19,5 +19,8 @@ namespace OmniBonk.Common.Messages.GameNetworkMessages
 
         /// <summary>Shared Experience (pause and shared XP). Protocol 4.</summary>
         public bool SharedExperience { get; set; }
+
+        /// <summary>No Enemy Cap: no limit on how many enemies are alive at once. Protocol 10.</summary>
+        public bool NoEnemyCap { get; set; }
     }
 }

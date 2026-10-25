@@ -22,8 +22,9 @@
         /// since clients no longer draw their own (OB-60).</para>
         /// <para>9: tag 89 <c>ItemVisualEffects</c> (OB-62). A protocol-8 peer would never draw another
         /// machine's item visuals.</para>
+        /// <para>10: <c>LobbySettings.NoEnemyCap</c>, a new field, so older peers would misread it.</para>
         /// </summary>
-        public const int Version = 9;
+        public const int Version = 10;
 
         /// <summary>Prefixed: lobby data is a flat namespace shared with the base game.</summary>
         public const string VersionKey = "mt_protocol";

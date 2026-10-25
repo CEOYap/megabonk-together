@@ -40,6 +40,9 @@ param(
     [switch] $ClientVulnerable,
     # Following bots walk into burger copies (Borgor), so the eaten path runs.
     [switch] $SeekBurgers,
+    # Lobby: No Enemy Cap on the host. TestSpawnEnemies: extra skeletons the host requests, to test a cap.
+    [switch] $NoEnemyCap,
+    [int] $TestSpawnEnemies = 0,
     [switch] $NoBuild,
     [switch] $KeepConfigs
 )
@@ -137,6 +140,8 @@ foreach ($copy in Get-Copies) {
     Set-CfgValue $cfg "Bot" "AutoHost" $copy.AutoHost
     Set-CfgValue $cfg "Bot" "AutoHostPlayers" ([string]@(Get-Copies).Count)
     Set-CfgValue $cfg "Testing" "TestSeekBurgers" $(if ($SeekBurgers) { "true" } else { "false" })
+    Set-CfgValue $cfg "Testing" "TestSpawnEnemies" $(if ($copy.AutoHost -eq "true") { [string]$TestSpawnEnemies } else { "0" })
+    Set-CfgValue $cfg "Lobby" "NoEnemyCap" $(if ($NoEnemyCap) { "true" } else { "false" })
     Set-CfgValue $cfg "Bot" "AutoHostStageMinutes" ([string]$StageMinutes)
     Set-CfgValue $cfg "Bot" "AutoHostMap" $Map
     Set-CfgValue $cfg "Testing" "TestItems" $copy.Items

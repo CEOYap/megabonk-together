@@ -17,6 +17,7 @@ namespace OmniBonk.Configuration
         public static ConfigEntry<bool> AllowSavesDuringNetplay { get; private set; }
         public static ConfigEntry<bool> EnabledSharedExperience { get; private set; }
         public static ConfigEntry<bool> NoProjectileCap { get; private set; }
+        public static ConfigEntry<bool> NoEnemyCap { get; private set; }
         public static ConfigEntry<bool> EndlessRun { get; private set; }
         public static ConfigEntry<float> EncounterInputGraceSeconds { get; private set; }
         public static ConfigEntry<bool> LogAllocationRate { get; private set; }
@@ -36,6 +37,7 @@ namespace OmniBonk.Configuration
         public static ConfigEntry<string> TestWeapons { get; private set; }
         public static ConfigEntry<string> TestCharacter { get; private set; }
         public static ConfigEntry<bool> TestSeekBurgers { get; private set; }
+        public static ConfigEntry<int> TestSpawnEnemies { get; private set; }
 #endif
         public static ConfigEntry<bool> LogEncounterPause { get; private set; }
         public static ConfigEntry<bool> LogBandwidth { get; private set; }
@@ -152,6 +154,13 @@ namespace OmniBonk.Configuration
                 false,
                 "Developer tool, leave off for normal play. A following bot walks into the nearest " +
                 "Borgor burger copy, so the eaten path runs (OB-62)."
+            );
+            TestSpawnEnemies = config.Bind(
+                "Testing",
+                "TestSpawnEnemies",
+                0,
+                "Developer tool, leave 0 for normal play. The host asks for this many extra skeletons, 30 s into a run, " +
+                "through the capped spawn path, so the enemy cap (or No Enemy Cap) shows in the [enemy-cap] log line."
             );
             BotStuckSeconds = config.Bind(
                 "Bot",
@@ -323,6 +332,14 @@ namespace OmniBonk.Configuration
                 false,
                 "Lets a weapon fire every projectile of a big volley at once. The game normally stops at 80 and drops the rest, " +
                 "which only matters with very high Quantity. Only the host's setting counts: it applies to everyone in the session."
+            );
+            NoEnemyCap = config.Bind(
+                "Lobby",
+                "NoEnemyCap",
+                false,
+                "No limit on how many enemies can be alive at once. The game stops at 550 (400, then 300, in the Final Swarm) " +
+                "and multiplayer at 500, or 600 with four or more players. Off keeps those limits. Very large crowds cost frame rate, " +
+                "most of all on the host. Only the host's setting counts: it applies to everyone in the session."
             );
             EndlessRun = config.Bind(
                 "Lobby",

@@ -1,7 +1,37 @@
 # Enemy cap — current state, costs of raising it, and a plan
 
 Written 2026-10-19 as groundwork for a future feature: a configurable (or player-count-scaled)
-enemy cap. Nothing here is built. Status legend as in [`../README.md`](../README.md).
+enemy cap. Status legend as in [`../README.md`](../README.md).
+
+## Built 2026-10-25: the No Enemy Cap lobby setting
+
+`[Lobby] NoEnemyCap`, with a "No Enemy Cap" toggle in the lobby's Options view. Only the host's
+setting counts: it is sent in `LobbySettings.NoEnemyCap` (protocol 10) and applied on every peer.
+There are **three** limits, all decompiled (CONFIRMED), and the setting lifts all of them:
+
+| Limit | Where | Value | With No Enemy Cap |
+|---|---|---|---|
+| The game's | `EnemyManager.GetNumMaxEnemies` (0x180419D60) | 550; Final Swarm 400, then 300 after 120 s | the mod already reported 1000; now 100 000 |
+| The mod's | `EnemyManagerPatches.SpawnEnemy_Prefix`, `GameBalanceService.GetMaxEnemiesSpawnable` | 500 (2–3 players), 600 (4–6), 400 in the Final Swarm | skipped |
+| The enemy pool's | `PoolManager.<Start>b__107_3` (0x18040E8D0) returns null once the pool holds `EnemyManager.maxNumEnemiesPooled` (static 0x10) | 700 | raised to 100 000; the game's value is restored when the session resets |
+
+`GetNumMaxEnemies` is read by `SpawnEnemy` (0x18041A3F0, refuses a non-forced spawn at the limit),
+`CanSpawnEnemy`, `HasMaxEnemies`, and `SwarmSummoner.GetNumTargetEnemies` (0x180489420). In the Final
+Swarm the target there is min(time x 2.5, limit) x multiplier + 50 (`.rdata` 2.5 and 50). With No
+Enemy Cap the swarm keeps growing for as long as it lasts, instead of stopping at 400.
+
+**Hands-off, 2026-10-25** (`run-local-session.ps1 -NoEnemyCap -TestSpawnEnemies 1200`; the Debug
+option `[Testing] TestSpawnEnemies` has the host ask for that many skeletons, 30 s in, through the
+capped spawn path):
+
+| Run | Requested | Spawned | Peak alive | Client in sync |
+|---|---|---|---|---|
+| No Enemy Cap off | 1200 | 496 | 500 | yes |
+| On, first build (pool limit not yet found) | 1200 | 694 | 700 | 573/573 |
+| On | 1200 | 1200 | 1214 | 818/818 at a digest |
+
+No errors and no exceptions. Not measured: frame rate or bandwidth at these counts, and anything at
+packet loss. The cost notes below still apply.
 
 ---
 

@@ -21,10 +21,16 @@ namespace OmniBonk.Helpers
 
         private const float GRANT_DELAY_SECONDS = 5f;
 
-        internal static void Reset() => granted = false;
+        internal static void Reset()
+        {
+            granted = false;
+            spawnedEnemies = false;
+        }
 
         internal static void GrantOnce()
         {
+            SpawnTestEnemiesOnce();
+
             var spec = ModConfig.TestItems?.Value ?? "";
             if (granted || (string.IsNullOrWhiteSpace(spec) && string.IsNullOrWhiteSpace(ModConfig.TestWeapons?.Value)))
             {
@@ -33,6 +39,61 @@ namespace OmniBonk.Helpers
 
             granted = true;
             CoroutineRunner.Instance.Run(GrantAfterPeersSpawn(spec));
+        }
+
+        private static bool spawnedEnemies;
+
+        /// <summary>
+        /// Host, <c>TestSpawnEnemies</c>: requests that many skeletons through the summoner overload of
+        /// <c>SpawnEnemy</c>, the one both caps apply to, 20 a frame. Logs requested, spawned and the
+        /// peak alive count, so a run shows where the cap stopped them.
+        /// </summary>
+        private static void SpawnTestEnemiesOnce()
+        {
+            var count = ModConfig.TestSpawnEnemies?.Value ?? 0;
+            var sync = Plugin.Services.GetService(typeof(Services.ISynchronizationService)) as Services.ISynchronizationService;
+            if (spawnedEnemies || count <= 0 || sync?.IsServerMode() != true)
+            {
+                return;
+            }
+
+            spawnedEnemies = true;
+            CoroutineRunner.Instance.Run(SpawnTestEnemies(count));
+        }
+
+        private static IEnumerator SpawnTestEnemies(int count)
+        {
+            yield return new UnityEngine.WaitForSecondsRealtime(30f);
+
+            var manager = Assets.Scripts.Managers.EnemyManager.Instance;
+            var data = DataManager.Instance?.GetEnemyData(Actors.Enemies.EEnemy.Skeleton);
+            if (manager == null || data == null)
+            {
+                Plugin.Log.LogWarning("[enemy-cap] test spawn skipped: no EnemyManager or skeleton data.");
+                yield break;
+            }
+
+            var spawned = 0;
+            var peak = manager.numEnemies;
+            for (var i = 0; i < count; i++)
+            {
+                if (manager.SpawnEnemy(data, 0, false, 0, true) != null)
+                {
+                    spawned++;
+                }
+
+                if (manager.numEnemies > peak)
+                {
+                    peak = manager.numEnemies;
+                }
+
+                if (i % 20 == 19)
+                {
+                    yield return null;
+                }
+            }
+
+            Plugin.Log.LogInfo($"[enemy-cap] test spawn: requested {count}, spawned {spawned}, peak alive {peak}, max reported {manager.GetNumMaxEnemies()}.");
         }
 
         private static IEnumerator GrantAfterPeersSpawn(string spec)

@@ -13,6 +13,8 @@ namespace OmniBonk.Services
     {
         bool NoProjectileCap { get; }
 
+        bool NoEnemyCap { get; }
+
         bool EndlessEnabled { get; }
 
         /// <summary>Host only, just before <c>RunStarted</c>.</summary>
@@ -38,6 +40,8 @@ namespace OmniBonk.Services
 
         public bool NoProjectileCap => current.NoProjectileCap;
 
+        public bool NoEnemyCap => current.NoEnemyCap;
+
         public bool EndlessEnabled => current.EndlessEnabled;
 
         public void BroadcastToClients()
@@ -47,10 +51,12 @@ namespace OmniBonk.Services
                 NoProjectileCap = ModConfig.NoProjectileCap.Value,
                 EndlessEnabled = ModConfig.EndlessRun.Value,
                 SharedExperience = ModConfig.EnabledSharedExperience.Value,
+                NoEnemyCap = ModConfig.NoEnemyCap.Value,
             };
 
             // At run start, not lobby creation: the toggle lives in the open lobby.
             Plugin.Instance.Mode.EnabledSharedExperience = current.SharedExperience;
+            Patches.Enemies.EnemyPoolSize.Apply(current.NoEnemyCap);
 
             transport.SendToAllClients(current, NetDelivery.ReliableOrdered);
             logger.LogInfo($"[lobby-settings] Host settings for this session: {Describe(current)}.");
@@ -60,6 +66,7 @@ namespace OmniBonk.Services
         {
             current = settings ?? new LobbySettings();
             Plugin.Instance.Mode.EnabledSharedExperience = current.SharedExperience;
+            Patches.Enemies.EnemyPoolSize.Apply(current.NoEnemyCap);
             logger.LogInfo($"[lobby-settings] Applying the host's settings: {Describe(current)}.");
         }
 
@@ -67,10 +74,11 @@ namespace OmniBonk.Services
         {
             current = new LobbySettings();
             NoProjectileCapPatches.RestoreAll();
+            Patches.Enemies.EnemyPoolSize.Restore();
         }
 
         private static string Describe(LobbySettings settings)
             => $"no projectile cap {(settings.NoProjectileCap ? "ON" : "off")}, endless {(settings.EndlessEnabled ? "ON" : "off")}, "
-               + $"shared experience {(settings.SharedExperience ? "ON" : "off")}";
+               + $"shared experience {(settings.SharedExperience ? "ON" : "off")}, no enemy cap {(settings.NoEnemyCap ? "ON" : "off")}";
     }
 }

@@ -7,14 +7,56 @@ using UnityEngine;
 
 namespace OmniBonk.Patches.Enemies
 {
+    /// <summary>
+    /// No Enemy Cap, the third limit. <c>SpawnEnemy</c> (0x18041A3F0) takes each enemy from
+    /// <c>PoolManager.enemyPool</c> (0xC0) and gives up on null. That pool's create function,
+    /// <c>PoolManager.&lt;Start&gt;b__107_3</c> (0x18040E8D0, built in <c>Start</c> 0x18040AF40), returns null
+    /// once the pool holds <c>EnemyManager.maxNumEnemiesPooled</c> (static 0x10) enemies. That stopped a
+    /// hands-off test at 700 alive with both other caps lifted. Raised while the lobby setting is on, on
+    /// every peer, since clients draw the host's enemies from their own pool; the game's value comes back
+    /// on <see cref="Restore"/>.
+    /// </summary>
+    internal static class EnemyPoolSize
+    {
+        private static int? original;
+
+        internal static void Apply(bool noEnemyCap)
+        {
+            if (!noEnemyCap)
+            {
+                Restore();
+                return;
+            }
+
+            original ??= EnemyManager.maxNumEnemiesPooled;
+            EnemyManager.maxNumEnemiesPooled = EnemyManagerPatches.NO_ENEMY_CAP_LIMIT;
+        }
+
+        internal static void Restore()
+        {
+            if (original.HasValue)
+            {
+                EnemyManager.maxNumEnemiesPooled = original.Value;
+                original = null;
+            }
+        }
+    }
+
     [HarmonyPatch(typeof(EnemyManager))]
     internal class EnemyManagerPatches
     {
         private static readonly ISynchronizationService synchronizationService = Plugin.Services.GetService<ISynchronizationService>();
         private static readonly IEnemyManagerService enemyManagerService = Plugin.Services.GetService<IEnemyManagerService>();
         private static readonly IGameBalanceService gameBalanceService = Plugin.Services.GetService<IGameBalanceService>();
+        private static readonly ILobbySettingsService lobbySettingsService = Plugin.Services.GetService<ILobbySettingsService>();
 
-        /// <summary>Host-only spawning, with our own max-enemies limit.</summary>
+        /// <summary>
+        /// What <see cref="GetNumMaxEnemies"/> reports under No Enemy Cap: past any crowd a run reaches, and
+        /// small enough that the game's float math on it (the Final Swarm target) stays exact.
+        /// </summary>
+        internal const int NO_ENEMY_CAP_LIMIT = 100000;
+
+        /// <summary>Host-only spawning, with our own max-enemies limit unless the lobby set No Enemy Cap.</summary>
         [HarmonyPrefix]
         [HarmonyPatch(nameof(EnemyManager.SpawnEnemy), [typeof(EnemyData), typeof(int), typeof(bool), typeof(EEnemyFlag), typeof(bool)])]
         public static bool SpawnEnemy_Prefix(bool forceSpawn, EnemyManager __instance)
@@ -30,7 +72,7 @@ namespace OmniBonk.Patches.Enemies
                 return false;
             }
 
-            if (!forceSpawn && __instance.numEnemies >= gameBalanceService.GetMaxEnemiesSpawnable())
+            if (!forceSpawn && !lobbySettingsService.NoEnemyCap && __instance.numEnemies >= gameBalanceService.GetMaxEnemiesSpawnable())
             {
                 return false;
             }
@@ -133,7 +175,14 @@ namespace OmniBonk.Patches.Enemies
             return true;
         }
 
-        /// <summary>Enemies turn passive at the max limit; report a high limit to prevent that.</summary>
+        /// <summary>
+        /// The game's own limit. Decompiled (0x180419D60): 550, or in the Final Swarm 400 then 300 after
+        /// 120 s. Its callers are <c>SpawnEnemy</c> (0x18041A3F0, refuses a non-forced spawn at the limit),
+        /// <c>CanSpawnEnemy</c> and <c>HasMaxEnemies</c> (the summoners stop), and
+        /// <c>SwarmSummoner.GetNumTargetEnemies</c> (0x180489420), whose Final Swarm target is
+        /// min(time x 2.5, limit) x multiplier + 50. So the mod's own cap
+        /// (<see cref="SpawnEnemy_Prefix"/>) is the one that bites, at 1000 here; No Enemy Cap lifts both.
+        /// </summary>
         [HarmonyPostfix]
         [HarmonyPatch(nameof(EnemyManager.GetNumMaxEnemies))]
         public static void GetNumMaxEnemies(ref int __result, EnemyManager __instance)
@@ -143,7 +192,7 @@ namespace OmniBonk.Patches.Enemies
                 return;
             }
 
-            __result = 1000; //Bait the game to keep monster aggressive; TODO: is it really working ?
+            __result = lobbySettingsService.NoEnemyCap ? NO_ENEMY_CAP_LIMIT : 1000;
 
             //Plugin.Log.LogInfo($"GetNumMaxEnemies: {__instance.numEnemies} / {__result} ");
         }
