@@ -38,6 +38,7 @@ how each fix was reasoned out, and what the transport layer looks like.
 | [`reverse-engineering/00-decompilation-guide.md`](reverse-engineering/00-decompilation-guide.md) | Toolchain and workflow for inspecting the IL2CPP game build |
 | [`reverse-engineering/01-investigation-targets.md`](reverse-engineering/01-investigation-targets.md) | Concrete types and methods to decompile, each tied to an open question in the code |
 | [`reverse-engineering/02-item-visual-audit.md`](reverse-engineering/02-item-visual-audit.md) | Which items and weapons draw visuals on one machine only, the game chokepoints, and the replication design (OB-56) |
+| [`reverse-engineering/03-enemy-limits.md`](reverse-engineering/03-enemy-limits.md) | The three limits on enemies alive at once (the game's 550, the mod's 500/600, the enemy pool's 700) and how No Enemy Cap lifts each |
 
 ### Reference
 

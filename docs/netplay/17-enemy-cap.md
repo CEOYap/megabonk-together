@@ -5,6 +5,8 @@ enemy cap. Status legend as in [`../README.md`](../README.md).
 
 ## Built 2026-10-25: the No Enemy Cap lobby setting
 
+Full write-up of the three limits: [`../reverse-engineering/03-enemy-limits.md`](../reverse-engineering/03-enemy-limits.md).
+
 `[Lobby] NoEnemyCap`, with a "No Enemy Cap" toggle in the lobby's Options view. Only the host's
 setting counts: it is sent in `LobbySettings.NoEnemyCap` (protocol 10) and applied on every peer.
 There are **three** limits, all decompiled (CONFIRMED), and the setting lifts all of them:
