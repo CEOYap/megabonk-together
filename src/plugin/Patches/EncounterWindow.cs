@@ -44,7 +44,28 @@ namespace OmniBonk.Patches
                 return false;
             }
 
+            ClosePauseMenu();
+
             return true;
+        }
+
+        /// <summary>
+        /// OB-64: in netplay the pause menu does not pause, so a reward can open under it. Decompiled
+        /// <c>WindowManager.WindowOpened</c> (0x18039EAB0) unfocuses the pause window's buttons while the
+        /// reward window sits behind the menu, and <c>PauseUi.CanPause</c> (0x180556830) refuses Esc while
+        /// an encounter is open: nothing can be clicked. The game never shows both, so close the menu
+        /// first. Its <c>OnDisable</c> unpauses, which is harmless here: the reward pauses after this.
+        /// </summary>
+        private static void ClosePauseMenu()
+        {
+            var pause = UiManager.Instance == null ? null : UiManager.Instance.pause;
+            if (pause == null || !pause.IsPaused())
+            {
+                return;
+            }
+
+            pause.gameObject.SetActive(false);
+            Plugin.Log.LogInfo("[pause-menu] Closed the pause menu: a reward window is opening (OB-64).");
         }
 
         /// <summary>Queues an encounter while one is in progress; popped later in LateUpdate.</summary>
