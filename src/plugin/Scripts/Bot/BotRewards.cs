@@ -148,6 +148,29 @@ namespace OmniBonk.Scripts.Bot
             return active.Count > 0 && Click(active[Random.Range(0, active.Count)]);
         }
 
+        /// <summary>
+        /// Test only (OB-67): the Shady Guy's shop showing in <paramref name="window"/>, or null. It shares
+        /// the level-up screen with level-ups and Moai (decompiled <c>PopReward</c>).
+        /// </summary>
+        internal static InteractableShadyGuy ShadyGuyShop(BaseEncounterWindow window)
+        {
+            var levelup = window != null ? window.GetComponent<LevelupScreen>() : null;
+            return levelup != null && levelup.encounterType == EEncounter.ShadyGuy ? InteractableShadyGuy.currentlyInteracting : null;
+        }
+
+        /// <summary>Test only (OB-67): leaves a level-up-style window without picking, as a player with no gold.</summary>
+        internal static bool Leave(BaseEncounterWindow window)
+        {
+            var levelup = window != null ? window.GetComponent<LevelupScreen>() : null;
+            if (levelup == null || Time.unscaledTime < nextActionTime)
+            {
+                return false;
+            }
+
+            nextActionTime = Time.unscaledTime + ACTION_INTERVAL_SECONDS;
+            return Click(levelup.b_leave) || Click(levelup.b_skip);
+        }
+
         /// <summary>Presses a game button the way a click does; false when it is not showing.</summary>
         private static bool Click(MyButton button)
         {

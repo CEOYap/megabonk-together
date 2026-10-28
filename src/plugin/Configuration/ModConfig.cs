@@ -39,6 +39,8 @@ namespace OmniBonk.Configuration
         public static ConfigEntry<string> TestCharacter { get; private set; }
         public static ConfigEntry<bool> TestSeekBurgers { get; private set; }
         public static ConfigEntry<int> TestSpawnEnemies { get; private set; }
+        public static ConfigEntry<bool> TestOpenPauseMenu { get; private set; }
+        public static ConfigEntry<bool> TestSeekShadyGuy { get; private set; }
 #endif
         public static ConfigEntry<bool> LogEncounterPause { get; private set; }
         public static ConfigEntry<bool> LogBandwidth { get; private set; }
@@ -155,6 +157,20 @@ namespace OmniBonk.Configuration
                 false,
                 "Developer tool, leave off for normal play. A following bot walks into the nearest " +
                 "Borgor burger copy, so the eaten path runs (OB-62)."
+            );
+            TestOpenPauseMenu = config.Bind(
+                "Testing",
+                "TestOpenPauseMenu",
+                false,
+                "Developer tool, leave off for normal play. The bot opens the pause menu every 15 s and leaves it open, " +
+                "so a reward window arriving under it runs the OB-64 path."
+            );
+            TestSeekShadyGuy = config.Bind(
+                "Testing",
+                "TestSeekShadyGuy",
+                false,
+                "Developer tool, leave off for normal play. From 3 min into a stage the bot detours to the " +
+                "stage's Shady Guy at any range and shops there (OB-67)."
             );
             TestSpawnEnemies = config.Bind(
                 "Testing",

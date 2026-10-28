@@ -21,6 +21,61 @@ namespace OmniBonk.Scripts.Bot
         private static readonly HashSet<int> blacklist = [];
         private static float nextScanTime;
         private static BaseInteractable cachedDetour;
+        private static float stageStartTime;
+        private static float nextShadyGuyScanTime;
+        private static BaseInteractable cachedShadyGuy;
+
+        private static readonly HashSet<int> revisited = [];
+
+        /// <summary>
+        /// Test only (OB-67): the stage's usable Shady Guy at any range, from 3 min into the stage so the
+        /// bot has gold to buy with; null before then or when there is none. One a teammate bought from
+        /// comes first, once, even if this bot already used it: that is the revisit case. With
+        /// <paramref name="revisitOnly"/> nothing else is returned.
+        /// </summary>
+        internal static BaseInteractable FindShadyGuy(ISpawnedObjectManagerService spawnedObjects,
+            System.Func<InteractableShadyGuy, bool> boughtElsewhere, bool revisitOnly)
+        {
+            if (Time.unscaledTime - stageStartTime < 180f)
+            {
+                return null;
+            }
+
+            if (Time.unscaledTime < nextShadyGuyScanTime)
+            {
+                return cachedShadyGuy != null && cachedShadyGuy.CanInteract()
+                    && !blacklist.Contains(cachedShadyGuy.GetInstanceID()) ? cachedShadyGuy : null;
+            }
+
+            nextShadyGuyScanTime = Time.unscaledTime + SCAN_INTERVAL_SECONDS;
+            cachedShadyGuy = null;
+
+            InteractableShadyGuy fresh = null;
+            foreach (var (_, obj) in spawnedObjects.GetAllSpawnedObjects())
+            {
+                var shadyGuy = obj != null ? obj.GetComponentInChildren<InteractableShadyGuy>() : null;
+                if (shadyGuy == null || !shadyGuy.CanInteract())
+                {
+                    continue;
+                }
+
+                var id = shadyGuy.GetInstanceID();
+                if (boughtElsewhere(shadyGuy) && revisited.Add(id))
+                {
+                    blacklist.Remove(id);
+                    cachedShadyGuy = shadyGuy;
+                    return shadyGuy;
+                }
+
+                if (fresh == null && !revisitOnly && !blacklist.Contains(id) && !boughtElsewhere(shadyGuy))
+                {
+                    fresh = shadyGuy;
+                }
+            }
+
+            cachedShadyGuy = fresh;
+            return fresh;
+        }
 
         /// <summary>True when <paramref name="target"/> is strictly closer to the bot than to the host.</summary>
         internal static bool IsCloserToBot(Vector3 target, Vector3 bot, Vector3 owner)
@@ -40,6 +95,9 @@ namespace OmniBonk.Scripts.Bot
         /// <summary>Called on a stage transition: new map, new interactables.</summary>
         internal static void ResetStage()
         {
+            stageStartTime = Time.unscaledTime;
+            cachedShadyGuy = null;
+            revisited.Clear();
             blacklist.Clear();
             cachedDetour = null;
             nextScanTime = 0f;
@@ -103,7 +161,8 @@ namespace OmniBonk.Scripts.Bot
             || obj.GetComponent<InteractableShrineMoai>() != null
             || obj.GetComponent<InteractableShrineBalance>() != null
             || obj.GetComponent<InteractableShrineGreed>() != null
-            || obj.GetComponent<InteractableShrineChallenge>() != null;
+            || obj.GetComponent<InteractableShrineChallenge>() != null
+            || obj.GetComponentInChildren<InteractableShadyGuy>() != null;
 
         /// <summary>The host's revive coffin that can still be used, or null.</summary>
         internal static InteractableReviver FindOwnerCoffin(uint ownerId, ISpawnedObjectManagerService spawnedObjects)

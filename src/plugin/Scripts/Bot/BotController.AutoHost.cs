@@ -224,6 +224,7 @@ namespace OmniBonk.Scripts.Bot
             var detour = FindDetourSafely(position, position);
             if (detour != null)
             {
+                TeleportToShadyGuy(me, detour);
                 detourTarget = detour;
                 detourStartTime = Time.time;
                 State = BotState.Detouring;

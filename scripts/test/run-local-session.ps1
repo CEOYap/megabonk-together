@@ -42,6 +42,10 @@ param(
     [switch] $SeekBurgers,
     # Lobby: No Enemy Cap on the host. TestSpawnEnemies: extra skeletons the host requests, to test a cap.
     [switch] $NoEnemyCap,
+    [switch] $SharedXp,
+    [switch] $SkipChestAnimation,
+    [switch] $OpenPauseMenu,
+    [switch] $SeekShadyGuy,
     [int] $TestSpawnEnemies = 0,
     [switch] $NoBuild,
     [switch] $KeepConfigs
@@ -142,6 +146,10 @@ foreach ($copy in Get-Copies) {
     Set-CfgValue $cfg "Testing" "TestSeekBurgers" $(if ($SeekBurgers) { "true" } else { "false" })
     Set-CfgValue $cfg "Testing" "TestSpawnEnemies" $(if ($copy.AutoHost -eq "true") { [string]$TestSpawnEnemies } else { "0" })
     Set-CfgValue $cfg "Lobby" "NoEnemyCap" $(if ($NoEnemyCap) { "true" } else { "false" })
+    Set-CfgValue $cfg "Lobby" "SkipChestAnimation" $(if ($SkipChestAnimation) { "true" } else { "false" })
+    Set-CfgValue $cfg "Gameplay" "EnabledSharedExperience" $(if ($SharedXp) { "true" } else { "false" })
+    Set-CfgValue $cfg "Testing" "TestSeekShadyGuy" $(if ($SeekShadyGuy) { "true" } else { "false" })
+    Set-CfgValue $cfg "Testing" "TestOpenPauseMenu" $(if ($OpenPauseMenu -and $copy.AutoHost -ne "true") { "true" } else { "false" })
     Set-CfgValue $cfg "Bot" "AutoHostStageMinutes" ([string]$StageMinutes)
     Set-CfgValue $cfg "Bot" "AutoHostMap" $Map
     Set-CfgValue $cfg "Testing" "TestItems" $copy.Items

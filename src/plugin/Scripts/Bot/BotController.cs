@@ -320,6 +320,8 @@ namespace OmniBonk.Scripts.Bot
                 return;
             }
 
+            TickPauseMenuTest();
+
             if (detect == null) // Unity's ==: a destroyed component reads as null and is fetched again
             {
                 detect = me.GetComponentInChildren<DetectInteractables>();
@@ -341,6 +343,57 @@ namespace OmniBonk.Scripts.Bot
 
         private int burgerLogs;
         private float nextBurgerLogTime;
+
+        private float nextPauseMenuTime;
+        private float pauseMenuOpenedAt = -1f;
+        private int pauseMenusOpened;
+        private int pauseMenusClosedByBot;
+
+        /// <summary>
+        /// Test only (OB-64): opens the pause menu and leaves it, so a reward can arrive under it. A
+        /// reward closes it (the "[pause-menu]" line); after 10 s without one the bot closes it itself.
+        /// </summary>
+        private void TickPauseMenuTest()
+        {
+            if (!ModConfig.TestOpenPauseMenu.Value)
+            {
+                return;
+            }
+
+            var pause = UiManager.Instance == null ? null : UiManager.Instance.pause;
+            if (pause == null)
+            {
+                return;
+            }
+
+            var now = Time.unscaledTime;
+            if (pause.IsPaused())
+            {
+                if (pauseMenuOpenedAt >= 0f && now - pauseMenuOpenedAt > 10f)
+                {
+                    pause.gameObject.SetActive(false);
+                    pauseMenuOpenedAt = -1f;
+                    pauseMenusClosedByBot++;
+                }
+
+                return;
+            }
+
+            pauseMenuOpenedAt = -1f;
+            if (now < nextPauseMenuTime || !pause.CanPause())
+            {
+                return;
+            }
+
+            nextPauseMenuTime = now + 15f;
+            pause.Pause();
+            if (pause.IsPaused())
+            {
+                pauseMenuOpenedAt = now;
+                pauseMenusOpened++;
+                Plugin.Log.LogInfo($"[bot] opened the pause menu ({pauseMenusOpened} so far, {pauseMenusClosedByBot} closed by the bot after 10 s).");
+            }
+        }
 
         private void TickFollow(MyPlayer me)
         {
@@ -397,6 +450,7 @@ namespace OmniBonk.Scripts.Bot
             var detour = FindDetourSafely(me.transform.position, owner);
             if (detour != null)
             {
+                TeleportToShadyGuy(me, detour);
                 detourTarget = detour;
                 detourStartTime = Time.time;
                 State = BotState.Detouring;
@@ -406,6 +460,27 @@ namespace OmniBonk.Scripts.Bot
 
             var target = BotSteering.PickFollowPoint(owner, me.transform.position, ModConfig.BotFollowDistance.Value, Time.time);
             SteerTo(me, target, owner);
+        }
+
+        /// <summary>Test only (OB-67): the Shady Guy can be across the map, past the detour time limit.</summary>
+        private void TeleportToShadyGuy(MyPlayer me, BaseInteractable detour)
+        {
+            if (!ModConfig.TestSeekShadyGuy.Value || detour.GetComponentInChildren<InteractableShadyGuy>() == null)
+            {
+                return;
+            }
+
+            var spot = GroundUnder(detour.transform.position + new Vector3(2f, 0f, 0f), detour.transform.position, 3f);
+            me.transform.position = spot;
+            var body = me.playerMovement.rb;
+            if (body != null)
+            {
+                body.position = spot;
+                body.velocity = Vector3.zero;
+            }
+
+            Teleports++;
+            Plugin.Log.LogInfo("[bot] teleported to the Shady Guy (TestSeekShadyGuy).");
         }
 
         /// <summary>Detours are optional; a throw disables them for the session rather than stopping movement.</summary>
@@ -418,6 +493,17 @@ namespace OmniBonk.Scripts.Bot
 
             try
             {
+                if (ModConfig.TestSeekShadyGuy.Value)
+                {
+                    // The host only revisits one the client bought from; the client shops first.
+                    var shadyGuy = BotTargets.FindShadyGuy(spawnedObjectManagerService,
+                        synchronizationService.IsShadyGuyBoughtElsewhere, revisitOnly: IsAutoHost);
+                    if (shadyGuy != null)
+                    {
+                        return shadyGuy;
+                    }
+                }
+
                 return BotTargets.FindDetour(bot, owner, 3f * ModConfig.BotFollowDistance.Value, detect);
             }
             catch (System.Exception ex)
@@ -709,6 +795,23 @@ namespace OmniBonk.Scripts.Bot
                 BotRewards.Fallback(window);
                 actedOnWindow = true;
                 return;
+            }
+
+            // Test only (OB-67): the host leaves a Shady Guy's shared shop unbought, so the client buys
+            // there and the host's later visit is the solo revisit being tested.
+            if (ModConfig.TestSeekShadyGuy.Value && IsAutoHost)
+            {
+                var shop = BotRewards.ShadyGuyShop(window);
+                if (shop != null && !synchronizationService.IsShadyGuyBoughtElsewhere(shop))
+                {
+                    if (BotRewards.Leave(window))
+                    {
+                        actedOnWindow = true;
+                        Plugin.Log.LogInfo("[bot] left a Shady Guy's shop without buying (TestSeekShadyGuy).");
+                    }
+
+                    return;
+                }
             }
 
             if (BotRewards.TryPick(window))
