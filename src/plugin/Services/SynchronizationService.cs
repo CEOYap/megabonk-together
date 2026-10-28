@@ -498,6 +498,8 @@ namespace OmniBonk.Services
             var projectileSnapshots = new List<ProjectileSnapshot>();
             foreach (var proj in projectiles)
             {
+                ReceivedProjectileDiagnostics.Snapshot(proj.Id, Quantizer.Dequantize(proj.Position), Quantizer.Dequantize(proj.FordwardVector));
+
                 projectileSnapshots.Add(new ProjectileSnapshot
                 {
                     Timestamp = Time.timeAsDouble,
@@ -1981,6 +1983,8 @@ namespace OmniBonk.Services
                     {
                         Patches.Projectiles.ProjectileMinesPatches.InitReceived(mine, weapon);
                     }
+
+                    ReceivedProjectileDiagnostics.Describe(projectile.Weapon, projectile.Id, proj);
 
                     // FIX P2-5: owner registered so these are dropped when that peer leaves.
                     projectileManagerService.RegisterProjectileForInterpolation(projectile.Id, proj, projectile.OwnerId);
