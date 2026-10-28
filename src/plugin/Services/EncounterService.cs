@@ -29,6 +29,16 @@ namespace OmniBonk.Services
 
         public float WaitFailsafeSeconds { get; }
 
+        /// <summary>
+        /// OB-67: a reward window only this peer has (a Shady Guy a teammate already bought from). It is
+        /// not part of any round: no pause, no report. Set before the window opens, cleared when it closes.
+        /// </summary>
+        bool IsSoloShop { get; }
+
+        void BeginSoloShop();
+
+        void EndSoloShop();
+
         #region Round identity (SE-5)
 
         /// <summary>0 until known.</summary>
@@ -109,6 +119,12 @@ namespace OmniBonk.Services
 
         public float WaitedSeconds => waitingSince < 0f ? 0f : Time.unscaledTime - waitingSince;
 
+        public bool IsSoloShop { get; private set; }
+
+        public void BeginSoloShop() => IsSoloShop = true;
+
+        public void EndSoloShop() => IsSoloShop = false;
+
         public bool HasWaitedTooLong()
         {
             return IsWaiting && WaitedSeconds >= WaitFailsafeSeconds;
@@ -148,6 +164,7 @@ namespace OmniBonk.Services
 
         public void ResetSession()
         {
+            IsSoloShop = false;
             SessionId = 0;
             RoundId = 0;
             lastAppliedRoundId = -1;

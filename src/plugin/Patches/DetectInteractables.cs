@@ -38,6 +38,11 @@ namespace OmniBonk.Patches
                 return true;
             }
 
+            if (synchronizationService.TryStartSoloShop(__instance.currentInteractable))
+            {
+                return true;
+            }
+
             synchronizationService.OnInteractableUsed(__instance.currentInteractable);
 
             var isHost = synchronizationService.IsServerMode() ?? false;

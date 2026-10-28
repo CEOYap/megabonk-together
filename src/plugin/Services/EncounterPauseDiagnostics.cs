@@ -11,6 +11,7 @@ namespace OmniBonk.Services
     /// </summary>
     internal static class EncounterPauseDiagnostics
     {
+        private static IEncounterService encounterService;
         private static bool primed;
         private static bool lastWindowOpen;
         private static bool lastPaused;
@@ -23,6 +24,10 @@ namespace OmniBonk.Services
             {
                 return;
             }
+
+            encounterService ??= Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions
+                .GetService<IEncounterService>(Plugin.Services);
+            var soloShop = encounterService?.IsSoloShop ?? false;
 
             var windowOpen = IsEncounterWindowOpen();
             var paused = MyTime.paused;
@@ -41,8 +46,10 @@ namespace OmniBonk.Services
             lastPaused = paused;
             lastSimulationMode = simulationMode;
 
-            // Flag the key reading: window open but not paused.
-            var verdict = windowOpen && (!paused || simulationMode != (int)SimulationMode.Script)
+            // Flag the key reading: window open but not paused. A solo shop (OB-67) runs unpaused on purpose.
+            var verdict = soloShop && windowOpen
+                ? "  (solo shop, unpaused on purpose: OB-67)"
+                : windowOpen && (!paused || simulationMode != (int)SimulationMode.Script)
                 ? "  <-- WINDOW OPEN BUT NOT PAUSED (OB-13)"
                 : string.Empty;
 

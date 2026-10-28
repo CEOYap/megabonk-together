@@ -52,5 +52,31 @@ namespace OmniBonk.Patches.Interactables
                 synchronizationService.OnSpawnedObject(__instance.gameObject);
             }
         }
+
+        /// <summary>
+        /// OB-67: <c>OnShadyGuyDone</c> runs on every Shady Guy when anyone's purchase finishes, but
+        /// marks only the one this peer was shopping at (decompiled 0x1804CD5F0). Captures the flag so the
+        /// postfix sends only on the real transition.
+        /// </summary>
+        [HarmonyPrefix]
+        [HarmonyPatch("OnShadyGuyDone")]
+        public static void OnShadyGuyDone_Prefix(InteractableShadyGuy __instance, out bool __state)
+            => __state = synchronizationService.HasNetplaySessionStarted() && __instance.done;
+
+        /// <summary>Local purchase only: a replicated one never calls this method.</summary>
+        [HarmonyPostfix]
+        [HarmonyPatch("OnShadyGuyDone")]
+        public static void OnShadyGuyDone_Postfix(InteractableShadyGuy __instance, bool __state)
+        {
+            if (!synchronizationService.HasNetplaySessionStarted() || !Plugin.CAN_SEND_MESSAGES)
+            {
+                return;
+            }
+
+            if (!__state && __instance.done)
+            {
+                synchronizationService.OnShadyGuyDone(__instance);
+            }
+        }
     }
 }

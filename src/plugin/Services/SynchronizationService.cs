@@ -94,6 +94,17 @@ namespace OmniBonk.Services
         public void OnChestOpened(OpenChest instance);
         public void OnWeaponAdded(WeaponInventory instance, WeaponData weaponData, Il2CppSystem.Collections.Generic.List<StatModifier> upgradeOffer);
         public void OnInteractableUsed(BaseInteractable instance);
+
+        /// <summary>OB-67: a local purchase finished this Shady Guy; the others mark theirs as bought elsewhere.</summary>
+        public void OnShadyGuyDone(InteractableShadyGuy shadyGuy);
+
+        /// <summary>
+        /// OB-67: true when <paramref name="instance"/> is a Shady Guy a teammate bought from. The visit
+        /// then opens a solo shop here and is not sent, since the buyer has nothing left to replay it on.
+        /// </summary>
+        public bool TryStartSoloShop(BaseInteractable instance);
+
+        public bool IsShadyGuyBoughtElsewhere(InteractableShadyGuy shadyGuy);
         public bool OnStartingToChargingShrine(uint shrineNetplayId);
         public bool OnStoppingChargingShrine(uint shrineNetplayId);
         public void OnPickupSpawned(Pickup result, EPickup ePickup, Vector3 pos, int value);
@@ -371,6 +382,7 @@ namespace OmniBonk.Services
         public void Reset()
         {
             currentState = State.None;
+            shadyGuysBoughtElsewhere.Clear();
             lobbySettingsService.Reset();
             endlessRunService.Reset();
 #if DEBUG
@@ -2955,6 +2967,80 @@ namespace OmniBonk.Services
             }
         }
 
+        public void OnShadyGuyDone(InteractableShadyGuy shadyGuy)
+        {
+            // Without Shared XP each player shops alone and there is no barrier to stall. A solo buy at
+            // one already bought elsewhere tells nobody anything new: the others bought or have it marked.
+            if (!IsSharedExperienceEnabled() || IsShadyGuyBoughtElsewhere(shadyGuy))
+            {
+                return;
+            }
+
+            var netplayId = spawnedObjectManagerService.GetByReferenceInChildren<InteractableShadyGuy>(shadyGuy.gameObject);
+            if (!netplayId.HasValue)
+            {
+                logger.LogWarning("[shady-guy] A purchase finished a Shady Guy with no netplayId; the others keep theirs.");
+                return;
+            }
+
+            IGameNetworkMessage message = new InteractableUsed
+            {
+                NetplayId = netplayId.Value,
+                Action = InteractableAction.Destroy,
+                OwnerId = playerManagerService.GetLocalPlayer().ConnectionId,
+            };
+
+            if (IsServerMode() ?? false)
+            {
+                udpClientService.SendToAllClients(message, NetDelivery.ReliableOrdered);
+            }
+            else
+            {
+                udpClientService.SendToHost(message, NetDelivery.ReliableOrdered);
+            }
+
+            logger.LogInfo($"[shady-guy] Bought from Shady Guy {netplayId.Value}; the others can still shop there alone.");
+        }
+
+        /// <summary>OB-67: Shady Guys a teammate bought from, by instance id. Main thread only.</summary>
+        private readonly HashSet<int> shadyGuysBoughtElsewhere = [];
+
+        /// <summary>
+        /// OB-67. Only the buyer's copy goes done and disappears (decompiled <c>OnShadyGuyDone</c>). This
+        /// peer keeps its own, so it can still buy there; a later visit is a solo shop
+        /// (<see cref="TryStartSoloShop"/>), since a shared one would wait on the buyer forever.
+        /// </summary>
+        private void MarkShadyGuyBoughtElsewhere(InteractableShadyGuy shadyGuy, uint netplayId)
+        {
+            if (shadyGuy.done || !shadyGuysBoughtElsewhere.Add(shadyGuy.GetInstanceID()))
+            {
+                return;
+            }
+
+            logger.LogInfo($"[shady-guy] Shady Guy {netplayId} was bought from elsewhere; still open here, solo from now on.");
+        }
+
+        public bool IsShadyGuyBoughtElsewhere(InteractableShadyGuy shadyGuy)
+            => shadyGuy != null && shadyGuysBoughtElsewhere.Contains(shadyGuy.GetInstanceID());
+
+        public bool TryStartSoloShop(BaseInteractable instance)
+        {
+            if (instance == null || !IsSharedExperienceEnabled())
+            {
+                return false;
+            }
+
+            var shadyGuy = instance.GetComponentInChildren<InteractableShadyGuy>();
+            if (!IsShadyGuyBoughtElsewhere(shadyGuy))
+            {
+                return false;
+            }
+
+            encounterService.BeginSoloShop();
+            logger.LogInfo("[shady-guy] Solo shop at a Shady Guy a teammate bought from; nobody else waits.");
+            return true;
+        }
+
         public void OnInteractableUsed(BaseInteractable instance)
         {
             var netplayId = DynamicData.For(instance.gameObject).Get<uint?>("netplayId");
@@ -3292,6 +3378,14 @@ namespace OmniBonk.Services
                 switch (used.Action)
                 {
                     case InteractableAction.Destroy:
+                        // OB-67: a Shady Guy's Destroy means "bought"; the Interact before it was counted.
+                        var doneShadyGuy = interactableObj.GetComponentInChildren<InteractableShadyGuy>();
+                        if (doneShadyGuy != null)
+                        {
+                            MarkShadyGuyBoughtElsewhere(doneShadyGuy, used.NetplayId);
+                            break;
+                        }
+
                         CountInteractableAsUsed(interactableObj);
                         GameObject.DestroyImmediate(interactableObj);
                         break;

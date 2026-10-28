@@ -114,8 +114,14 @@ namespace OmniBonk.Patches
 
             if (synchronizationService.IsSharedExperienceEnabled())
             {
+                // Re-shown first: the last round's wait may have hidden this window (RewardFinished_Prefix).
                 UiManager.Instance.encounterWindows?.activeEncounterWindow?.gameObject.SetActive(true);
-                return;
+
+                // OB-67: a solo shop is played as without Shared XP: a host pausing here would freeze everyone.
+                if (!encounterService.IsSoloShop)
+                {
+                    return;
+                }
             }
 
             MyTime.Unpause();
@@ -171,6 +177,13 @@ namespace OmniBonk.Patches
 
             if (!synchronizationService.IsSharedExperienceEnabled())
             {
+                return true;
+            }
+
+            // OB-67: a solo shop belongs to no round, so it reports nothing.
+            if (encounterService.IsSoloShop)
+            {
+                encounterService.EndSoloShop();
                 return true;
             }
 
