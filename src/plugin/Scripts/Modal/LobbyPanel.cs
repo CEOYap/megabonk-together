@@ -99,6 +99,7 @@ namespace OmniBonk.Scripts.Modal
         private CustomButton sharedExpToggleButton;
         private CustomButton projectileCapToggleButton;
         private CustomButton enemyCapToggleButton;
+        private CustomButton chestSkipToggleButton;
         private CustomButton endlessToggleButton;
         private CustomButton optionsBackButton;
 
@@ -441,6 +442,7 @@ namespace OmniBonk.Scripts.Modal
             sharedExpToggleButton = CreateButton("SharedExpToggleButton", "Shared XP: OFF", OnSharedExpToggleClicked);
             projectileCapToggleButton = CreateButton("ProjectileCapToggleButton", "No Proj. Cap: OFF", OnProjectileCapToggleClicked);
             enemyCapToggleButton = CreateButton("EnemyCapToggleButton", "No Enemy Cap: OFF", OnEnemyCapToggleClicked);
+            chestSkipToggleButton = CreateButton("ChestSkipToggleButton", "Skip Chest Anim: OFF", OnChestSkipToggleClicked);
             endlessToggleButton = CreateButton("EndlessToggleButton", "Endless: OFF", OnEndlessToggleClicked);
             optionsBackButton = CreateButton("OptionsBackButton", "Back", OnOptionsBackClicked);
         }
@@ -476,6 +478,7 @@ namespace OmniBonk.Scripts.Modal
             SetButtonVisible(sharedExpToggleButton, false);
             SetButtonVisible(projectileCapToggleButton, false);
             SetButtonVisible(enemyCapToggleButton, false);
+            SetButtonVisible(chestSkipToggleButton, false);
             SetButtonVisible(endlessToggleButton, false);
             SetButtonVisible(optionsBackButton, false);
 
@@ -569,6 +572,7 @@ namespace OmniBonk.Scripts.Modal
             SetButtonVisible(sharedExpToggleButton, true);
             SetButtonVisible(projectileCapToggleButton, true);
             SetButtonVisible(enemyCapToggleButton, true);
+            SetButtonVisible(chestSkipToggleButton, true);
             SetButtonVisible(endlessToggleButton, true);
             SetButtonVisible(optionsBackButton, true);
 
@@ -576,6 +580,7 @@ namespace OmniBonk.Scripts.Modal
             SetButtonLabel(sharedExpToggleButton, ModConfig.EnabledSharedExperience.Value ? "Shared XP: ON" : "Shared XP: OFF");
             SetButtonLabel(projectileCapToggleButton, ModConfig.NoProjectileCap.Value ? "No Proj. Cap: ON" : "No Proj. Cap: OFF");
             SetButtonLabel(enemyCapToggleButton, ModConfig.NoEnemyCap.Value ? "No Enemy Cap: ON" : "No Enemy Cap: OFF");
+            SetButtonLabel(chestSkipToggleButton, ModConfig.SkipChestAnimation.Value ? "Skip Chest Anim: ON" : "Skip Chest Anim: OFF");
             SetButtonLabel(endlessToggleButton, ModConfig.EndlessRun.Value ? "Endless: ON" : "Endless: OFF");
 
             lobbyWindow?.FindAllButtonsInWindow();
@@ -696,6 +701,17 @@ namespace OmniBonk.Scripts.Modal
             PlaySelectSfx();
 
             ModConfig.NoEnemyCap.Value = !ModConfig.NoEnemyCap.Value;
+            ModConfig.Save();
+
+            Refresh();
+        }
+
+        /// <summary>Lobby setting, like the projectile cap: the host's value applies to the session.</summary>
+        private void OnChestSkipToggleClicked()
+        {
+            PlaySelectSfx();
+
+            ModConfig.SkipChestAnimation.Value = !ModConfig.SkipChestAnimation.Value;
             ModConfig.Save();
 
             Refresh();

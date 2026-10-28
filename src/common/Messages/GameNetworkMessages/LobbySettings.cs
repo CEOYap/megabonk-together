@@ -22,5 +22,8 @@ namespace OmniBonk.Common.Messages.GameNetworkMessages
 
         /// <summary>No Enemy Cap: no limit on how many enemies are alive at once. Protocol 10.</summary>
         public bool NoEnemyCap { get; set; }
+
+        /// <summary>Skip Chest Animation: every chest opens with no window, for everyone. Protocol 11.</summary>
+        public bool SkipChestAnimation { get; set; }
     }
 }

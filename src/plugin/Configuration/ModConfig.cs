@@ -18,6 +18,7 @@ namespace OmniBonk.Configuration
         public static ConfigEntry<bool> EnabledSharedExperience { get; private set; }
         public static ConfigEntry<bool> NoProjectileCap { get; private set; }
         public static ConfigEntry<bool> NoEnemyCap { get; private set; }
+        public static ConfigEntry<bool> SkipChestAnimation { get; private set; }
         public static ConfigEntry<bool> EndlessRun { get; private set; }
         public static ConfigEntry<float> EncounterInputGraceSeconds { get; private set; }
         public static ConfigEntry<bool> LogAllocationRate { get; private set; }
@@ -340,6 +341,15 @@ namespace OmniBonk.Configuration
                 "No limit on how many enemies can be alive at once. The game stops at 550 (400, then 300, in the Final Swarm) " +
                 "and multiplayer at 500, or 600 with four or more players. Off keeps those limits. Very large crowds cost frame rate, " +
                 "most of all on the host. Only the host's setting counts: it applies to everyone in the session."
+            );
+            SkipChestAnimation = config.Bind(
+                "Lobby",
+                "SkipChestAnimation",
+                false,
+                "Every chest opens straight into your items, with no chest window, for every player, whatever their own " +
+                "Skip Chest Animation game setting says. With Shared XP on, this lobby setting decides for everyone (so nobody waits " +
+                "on a window only they can see); with Shared XP off, a player's own game setting still works too. " +
+                "Only the host's setting counts: it applies to everyone in the session."
             );
             EndlessRun = config.Bind(
                 "Lobby",

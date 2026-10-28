@@ -17,6 +17,13 @@ namespace OmniBonk.Services
 
         bool EndlessEnabled { get; }
 
+        /// <summary>
+        /// OB-65: whether a chest opens with no window in this session. The lobby setting turns it on
+        /// for everyone. Under Shared XP it alone decides, so every peer agrees and nobody waits at the
+        /// barrier for a window another peer skipped; otherwise the player's own game setting also counts.
+        /// </summary>
+        bool SkipsChestAnimation();
+
         /// <summary>Host only, just before <c>RunStarted</c>.</summary>
         void BroadcastToClients();
 
@@ -44,6 +51,21 @@ namespace OmniBonk.Services
 
         public bool EndlessEnabled => current.EndlessEnabled;
 
+        public bool SkipsChestAnimation()
+        {
+            if (current.SkipChestAnimation)
+            {
+                return true;
+            }
+
+            if (current.SharedExperience)
+            {
+                return false;
+            }
+
+            return SaveManager.Instance?.config?.cfGameSettings?.skip_chest_animation == 1;
+        }
+
         public void BroadcastToClients()
         {
             current = new LobbySettings
@@ -52,6 +74,7 @@ namespace OmniBonk.Services
                 EndlessEnabled = ModConfig.EndlessRun.Value,
                 SharedExperience = ModConfig.EnabledSharedExperience.Value,
                 NoEnemyCap = ModConfig.NoEnemyCap.Value,
+                SkipChestAnimation = ModConfig.SkipChestAnimation.Value,
             };
 
             // At run start, not lobby creation: the toggle lives in the open lobby.
@@ -79,6 +102,7 @@ namespace OmniBonk.Services
 
         private static string Describe(LobbySettings settings)
             => $"no projectile cap {(settings.NoProjectileCap ? "ON" : "off")}, endless {(settings.EndlessEnabled ? "ON" : "off")}, "
-               + $"shared experience {(settings.SharedExperience ? "ON" : "off")}, no enemy cap {(settings.NoEnemyCap ? "ON" : "off")}";
+               + $"shared experience {(settings.SharedExperience ? "ON" : "off")}, no enemy cap {(settings.NoEnemyCap ? "ON" : "off")}, "
+               + $"skip chest animation {(settings.SkipChestAnimation ? "ON" : "off")}";
     }
 }

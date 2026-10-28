@@ -2784,7 +2784,20 @@ namespace OmniBonk.Services
 
             if (IsSharedExperienceEnabled())
             {
-                UiManager.Instance.encounterWindows.AddEncounter(Assets.Scripts.UI.InGame.Rewards.EEncounter.ChestNormal);
+                // OB-65: with chests skipped the opener raised no window and will never report, so
+                // opening one here would hold this peer at the barrier until the 20 s failsafe.
+                if (lobbySettingsService.SkipsChestAnimation())
+                {
+                    if (!GameManager.Instance.player.IsDead())
+                    {
+                        ChestUtility.OpenChestNoAnimation(
+                            ChestUtility.EncounterToChestType(Assets.Scripts.UI.InGame.Rewards.EEncounter.ChestNormal));
+                    }
+                }
+                else
+                {
+                    UiManager.Instance.encounterWindows.AddEncounter(Assets.Scripts.UI.InGame.Rewards.EEncounter.ChestNormal);
+                }
             }
 
             GameObject.DestroyImmediate(chestObject);
@@ -3359,6 +3372,12 @@ namespace OmniBonk.Services
                         {
                             if (GameManager.Instance.player.IsDead() || !chest.CanAfford())
                             {
+                                // OB-65: a skipped chest opens no round anywhere, so there is nothing to wait for.
+                                if (lobbySettingsService.SkipsChestAnimation())
+                                {
+                                    break;
+                                }
+
                                 MyTime.Pause();
                                 RewardFinished();
                                 ScreenTextHelper.Show("Waiting for other player(s) choices in Chest...", new Vector2(0, -350));
