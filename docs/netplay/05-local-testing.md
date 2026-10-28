@@ -219,6 +219,12 @@ What it does, in order:
 2. Backs up each copy's `OmniBonk.cfg` and `BepInEx.cfg` (`*.session-backup`) and writes the test
    settings: `BotMode`, `AutoHost` (host only), `TestItems`, `PlayerName`, `UseSteamTransport = false`,
    `CheckForUpdates = false`, `AllowSavesDuringNetplay = false`, `WriteUnityLog = true`.
+   `EnabledSharedExperience` is written off unless `-SharedXp`; `-SkipChestAnimation` sets the lobby
+   setting (OB-65, `[chest-skip]` counts no-window chests on each peer); `-OpenPauseMenu` has each
+   client bot open the pause menu every 15 s and leave it (OB-64, `[pause-menu]` when a reward closes it);
+   `-SeekShadyGuy` (OB-67, `[shady-guy]`): from 3 min in, the client bot teleports to each Shady Guy and
+   shops; the host bot leaves a Shady Guy's shop unbought until the client has bought there, then
+   teleports back for a solo shop.
 3. Starts the matchmaking server if nothing listens on port 5000.
 4. Launches both copies windowed (960×540) from their exe, host first.
    `-HostItems`/`-ClientItems` and `-HostWeapons`/`-ClientWeapons` (`[Testing] TestWeapons`, EWeapon
@@ -259,6 +265,9 @@ capture shows which map the run is on, or a host pushing into a wall.
   copy last was.
 - `GetComponentsInChildren<T>(bool)` compiles against the stubs but throws `MissingMethodException`
   in game; use `Il2CppFindHelper.RuntimeGetComponentsInChildren<T>`.
+- The compile-time `UnityEngine` stubs do not derive from `Il2CppObjectBase`, so `component.Pointer`
+  or `TryCast` on a `Component` does not compile. At run time the wrapper is one: cast through
+  `object`, as `ReceivedProjectileDiagnostics` does to read a component's real class name.
 
 What it cannot do: judge visuals, or test anything Steam-dependent (see below).
 

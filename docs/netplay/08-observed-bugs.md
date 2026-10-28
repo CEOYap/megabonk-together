@@ -5491,3 +5491,154 @@ the replayed hits it held back that the old code would have forwarded.
 also showed 233 Lightning Staff hits, which were never forwarded: their source is not an item name.
 The counter now counts only forwardable sources. UNVERIFIED: the host's damage totals were not
 compared before and after.
+
+---
+
+<a name="ob-64"></a>
+## OB-64 — A reward window opening under the pause menu soft-locks the player — **FIXED 2026-10-28, path confirmed hands-off; the click itself not verified**
+
+**Reported (2026-10-26 two-player session):** a reward popped while a player was in the Esc menu, and
+nothing could be clicked. The 20 s failsafe did not free them.
+
+**Cause, decompiled:**
+
+- In netplay the pause menu does not pause (`PauseUiPatches.OnEnable_Postfix`). So the game keeps
+  running under the menu, and a level-up or a teammate's chest (Shared XP) reaches
+  `EncounterWindows.PopReward`. `PlayerInput.CanInput` (0x1803394D0) checks only the player and the
+  camera, so the mod's `PopReward_Prefix` let it through.
+- `WindowManager.WindowOpened` (0x18039EAB0) unfocuses the active window (the pause menu:
+  `MyButton.SetFocus(false)` on all of its buttons) and focuses the reward window, which is drawn behind
+  the menu.
+- `PauseUi.CanPause` (0x180556830) and `Pause` refuse while `EncounterWindows.HasEncounter`, so Esc
+  could not close the menu either.
+- The failsafe never ran for this player. Its clock starts when a peer *reports*, and a player who
+  cannot click never reports.
+
+**Fix:** `PopReward_Prefix` closes the pause menu before a reward window opens
+(`[pause-menu] Closed the pause menu`). The game never shows both at once. `PauseUi.OnDisable`
+unpauses, which is harmless, because the reward pauses again right after.
+
+**Hands-off, 2026-10-28** (`-SharedXp -SkipChestAnimation -OpenPauseMenu`, 12 min): the client bot
+opened the menu 47 times. A reward arrived under it 16 times and closed it every time. All 26 barrier
+rounds released, with no failsafe on either peer. **Not verified:** the bot picks rewards in code, not
+by clicking, so the old soft-lock could not reproduce here. That a person can click the reward after
+the menu closes is inferred from the `WindowManager` code, not observed.
+
+<a name="ob-65"></a>
+## OB-65 — Skip Chest Animation skipped only gold chests; dropped chests still opened a window for everyone — **FIXED 2026-10-28, confirmed hands-off (0% loss)**
+
+**Reported (2026-10-26):** with the game's Skip Chest Animation on for both players, gold chests
+opened with no window, but chests dropped by enemies still showed the window and paused the game.
+
+**Cause:**
+
+- The game reads `CFGameSettings.skip_chest_animation` (0x78) in `OpenChest.OnTriggerStay`
+  (0x18046B7F0), `InteractableChest.Interact` (0x180452FB0) and `OpenChestImplementation` (0x180453990).
+  When it is 1, the game calls `ChestUtility.OpenChestNoAnimation` instead of `AddEncounter`. So the
+  player who picks up a dropped chest already skips.
+- Under Shared XP every *other* peer gets `ChestOpened` and `OnReceivedChestOpened` called
+  `AddEncounter(ChestNormal)` unconditionally. That is the window players saw.
+- It also stalled the barrier. The opener skipped and never reported, so everyone else waited 20 s
+  for the failsafe. That explains several of the 2026-10-26 host failsafes. Example: round 21, where
+  the client showed `paused 0%` while the host waited. A gold chest had the same hole: a peer who
+  could not afford it, or was dead, paused and reported, while the opener with skip on never did.
+
+**Fix:**
+
+- New lobby setting **Skip Chest Animation** (`LobbySettings.SkipChestAnimation`, protocol 11). It
+  defaults off.
+- `ILobbySettingsService.SkipsChestAnimation()` decides for the session. The lobby setting turns it on
+  for everyone. Under Shared XP it alone decides, so every peer agrees. With Shared XP off, the
+  player's own game setting also counts.
+- `ChestAnimationSkipPatches` sets the game's value for the length of those three calls, then puts
+  the player's own value back. The saved setting never changes.
+- `OnReceivedChestOpened` calls `OpenChestNoAnimation` instead of opening a window. The
+  can't-afford and dead branches no longer pause and report.
+
+**Hands-off, 2026-10-28** (run 2, `-SharedXp -SkipChestAnimation`): the client bot opened 3 chests,
+and `[chest-skip]` counted 3 no-window opens on the client and the same 3 replayed on the host. No
+window followed a chest use, and there were no failsafes. **Not exercised:** an enemy-dropped chest
+picked up by a bot (the bots used gold chests), and a mixed setup where one player's own game
+setting differs.
+
+<a name="ob-66"></a>
+## OB-66 — Bone projectiles look like a fast-spinning star on clients — **OPEN, cause not found**
+
+**Reported (2026-10-26):** on a client, Bone projectiles spin fast or show several frames at once, so
+they look like a star.
+
+**Ruled out (hands-off 2026-10-28, Debug `[proj-diag]`):**
+
+- The interpolator's rotation is not the cause. The host's root forward for a Bone stayed constant
+  across 12 snapshots (`fwd -1.01,0.13,-0.10`), so the root does not spin and there is nothing to alias.
+- There is no spin component. A received `ProjectileBone(Clone)` holds `Transform, ParticleSystem,
+  ParticleSystemRenderer, AudioSource, RandomSfx, ProjectileBasic, AudioSpamFilter, ParticleOpacity`
+  and a `SparkTrail` child (`ParticleSystem`, renderer). The bone is drawn by the root particle
+  system.
+- `ReceivedProjectileSize` changes only scale and radius. `ParticleOpacity.Refresh` changes only
+  opacity. `ProjectileBase.Set` reads duration, speed and size stats, and none of them feeds the
+  particles.
+
+**Open leads:** which copy looks wrong, a client's own bones or the host's received ones. Also, how
+the bone particle's start rotation or rotation-over-lifetime behaves on a copy built by `Instantiate`
+rather than from the pool (`Set` re-enables pooled copies, which restarts the system). Needs a capture
+or a description from play, then a look at the prefab's particle modules at run time.
+
+<a name="ob-67"></a>
+## OB-67 — Returning to a Shady Guy a teammate bought from froze you until the 20 s failsafe — **FIXED 2026-10-28 (solo shop), confirmed hands-off (0% loss)**
+
+**Reported (2026-10-26, Forest, Shared XP):** the client bought from a Shady Guy and the host could
+not afford anything. The host went back to the same Shady Guy, still could not afford anything, and
+sat on "Waiting for other player(s)" while the client walked around. It happened more than once.
+
+**Cause, decompiled and in the logs:**
+
+- `InteractableShadyGuy.Interact` (0x1804CD400) always opens the shop (`AddEncounter(ShadyGuy)`).
+- `OnShadyGuyDone` (0x1804CD5F0) runs when a purchase finishes. Only on the buyer's machine is this
+  the Shady Guy being shopped at, so only there does it set `done` (`CanInteract` returns `!done`)
+  and invoke `Disappear`, which destroys the object.
+- The host's copy stayed up and usable. Using it again opened the host's shop and sent
+  `InteractableUsed`. On the client the object was gone: `[interactable] 85195421's interaction with
+  object 886 (Interact) has no match here; skipped`, logged three times. The client never joined
+  that barrier round, so the host waited for the failsafe each time (host failsafes at rounds 21,
+  29 and 31).
+
+**Fix (revised 2026-10-28 at the reporter's request: a player who could not afford anything must be
+able to come back):**
+
+- Under Shared XP, a local purchase that sets `done` (prefix/postfix on `OnShadyGuyDone`) sends
+  `InteractableUsed` with `Action = Destroy`. No wire change. The receivers only **mark** that Shady
+  Guy as bought elsewhere. Theirs stays up and usable.
+- A later visit to a marked Shady Guy is a **solo shop** (`TryStartSoloShop`, called from
+  `DetectInteractables`). It is not sent, so nobody else gets a window or waits.
+  `IEncounterService.IsSoloShop` makes `PopReward_Postfix` unpause, as without Shared XP: a host paused
+  in its shop would freeze everyone. It also makes `RewardFinished_Prefix` finish the window without a
+  barrier report.
+- A purchase on a solo visit sends nothing: everyone else has either bought there or already has it marked.
+- Shared XP off is unchanged.
+- Logs: `[shady-guy] Bought from ...`, `... was bought from elsewhere; still open here, solo from now on`,
+  `Solo shop at a Shady Guy a teammate bought from`. `EncounterPauseDiagnostics` labels a solo shop's
+  open-but-unpaused window as intended, not as OB-13.
+
+**Hands-off, 2026-10-28** (`-SharedXp -SeekShadyGuy`; the host bot leaves a Shady Guy's shop unbought
+until the client has bought there, then revisits). For four Shady Guys (723 to 726), the host left the
+shared shop, the client bought, and the host revisited as a solo shop. The `[pause]` diagnostics show
+the host's window open with the game unpaused, and the client opened no window. The host bought on
+its solo visit to 726. All 26 barrier rounds released on both peers, with no failsafe.
+
+A later run found a bug in the first solo build: 16 client failsafes in 6 rounds. When the host had
+waited at the end of the previous round, `RewardFinished_Prefix` had hidden the reward window
+(`SetActive(false)`), and the solo path skipped the line that shows it again. The solo shop opened
+invisible, was never finished, and every round after it stalled. `PopReward_Postfix` now re-shows the
+window under Shared XP before the solo check. The rerun had 3 solo shops, all 27 rounds released on
+both peers, and no failsafe or `has no match`.
+
+**Known cost:** a teammate's shared round that starts during a solo shop waits behind it. The window
+is queued, as for any slow chooser, and the teammates' 20 s failsafe applies. The earlier
+fix, which finished the Shady Guy everywhere, was also run hands-off and then replaced.
+**Not exercised:** three or more players, a purchase while the other peer is still in the same
+shared shop, and anything at real packet loss.
+
+**Still open:** the general shape. Any interaction that opens a window on the sender, for an object
+already gone on a receiver, still leaves the sender waiting for the failsafe. The receiver skips
+without knowing a window opened. Shady Guy was the case that could repeat; others are not known.

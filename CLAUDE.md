@@ -109,7 +109,10 @@ character for its passive. Both bots are invincible, so anything that reacts to 
 "D:\Games\Megabonk - Copy"` adds a second client (with `-ThirdItems`/`-ThirdWeapons`/`-ThirdCharacter`),
 for anything a third player must see. `-SeekBurgers` makes following bots walk into Borgor burgers. `-NoEnemyCap` sets the lobby setting on
 the host, and `-TestSpawnEnemies 1200` has the host request that many skeletons through the capped
-spawn path. Prefer a **count on both sides** to a single "it ran" line: OB-58's
+spawn path. `-SharedXp` turns Shared XP on (it is written off otherwise), `-SkipChestAnimation` sets
+that lobby setting, `-OpenPauseMenu` has client bots sit in the pause menu so rewards arrive under it, and `-SeekShadyGuy`
+has the client bot buy from Shady Guys and the host bot revisit them for a solo shop.
+Prefer a **count on both sides** to a single "it ran" line: OB-58's
 first fix logged its marker fine while drawing 17 times too many mine explosions, which only the
 `[explosions]` host/client counts exposed.
 
