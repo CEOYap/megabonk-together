@@ -224,7 +224,11 @@ What it does, in order:
    client bot open the pause menu every 15 s and leave it (OB-64, `[pause-menu]` when a reward closes it);
    `-SeekShadyGuy` (OB-67, `[shady-guy]`): from 3 min in, the client bot teleports to each Shady Guy and
    shops; the host bot leaves a Shady Guy's shop unbought until the client has bought there, then
-   teleports back for a solo shop.
+   teleports back for a solo shop. `-DuoShrines` sets the Duo Shrines lobby setting; `-ShareShrines`
+   has the host bot stand in the nearest charge shrine until it completes and the client bot walk into
+   the one its host stands at (`[shrine-duo]` logs each count change and the required time on each peer);
+   `-ShowLobbyOptions` has the host bot hold the lobby's Netplay Options view open for 8 s before
+   starting, for a screenshot (`[lobby] Button column` measures it).
 3. Starts the matchmaking server if nothing listens on port 5000.
 4. Launches both copies windowed (960×540) from their exe, host first.
    `-HostItems`/`-ClientItems` and `-HostWeapons`/`-ClientWeapons` (`[Testing] TestWeapons`, EWeapon

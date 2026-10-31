@@ -24,8 +24,10 @@
         /// machine's item visuals.</para>
         /// <para>10: <c>LobbySettings.NoEnemyCap</c>, a new field, so older peers would misread it.</para>
         /// <para>11: <c>LobbySettings.SkipChestAnimation</c> (OB-65), a new field, as 10.</para>
+        /// <para>12: <c>LobbySettings.ShrineDuoBoost</c>, a new field, and tag 90 <c>ShrineChargersChanged</c>
+        /// (Duo Shrines). A protocol-11 peer would misread the settings and never speed a shrine up.</para>
         /// </summary>
-        public const int Version = 11;
+        public const int Version = 12;
 
         /// <summary>Prefixed: lobby data is a flat namespace shared with the base game.</summary>
         public const string VersionKey = "mt_protocol";

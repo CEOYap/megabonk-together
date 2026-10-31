@@ -71,6 +71,9 @@ namespace OmniBonk.Services
                 case ChargeShrineCompleted chargeShrineCompleted:
                     EventManager.OnChargeShrineCompleted(chargeShrineCompleted);
                     break;
+                case ShrineChargersChanged shrineChargersChanged:
+                    EventManager.OnShrineChargersChanged(shrineChargersChanged);
+                    break;
                 case AbstractSpawnedProjectile spawnedProjectile:
                     EventManager.OnSpawnedProjectile(spawnedProjectile);
                     break;

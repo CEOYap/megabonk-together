@@ -447,6 +447,11 @@ namespace OmniBonk.Scripts.Bot
                 }
             }
 
+            if (TickShareShrine(me, owner))
+            {
+                return;
+            }
+
             var detour = FindDetourSafely(me.transform.position, owner);
             if (detour != null)
             {
@@ -486,7 +491,8 @@ namespace OmniBonk.Scripts.Bot
         /// <summary>Detours are optional; a throw disables them for the session rather than stopping movement.</summary>
         private BaseInteractable FindDetourSafely(Vector3 bot, Vector3 owner)
         {
-            if (detoursDisabled)
+            // TestShareShrines: a client on a chest detour never reaches the shrine its host stands in.
+            if (detoursDisabled || (ModConfig.TestShareShrines.Value && !IsAutoHost))
             {
                 return null;
             }

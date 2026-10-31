@@ -117,6 +117,11 @@ namespace OmniBonk.Scripts.Bot
                 && lobbyViewService.AreAllMembersReady
                 && playerManagerService.GetAllPlayers().Count() >= ModConfig.AutoHostPlayers.Value)
             {
+                if (TickShowLobbyOptions(now))
+                {
+                    return true;
+                }
+
                 if (now >= nextStartRequestTime)
                 {
                     nextStartRequestTime = now + 3f;
@@ -203,6 +208,41 @@ namespace OmniBonk.Scripts.Bot
             return lastTry;
         }
 
+        private const float SHOW_LOBBY_OPTIONS_SECONDS = 8f;
+        private float lobbyOptionsShownAt = -1f;
+        private bool lobbyOptionsShown;
+
+        /// <summary>
+        /// Test only (TestShowLobbyOptions): holds the Netplay Options view open once, before the first
+        /// start, long enough to screenshot. True while it holds, so Start waits.
+        /// </summary>
+        private bool TickShowLobbyOptions(float now)
+        {
+            if (!ModConfig.TestShowLobbyOptions.Value || lobbyOptionsShown)
+            {
+                return false;
+            }
+
+            var panel = Modal.LobbyPanel.Current;
+            if (lobbyOptionsShownAt < 0f)
+            {
+                lobbyOptionsShownAt = now;
+                panel.TestSetShowingOptions(true);
+                Plugin.Log.LogInfo($"[bot] showing the lobby options for {SHOW_LOBBY_OPTIONS_SECONDS:F0} s.");
+                return true;
+            }
+
+            if (now - lobbyOptionsShownAt < SHOW_LOBBY_OPTIONS_SECONDS)
+            {
+                return true;
+            }
+
+            panel.TestSetShowingOptions(false);
+            lobbyOptionsShown = true;
+            Plugin.Log.LogInfo("[bot] closed the lobby options.");
+            return false;
+        }
+
         /// <summary>In a run: leave through the portal once the stage time is up, otherwise wander and use what is near.</summary>
         private void TickHostRun(MyPlayer me)
         {
@@ -217,6 +257,11 @@ namespace OmniBonk.Scripts.Bot
 
             var stageMinutes = ModConfig.AutoHostStageMinutes.Value;
             if (stageMinutes > 0f && Time.time - stageStartTime >= stageMinutes * 60f && TickLeaveStage(me))
+            {
+                return;
+            }
+
+            if (TickShareShrine(me, position))
             {
                 return;
             }

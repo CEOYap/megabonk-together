@@ -1,8 +1,32 @@
 # Shrine charge scaling — research and plan
 
-**Status:** Not built. A port was written on 2026-10-21, compiled, then reverted on request before it
-was committed. Nothing here has been run in-game. The decompile findings in §2 are **CONFIRMED**
-against build 21750826. The design in §3 is a plan.
+**Status:** Built 2026-10-28 as the **Duo Shrines** lobby setting (protocol 12). The decompile findings
+in §2 are **CONFIRMED** against build 21750826. What was built differs from the §3 plan; see §0.
+
+## 0. As built (Duo Shrines)
+
+- **Lobby setting, off by default.** `[Lobby] ShrineDuoBoost`, the "Duo Shrines" toggle in the lobby's
+  Netplay Options. Carried as `LobbySettings.ShrineDuoBoost` (protocol 12), so the host's value applies.
+- **Capped at two players.** A shrine with two or more players in it charges at
+  `Tunables.SHRINE_DUO_CHARGE_SPEED` (×1.5); a third adds nothing. Two players in separate shrines charge
+  2 shrines' worth against 1.5 for two in one, so spreading out always wins. The aim is to get players to
+  explore. Replaces the uncapped `1 + extraPlayers × factor` and its config factor below.
+- **Message:** `ShrineChargersChanged`, tag **90** (§1 says 83; 83 to 89 were taken by then). Host only,
+  sent only while the setting is on, from the four join/leave paths and on disconnect.
+- **Disconnects (§4, first gap): fixed.** `RemoveShrineCharger` drops a disconnected player from every
+  shrine's set and re-sends the count. A disconnect that empties a shrine still leaves it charging, as
+  before; that is unchanged.
+- **Lobby panel:** the options view now has 8 buttons, needing 486 units against the prefab's 430. In
+  that view the button column now grows upward instead of moving (673 units, 187 spare).
+
+**Hands-off session, 2026-10-28** (`-DuoShrines -ShareShrines`, Desert, 0% loss). Shrine 588 on both
+peers: `1 charging, x1.00, required 5.00s`, then the host logged the client joining an in-progress
+charge and both logged `2 charging, x1.50, required 3.33s`, then `1` and `0` as they left. Earlier runs
+also showed the per-peer Wrench bonus: `required 4.80s` on one peer against `5.00s` on the other.
+
+**Not verified:** anything at real packet loss; the disconnect path (no disconnect happened mid-charge);
+the options view on screen (measured, but the screenshot caught a character window over it); whether
+×1.5 feels right. That needs a playtest.
 
 **Source:** [`caaatto/together-we-bonk@f4af058`](https://github.com/caaatto/together-we-bonk/commit/f4af058fb8fc0921a88f663c17e75f40ae6676a0),
 "feat: charge shrines faster the more players stand in them". It is a fork of the same upstream as ours.

@@ -17,6 +17,9 @@ namespace OmniBonk.Services
 
         bool EndlessEnabled { get; }
 
+        /// <summary>Duo Shrines: a second player in a charge shrine speeds it up (docs/netplay/20).</summary>
+        bool ShrineDuoBoost { get; }
+
         /// <summary>
         /// OB-65: whether a chest opens with no window in this session. The lobby setting turns it on
         /// for everyone. Under Shared XP it alone decides, so every peer agrees and nobody waits at the
@@ -51,6 +54,8 @@ namespace OmniBonk.Services
 
         public bool EndlessEnabled => current.EndlessEnabled;
 
+        public bool ShrineDuoBoost => current.ShrineDuoBoost;
+
         public bool SkipsChestAnimation()
         {
             if (current.SkipChestAnimation)
@@ -75,6 +80,7 @@ namespace OmniBonk.Services
                 SharedExperience = ModConfig.EnabledSharedExperience.Value,
                 NoEnemyCap = ModConfig.NoEnemyCap.Value,
                 SkipChestAnimation = ModConfig.SkipChestAnimation.Value,
+                ShrineDuoBoost = ModConfig.ShrineDuoBoost.Value,
             };
 
             // At run start, not lobby creation: the toggle lives in the open lobby.
@@ -103,6 +109,6 @@ namespace OmniBonk.Services
         private static string Describe(LobbySettings settings)
             => $"no projectile cap {(settings.NoProjectileCap ? "ON" : "off")}, endless {(settings.EndlessEnabled ? "ON" : "off")}, "
                + $"shared experience {(settings.SharedExperience ? "ON" : "off")}, no enemy cap {(settings.NoEnemyCap ? "ON" : "off")}, "
-               + $"skip chest animation {(settings.SkipChestAnimation ? "ON" : "off")}";
+               + $"skip chest animation {(settings.SkipChestAnimation ? "ON" : "off")}, duo shrines {(settings.ShrineDuoBoost ? "ON" : "off")}";
     }
 }

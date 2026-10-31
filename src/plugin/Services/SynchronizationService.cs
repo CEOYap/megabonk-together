@@ -328,6 +328,7 @@ namespace OmniBonk.Services
             EventManager.SubscribeReleaseBarrierEvents(ReleaseBarrier);
             EventManager.SubscribeGoldChangedEvents(OnReceivedChangeGold);
             EventManager.SubscribeChargeShrineCompletedEvents(OnReceivedChargeShrineCompleted);
+            EventManager.SubscribeShrineChargersChangedEvents(OnReceivedShrineChargersChanged);
             EventManager.SubscribeMineExplodedEvents(Patches.Projectiles.ProjectileMinesPatches.OnReceivedMineExploded);
             EventManager.SubscribeFlaskExplodedEvents(Patches.Projectiles.ProjectilePoisonFlaskPatches.OnReceivedFlaskExploded);
             EventManager.SubscribeEnemyHitEffectsEvents(WeaponHitSparks.OnReceived);
@@ -3806,7 +3807,93 @@ namespace OmniBonk.Services
                 PlayerChargingId = playerManagerService.GetLocalPlayer().ConnectionId
             };
 
-            return HandleChargingStart(shrineNetplayId, shrineChargingPlayers, message, "shrine", replayOnEveryPeer: true);
+            var shouldRunVanilla = HandleChargingStart(shrineNetplayId, shrineChargingPlayers, message, "shrine", replayOnEveryPeer: true);
+            BroadcastShrineChargerCount(shrineNetplayId);
+
+            return shouldRunVanilla;
+        }
+
+        /// <summary>
+        /// Duo Shrines, host only: sends the shrine's charger count and the speed that follows, then
+        /// applies it here. Nothing is sent while the lobby setting is off. Plan: docs/netplay/20.
+        ///
+        /// <para>Call after any StartingChargingShrine for the same shrine has been sent. Both go
+        /// ReliableOrdered, and a peer's replayed OnTriggerEnter resets the required time, so the count
+        /// has to land second.</para>
+        /// </summary>
+        private void BroadcastShrineChargerCount(uint shrineNetplayId)
+        {
+            if (!(IsServerMode() ?? false) || !lobbySettingsService.ShrineDuoBoost)
+            {
+                return;
+            }
+
+            var count = 0;
+            if (shrineChargingPlayers.TryGetValue(shrineNetplayId, out var chargers) && chargers != null)
+            {
+                count = chargers.Count;
+            }
+
+            var message = new ShrineChargersChanged
+            {
+                ShrineNetplayId = shrineNetplayId,
+                ChargerCount = (byte)Math.Min(count, byte.MaxValue),
+                SpeedMultiplier = count >= Tunables.SHRINE_DUO_MAX_CHARGERS ? Tunables.SHRINE_DUO_CHARGE_SPEED : 1f,
+            };
+
+            udpClientService.SendToAllClients(message, NetDelivery.ReliableOrdered);
+            ApplyShrineChargeSpeed(message);
+        }
+
+        private void OnReceivedShrineChargersChanged(ShrineChargersChanged changed)
+        {
+            ApplyShrineChargeSpeed(changed);
+        }
+
+        /// <summary>
+        /// Divides the shrine's required charge time by the host's multiplier.
+        ///
+        /// <para>Decompiled <c>ChargeShrine$$Update</c> (VA 0x1804C2E20) fills <c>chargeProgress</c>
+        /// (0x60) by <c>dt / currentChargeTime</c> (0x5C) and completes at 1, so
+        /// <c>currentChargeTime</c> is the required seconds. <c>FindChargeTime</c> (VA 0x1804C22A0)
+        /// recomputes it from <c>chargeTime</c> (0x58) and the local player's Wrench, as OnTriggerEnter
+        /// does. Resetting through it each time keeps the Wrench bonus current and never compounds.</para>
+        /// </summary>
+        private void ApplyShrineChargeSpeed(ShrineChargersChanged changed)
+        {
+            var spawnedObj = spawnedObjectManagerService.GetSpawnedObject(changed.ShrineNetplayId);
+            var shrine = spawnedObj != null ? spawnedObj.GetComponent<ChargeShrine>() : null;
+            if (shrine == null)
+            {
+                return;
+            }
+
+            shrine.FindChargeTime();
+
+            if (changed.SpeedMultiplier > 1f)
+            {
+                shrine.currentChargeTime /= changed.SpeedMultiplier;
+            }
+
+            logger.LogInfo(
+                $"[shrine-duo] Shrine {changed.ShrineNetplayId}: {changed.ChargerCount} charging, "
+                + $"x{changed.SpeedMultiplier:F2}, required {shrine.currentChargeTime:F2}s.");
+        }
+
+        /// <summary>
+        /// A disconnected player is never sent a stop, so without this a shrine they stood in kept them
+        /// as a charger for the rest of the stage, and under Duo Shrines stayed sped up.
+        /// </summary>
+        private void RemoveShrineCharger(uint connectionId)
+        {
+            foreach (var entry in shrineChargingPlayers)
+            {
+                if (entry.Value != null && entry.Value.Remove(connectionId))
+                {
+                    logger.LogInfo($"Shrine {entry.Key}: removed disconnected charger {connectionId}. Remaining: [{string.Join(", ", entry.Value)}].");
+                    BroadcastShrineChargerCount(entry.Key);
+                }
+            }
         }
 
         private void OnReceivedStartingToChargingShrine(StartingChargingShrine shrine)
@@ -3829,6 +3916,7 @@ namespace OmniBonk.Services
                         + $"in-progress charge. Chargers: [{string.Join(", ", chargers)}].");
 
                     udpClientService.SendToAllClients(shrine, NetDelivery.ReliableOrdered);
+                    BroadcastShrineChargerCount(shrine.ShrineNetplayId);
                     return;
                 }
 
@@ -3856,6 +3944,7 @@ namespace OmniBonk.Services
                 }
 
                 udpClientService.SendToAllClients(shrine, NetDelivery.ReliableOrdered);
+                BroadcastShrineChargerCount(shrine.ShrineNetplayId);
             }
             else
             {
@@ -3891,7 +3980,10 @@ namespace OmniBonk.Services
                 PlayerChargingId = playerManagerService.GetLocalPlayer().ConnectionId
             };
 
-            return HandleChargingStop(shrineNetplayId, shrineChargingPlayers, message, "shrine");
+            var shouldRunVanilla = HandleChargingStop(shrineNetplayId, shrineChargingPlayers, message, "shrine");
+            BroadcastShrineChargerCount(shrineNetplayId);
+
+            return shouldRunVanilla;
         }
 
         private void OnReceivedStoppingChargingShrine(StoppingChargingShrine shrine)
@@ -3913,6 +4005,8 @@ namespace OmniBonk.Services
                 logger.LogInfo(
                     $"Shrine {shrine.ShrineNetplayId}: {shrine.PlayerChargingId} stopped charging "
                     + $"(was recorded: {removed}). Remaining: [{string.Join(", ", chargers)}].");
+
+                BroadcastShrineChargerCount(shrine.ShrineNetplayId);
 
                 if (chargers.Count > 0)
                 {
@@ -4912,6 +5006,8 @@ namespace OmniBonk.Services
 
             // Or the readiness round waits forever on them (cf. SE-6).
             readinessService.RemoveParticipant(disconnected.ConnectionId);
+
+            RemoveShrineCharger(disconnected.ConnectionId);
 
             var isHost = IsServerMode() ?? false;
             var canRetarget = isHost && GameManager.Instance != null && GameManager.Instance.player != null;

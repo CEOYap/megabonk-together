@@ -154,6 +154,44 @@ namespace OmniBonk.Scripts.Bot
             return cachedDetour;
         }
 
+        /// <summary>
+        /// Test only (Duo Shrines): the nearest unfinished charge shrine within <paramref name="range"/> of
+        /// <paramref name="center"/>, or null. Not cached: called only until a shrine is picked.
+        /// </summary>
+        internal static ChargeShrine FindChargeShrine(Vector3 center, float range, DetectInteractables detect)
+        {
+            if (detect == null)
+            {
+                return null;
+            }
+
+            var hits = Helpers.Il2CppFindHelper.RuntimeOverlapSphere(center, range, detect.whatIsInteractable);
+            if (hits == null)
+            {
+                return null;
+            }
+
+            ChargeShrine best = null;
+            var bestDistance = float.MaxValue;
+            foreach (var hit in hits)
+            {
+                var shrine = hit != null ? hit.GetComponentInParent<ChargeShrine>() : null;
+                if (shrine == null || shrine.rewardGiven || blacklist.Contains(shrine.GetInstanceID()))
+                {
+                    continue;
+                }
+
+                var distance = (shrine.transform.position - center).sqrMagnitude;
+                if (distance < bestDistance)
+                {
+                    bestDistance = distance;
+                    best = shrine;
+                }
+            }
+
+            return best;
+        }
+
         private static bool IsAllowed(GameObject obj)
             => obj.GetComponent<InteractableChest>() != null
             || obj.GetComponent<ChargeShrine>() != null

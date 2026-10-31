@@ -128,6 +128,16 @@ namespace OmniBonk.Configuration
         /// <summary>Extra enemy HP per additional player, fraction. Read on both peers, so builds must match.</summary>
         internal const float HP_SCALING_PER_ADDITIONAL_PLAYER = 0.1f;
 
+        /// <summary>
+        /// Duo Shrines: charge speed with two or more players in one charge shrine. Capped at two players so
+        /// stacking never beats splitting up (two shrines at x1 out-charge one at this). Host only: it is sent.
+        /// Untuned; needs a playtest.
+        /// </summary>
+        internal const float SHRINE_DUO_CHARGE_SPEED = 1.5f;
+
+        /// <summary>Players counted toward <see cref="SHRINE_DUO_CHARGE_SPEED"/>; more add nothing.</summary>
+        internal const int SHRINE_DUO_MAX_CHARGERS = 2;
+
         #endregion
 
         #region Diagnostics

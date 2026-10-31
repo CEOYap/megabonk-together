@@ -15,6 +15,7 @@ namespace OmniBonk.Services
         private static event Action<PlayerStatsChanged> PlayerStatsChangedEvents;
         private static event Action<StateDigest> StateDigestEvents;
         private static event Action<ChargeShrineCompleted> ChargeShrineCompletedEvents;
+        private static event Action<ShrineChargersChanged> ShrineChargersChangedEvents;
         private static event Action<LobbySettings> LobbySettingsEvents;
         private static event Action<EndlessNextRoom> EndlessNextRoomEvents;
         private static event Action<PlayerUpdate> PlayerUpdatesEvents;
@@ -210,6 +211,19 @@ namespace OmniBonk.Services
         public static void SubscribeChargeShrineCompletedEvents(Action<ChargeShrineCompleted> action)
         {
             ChargeShrineCompletedEvents += action;
+        }
+
+        public static void OnShrineChargersChanged(ShrineChargersChanged message)
+        {
+            MainThreadDispatcher.Enqueue(() =>
+            {
+                ShrineChargersChangedEvents?.Invoke(message);
+            });
+        }
+
+        public static void SubscribeShrineChargersChangedEvents(Action<ShrineChargersChanged> action)
+        {
+            ShrineChargersChangedEvents += action;
         }
 
         public static void SubscribeSelectedCharacterEvents(Action<SelectedCharacter> action)

@@ -100,6 +100,7 @@ namespace OmniBonk.Scripts.Modal
         private CustomButton projectileCapToggleButton;
         private CustomButton enemyCapToggleButton;
         private CustomButton chestSkipToggleButton;
+        private CustomButton duoShrineToggleButton;
         private CustomButton endlessToggleButton;
         private CustomButton optionsBackButton;
 
@@ -443,6 +444,7 @@ namespace OmniBonk.Scripts.Modal
             projectileCapToggleButton = CreateButton("ProjectileCapToggleButton", "No Proj. Cap: OFF", OnProjectileCapToggleClicked);
             enemyCapToggleButton = CreateButton("EnemyCapToggleButton", "No Enemy Cap: OFF", OnEnemyCapToggleClicked);
             chestSkipToggleButton = CreateButton("ChestSkipToggleButton", "Skip Chest Anim: OFF", OnChestSkipToggleClicked);
+            duoShrineToggleButton = CreateButton("DuoShrineToggleButton", "Duo Shrines: OFF", OnDuoShrineToggleClicked);
             endlessToggleButton = CreateButton("EndlessToggleButton", "Endless: OFF", OnEndlessToggleClicked);
             optionsBackButton = CreateButton("OptionsBackButton", "Back", OnOptionsBackClicked);
         }
@@ -479,6 +481,7 @@ namespace OmniBonk.Scripts.Modal
             SetButtonVisible(projectileCapToggleButton, false);
             SetButtonVisible(enemyCapToggleButton, false);
             SetButtonVisible(chestSkipToggleButton, false);
+            SetButtonVisible(duoShrineToggleButton, false);
             SetButtonVisible(endlessToggleButton, false);
             SetButtonVisible(optionsBackButton, false);
 
@@ -573,6 +576,7 @@ namespace OmniBonk.Scripts.Modal
             SetButtonVisible(projectileCapToggleButton, true);
             SetButtonVisible(enemyCapToggleButton, true);
             SetButtonVisible(chestSkipToggleButton, true);
+            SetButtonVisible(duoShrineToggleButton, true);
             SetButtonVisible(endlessToggleButton, true);
             SetButtonVisible(optionsBackButton, true);
 
@@ -581,6 +585,7 @@ namespace OmniBonk.Scripts.Modal
             SetButtonLabel(projectileCapToggleButton, ModConfig.NoProjectileCap.Value ? "No Proj. Cap: ON" : "No Proj. Cap: OFF");
             SetButtonLabel(enemyCapToggleButton, ModConfig.NoEnemyCap.Value ? "No Enemy Cap: ON" : "No Enemy Cap: OFF");
             SetButtonLabel(chestSkipToggleButton, ModConfig.SkipChestAnimation.Value ? "Skip Chest Anim: ON" : "Skip Chest Anim: OFF");
+            SetButtonLabel(duoShrineToggleButton, ModConfig.ShrineDuoBoost.Value ? "Duo Shrines: ON" : "Duo Shrines: OFF");
             SetButtonLabel(endlessToggleButton, ModConfig.EndlessRun.Value ? "Endless: ON" : "Endless: OFF");
 
             lobbyWindow?.FindAllButtonsInWindow();
@@ -638,8 +643,11 @@ namespace OmniBonk.Scripts.Modal
                 var memberTop = members.localPosition.y + members.rect.yMax;
                 var columnTop = column.localPosition.y + column.rect.yMax;
 
+                // Only the top moves: the bottom stays where it sits in the main view, so the column
+                // grows by the shift. The options view holds more buttons than the prefab's column
+                // height fits (8 need 486 units of 430), and this avoids rebuilding the bundle.
                 var shift = new Vector2(0f, Mathf.Max(0f, memberTop - columnTop));
-                column.offsetMin = columnOffsetMin + shift;
+                column.offsetMin = columnOffsetMin;
                 column.offsetMax = columnOffsetMax + shift;
             }
             else
@@ -652,16 +660,30 @@ namespace OmniBonk.Scripts.Modal
         private void OnOptionsClicked()
         {
             PlaySelectSfx();
-            showingOptions = true;
-            Refresh();
+            SetShowingOptions(true);
         }
 
         private void OnOptionsBackClicked()
         {
             PlaySelectSfx();
-            showingOptions = false;
+            SetShowingOptions(false);
+        }
+
+        /// <summary>
+        /// Re-arms the column measurement: the two views hold different buttons, and measuring only the
+        /// first one shown never reported the options view, the taller of the two.
+        /// </summary>
+        private void SetShowingOptions(bool show)
+        {
+            showingOptions = show;
+            warnedAboutButtonOverflow = false;
             Refresh();
         }
+
+#if DEBUG
+        /// <summary>Test only (TestShowLobbyOptions): the auto-host's way into and out of the options view.</summary>
+        internal void TestSetShowingOptions(bool show) => SetShowingOptions(show);
+#endif
 
         /// <summary>Saved on every press, or quitting before a run would revert it.</summary>
         private void OnSaveToggleClicked()
@@ -712,6 +734,17 @@ namespace OmniBonk.Scripts.Modal
             PlaySelectSfx();
 
             ModConfig.SkipChestAnimation.Value = !ModConfig.SkipChestAnimation.Value;
+            ModConfig.Save();
+
+            Refresh();
+        }
+
+        /// <summary>Lobby setting, like the projectile cap: the host's value applies to the session.</summary>
+        private void OnDuoShrineToggleClicked()
+        {
+            PlaySelectSfx();
+
+            ModConfig.ShrineDuoBoost.Value = !ModConfig.ShrineDuoBoost.Value;
             ModConfig.Save();
 
             Refresh();

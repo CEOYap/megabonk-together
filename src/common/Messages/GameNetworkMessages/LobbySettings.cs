@@ -25,5 +25,8 @@ namespace OmniBonk.Common.Messages.GameNetworkMessages
 
         /// <summary>Skip Chest Animation: every chest opens with no window, for everyone. Protocol 11.</summary>
         public bool SkipChestAnimation { get; set; }
+
+        /// <summary>Duo Shrines: a second player in a charge shrine speeds it up; a third adds nothing. Protocol 12.</summary>
+        public bool ShrineDuoBoost { get; set; }
     }
 }

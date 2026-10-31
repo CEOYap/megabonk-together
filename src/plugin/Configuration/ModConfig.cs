@@ -19,6 +19,7 @@ namespace OmniBonk.Configuration
         public static ConfigEntry<bool> NoProjectileCap { get; private set; }
         public static ConfigEntry<bool> NoEnemyCap { get; private set; }
         public static ConfigEntry<bool> SkipChestAnimation { get; private set; }
+        public static ConfigEntry<bool> ShrineDuoBoost { get; private set; }
         public static ConfigEntry<bool> EndlessRun { get; private set; }
         public static ConfigEntry<float> EncounterInputGraceSeconds { get; private set; }
         public static ConfigEntry<bool> LogAllocationRate { get; private set; }
@@ -41,6 +42,8 @@ namespace OmniBonk.Configuration
         public static ConfigEntry<int> TestSpawnEnemies { get; private set; }
         public static ConfigEntry<bool> TestOpenPauseMenu { get; private set; }
         public static ConfigEntry<bool> TestSeekShadyGuy { get; private set; }
+        public static ConfigEntry<bool> TestShareShrines { get; private set; }
+        public static ConfigEntry<bool> TestShowLobbyOptions { get; private set; }
 #endif
         public static ConfigEntry<bool> LogEncounterPause { get; private set; }
         public static ConfigEntry<bool> LogBandwidth { get; private set; }
@@ -171,6 +174,20 @@ namespace OmniBonk.Configuration
                 false,
                 "Developer tool, leave off for normal play. From 3 min into a stage the bot detours to the " +
                 "stage's Shady Guy at any range and shops there (OB-67)."
+            );
+            TestShareShrines = config.Bind(
+                "Testing",
+                "TestShareShrines",
+                false,
+                "Developer tool, leave off for normal play. The auto-host walks to the nearest charge shrine and stands in " +
+                "it until it completes; a client bot walks into the shrine its host stands at (Duo Shrines)."
+            );
+            TestShowLobbyOptions = config.Bind(
+                "Testing",
+                "TestShowLobbyOptions",
+                false,
+                "Developer tool, leave off for normal play. The auto-host opens the lobby's Netplay Options view for a " +
+                "few seconds before starting, so its layout can be checked and screenshotted."
             );
             TestSpawnEnemies = config.Bind(
                 "Testing",
@@ -365,6 +382,14 @@ namespace OmniBonk.Configuration
                 "Every chest opens straight into your items, with no chest window, for every player, whatever their own " +
                 "Skip Chest Animation game setting says. With Shared XP on, this lobby setting decides for everyone (so nobody waits " +
                 "on a window only they can see); with Shared XP off, a player's own game setting still works too. " +
+                "Only the host's setting counts: it applies to everyone in the session."
+            );
+            ShrineDuoBoost = config.Bind(
+                "Lobby",
+                "ShrineDuoBoost",
+                false,
+                "Duo Shrines: a charge shrine fills 1.5x as fast with two players standing in it. A third player adds nothing, " +
+                "so two players in separate shrines still charge more than two in one: it pays to spread out and explore. " +
                 "Only the host's setting counts: it applies to everyone in the session."
             );
             EndlessRun = config.Bind(

@@ -111,7 +111,9 @@ for anything a third player must see. `-SeekBurgers` makes following bots walk i
 the host, and `-TestSpawnEnemies 1200` has the host request that many skeletons through the capped
 spawn path. `-SharedXp` turns Shared XP on (it is written off otherwise), `-SkipChestAnimation` sets
 that lobby setting, `-OpenPauseMenu` has client bots sit in the pause menu so rewards arrive under it, and `-SeekShadyGuy`
-has the client bot buy from Shady Guys and the host bot revisit them for a solo shop.
+has the client bot buy from Shady Guys and the host bot revisit them for a solo shop. `-DuoShrines` sets
+that lobby setting and `-ShareShrines` has both bots charge one shrine together; `-ShowLobbyOptions` holds
+the lobby's options view open for a screenshot.
 Prefer a **count on both sides** to a single "it ran" line: OB-58's
 first fix logged its marker fine while drawing 17 times too many mine explosions, which only the
 `[explosions]` host/client counts exposed.
